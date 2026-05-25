@@ -88,7 +88,7 @@ const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] 
   },
 ]
 
-export function SettingsPage() {
+export function ApiClientsTab() {
   const { data: clients, isLoading } = useApiClients()
   const createClient = useCreateApiClient()
   const updateClient = useUpdateApiClient()
@@ -367,6 +367,82 @@ export function SettingsPage() {
           </CardContent>
         </Card>
       )}
+    </div>
+  )
+}
+
+// ─── B-PR-7 tabbed shell ─────────────────────────────────────────
+
+import { useSearchParams } from 'react-router'
+import clsx from 'clsx'
+import { ProfileTab } from './settings/ProfileTab'
+import { UsersTab } from './settings/UsersTab'
+import { AuditTab } from './settings/AuditTab'
+
+type SettingsTab = 'profile' | 'users' | 'clients' | 'audit'
+
+const TAB_DEFS: { id: SettingsTab; label: string }[] = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'users', label: 'Users' },
+  { id: 'clients', label: 'API Clients' },
+  { id: 'audit', label: 'Audit' },
+]
+
+export function SettingsPage() {
+  const [params, setParams] = useSearchParams()
+  const raw = params.get('tab') as SettingsTab | null
+  const tab: SettingsTab = (raw && TAB_DEFS.some((t) => t.id === raw) ? raw : 'profile') as SettingsTab
+
+  function selectTab(next: SettingsTab) {
+    const np = new URLSearchParams(params)
+    np.set('tab', next)
+    setParams(np, { replace: true })
+  }
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Settings</h1>
+          <p className="page-subtitle">Profile, users, API clients and audit trail.</p>
+        </div>
+      </div>
+
+      <div
+        className="tabs"
+        style={{
+          background: 'var(--panel)',
+          borderRadius: 'var(--r-3) var(--r-3) 0 0',
+          border: '1px solid var(--border)',
+          borderBottom: 0,
+        }}
+      >
+        {TAB_DEFS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={clsx('tab', tab === t.id && 'active')}
+            onClick={() => selectTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div
+        style={{
+          background: 'var(--panel)',
+          border: '1px solid var(--border)',
+          borderTop: 0,
+          borderRadius: '0 0 var(--r-3) var(--r-3)',
+          padding: 18,
+          marginBottom: 24,
+        }}
+      >
+        {tab === 'profile' ? <ProfileTab /> : null}
+        {tab === 'users' ? <UsersTab /> : null}
+        {tab === 'clients' ? <ApiClientsTab /> : null}
+        {tab === 'audit' ? <AuditTab /> : null}
+      </div>
     </div>
   )
 }

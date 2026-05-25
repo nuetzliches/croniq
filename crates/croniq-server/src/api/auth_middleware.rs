@@ -8,10 +8,10 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use croniq_auth::api_key::hash_api_key;
+use croniq_auth::api_key::{hash_api_key, hash_token};
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::validate_token;
-use croniq_auth::{CallerContext, CallerType};
+use croniq_auth::{AuthMethod, CallerContext, CallerType};
 
 use super::ServerState;
 
@@ -37,6 +37,9 @@ pub async fn require_auth(
             caller_type: CallerType::User,
             caller_id: "anonymous".into(),
             client_id: "anonymous".into(),
+            user_id: None,
+            role: None,
+            auth_method: AuthMethod::ApiKey,
             scopes: vec![Scope::ADMIN.to_string()],
         });
         return Ok(next.run(req).await);
@@ -53,8 +56,19 @@ pub async fn require_auth(
     };
 
     let ctx = if let Some(token) = header.strip_prefix("Bearer ") {
-        // JWT validation
-        validate_token(jwt_config, token).map_err(|_| StatusCode::UNAUTHORIZED)?
+        // PAT short-circuit: a "Bearer croniq_pat_…" header is a PAT,
+        // not a JWT. Distinguishing by prefix avoids client confusion
+        // (every browser-facing flow uses `Bearer`) while keeping the
+        // JWT path the default.
+        if token.starts_with("croniq_pat_") {
+            resolve_pat(state.as_ref(), token).await?
+        } else {
+            validate_token(jwt_config, token).map_err(|_| StatusCode::UNAUTHORIZED)?
+        }
+    } else if let Some(raw_pat) = header.strip_prefix("PAT ") {
+        // Explicit `Authorization: PAT croniq_pat_…` form for clients
+        // that prefer not to overload Bearer.
+        resolve_pat(state.as_ref(), raw_pat).await?
     } else if let Some(raw_key) = header.strip_prefix("ApiKey ") {
         // API key lookup
         let store = state
@@ -93,6 +107,9 @@ pub async fn require_auth(
             caller_type: CallerType::ApiKey,
             caller_id: api_key.key_id,
             client_id: api_key.client_id,
+            user_id: None,
+            role: None,
+            auth_method: AuthMethod::ApiKey,
             scopes: client.scopes,
         }
     } else {
@@ -110,4 +127,46 @@ pub fn require_scope(ctx: &CallerContext, scope: &str) -> Result<(), StatusCode>
     } else {
         Err(StatusCode::FORBIDDEN)
     }
+}
+
+/// Resolve an `Authorization: ... croniq_pat_…` header into a
+/// CallerContext. Validates revocation + expiry + owning user is
+/// active, then stamps `last_used_at` (best-effort, errors swallowed).
+async fn resolve_pat(state: &ServerState, raw_token: &str) -> Result<CallerContext, StatusCode> {
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let token_hash = hash_token(raw_token);
+    let pat = store
+        .pat_find_by_hash(&token_hash)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if pat.revoked_at.is_some() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if let Some(expires) = pat.expires_at
+        && chrono::Utc::now() > expires
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let user = store
+        .users_get_by_id(&pat.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if !user.is_active {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    // Best-effort touch; do not fail the request if the UPDATE blocks.
+    let _ = store.pat_touch_last_used(&pat.token_id, chrono::Utc::now());
+
+    Ok(CallerContext {
+        caller_type: CallerType::User,
+        caller_id: user.user_id.clone(),
+        client_id: user.user_id.clone(),
+        user_id: Some(user.user_id),
+        role: Some(user.role),
+        auth_method: AuthMethod::Pat,
+        scopes: pat.scopes,
+    })
 }

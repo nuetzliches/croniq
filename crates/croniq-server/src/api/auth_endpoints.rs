@@ -6,14 +6,17 @@ use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
-use croniq_auth::jwt::issue_token_pair;
+use croniq_auth::crypto::unwrap_totp_secret;
+use croniq_auth::jwt::{issue_mfa_token, issue_token_pair, validate_mfa_token};
 use croniq_auth::password::verify_password;
-use croniq_auth::{CallerContext, CallerType};
+use croniq_auth::totp::{hash_recovery_code, verify_code};
+use croniq_auth::{AuthMethod, CallerContext, CallerType, default_scopes_for_role};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 use crate::api::auth_middleware::require_scope;
 
 // ─── Request/Response types ──────────────────────────────────────────────────
@@ -30,6 +33,38 @@ pub struct TokenResponse {
     pub refresh_token: String,
     pub token_type: String,
     pub expires_in: i64,
+}
+
+/// Response for `POST /v1/auth/login` when the user has TOTP enabled.
+/// The client must POST to `/v1/auth/login/totp` with the `mfa_token`
+/// and a current 6-digit code (or a recovery code) to receive
+/// `TokenResponse`. The `mfa_token` itself is unusable for any other
+/// API call — its purpose claim is "mfa", which `validate_token`
+/// rejects.
+#[derive(Serialize)]
+pub struct MfaRequiredResponse {
+    pub requires_totp: bool, // always true; future-proof for WebAuthn
+    pub mfa_token: String,
+    pub mfa_token_expires_in: i64,
+}
+
+/// `POST /v1/auth/login` response — one variant or the other. Tagged
+/// internally for client convenience: clients can pattern-match on
+/// the presence of `requires_totp`.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum LoginResponse {
+    Tokens(TokenResponse),
+    MfaRequired(MfaRequiredResponse),
+}
+
+#[derive(Deserialize)]
+pub struct TotpLoginRequest {
+    pub mfa_token: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub recovery_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -70,7 +105,7 @@ pub struct CreateApiKeyResponse {
 pub async fn handle_login(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<TokenResponse>, StatusCode> {
+) -> Result<Json<LoginResponse>, StatusCode> {
     let store = state
         .store
         .as_ref()
@@ -104,6 +139,14 @@ pub async fn handle_login(
             updated.locked_until = Some(Utc::now() + chrono::Duration::minutes(15));
         }
         let _ = store.upsert_credentials(&updated);
+        audit::record_event(
+            store,
+            "user",
+            Some(&cred.user_id),
+            "auth.login_failed",
+            "user",
+            Some(&cred.user_id),
+        );
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -115,33 +158,176 @@ pub async fn handle_login(
         let _ = store.upsert_credentials(&updated);
     }
 
-    // Issue tokens
+    // Look up the user row to pull role + active flag. Pre-PR-A1 deploys
+    // backfill an admin user via migration 011, so this should always
+    // resolve. A missing user is treated as 401 — the credential exists
+    // but the identity it points at no longer does (manual DB tamper or
+    // hand-rollback to before migration 011).
+    let user = store
+        .users_get_by_id(&cred.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !user.is_active {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // TOTP step-up: if the user has a confirmed TOTP secret, return an
+    // MFA-token instead of access/refresh tokens. Password verification
+    // has already succeeded above, so the MFA-token vouches for that
+    // step. The client must then POST to /v1/auth/login/totp.
+    let totp_enabled = store
+        .totp_get(&user.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(|t| t.enabled)
+        .unwrap_or(false);
+    if totp_enabled {
+        let (mfa_token, expires_in) = issue_mfa_token(jwt_config, &user.user_id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        audit::record_event(
+            store,
+            "user",
+            Some(&user.user_id),
+            "auth.login_password_ok_totp_required",
+            "user",
+            Some(&user.user_id),
+        );
+        return Ok(Json(LoginResponse::MfaRequired(MfaRequiredResponse {
+            requires_totp: true,
+            mfa_token,
+            mfa_token_expires_in: expires_in,
+        })));
+    }
+
+    let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        "auth.login_success",
+        "user",
+        Some(&user.user_id),
+    );
+    Ok(Json(LoginResponse::Tokens(tokens)))
+}
+
+/// `POST /v1/auth/login/totp` — exchange the MFA step-up token + a
+/// 6-digit TOTP code (or single-use recovery code) for normal tokens.
+pub async fn handle_totp_login(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<TotpLoginRequest>,
+) -> Result<Json<TokenResponse>, StatusCode> {
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let user_id =
+        validate_mfa_token(jwt_config, &req.mfa_token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let user = store
+        .users_get_by_id(&user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if !user.is_active {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let secret_row = store
+        .totp_get(&user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if !secret_row.enabled {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Accept either a current 6-digit TOTP code OR an 8-char recovery
+    // code. Exactly one must be set.
+    match (&req.code, &req.recovery_code) {
+        (Some(code), None) => {
+            let raw = unwrap_totp_secret(&jwt_config.secret, &secret_row.secret_enc)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let secret_b32 =
+                String::from_utf8(raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            match verify_code(&secret_b32, code) {
+                Ok(true) => {}
+                _ => return Err(StatusCode::UNAUTHORIZED),
+            }
+        }
+        (None, Some(recovery)) => {
+            let hash = hash_recovery_code(recovery);
+            let row = store
+                .recovery_codes_find_unused(&user_id, &hash)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::UNAUTHORIZED)?;
+            // Mark used BEFORE minting tokens so a parallel retry can't
+            // double-spend.
+            store
+                .recovery_codes_mark_used(&row.code_id, Utc::now())
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        _ => return Err(StatusCode::BAD_REQUEST),
+    }
+
+    let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    let action = if req.recovery_code.is_some() {
+        "auth.login_totp_recovery_success"
+    } else {
+        "auth.login_totp_success"
+    };
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        action,
+        "user",
+        Some(&user.user_id),
+    );
+    Ok(Json(tokens))
+}
+
+/// Mint + persist an access/refresh pair for a fully-authenticated
+/// user. Pulled out so both the no-2FA login path and the TOTP-success
+/// path can call it.
+fn mint_user_tokens(
+    jwt_config: &croniq_auth::jwt::JwtConfig,
+    user: &croniq_store::models::User,
+    store: &crate::store::DynStore,
+) -> Result<TokenResponse, StatusCode> {
+    let scopes = default_scopes_for_role(user.role);
     let pair = issue_token_pair(
         jwt_config,
-        &cred.user_id,
-        &cred.user_id,
+        &user.user_id,
+        &user.user_id,
         CallerType::User,
-        &["admin".to_string()], // Users get admin scope
+        Some(&user.user_id),
+        Some(user.role),
+        AuthMethod::Password,
+        &scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Store refresh token
+    let _ = store.users_set_last_login(&user.user_id, Utc::now());
+
     let refresh_hash = hash_api_key(&pair.refresh_token);
     let _ = store.create_refresh_token(&RefreshToken {
         token_hash: refresh_hash,
-        client_id: cred.user_id.clone(),
-        user_id: Some(cred.user_id),
+        client_id: user.user_id.clone(),
+        user_id: Some(user.user_id.clone()),
         expires_at: pair.refresh_expires_at,
         revoked_at: None,
         created_at: Utc::now(),
     });
 
-    Ok(Json(TokenResponse {
+    Ok(TokenResponse {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         token_type: "Bearer".into(),
         expires_in: jwt_config.access_ttl_secs,
-    }))
+    })
 }
 
 /// `POST /v1/auth/refresh`
@@ -171,28 +357,44 @@ pub async fn handle_refresh(
     // Revoke old token
     let _ = store.revoke_refresh_token(&token_hash, Utc::now());
 
-    // Issue new pair
-    let caller_type = if token.user_id.is_some() {
-        CallerType::User
+    // Branch on caller type. User refresh re-loads the user row so role
+    // changes propagate without forcing a re-login; API-key refresh
+    // picks up scope changes on the owning client the same way.
+    let (caller_type, user_id, role, auth_method, scopes) = if let Some(uid) = &token.user_id {
+        let user = store
+            .users_get_by_id(uid)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::UNAUTHORIZED)?;
+        if !user.is_active {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        let scopes = default_scopes_for_role(user.role);
+        (
+            CallerType::User,
+            Some(user.user_id.clone()),
+            Some(user.role),
+            AuthMethod::Password,
+            scopes,
+        )
     } else {
-        CallerType::ApiKey
-    };
-    let scopes = if token.user_id.is_some() {
-        vec!["admin".to_string()]
-    } else {
-        store
+        let scopes = store
             .get_client(&token.client_id)
             .ok()
             .flatten()
             .map(|c| c.scopes)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        (CallerType::ApiKey, None, None, AuthMethod::ApiKey, scopes)
     };
 
+    let caller_id = user_id.clone().unwrap_or_else(|| token.client_id.clone());
     let pair = issue_token_pair(
         jwt_config,
-        &token.client_id,
+        &caller_id,
         &token.client_id,
         caller_type,
+        user_id.as_deref(),
+        role,
+        auth_method,
         &scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -370,6 +572,9 @@ pub async fn handle_issue_client_token(
         &client.client_id,
         &client.client_id,
         CallerType::ApiKey,
+        None,
+        None,
+        AuthMethod::ApiKey,
         &client.scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

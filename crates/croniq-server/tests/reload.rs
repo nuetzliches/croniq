@@ -156,6 +156,9 @@ impl Harness {
             "admin-user",
             "admin-client",
             CallerType::User,
+            Some("admin-user"),
+            Some(croniq_auth::Role::Admin),
+            croniq_auth::AuthMethod::Password,
             &["admin".into()],
         )
         .unwrap();
@@ -165,8 +168,17 @@ impl Harness {
     fn user_token(&self, scopes: &[&str]) -> String {
         let cfg = self.state.jwt_config.as_ref().unwrap();
         let scopes: Vec<String> = scopes.iter().map(|s| (*s).into()).collect();
-        let pair =
-            issue_token_pair(cfg, "test-user", "test-client", CallerType::User, &scopes).unwrap();
+        let pair = issue_token_pair(
+            cfg,
+            "test-user",
+            "test-client",
+            CallerType::User,
+            Some("test-user"),
+            Some(croniq_auth::Role::Operator),
+            croniq_auth::AuthMethod::Password,
+            &scopes,
+        )
+        .unwrap();
         pair.access_token
     }
 

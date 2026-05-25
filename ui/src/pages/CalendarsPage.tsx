@@ -161,10 +161,13 @@ export function CalendarsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page wide">
       {confirmDialog}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{calendars?.length ?? 0} calendars defined</p>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Calendars</h1>
+          <p className="page-subtitle">{calendars?.length ?? 0} calendars defined · attach to jobs to gate firing.</p>
+        </div>
         <Dialog.Root open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog() }}>
           <Dialog.Trigger asChild>
             <Button size="sm"><Plus className="h-3.5 w-3.5" />Add Calendar</Button>

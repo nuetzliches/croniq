@@ -36,6 +36,22 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 notify = "8"
 
+# OIDC/SSO support (PR-A5). Manual Authorization-Code-Flow on top of
+# reqwest + jsonwebtoken (already a transitive dep via croniq-auth).
+# The openidconnect crate's heavy generic API was a poor fit for the
+# tight integration with ServerState + the JIT-provisioning logic.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+base64 = "0.22"
+rand = "0.9"
+
+# PR-A6: optional SMTP transport for invitations + password resets.
+# Off by default — NoopSender keeps working and the API still returns
+# the token URL in the JSON response. Enable the `smtp` cargo feature
+# to drop in a lettre-backed sender.
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "tokio1-rustls-tls", "builder"], optional = true }
+
 # OTLP exporter (issue #121). Off by default — when disabled, behaviour is
 # identical to plain tracing-subscriber fmt on stderr. When enabled and
 # OTEL_EXPORTER_OTLP_ENDPOINT is set at runtime, scheduler spans and
@@ -56,6 +72,10 @@ otlp = [
     "dep:opentelemetry-appender-tracing",
     "dep:tracing-opentelemetry",
 ]
+# Outbound SMTP via lettre for invitations + password-reset email
+# delivery. When off (default), NoopSender is used and tokens come
+# back in the API response only.
+smtp = ["dep:lettre"]
 
 [dev-dependencies]
 pretty_assertions = "1"

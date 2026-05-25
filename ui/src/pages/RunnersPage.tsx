@@ -1,20 +1,13 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
-import { useRunnersSSE, useDeleteRunner, useJobs, useExecutions, useRunnerTags } from '@/api/hooks'
+import { useRunnersSSE, useDeleteRunner, useRunnerTags } from '@/api/hooks'
 import { Badge } from '@/components/ui/badge'
-import { stateVariant } from '@/components/ui/badge-variants'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import { Sheet } from '@/components/ui/sheet'
-import { Spinner } from '@/components/ui/spinner'
-import { LogsPanel } from '@/components/LogsPanel'
-import type { RunnerSummary, Execution } from '@/api/types'
-import { shortId, formatDate } from '@/lib/utils'
 
 function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
   const pct = max > 0 ? Math.min(inflight / max, 1) : 0
@@ -40,178 +33,11 @@ function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
 const statusVariant = (s: string) =>
   s === 'Online' ? 'ok' : s === 'Stale' ? 'warn' : 'err'
 
-function ExecutionDetail({ execution }: { execution: Execution }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-        {[
-          ['ID', (
-            <span key="id" className="flex items-center gap-1.5 font-mono">
-              {execution.id}
-              <CopyButton value={execution.id} label="Copy execution id" />
-            </span>
-          )],
-          ['Job', execution.job_key],
-          ['State', <Badge key="s" variant={stateVariant(execution.state)}>{execution.state}</Badge>],
-          ['Attempt', execution.attempt],
-          ['Runner', execution.runner_id || '—'],
-          ['Duration', execution.duration_ms ? `${execution.duration_ms}ms` : '—'],
-          ['Fire at', formatDate(execution.fire_at)],
-          ['Completed', execution.completed_at ? formatDate(execution.completed_at) : '—'],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="contents">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-medium text-foreground">{value}</span>
-          </div>
-        ))}
-      </div>
-
-      {execution.error && (
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">Error</p>
-          <pre className="text-xs bg-muted rounded-md p-3 overflow-auto max-h-32 whitespace-pre-wrap">{execution.error}</pre>
-        </div>
-      )}
-
-      <LogsPanel executionId={execution.id} executionState={execution.state} />
-    </div>
-  )
-}
-
-function RunnerDetail({ runner }: { runner: RunnerSummary }) {
-  const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
-  const jobs = useJobs()
-  const executions = useExecutions({ runner_id: runner.runner_id, limit: 50 })
-  // Jobs this runner has actually handled recently — derived from execution
-  // history. Croniq routes mostly by capability matching (not by pinning via
-  // `assigned_runner_id`), so the explicit-assignment field is null for most
-  // jobs even when a runner regularly executes them.
-  const handledJobKeys = Array.from(new Set((executions.data ?? []).map((e) => e.job_key)))
-  const handledJobs = handledJobKeys
-    .map((key) => jobs.data?.find((j) => j.job_key === key) ?? { job_key: key })
-    .sort((a, b) => a.job_key.localeCompare(b.job_key))
-
-  return (
-    <div className="space-y-6">
-      {/* Identity */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identity</h3>
-        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs items-start">
-          <span className="text-muted-foreground pt-0.5">ID</span>
-          <span className="flex items-center gap-1.5 font-mono break-all">
-            {runner.runner_id}
-            <CopyButton value={runner.runner_id} label="Copy runner id" />
-          </span>
-
-          <span className="text-muted-foreground pt-0.5">Status</span>
-          <span><Badge variant={statusVariant(runner.status)}>{runner.status}</Badge></span>
-
-          <span className="text-muted-foreground pt-0.5">Last poll</span>
-          <span className="text-foreground"><RelativeTime iso={runner.last_poll_at} /></span>
-
-          <span className="text-muted-foreground pt-0.5">Inflight</span>
-          <span className="text-foreground">{runner.inflight} / {runner.max_inflight}</span>
-
-          {runner.capabilities.length > 0 && (
-            <>
-              <span className="text-muted-foreground pt-0.5">Capabilities</span>
-              <div className="flex flex-wrap gap-1">
-                {runner.capabilities.map((c) => (
-                  <span key={c} className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground">
-                    {c}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-
-          {(runner.tags ?? []).length > 0 && (
-            <>
-              <span className="text-muted-foreground pt-0.5">Tags</span>
-              <div className="flex flex-wrap gap-1">
-                {(runner.tags ?? []).map((t) => (
-                  <span key={t} className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs font-mono text-accent-foreground">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </section>
-
-      {/* Jobs handled (derived from recent executions) */}
-      <section className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Jobs handled</h3>
-        {executions.isLoading && <Spinner className="h-4 w-4" />}
-        {!executions.isLoading && handledJobs.length === 0 && (
-          <p className="text-xs text-muted-foreground">This runner hasn't handled any jobs recently</p>
-        )}
-        {handledJobs.length > 0 && (
-          <ul className="space-y-1">
-            {handledJobs.map((j) => (
-              <li key={j.job_key}>
-                <Link
-                  to={`/jobs/${j.job_key}`}
-                  className="text-xs font-mono text-primary hover:underline"
-                >
-                  {j.job_key}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Recent executions */}
-      <section className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent executions</h3>
-        {executions.isLoading && <Spinner className="h-4 w-4" />}
-        {!executions.isLoading && (executions.data?.length ?? 0) === 0 && (
-          <p className="text-xs text-muted-foreground">No recent executions</p>
-        )}
-        {(executions.data?.length ?? 0) > 0 && (
-          <div className="rounded-md border border-border overflow-hidden">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border">
-                  {['ID', 'State', 'Fire At', 'Duration'].map((h) => (
-                    <th key={h} className="px-2 py-2 text-left font-medium text-muted-foreground uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {executions.data?.map((e) => (
-                  <tr
-                    key={e.id}
-                    onClick={() => setSelectedExecution(e)}
-                    className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-accent/40 ${selectedExecution?.id === e.id ? 'bg-accent/60' : ''}`}
-                  >
-                    <td className="px-2 py-2 font-mono text-muted-foreground" title={e.id}>{shortId(e.id)}</td>
-                    <td className="px-2 py-2"><Badge variant={stateVariant(e.state)}>{e.state}</Badge></td>
-                    <td className="px-2 py-2 text-muted-foreground"><RelativeTime iso={e.fire_at} /></td>
-                    <td className="px-2 py-2 text-muted-foreground">{e.duration_ms ? `${e.duration_ms}ms` : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <Sheet open={!!selectedExecution} onOpenChange={(o) => !o && setSelectedExecution(null)} title="Execution Detail">
-        {selectedExecution && <ExecutionDetail execution={selectedExecution} />}
-      </Sheet>
-    </div>
-  )
-}
-
 export function RunnersPage() {
   const { data: runners, isConnected } = useRunnersSSE()
   const tagCounts = useRunnerTags()
   const deleteRunner = useDeleteRunner()
   const { confirm, dialog: confirmDialog } = useConfirm()
-  const [selectedRunner, setSelectedRunner] = useState<RunnerSummary | null>(null)
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
 
   const toggleTag = (tag: string) =>
@@ -243,10 +69,13 @@ export function RunnersPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page wide">
       {confirmDialog}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{runners?.length ?? 0} runners</p>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Runners</h1>
+          <p className="page-subtitle">{runners?.length ?? 0} runners connected · click a card to inspect activity.</p>
+        </div>
         <span
           role="status"
           aria-live="polite"
@@ -308,11 +137,7 @@ export function RunnersPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {filteredRunners.map((r) => (
-          <Card
-            key={r.runner_id}
-            className="cursor-pointer transition-colors hover:bg-accent/40"
-            onClick={() => setSelectedRunner(r)}
-          >
+          <Card key={r.runner_id}>
             <CardContent className="pt-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0 space-y-2">
@@ -373,13 +198,6 @@ export function RunnersPage() {
         ))}
       </div>
 
-      <Sheet
-        open={!!selectedRunner}
-        onOpenChange={(o) => !o && setSelectedRunner(null)}
-        title="Runner Detail"
-      >
-        {selectedRunner && <RunnerDetail runner={selectedRunner} />}
-      </Sheet>
     </div>
   )
 }

@@ -181,6 +181,108 @@ pub trait AuthStore {
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError>;
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // Users — identity decoupled from auth method. Migration 011 backfills
+    // existing password_credentials rows into users with role=admin; new
+    // multi-user flows (invitations, OIDC JIT, PATs) all attach to a row
+    // here. `users_create` is upsert-on-user_id; `users_update` rejects
+    // attempts to remove the last admin.
+    fn users_create(&self, user: &User) -> Result<(), StoreError>;
+    fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError>;
+    fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError>;
+    fn users_list(&self) -> Result<Vec<User>, StoreError>;
+    fn users_update(&self, user: &User) -> Result<(), StoreError>;
+    fn users_delete(&self, user_id: &str) -> Result<(), StoreError>;
+    fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    /// Count active users with role=admin. Used by user_update / user_delete to
+    /// prevent the last admin from being demoted or removed (avoids lock-out).
+    fn users_count_active_admins(&self) -> Result<u64, StoreError>;
+
+    // Invitations — admin issues, user redeems with a raw token.
+    fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError>;
+    fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError>;
+    fn invitations_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<Invitation>, StoreError>;
+    fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError>;
+    fn invitations_mark_accepted(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+    fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // Password resets — same hash-on-create / raw-token-on-redeem pattern.
+    fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError>;
+    fn password_resets_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordReset>, StoreError>;
+    fn password_resets_mark_used(
+        &self,
+        reset_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    // TOTP secrets — one per user_id (PK). Upsert lets `/totp/setup`
+    // be retried (the secret stays at enabled=0 until confirmed).
+    fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError>;
+    fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError>;
+    fn totp_set_enabled(
+        &self,
+        user_id: &str,
+        enabled: bool,
+        confirmed_at: Option<DateTime<Utc>>,
+    ) -> Result<(), StoreError>;
+    fn totp_delete(&self, user_id: &str) -> Result<(), StoreError>;
+
+    // Recovery codes — bulk insert at TOTP confirm time, single-use
+    // consumption via mark_used. Replace_all is used by the
+    // regenerate-codes endpoint.
+    fn recovery_codes_replace_all(
+        &self,
+        user_id: &str,
+        codes: &[RecoveryCode],
+    ) -> Result<(), StoreError>;
+    fn recovery_codes_find_unused(
+        &self,
+        user_id: &str,
+        code_hash: &str,
+    ) -> Result<Option<RecoveryCode>, StoreError>;
+    fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError>;
+
+    // Personal Access Tokens — user-bound API credentials.
+    fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError>;
+    fn pat_find_by_hash(&self, token_hash: &str)
+    -> Result<Option<PersonalAccessToken>, StoreError>;
+    fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError>;
+    fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // OIDC — JIT-linked external identities + short-TTL state-param store.
+    fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError>;
+    fn oidc_get_by_subject(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<OidcIdentity>, StoreError>;
+    fn oidc_touch_last_login(
+        &self,
+        provider: &str,
+        subject: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+    fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError>;
+    fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError>;
+    /// Purge expired oidc_pending_logins rows. Called opportunistically
+    /// (e.g. before every callback handler invocation) — best-effort.
+    fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
+
+    // Audit log — append-only.
+    fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError>;
+    fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

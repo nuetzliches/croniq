@@ -31,10 +31,12 @@
 pub mod api;
 pub mod completion;
 pub mod dashboard;
+pub mod email;
 pub mod loader;
 pub mod mcp;
 pub mod metrics;
 pub mod notify;
+pub mod oidc;
 pub mod quota;
 pub mod reload;
 pub mod scheduler;

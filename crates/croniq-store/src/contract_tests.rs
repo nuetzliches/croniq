@@ -803,3 +803,539 @@ fn append_logs_batch_empty_is_a_noop() {
     store.append_logs_batch(&[]).unwrap();
     // No assertion needed — just confirming it doesn't panic or error.
 }
+
+// ─── Users ───
+
+fn make_user(username: &str, role: Role) -> User {
+    User {
+        user_id: Uuid::new_v4().to_string(),
+        username: username.into(),
+        email: None,
+        display_name: None,
+        role,
+        is_active: true,
+        created_at: now(),
+        updated_at: now(),
+        last_login_at: None,
+    }
+}
+
+#[test]
+fn users_create_and_lookup_round_trip() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+
+    let by_id = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    let by_name = store.users_get_by_username("alex").unwrap().unwrap();
+
+    assert_eq!(by_id.user_id, u.user_id);
+    assert_eq!(by_name.user_id, u.user_id);
+    assert_eq!(by_id.role, Role::Admin);
+}
+
+#[test]
+fn users_create_is_upsert_on_user_id() {
+    let store = create_memory_store().unwrap();
+    let mut u = make_user("alex", Role::Operator);
+    store.users_create(&u).unwrap();
+
+    u.role = Role::Admin;
+    u.email = Some("alex@example.org".into());
+    store.users_create(&u).unwrap();
+
+    let loaded = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    assert_eq!(loaded.role, Role::Admin);
+    assert_eq!(loaded.email.as_deref(), Some("alex@example.org"));
+}
+
+#[test]
+fn users_list_returns_all_sorted_by_username() {
+    let store = create_memory_store().unwrap();
+    store
+        .users_create(&make_user("carol", Role::Admin))
+        .unwrap();
+    store.users_create(&make_user("alex", Role::Admin)).unwrap();
+    store
+        .users_create(&make_user("bob", Role::Operator))
+        .unwrap();
+
+    let names: Vec<String> = store
+        .users_list()
+        .unwrap()
+        .into_iter()
+        .map(|u| u.username)
+        .collect();
+    assert_eq!(names, vec!["alex", "bob", "carol"]);
+}
+
+#[test]
+fn users_set_last_login_updates_field() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+
+    let when = utc(2026, 5, 23, 14, 30);
+    store.users_set_last_login(&u.user_id, when).unwrap();
+
+    let loaded = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    assert_eq!(loaded.last_login_at, Some(when));
+}
+
+#[test]
+fn users_count_active_admins_excludes_deactivated_and_non_admins() {
+    let store = create_memory_store().unwrap();
+
+    let mut a1 = make_user("a1", Role::Admin);
+    let mut a2 = make_user("a2", Role::Admin);
+    let op = make_user("op", Role::Operator);
+    let view = make_user("view", Role::Viewer);
+
+    a2.is_active = false; // deactivated admin doesn't count
+    a1.is_active = true;
+
+    store.users_create(&a1).unwrap();
+    store.users_create(&a2).unwrap();
+    store.users_create(&op).unwrap();
+    store.users_create(&view).unwrap();
+
+    assert_eq!(store.users_count_active_admins().unwrap(), 1);
+}
+
+#[test]
+fn users_delete_removes_row() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+    store.users_delete(&u.user_id).unwrap();
+    assert!(store.users_get_by_id(&u.user_id).unwrap().is_none());
+}
+
+#[test]
+fn users_get_by_id_unknown_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(store.users_get_by_id("does-not-exist").unwrap().is_none());
+}
+
+// ─── Invitations + Password Resets ───
+
+fn seed_admin(store: &impl AuthStore) -> User {
+    let u = make_user("admin-issuer", Role::Admin);
+    store.users_create(&u).unwrap();
+    u
+}
+
+fn make_invitation(invited_by: &str, email: &str, role: Role) -> Invitation {
+    Invitation {
+        invitation_id: Uuid::new_v4().to_string(),
+        email: email.into(),
+        role,
+        token_hash: format!("hash-{}", Uuid::new_v4()),
+        invited_by: invited_by.into(),
+        expires_at: utc(2026, 6, 1, 0, 0),
+        accepted_at: None,
+        revoked_at: None,
+        created_at: now(),
+    }
+}
+
+#[test]
+fn invitation_create_and_lookup_round_trip() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "bob@example.org", Role::Operator);
+    store.invitations_create(&inv).unwrap();
+
+    let by_id = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    let by_hash = store
+        .invitations_get_by_token_hash(&inv.token_hash)
+        .unwrap()
+        .unwrap();
+    assert_eq!(by_id.email, "bob@example.org");
+    assert_eq!(by_id.role, Role::Operator);
+    assert_eq!(by_hash.invitation_id, inv.invitation_id);
+    assert!(by_id.accepted_at.is_none());
+}
+
+#[test]
+fn invitations_list_ordered_by_recency() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+
+    let mut older = make_invitation(&admin.user_id, "a@e.org", Role::Viewer);
+    older.created_at = utc(2026, 5, 1, 0, 0);
+    let mut newer = make_invitation(&admin.user_id, "b@e.org", Role::Viewer);
+    newer.created_at = utc(2026, 5, 20, 0, 0);
+
+    store.invitations_create(&older).unwrap();
+    store.invitations_create(&newer).unwrap();
+
+    let list = store.invitations_list().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].email, "b@e.org");
+    assert_eq!(list[1].email, "a@e.org");
+}
+
+#[test]
+fn invitations_mark_accepted_persists() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "x@e.org", Role::Viewer);
+    store.invitations_create(&inv).unwrap();
+
+    let when = utc(2026, 5, 23, 14, 0);
+    store
+        .invitations_mark_accepted(&inv.invitation_id, when)
+        .unwrap();
+
+    let loaded = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    assert_eq!(loaded.accepted_at, Some(when));
+}
+
+#[test]
+fn invitations_revoke_persists() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "x@e.org", Role::Viewer);
+    store.invitations_create(&inv).unwrap();
+
+    let when = utc(2026, 5, 23, 15, 0);
+    store.invitations_revoke(&inv.invitation_id, when).unwrap();
+
+    let loaded = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    assert_eq!(loaded.revoked_at, Some(when));
+    assert!(loaded.accepted_at.is_none());
+}
+
+#[test]
+fn password_reset_create_and_get_round_trip() {
+    let store = create_memory_store().unwrap();
+    let user = make_user("alex", Role::Operator);
+    store.users_create(&user).unwrap();
+
+    let reset = PasswordReset {
+        reset_id: Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        token_hash: "reset-hash-abc".into(),
+        expires_at: utc(2026, 5, 24, 0, 0),
+        used_at: None,
+        created_at: now(),
+    };
+    store.password_resets_create(&reset).unwrap();
+
+    let loaded = store
+        .password_resets_get_by_token_hash("reset-hash-abc")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.reset_id, reset.reset_id);
+    assert_eq!(loaded.user_id, user.user_id);
+    assert!(loaded.used_at.is_none());
+}
+
+#[test]
+fn password_resets_mark_used_persists() {
+    let store = create_memory_store().unwrap();
+    let user = make_user("alex", Role::Operator);
+    store.users_create(&user).unwrap();
+
+    let reset = PasswordReset {
+        reset_id: Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        token_hash: "reset-hash-xyz".into(),
+        expires_at: utc(2026, 5, 24, 0, 0),
+        used_at: None,
+        created_at: now(),
+    };
+    store.password_resets_create(&reset).unwrap();
+
+    let when = utc(2026, 5, 23, 16, 0);
+    store
+        .password_resets_mark_used(&reset.reset_id, when)
+        .unwrap();
+
+    let loaded = store
+        .password_resets_get_by_token_hash("reset-hash-xyz")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.used_at, Some(when));
+}
+
+#[test]
+fn password_resets_unknown_token_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(
+        store
+            .password_resets_get_by_token_hash("nope")
+            .unwrap()
+            .is_none()
+    );
+}
+
+// ─── TOTP secrets + recovery codes ───
+
+fn seed_user(store: &impl AuthStore, username: &str) -> User {
+    let u = make_user(username, Role::Admin);
+    store.users_create(&u).unwrap();
+    u
+}
+
+#[test]
+fn totp_upsert_and_get_round_trip() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let secret = TotpSecret {
+        user_id: user.user_id.clone(),
+        secret_enc: "fake-wrapped".into(),
+        enabled: false,
+        confirmed_at: None,
+        created_at: now(),
+    };
+    store.totp_upsert(&secret).unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert!(!loaded.enabled);
+    assert_eq!(loaded.secret_enc, "fake-wrapped");
+}
+
+#[test]
+fn totp_upsert_is_idempotent() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let mut secret = TotpSecret {
+        user_id: user.user_id.clone(),
+        secret_enc: "first-wrap".into(),
+        enabled: false,
+        confirmed_at: None,
+        created_at: now(),
+    };
+    store.totp_upsert(&secret).unwrap();
+    // Re-upsert with a different wrapped secret (e.g. user retried setup).
+    secret.secret_enc = "second-wrap".into();
+    store.totp_upsert(&secret).unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert_eq!(loaded.secret_enc, "second-wrap");
+}
+
+#[test]
+fn totp_set_enabled_persists_confirmed_at() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user.user_id.clone(),
+            secret_enc: "wrapped".into(),
+            enabled: false,
+            confirmed_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+
+    let when = utc(2026, 5, 23, 17, 0);
+    store
+        .totp_set_enabled(&user.user_id, true, Some(when))
+        .unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert!(loaded.enabled);
+    assert_eq!(loaded.confirmed_at, Some(when));
+}
+
+#[test]
+fn totp_delete_removes_secret_and_recovery_codes() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user.user_id.clone(),
+            secret_enc: "wrapped".into(),
+            enabled: true,
+            confirmed_at: Some(now()),
+            created_at: now(),
+        })
+        .unwrap();
+
+    let codes: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("hash-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &codes)
+        .unwrap();
+    assert_eq!(
+        store.recovery_codes_count_unused(&user.user_id).unwrap(),
+        10
+    );
+
+    store.totp_delete(&user.user_id).unwrap();
+
+    assert!(store.totp_get(&user.user_id).unwrap().is_none());
+    assert_eq!(store.recovery_codes_count_unused(&user.user_id).unwrap(), 0);
+}
+
+#[test]
+fn recovery_codes_find_unused_skips_used_ones() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let code_id = Uuid::new_v4().to_string();
+    let codes = vec![RecoveryCode {
+        code_id: code_id.clone(),
+        user_id: user.user_id.clone(),
+        code_hash: "target-hash".into(),
+        used_at: None,
+        created_at: now(),
+    }];
+    store
+        .recovery_codes_replace_all(&user.user_id, &codes)
+        .unwrap();
+
+    let found = store
+        .recovery_codes_find_unused(&user.user_id, "target-hash")
+        .unwrap();
+    assert!(found.is_some());
+
+    store
+        .recovery_codes_mark_used(&code_id, utc(2026, 5, 23, 18, 0))
+        .unwrap();
+
+    let after = store
+        .recovery_codes_find_unused(&user.user_id, "target-hash")
+        .unwrap();
+    assert!(after.is_none(), "used code must not match find_unused");
+}
+
+#[test]
+fn recovery_codes_replace_all_clears_previous_set() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+
+    let first: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("first-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &first)
+        .unwrap();
+
+    let second: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("second-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &second)
+        .unwrap();
+
+    // None of the first batch matches anymore.
+    for i in 0..10 {
+        let hash = format!("first-{i}");
+        assert!(
+            store
+                .recovery_codes_find_unused(&user.user_id, &hash)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(
+        store.recovery_codes_count_unused(&user.user_id).unwrap(),
+        10
+    );
+}
+
+// ─── Personal Access Tokens ───
+
+fn make_pat(user_id: &str, name: &str, token_hash: &str) -> PersonalAccessToken {
+    PersonalAccessToken {
+        token_id: Uuid::new_v4().to_string(),
+        user_id: user_id.into(),
+        name: name.into(),
+        token_hash: token_hash.into(),
+        token_prefix: "croniq_pat_".into(),
+        scopes: vec!["jobs:read".into()],
+        expires_at: None,
+        revoked_at: None,
+        last_used_at: None,
+        created_at: now(),
+    }
+}
+
+#[test]
+fn pat_create_and_find_by_hash() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-a");
+    store.pat_create(&pat).unwrap();
+
+    let found = store.pat_find_by_hash("hash-a").unwrap().unwrap();
+    assert_eq!(found.token_id, pat.token_id);
+    assert_eq!(found.user_id, user.user_id);
+    assert_eq!(found.scopes, vec!["jobs:read".to_string()]);
+}
+
+#[test]
+fn pat_list_orders_by_created_desc() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+
+    let mut older = make_pat(&user.user_id, "older", "hash-old");
+    older.created_at = utc(2026, 5, 1, 0, 0);
+    let mut newer = make_pat(&user.user_id, "newer", "hash-new");
+    newer.created_at = utc(2026, 5, 20, 0, 0);
+    store.pat_create(&older).unwrap();
+    store.pat_create(&newer).unwrap();
+
+    let list = store.pat_list(&user.user_id).unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].name, "newer");
+    assert_eq!(list[1].name, "older");
+}
+
+#[test]
+fn pat_revoke_sets_revoked_at() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-r");
+    store.pat_create(&pat).unwrap();
+
+    let when = utc(2026, 5, 23, 19, 0);
+    store.pat_revoke(&pat.token_id, when).unwrap();
+
+    // After revoke, find_by_hash still returns the row (auth middleware
+    // checks revoked_at separately) — but the timestamp is set.
+    let loaded = store.pat_find_by_hash("hash-r").unwrap().unwrap();
+    assert_eq!(loaded.revoked_at, Some(when));
+}
+
+#[test]
+fn pat_touch_last_used_updates_field() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-t");
+    store.pat_create(&pat).unwrap();
+
+    let when = utc(2026, 5, 23, 20, 0);
+    store.pat_touch_last_used(&pat.token_id, when).unwrap();
+
+    let loaded = store.pat_find_by_hash("hash-t").unwrap().unwrap();
+    assert_eq!(loaded.last_used_at, Some(when));
+}
+
+#[test]
+fn pat_find_by_unknown_hash_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(store.pat_find_by_hash("nope").unwrap().is_none());
+}

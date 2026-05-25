@@ -101,6 +101,140 @@ export interface TokenResponse {
   expires_in: number
 }
 
+/**
+ * Response for `POST /v1/auth/login` when the user has TOTP enabled.
+ * Distinct shape via the `requires_totp` flag; the discriminator lets
+ * the UI pick the next screen without parsing JWT internals.
+ */
+export interface MfaRequiredResponse {
+  requires_totp: true
+  mfa_token: string
+  mfa_token_expires_in: number
+}
+
+export type LoginResponse = TokenResponse | MfaRequiredResponse
+
+export function isMfaRequired(r: LoginResponse): r is MfaRequiredResponse {
+  return (r as MfaRequiredResponse).requires_totp === true
+}
+
+// ─── PR-A1+ Users & Multi-User auth ──────────────────────────────
+
+export type Role = 'admin' | 'operator' | 'viewer'
+
+export interface User {
+  user_id: string
+  username: string
+  email: string | null
+  display_name: string | null
+  role: Role
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  last_login_at: string | null
+}
+
+export interface Invitation {
+  invitation_id: string
+  email: string
+  role: Role
+  invited_by: string
+  expires_at: string
+  accepted_at: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface CreateInvitationResponse {
+  invitation_id: string
+  email: string
+  role: Role
+  expires_at: string
+  token: string
+  accept_url: string
+}
+
+export interface PersonalAccessToken {
+  token_id: string
+  name: string
+  token_prefix: string
+  scopes: string[]
+  expires_at: string | null
+  revoked_at: string | null
+  last_used_at: string | null
+  created_at: string
+}
+
+export interface CreatePatResponse {
+  token_id: string
+  name: string
+  token: string
+  token_prefix: string
+  scopes: string[]
+  expires_at: string | null
+}
+
+// ─── PR-A3 TOTP ──────────────────────────────────────────────────
+
+export interface TotpSetupResponse {
+  secret: string
+  otpauth_url: string
+  recovery_codes: string[]
+}
+
+// ─── PR-A5 OIDC ──────────────────────────────────────────────────
+
+export interface OidcConfigResponse {
+  enabled: boolean
+  provider_name: string | null
+  login_url: string | null
+}
+
+// ─── PR-B1 Stats & Audit ─────────────────────────────────────────
+
+export interface AuditEvent {
+  event_id: string
+  actor_type: string
+  actor_id: string | null
+  action: string
+  target_type: string
+  target_id: string | null
+  diff_json: string | null
+  created_at: string
+}
+
+export interface JobStatsResponse {
+  job_key: string
+  window_days: number
+  total: number
+  completed: number
+  failed: number
+  dead: number
+  success_rate: number
+  p50_ms: number | null
+  p95_ms: number | null
+  p99_ms: number | null
+  last_failure_at: string | null
+}
+
+export interface ThroughputBucket {
+  start: string
+  ok: number
+  err: number
+}
+
+export interface ThroughputResponse {
+  window: string
+  bucket: 'hour' | 'day'
+  buckets: ThroughputBucket[]
+}
+
+export interface FailureHeatmap {
+  days: number
+  rows: number[][]
+  hotspots: { hour: number; failures: number }[]
+}
+
 export interface ForecastBucket {
   start: string
   end: string

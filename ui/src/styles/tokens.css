@@ -1,0 +1,130 @@
+/* ────────────────────────────────────────────────────────────
+   Croniq design tokens — ported from the Spike-B design bundle
+   (/tmp/croniq-design/croniq-ui/project/styles.css).
+
+   Defines the oklch palette + cards-chrome layout variables.
+   Variable names are intentionally distinct from Tailwind's
+   @theme tokens (--color-background, --font-sans-tw, …) so the
+   existing UI keeps rendering until B-PR-3 swaps the shell over.
+
+   `<html data-theme="dark|light">` toggles the palette;
+   `<html data-density="compact|cozy">` toggles row density.
+   The dark palette in :root is the default.
+   ──────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── surfaces (refined dark, default) ─────────────────────── */
+  --bg:        oklch(0.155 0.012 265);
+  --bg-2:      oklch(0.185 0.014 265);
+  --bg-3:      oklch(0.215 0.014 265);
+  --panel:     oklch(0.195 0.013 265);
+  --panel-2:   oklch(0.225 0.013 265);
+  --hover:     oklch(0.235 0.014 265);
+  --border:    oklch(0.265 0.013 265);
+  --border-2:  oklch(0.320 0.014 265);
+  --divider:   oklch(0.225 0.012 265);
+
+  /* ── foreground ramp ──────────────────────────────────────── */
+  --fg:        oklch(0.965 0.004 265);
+  --fg-1:      oklch(0.86 0.008 265);
+  --fg-2:      oklch(0.70 0.012 265);
+  --fg-3:      oklch(0.54 0.012 265);
+  --fg-mute:   oklch(0.42 0.012 265);
+
+  /* ── accent ───────────────────────────────────────────────── */
+  --accent:      oklch(0.66 0.19 285);
+  --accent-2:    oklch(0.58 0.20 285);
+  --accent-3:    oklch(0.74 0.13 285);
+  --accent-bg:   oklch(0.30 0.10 285 / 0.30);
+  --accent-line: oklch(0.66 0.19 285 / 0.45);
+
+  /* ── semantic status ──────────────────────────────────────── */
+  --success:    oklch(0.74 0.15 152);
+  --success-bg: oklch(0.40 0.12 152 / 0.22);
+  --warn:       oklch(0.80 0.16 82);
+  --warn-bg:    oklch(0.45 0.12 82 / 0.22);
+  --error:      oklch(0.68 0.20 25);
+  --error-bg:   oklch(0.40 0.16 25 / 0.22);
+  --info:       oklch(0.74 0.13 230);
+  --info-bg:    oklch(0.40 0.10 230 / 0.22);
+  --neutral-bg: oklch(0.30 0.01 265 / 0.50);
+
+  /* ── elevation ────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.4);
+  --shadow:    0 8px 24px -8px oklch(0 0 0 / 0.55), 0 2px 4px -1px oklch(0 0 0 / 0.4);
+  --shadow-lg: 0 24px 48px -16px oklch(0 0 0 / 0.65), 0 8px 16px -4px oklch(0 0 0 / 0.45);
+
+  /* ── radius scale ─────────────────────────────────────────── */
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 10px;
+  --r-4: 14px;
+  --r-5: 20px;
+
+  /* ── density (default = comfortable) ──────────────────────── */
+  --row-h: 40px;
+  --pad-x: 20px;
+
+  /* ── typography ───────────────────────────────────────────── */
+  --font-sans-app: "Geist", "Geist Sans", "Inter Tight", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono-app: "Geist Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* ── cards-chrome layout ──────────────────────────────────── */
+  --sidebar-w:           232px;
+  --sidebar-w-collapsed: 60px;
+  --topbar-h:            52px;
+  --tail-h:              0px;
+  --card-gap:            8px;
+  --card-radius:         12px;
+
+  --easing: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── light theme ───────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg:        oklch(0.985 0.004 80);
+  --bg-2:      oklch(0.965 0.005 80);
+  --bg-3:      oklch(0.945 0.006 80);
+  --panel:     oklch(1 0 0);
+  --panel-2:   oklch(0.975 0.004 80);
+  --hover:     oklch(0.95 0.006 80);
+  --border:    oklch(0.90 0.008 80);
+  --border-2:  oklch(0.82 0.01 80);
+  --divider:   oklch(0.93 0.008 80);
+
+  --fg:        oklch(0.20 0.012 265);
+  --fg-1:      oklch(0.32 0.012 265);
+  --fg-2:      oklch(0.48 0.012 265);
+  --fg-3:      oklch(0.58 0.012 265);
+  --fg-mute:   oklch(0.66 0.010 265);
+
+  --accent:      oklch(0.55 0.20 285);
+  --accent-2:    oklch(0.48 0.21 285);
+  --accent-3:    oklch(0.42 0.20 285);
+  --accent-bg:   oklch(0.55 0.20 285 / 0.10);
+  --accent-line: oklch(0.55 0.20 285 / 0.30);
+
+  --success:    oklch(0.50 0.14 152);
+  --success-bg: oklch(0.70 0.12 152 / 0.18);
+  --warn:       oklch(0.58 0.15 70);
+  --warn-bg:    oklch(0.80 0.14 80 / 0.20);
+  --error:      oklch(0.52 0.20 25);
+  --error-bg:   oklch(0.75 0.15 25 / 0.16);
+  --info:       oklch(0.50 0.14 230);
+  --info-bg:    oklch(0.70 0.10 230 / 0.16);
+  --neutral-bg: oklch(0.90 0.008 80);
+
+  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.04);
+  --shadow:    0 8px 24px -10px oklch(0 0 0 / 0.10), 0 2px 4px -1px oklch(0 0 0 / 0.06);
+  --shadow-lg: 0 24px 48px -16px oklch(0 0 0 / 0.16), 0 8px 16px -4px oklch(0 0 0 / 0.08);
+}
+
+/* ── density modes ─────────────────────────────────────────── */
+[data-density="compact"] {
+  --row-h: 34px;
+  --pad-x: 14px;
+}
+[data-density="cozy"] {
+  --row-h: 48px;
+  --pad-x: 24px;
+}

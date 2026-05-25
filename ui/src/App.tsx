@@ -17,9 +17,6 @@ const DashboardPage = lazy(() =>
 const JobsPage = lazy(() =>
   import('@/pages/JobsPage').then((m) => ({ default: m.JobsPage })),
 )
-const JobDetailPage = lazy(() =>
-  import('@/pages/JobDetailPage').then((m) => ({ default: m.JobDetailPage })),
-)
 const RunnersPage = lazy(() =>
   import('@/pages/RunnersPage').then((m) => ({ default: m.RunnersPage })),
 )
@@ -65,9 +62,10 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/jobs" element={<JobsPage />} />
-              <Route path="/jobs/:jobKey" element={<JobDetailPage />} />
+              <Route path="/jobs/:jobKey" element={<JobsPage />} />
               <Route path="/runners" element={<RunnersPage />} />
               <Route path="/dead-letters" element={<DeadLettersPage />} />
+              <Route path="/dead-letters/:id" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />
               <Route path="/calendars" element={<CalendarsPage />} />
               <Route path="/settings" element={<SettingsPage />} />

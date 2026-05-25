@@ -208,6 +208,194 @@ pub struct PasswordCredential {
     pub created_at: DateTime<Utc>,
 }
 
+/// A user identity. One row per human (or service account in machine mode).
+/// Decoupled from any specific auth method so a user can have password +
+/// TOTP + PATs + OIDC linked simultaneously.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Role,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// Role of a user. Maps to a fixed set of scopes via
+/// `croniq_auth::context::Role::default_scopes`. The variants are stable
+/// strings persisted in `users.role` (kebab-case in the DB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Wildcard — every scope.
+    Admin,
+    /// Read everything + write jobs/schedules/calendars + trigger.
+    Operator,
+    /// Read-only across the board.
+    Viewer,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Operator => "operator",
+            Role::Viewer => "viewer",
+        }
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "admin" => Ok(Role::Admin),
+            "operator" => Ok(Role::Operator),
+            "viewer" => Ok(Role::Viewer),
+            _ => Err(()),
+        }
+    }
+}
+
+/// An outstanding invitation. The raw token is delivered once (via email
+/// when SMTP is configured, otherwise as the `token` field in the create
+/// response). Only the SHA-256 hash is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invitation {
+    pub invitation_id: String,
+    pub email: String,
+    pub role: Role,
+    /// SHA-256 hash of the raw invitation token.
+    pub token_hash: String,
+    /// `users.user_id` of the admin who issued the invite.
+    pub invited_by: String,
+    pub expires_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A pending password-reset token. Single-use; `used_at` is set on first
+/// successful consumption.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordReset {
+    pub reset_id: String,
+    pub user_id: String,
+    /// SHA-256 hash of the raw reset token.
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A TOTP secret for a user. The base32-encoded seed lives inside
+/// `secret_enc` after AES-256-GCM wrapping (see
+/// `croniq_auth::crypto::wrap_totp_secret`). `enabled` is `false`
+/// during the setup window between `/totp/setup` and `/totp/confirm`;
+/// only confirmed secrets can be used to step up login.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TotpSecret {
+    pub user_id: String,
+    /// base64(nonce || ciphertext+tag) — opaque to the store.
+    pub secret_enc: String,
+    pub enabled: bool,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A single recovery code (SHA-256 hash of an 8-char lowercase
+/// alphanumeric). Consumed once via `password_resets`-style flow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryCode {
+    pub code_id: String,
+    pub user_id: String,
+    pub code_hash: String,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Link between a Croniq user and an external OIDC subject. JIT-created
+/// on first OIDC sign-in; subsequent sign-ins reuse the existing
+/// `user_id` so role + last_login_at history is preserved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcIdentity {
+    pub provider: String,
+    pub subject: String,
+    pub user_id: String,
+    pub email: Option<String>,
+    pub linked_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// Short-TTL store entry for the `state` param of an outbound OIDC
+/// authorization-code request. Holds the random `nonce` we expect to
+/// see back in the ID token, plus an optional post-login redirect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcPendingLogin {
+    pub state: String,
+    pub nonce: String,
+    pub redirect_to: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// A Personal Access Token — a user-bound API credential with a stable
+/// `user_id` and a scope subset of the owning user's role. Raw token
+/// is delivered once at creation; only the SHA-256 hash is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalAccessToken {
+    pub token_id: String,
+    pub user_id: String,
+    /// Human label ("laptop", "ci-personal").
+    pub name: String,
+    /// SHA-256 hash of the raw token.
+    pub token_hash: String,
+    /// First 12 chars of the raw token for display ("croniq_pat_…").
+    pub token_prefix: String,
+    /// Scopes granted to this token. Must be a subset of the owning
+    /// user's role's default scopes (enforced at create time).
+    pub scopes: Vec<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// An audit-log entry. Append-only. Drives the Activity Feed on the
+/// Dashboard, per-job Audit tabs, and Settings → Audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    pub event_id: String,
+    /// `user`, `api_key`, `pat`, `oidc`, or `system`.
+    pub actor_type: String,
+    pub actor_id: Option<String>,
+    /// Dotted action ID. Conventions: `<target>.<verb>` — e.g.
+    /// `job.created`, `auth.login_success`, `dead_letter.replayed`.
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<String>,
+    pub diff_json: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    pub actor_type: Option<String>,
+    pub actor_id: Option<String>,
+    pub action: Option<String>,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub limit: Option<u32>,
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

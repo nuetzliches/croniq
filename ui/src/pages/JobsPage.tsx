@@ -1,586 +1,1003 @@
-import { useState, useCallback } from 'react'
-import { Link } from 'react-router'
-import { useForm } from 'react-hook-form'
-import * as Dialog from '@radix-ui/react-dialog'
-import * as Switch from '@radix-ui/react-switch'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import { Plus, Play, Trash2, X, AlertCircle, Pencil, Download } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router'
 import {
-  useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
-  useTriggerJob, useExecutions, useSchedules, useAdoptJob, useJobTags,
+  Play,
+  Pencil,
+  Search,
+  Trash2,
+  Plus,
+  RotateCcw,
+  CalendarDays,
+  Bell,
+  Edit3,
+} from 'lucide-react'
+import clsx from 'clsx'
+import {
+  useJobs,
+  useJobTags,
+  useJob,
+  useJobStats,
+  useExecutions,
+  useSchedules,
+  useTriggerJob,
+  useActivateJob,
+  useDeactivateJob,
+  useDeleteJob,
+  useAuditEvents,
+  useForecast,
 } from '@/api/hooks'
-import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
-import { TimezoneInput } from '@/components/ui/timezone-input'
-import { CalendarPicker } from '@/components/ui/calendar-picker'
-import { EditJobDialog } from '@/components/EditJobDialog'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { EmptyState } from '@/components/ui/empty-state'
-import { Spinner } from '@/components/ui/spinner'
+import {
+  EmptyState,
+  StatusPill,
+  RunBars,
+  Toggle,
+  KPICard,
+  Sparkline,
+  CopyBtn,
+  Avatar,
+  BrandMark,
+} from '@/components/primitives'
+import type { RunOutcome } from '@/components/primitives'
+import type { AuditEvent, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import type { Execution, JobDefinition } from '@/api/types'
+import { EditJobDialog } from '@/components/EditJobDialog'
+import { formatRelative, formatDate } from '@/lib/utils'
+import { useCurrentUser } from '@/api/hooks'
 
-interface RegisterForm {
-  job_key: string
-  description: string
-  schedule: string
-  timezone: string
-  timeout: string
-  calendar: string
+type Tab = 'overview' | 'runs' | 'schedule' | 'dsl' | 'alerts' | 'audit'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'runs', label: 'Runs' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'dsl', label: 'DSL' },
+  { id: 'alerts', label: 'Alerts' },
+  { id: 'audit', label: 'Audit' },
+]
+
+const outcomeFor = (e: Execution): RunOutcome => {
+  if (e.state === 'completed') return 'ok'
+  if (e.state === 'failed' || e.state === 'dead') return 'err'
+  if (e.state === 'timeout') return 'warn'
+  return 'skip'
 }
 
-function HealthPill({ executions }: { executions: Execution[] }) {
-  const last20 = executions.slice(0, 20)
-  if (last20.length === 0) return <span className="text-xs text-muted-foreground">no runs</span>
-  const ok = last20.filter(e => e.state === 'completed').length
-  // Show the count inline so users don't need to hover. The bar chart
-  // remains because at a glance it surfaces the *pattern* (recent vs
-  // historical failures) better than a raw number can.
-  return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <div className="flex gap-1.5 items-center cursor-default" aria-label={`${ok}/${last20.length} successful`}>
-          <div className="flex gap-0.5 items-center">
-            {last20.map((e, i) => (
-              <span key={i} className={`inline-block w-1.5 h-3.5 rounded-sm ${
-                e.state === 'completed' ? 'bg-status-ok-fg' :
-                e.state === 'failed' || e.state === 'dead' ? 'bg-status-err-fg' :
-                'bg-status-neutral-fg opacity-40'
-              }`} />
-            ))}
-          </div>
-          <span className="text-xs text-muted-foreground tabular-nums">{ok}/{last20.length}</span>
-        </div>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md">
-          Last {last20.length} runs · {ok} successful
-          <Tooltip.Arrow className="fill-foreground" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
-  )
+function durationFmt(ms: number | null): string {
+  if (ms == null) return '—'
+  if (ms < 1000) return `${ms} ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
+  return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`
 }
-
-const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
 export function JobsPage() {
+  const { jobKey } = useParams<{ jobKey: string }>()
+  const navigate = useNavigate()
   const jobs = useJobs()
   const tagCounts = useJobTags()
-  const registerJob = useRegisterJob()
-  const deleteJob = useDeleteJob()
-  const activateJob = useActivateJob()
-  const deactivateJob = useDeactivateJob()
-  const triggerJob = useTriggerJob()
-  const adoptJob = useAdoptJob()
   const allExecs = useExecutions({ limit: 200 })
-  const allSchedules = useSchedules()
-  const { confirm, dialog: confirmDialog } = useConfirm()
-  const [open, setOpen] = useState(false)
-  const [triggeredId, setTriggeredId] = useState<string | null>(null)
-  const [triggerError, setTriggerError] = useState<string | null>(null)
-  const [toggleError, setToggleError] = useState<string | null>(null)
-  const [adoptError, setAdoptError] = useState<string | null>(null)
-  const [editingJob, setEditingJob] = useState<JobDefinition | null>(null)
+  const [search, setSearch] = useState('')
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
+  const [editing, setEditing] = useState<JobDefinition | null>(null)
+  const { confirm, dialog: confirmDialog } = useConfirm()
 
-  const toggleTag = (tag: string) =>
+  const toggleTag = (t: string) =>
     setActiveTags((prev) => {
       const next = new Set(prev)
-      if (next.has(tag)) next.delete(tag)
-      else next.add(tag)
+      if (next.has(t)) next.delete(t)
+      else next.add(t)
       return next
     })
 
-  // AND-semantics across selected tags: a job must carry all of them.
-  const filteredJobs = (jobs.data ?? []).filter((j) => {
-    if (activeTags.size === 0) return true
-    const have = new Set(j.tags ?? [])
-    for (const t of activeTags) if (!have.has(t)) return false
-    return true
-  })
+  const execsByJob = useMemo(() => {
+    const m: Record<string, Execution[]> = {}
+    for (const e of allExecs.data ?? []) (m[e.job_key] ??= []).push(e)
+    return m
+  }, [allExecs.data])
 
-  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<RegisterForm>({
-    defaultValues: { timeout: '5m' },
-  })
-  const [scheduleMode, setScheduleMode] = useState<'builder' | 'advanced'>('builder')
-  const onBuilderChange = useCallback(
-    (dsl: string) => setValue('schedule', dsl, { shouldValidate: true }),
-    [setValue],
-  )
-
-  const execsByJob = (allExecs.data ?? []).reduce<Record<string, Execution[]>>((acc, e) => {
-    ;(acc[e.job_key] ??= []).push(e)
-    return acc
-  }, {})
-
-  // A job is DSL-managed when any of its schedules came from the Croniqfile.
-  // The backend refuses UI toggle/delete for those (HTTP 409), so disable
-  // the controls and tell the user why instead of letting them click into
-  // an error.
-  const dslManagedJobs = new Set(
-    (allSchedules.data ?? [])
-      .filter((s) => s.managed_by === 'dsl')
-      .map((s) => s.job_key)
-  )
-
-  async function onSubmit(data: RegisterForm) {
-    await registerJob.mutateAsync({
-      job_key: data.job_key,
-      schedule: data.schedule,
-      timezone: data.timezone || undefined,
-      timeout: data.timeout || undefined,
-      description: data.description || undefined,
-      calendar: data.calendar || undefined,
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return (jobs.data ?? []).filter((j) => {
+      if (q && !j.job_key.toLowerCase().includes(q) && !(j.description ?? '').toLowerCase().includes(q)) return false
+      if (activeTags.size > 0) {
+        const have = new Set(j.tags ?? [])
+        for (const t of activeTags) if (!have.has(t)) return false
+      }
+      return true
     })
-    reset()
-    setScheduleMode('builder')
-    setOpen(false)
-  }
+  }, [jobs.data, search, activeTags])
 
-  async function handleTrigger(jobKey: string) {
-    setTriggeredId(jobKey)
-    setTriggerError(null)
-    try {
-      await triggerJob.mutateAsync(jobKey)
-    } catch (err) {
-      setTriggerError(err instanceof Error ? err.message : 'Trigger failed')
-    } finally {
-      setTriggeredId(null)
-    }
-  }
+  const selected = jobKey ?? (filtered[0]?.job_key ?? null)
 
-  async function handleToggle(jobKey: string, isActive: boolean) {
-    setToggleError(null)
-    const mutation = isActive ? deactivateJob : activateJob
-    const verb = isActive ? 'deactivate' : 'activate'
-    try {
-      await mutation.mutateAsync(jobKey)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'unknown error'
-      // 409 from the backend typically means the job is DSL-managed
-      // (its lifecycle is owned by the Croniqfile). Surface that plainly
-      // so users don't think the click was swallowed.
-      const body = /409|conflict/i.test(msg)
-        ? 'DSL-managed jobs cannot be toggled via the UI; edit the Croniqfile instead.'
-        : msg
-      setToggleError(`Could not ${verb} ${jobKey}: ${body}`)
-    }
-  }
-
-  async function handleDelete(jobKey: string) {
+  async function handleDelete(k: string) {
     const ok = await confirm({
-      title: `Delete job ${jobKey}?`,
-      description: 'The job, its schedules, and any associated trigger state are removed permanently. Past executions and dead letters are preserved.',
+      title: `Delete job ${k}?`,
+      description: 'The job, its schedules and trigger state are removed. Past executions and dead letters are preserved.',
       confirmLabel: 'Delete job',
       destructive: true,
     })
-    if (ok) deleteJob.mutate(jobKey)
-  }
-
-  async function handleAdopt(jobKey: string) {
-    const ok = await confirm({
-      title: `Adopt job ${jobKey}?`,
-      description:
-        'The Croniqfile job + its trigger are copied into the API store. The DSL definition is ignored on the next reload until you unadopt. Requires `policy { dsl_adopt_on_mutate true }`.',
-      confirmLabel: 'Adopt to edit',
-    })
-    if (!ok) return
-    setAdoptError(null)
-    try {
-      await adoptJob.mutateAsync(jobKey)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      const m = msg.match(/^409:\s*(.+)$/s)
-      if (m) {
-        try {
-          const parsed = JSON.parse(m[1])
-          setAdoptError(parsed.message ?? msg)
-        } catch {
-          setAdoptError(m[1])
-        }
-      } else {
-        setAdoptError(msg)
-      }
+    if (ok) {
+      await jobs.refetch()
+      navigate('/jobs')
     }
   }
 
   return (
-    <Tooltip.Provider delayDuration={200}>
+    <div className="split">
       {confirmDialog}
       <EditJobDialog
-        job={editingJob}
-        open={editingJob !== null}
-        onOpenChange={(o) => { if (!o) setEditingJob(null) }}
+        job={editing}
+        open={editing !== null}
+        onOpenChange={(o) => {
+          if (!o) setEditing(null)
+        }}
       />
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">{jobs.data?.length ?? 0} jobs registered</p>
-          <Dialog.Root open={open} onOpenChange={setOpen}>
-            <Dialog.Trigger asChild>
-              <Button size="sm"><Plus className="h-3.5 w-3.5" />Create Job</Button>
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-4">
-                  <Dialog.Title className="text-sm font-semibold">Create Job</Dialog.Title>
-                  <Dialog.Close
-                    aria-label="Close dialog"
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </Dialog.Close>
-                </div>
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 max-h-[80vh] overflow-y-auto">
-                  {/* Section: Job — identity + execution metadata. The
-                      schedule below is technically a separate aggregate
-                      (a job can carry many schedules), but creating a
-                      job without one is rarely what users want, so we
-                      prompt for both here and split visually instead. */}
-                  <fieldset className="space-y-3">
-                    <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Job
-                    </legend>
-                    <div>
-                      <input {...register('job_key', { required: 'Required' })} placeholder="Job key (e.g. billing:invoice)" className={inputCls} />
-                      {errors.job_key && <p className="text-xs text-destructive mt-1">{errors.job_key.message}</p>}
-                    </div>
-                    <input {...register('description')} placeholder="Description (optional)" className={inputCls} />
-                    <div>
-                      <label className="block text-xs text-muted-foreground mb-1">
-                        Execution timeout
-                      </label>
-                      <input
-                        {...register('timeout')}
-                        placeholder="e.g. 5m, 30s, 1h"
-                        className={inputCls}
-                      />
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        How long an execution may run before being killed. Default: 5m.
-                      </p>
-                    </div>
-                  </fieldset>
 
-                  <hr className="border-border" />
-
-                  {/* Section: Schedule — when this job fires + calendar
-                      gating. Mirrors the standalone Create Schedule
-                      dialog on JobDetailPage so users see the same form
-                      shape in both places. */}
-                  <fieldset className="space-y-3">
-                    <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Schedule
-                    </legend>
-                    <div>
-                      <div role="tablist" className="inline-flex border border-border rounded-md p-0.5 mb-3 text-xs">
-                        {(['builder', 'advanced'] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            role="tab"
-                            aria-selected={scheduleMode === m}
-                            onClick={() => setScheduleMode(m)}
-                            className={`px-3 py-1 rounded-sm capitalize ${
-                              scheduleMode === m
-                                ? 'bg-primary/15 text-primary'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                      {scheduleMode === 'builder' ? (
-                        <>
-                          <ScheduleBuilder onChange={onBuilderChange} />
-                          <input type="hidden" {...register('schedule', { required: 'Required' })} />
-                        </>
-                      ) : (
-                        <input {...register('schedule', { required: 'Required' })} placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" className={inputCls} />
-                      )}
-                      {errors.schedule && <p className="text-xs text-destructive mt-1">{errors.schedule.message}</p>}
-                    </div>
-                    <TimezoneInput
-                      {...register('timezone')}
-                      className={inputCls}
-                      showDetectedHint
-                    />
-                    <CalendarPicker {...register('calendar')} />
-                  </fieldset>
-
-                  {registerJob.error && (
-                    <p className="text-xs text-destructive flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5" />{String(registerJob.error)}
-                    </p>
-                  )}
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
-                    <Button type="submit" size="sm" disabled={registerJob.isPending}>
-                      {registerJob.isPending ? <><Spinner className="h-3.5 w-3.5" />Creating…</> : 'Create & Schedule'}
-                    </Button>
-                  </div>
-                </form>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
-        </div>
-
-        {triggerError && (
-          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {triggerError}
+      <aside className="master" aria-label="Jobs list">
+        <div
+          className="master-filter"
+          style={{
+            padding: '12px 14px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}
+        >
+          <div className="row gap-6">
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Search
+                size={13}
+                style={{
+                  position: 'absolute',
+                  left: 10,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--fg-mute)',
+                }}
+              />
+              <input
+                type="search"
+                className="input"
+                placeholder="Filter jobs…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 28 }}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn icon"
+              title="New job"
+              onClick={() => navigate('/jobs')}
+              aria-label="New job"
+            >
+              <Plus size={14} />
+            </button>
           </div>
-        )}
-
-        {toggleError && (
-          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {toggleError}
-          </div>
-        )}
-
-        {adoptError && (
-          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {adoptError}
-          </div>
-        )}
-
-        {(tagCounts.data?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-muted-foreground mr-1">Tags:</span>
-            {tagCounts.data?.map((tc) => {
-              const active = activeTags.has(tc.tag)
-              return (
+          {(tagCounts.data ?? []).length > 0 ? (
+            <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={clsx('pill', activeTags.size === 0 ? 'accent' : 'outline')}
+                onClick={() => setActiveTags(new Set())}
+              >
+                <span className="dot" /> All <span>{jobs.data?.length ?? 0}</span>
+              </button>
+              {(tagCounts.data ?? []).slice(0, 8).map((tc) => (
                 <button
                   key={tc.tag}
                   type="button"
+                  className={clsx('pill', activeTags.has(tc.tag) ? 'accent' : 'outline')}
                   onClick={() => toggleTag(tc.tag)}
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
-                    active
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-accent text-accent-foreground hover:bg-accent/70'
-                  }`}
-                  aria-pressed={active}
                 >
-                  <span className="font-mono">{tc.tag}</span>
-                  <span className="opacity-70 tabular-nums">{tc.count}</span>
+                  {tc.tag} <span className="dim">{tc.count}</span>
                 </button>
-              )
-            })}
-            {activeTags.size > 0 && (
-              <button
-                type="button"
-                onClick={() => setActiveTags(new Set())}
-                className="text-xs text-muted-foreground hover:text-foreground underline ml-1"
-              >
-                clear
-              </button>
-            )}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : null}
+        </div>
 
-        {jobs.isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
+        <div className="master-list">
+          {jobs.isLoading ? (
+            <div className="dim center" style={{ padding: 30 }}>
+              Loading…
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              title="No jobs match"
+              desc={search || activeTags.size > 0 ? 'Adjust the search or clear tag filters.' : 'Register a job to get started.'}
+            />
+          ) : (
+            filtered.map((j) => (
+              <JobRow
+                key={j.job_key}
+                job={j}
+                active={j.job_key === selected}
+                execs={execsByJob[j.job_key] ?? []}
+                onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
+              />
+            ))
+          )}
+        </div>
+      </aside>
 
-        {!jobs.isLoading && jobs.data?.length === 0 && (
+      <section className="detail" aria-label="Job detail">
+        {selected ? (
+          <JobDetailContent
+            jobKey={selected}
+            onEdit={(j) => setEditing(j)}
+            onDelete={handleDelete}
+          />
+        ) : (
           <EmptyState
-            icon={<Plus className="h-10 w-10" />}
-            title="No jobs yet"
-            description="Create a job or register via the Runner SDK"
-            action={<Button size="sm" onClick={() => setOpen(true)}><Plus className="h-3.5 w-3.5" />Create Job</Button>}
+            icon={Search}
+            title="Select a job"
+            desc="Pick a job from the list on the left to see its overview, runs, schedule, DSL and audit trail."
           />
         )}
+      </section>
+    </div>
+  )
+}
 
-        {!jobs.isLoading && (jobs.data?.length ?? 0) > 0 && filteredJobs.length === 0 && (
-          <p className="text-sm text-muted-foreground py-6 text-center">
-            No jobs match the selected tags.
-          </p>
-        )}
+function JobRow({
+  job,
+  active,
+  execs,
+  onClick,
+}: {
+  job: JobDefinition
+  active: boolean
+  execs: Execution[]
+  onClick: () => void
+}) {
+  const recent = execs.slice(0, 14)
+  const total = recent.length
+  const fails = recent.filter((e) => e.state === 'failed' || e.state === 'dead').length
+  const failRate = total === 0 ? 0 : fails / total
 
-        <div className="space-y-2">
-          {filteredJobs.map((j) => {
-            const isDslManaged = dslManagedJobs.has(j.job_key)
-            const toggleTip = isDslManaged
-              ? 'Managed by Croniqfile — edit the DSL to change this'
-              : (j.is_active ? 'Deactivate' : 'Activate')
-            const deleteTip = isDslManaged
-              ? 'Managed by Croniqfile — delete via the DSL'
-              : 'Delete job'
-            return (
-            <Card key={j.job_key}>
-              <CardContent className="py-3">
-                <div className="flex items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Link to={`/jobs/${j.job_key}`} className="font-mono text-sm text-primary hover:underline truncate">
-                        {j.job_key}
-                      </Link>
-                      <Badge variant={j.is_active ? 'ok' : 'neutral'}>
-                        {j.is_active ? 'active' : 'inactive'}
-                      </Badge>
-                      {isDslManaged && (
-                        <Badge variant="neutral" className="font-mono">dsl</Badge>
-                      )}
-                      {(j.tags ?? []).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTag(t) }}
-                          className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10px] font-mono text-accent-foreground hover:bg-accent/70"
-                          title={`Filter by ${t}`}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                    {j.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{j.description}</p>}
-                  </div>
-
-                  <div className="shrink-0">
-                    <HealthPill executions={execsByJob[j.job_key] ?? []} />
-                  </div>
-
-                  {/* Activate/Deactivate toggle — Tooltip.Trigger wraps a
-                      span, not the Switch itself. Radix Slot's asChild merge
-                      collides with Switch.Root on `data-state` (Tooltip's
-                      open/closed overwrites Switch's checked/unchecked),
-                      which blanks out the track color AND swallows the
-                      click handler. The span receives the Tooltip data
-                      attributes cleanly and the Switch inside behaves as
-                      intended. */}
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <span className="inline-flex">
-                        <Switch.Root
-                          checked={j.is_active}
-                          onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
-                          disabled={isDslManaged || activateJob.isPending || deactivateJob.isPending}
-                          className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
-                          aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
-                        >
-                          <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
-                        </Switch.Root>
-                      </span>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        {toggleTip}
-                        <Tooltip.Arrow className="fill-foreground" />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-
-                  {/* Trigger */}
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleTrigger(j.job_key)}
-                        disabled={triggeredId === j.job_key}
-                        aria-label={`Trigger ${j.job_key}`}
-                        className="h-7 w-7 p-0"
-                      >
-                        {triggeredId === j.job_key ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                      </Button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        Trigger now
-                        <Tooltip.Arrow className="fill-foreground" />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-
-                  {/* Adopt — only shown for DSL-managed jobs. Copies the
-                      DSL definition into the API store so the user can
-                      edit it without touching the Croniqfile. Requires
-                      `policy { dsl_adopt_on_mutate true }` server-side. */}
-                  {isDslManaged && (
-                    <Tooltip.Root>
-                      <Tooltip.Trigger asChild>
-                        <span className="inline-flex">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleAdopt(j.job_key)}
-                            disabled={adoptJob.isPending}
-                            aria-label={`Adopt ${j.job_key}`}
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                          </Button>
-                        </span>
-                      </Tooltip.Trigger>
-                      <Tooltip.Portal>
-                        <Tooltip.Content className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                          Adopt to API store (requires <code>policy {`{ dsl_adopt_on_mutate true }`}</code>)
-                          <Tooltip.Arrow className="fill-foreground" />
-                        </Tooltip.Content>
-                      </Tooltip.Portal>
-                    </Tooltip.Root>
-                  )}
-
-                  {/* Edit — disabled for DSL-managed jobs (Croniqfile owns
-                      them; PUT would 409). */}
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <span className="inline-flex">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditingJob(j)}
-                          disabled={isDslManaged}
-                          aria-label={`Edit ${j.job_key}`}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      </span>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        {isDslManaged ? 'Managed by Croniqfile — adopt or edit the DSL to change' : 'Edit job'}
-                        <Tooltip.Arrow className="fill-foreground" />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-
-                  {/* Delete — disabled for DSL-managed jobs. The button sits
-                      inside a span so the Tooltip still fires on hover even
-                      when the button itself is disabled (disabled buttons
-                      don't emit pointer events in all browsers). */}
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <span className="inline-flex">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(j.job_key)}
-                          disabled={isDslManaged}
-                          aria-label={`Delete ${j.job_key}`}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </span>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        {deleteTip}
-                        <Tooltip.Arrow className="fill-foreground" />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-                </div>
-              </CardContent>
-            </Card>
-            )
-          })}
+  return (
+    <button type="button" className={clsx('job-row', active && 'active')} onClick={onClick}>
+      <div className="row between">
+        <span className="key ellipsis" style={{ minWidth: 0, flex: 1 }}>
+          {job.job_key}
+        </span>
+        {!job.is_active ? <StatusPill state="disabled" dot={false} /> : null}
+      </div>
+      <div className="dim ellipsis" style={{ fontSize: 11.5 }}>
+        {job.description || '—'}
+      </div>
+      <div className="row between">
+        <div className="meta ellipsis" style={{ minWidth: 0, flex: 1 }}>
+          {(job.tags ?? []).slice(0, 2).map((t) => (
+            <span key={t} className="dim mono" style={{ marginRight: 6 }}>
+              #{t}
+            </span>
+          ))}
+        </div>
+        <div className="row gap-6" style={{ flexShrink: 0 }}>
+          <RunBars
+            counts={recent.map(outcomeFor).reverse()}
+            durations={recent.map((e) => e.duration_ms).reverse()}
+            compact
+          />
+          <span
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: failRate > 0 ? 'var(--error)' : 'var(--success)',
+              minWidth: 32,
+              textAlign: 'right',
+            }}
+          >
+            {total === 0 ? '—' : failRate > 0 ? `${(failRate * 100).toFixed(0)}%` : '100%'}
+          </span>
         </div>
       </div>
-    </Tooltip.Provider>
+    </button>
   )
+}
+
+interface JobDetailProps {
+  jobKey: string
+  onEdit: (j: JobDefinition) => void
+  onDelete: (k: string) => Promise<void>
+}
+
+function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
+  const [tab, setTab] = useState<Tab>('overview')
+  const job = useJob(jobKey)
+  const stats = useJobStats(jobKey, 7)
+  const schedules = useSchedules(jobKey)
+  const executions = useExecutions({ job_key: jobKey, limit: 30 })
+  const audit = useAuditEvents({ target_type: 'job', limit: 50 })
+  const forecast = useForecast(180)
+  const triggerJob = useTriggerJob()
+  const activateJob = useActivateJob()
+  const deactivateJob = useDeactivateJob()
+  const deleteJob = useDeleteJob()
+
+  const execsData = executions.data
+  // p95 sparkline: derive a duration series from the most recent 24
+  // completed executions in fire-order. If we don't have any duration
+  // data, the sparkline gracefully renders empty.
+  const durSeries = useMemo(
+    () =>
+      (execsData ?? [])
+        .filter((e) => e.duration_ms != null)
+        .slice(0, 24)
+        .map((e) => e.duration_ms ?? 0)
+        .reverse(),
+    [execsData],
+  )
+
+  // Find the next scheduled fire for this job from the global forecast.
+  const forecastData = forecast.data
+  const nextFire = useMemo(() => {
+    const next = (forecastData?.buckets ?? [])
+      .map((b) => b as unknown as { job_key?: string; start: string })
+      .find((b) => b.job_key === jobKey)
+    return next?.start ?? null
+  }, [forecastData, jobKey])
+
+  if (job.isLoading || !job.data) {
+    return <div className="dim center" style={{ padding: 40 }}>Loading…</div>
+  }
+  const j = job.data
+  const dslManaged = (schedules.data ?? []).some((s) => s.managed_by === 'dsl')
+  const execs = execsData ?? []
+  const last20 = execs.slice(0, 20)
+  const jobAudit = (audit.data ?? []).filter((e) => e.target_id === jobKey)
+
+  function setActive(next: boolean) {
+    if (next) activateJob.mutate(jobKey)
+    else deactivateJob.mutate(jobKey)
+  }
+
+  function trigger() {
+    triggerJob.mutate(jobKey)
+  }
+
+  async function remove() {
+    deleteJob.mutate(jobKey)
+    await onDelete(jobKey)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--card-gap)' }}>
+      <div className="card" style={{ padding: 0, overflow: 'visible' }}>
+        <JobDetailHeader
+          job={j}
+          dslManaged={dslManaged}
+          triggerPending={triggerJob.isPending}
+          onToggle={setActive}
+          onTrigger={trigger}
+          onEdit={() => onEdit(j)}
+          onRemove={remove}
+        />
+      </div>
+
+      <KpiRow
+        runsLast24={last20}
+        stats={stats.data ?? null}
+        durSeries={durSeries}
+        nextFire={nextFire}
+        schedule={schedules.data?.[0] ?? null}
+      />
+
+      <div className="card" style={{ padding: 0 }}>
+        <div className="tabs" style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={clsx('tab', tab === t.id && 'active')}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {t.id === 'runs' && stats.data ? <span className="count">{stats.data.total}</span> : null}
+              {t.id === 'audit' && jobAudit.length > 0 ? <span className="count">{jobAudit.length}</span> : null}
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: '18px 20px 24px' }}>
+          {tab === 'overview' ? (
+            <OverviewTab
+              job={j}
+              executions={execs}
+              schedules={schedules.data ?? []}
+            />
+          ) : null}
+          {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
+          {tab === 'schedule' ? <ScheduleTab schedules={schedules.data ?? []} loading={schedules.isLoading} /> : null}
+          {tab === 'dsl' ? <DslTab job={j} schedules={schedules.data ?? []} /> : null}
+          {tab === 'alerts' ? <AlertsTab /> : null}
+          {tab === 'audit' ? <AuditTab events={jobAudit} loading={audit.isLoading} /> : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function JobDetailHeader({
+  job,
+  dslManaged,
+  triggerPending,
+  onToggle,
+  onTrigger,
+  onEdit,
+  onRemove,
+}: {
+  job: JobDefinition
+  dslManaged: boolean
+  triggerPending: boolean
+  onToggle: (next: boolean) => void
+  onTrigger: () => void
+  onEdit: () => void
+  onRemove: () => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 14,
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        padding: '16px 20px',
+      }}
+    >
+      <div className="col" style={{ gap: 6, minWidth: 0, flex: '1 1 380px' }}>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          <h1
+            className="mono"
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 600,
+              letterSpacing: '-0.01em',
+              wordBreak: 'break-word',
+              color: 'var(--fg)',
+            }}
+          >
+            {job.job_key}
+          </h1>
+          <StatusPill state={job.is_active ? 'active' : 'disabled'} />
+          {dslManaged ? (
+            <span className="pill outline" style={{ fontFamily: 'var(--font-mono-app)' }}>
+              DSL
+            </span>
+          ) : null}
+          <CopyBtn value={job.job_key} />
+        </div>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          {(job.tags ?? []).map((t) => (
+            <span key={t} className="tag">
+              {t}
+            </span>
+          ))}
+          {dslManaged ? (
+            <>
+              <span className="dim" style={{ fontSize: 12 }}>·</span>
+              <span className="dim" style={{ fontSize: 12 }}>
+                managed by Croniqfile
+              </span>
+            </>
+          ) : null}
+        </div>
+        {job.description ? (
+          <p
+            style={{
+              margin: 0,
+              color: 'var(--fg-1)',
+              fontSize: 13.5,
+              maxWidth: 720,
+            }}
+          >
+            {job.description}
+          </p>
+        ) : null}
+      </div>
+      <div className="row gap-6" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <Toggle on={job.is_active} onChange={onToggle} disabled={dslManaged} label="Active" />
+        <button type="button" className="btn sm ghost" onClick={onEdit}>
+          <Pencil size={13} /> Edit
+        </button>
+        <button type="button" className="btn sm primary" onClick={onTrigger} disabled={triggerPending}>
+          {triggerPending ? <BrandMark spinning size={13} /> : <Play size={13} />} Trigger
+        </button>
+        <button
+          type="button"
+          className="btn icon sm danger-hover"
+          aria-label="Delete"
+          title={dslManaged ? 'DSL-managed jobs cannot be deleted via the UI' : 'Delete'}
+          onClick={onRemove}
+          disabled={dslManaged}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function KpiRow({
+  runsLast24,
+  stats,
+  durSeries,
+  nextFire,
+  schedule,
+}: {
+  runsLast24: Execution[]
+  stats: ReturnType<typeof useJobStats>['data'] | null
+  durSeries: number[]
+  nextFire: string | null
+  schedule: TriggerDefinition | null
+}) {
+  const sr = stats && stats.total > 0 ? stats.success_rate * 100 : null
+  const srColor =
+    sr === null ? 'var(--fg)' : sr === 100 ? 'var(--success)' : sr > 90 ? 'var(--fg)' : 'var(--error)'
+
+  // Tick once per minute so the "in 12m 14s" countdown stays fresh
+  // without making the useMemo body impure (Date.now lives in the
+  // effect, not the render path).
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  const fireRel = useMemo(() => {
+    if (!nextFire) return null
+    const ms = +new Date(nextFire) - now
+    if (ms <= 0) return 'now'
+    const secs = Math.floor(ms / 1000)
+    if (secs < 60) return `in ${secs}s`
+    if (secs < 3600) return `in ${Math.floor(secs / 60)}m ${secs % 60}s`
+    return `in ${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
+  }, [nextFire, now])
+
+  return (
+    <div className="grid cols-4">
+      <KPICard
+        title="Last 24h"
+        value={runsLast24.length}
+        mono
+        sub={
+          <RunBars
+            counts={runsLast24.map(outcomeFor).reverse()}
+            durations={runsLast24.map((e) => e.duration_ms).reverse()}
+            compact
+          />
+        }
+      />
+      <KPICard
+        title="Success rate"
+        value={
+          <span style={{ color: srColor }}>
+            {sr === null ? '—' : `${sr.toFixed(1)}%`}
+          </span>
+        }
+        mono
+        sub={
+          stats ? (
+            <span>
+              {stats.completed} ok · {stats.failed} fail
+              {stats.dead > 0 ? <span className="dim"> · {stats.dead} dead</span> : null}
+            </span>
+          ) : (
+            <span className="muted">—</span>
+          )
+        }
+      />
+      <KPICard
+        title="p95 duration"
+        value={stats?.p95_ms != null ? durationFmt(stats.p95_ms) : '—'}
+        mono
+        chart={durSeries.length > 1 ? <Sparkline data={durSeries} color="var(--accent)" height={32} /> : null}
+      />
+      <KPICard
+        title="Next fire"
+        value={<span style={{ fontSize: 18 }}>{fireRel ?? '—'}</span>}
+        mono
+        sub={
+          schedule ? (
+            <span className="mono dim" style={{ fontSize: 11 }}>
+              {schedule.cron_expression ?? '—'}
+              {schedule.timezone ? ` · ${schedule.timezone}` : ''}
+            </span>
+          ) : (
+            <span className="muted">no schedule</span>
+          )
+        }
+      />
+    </div>
+  )
+}
+
+function OverviewTab({
+  job,
+  executions,
+  schedules,
+}: {
+  job: JobDefinition
+  executions: Execution[]
+  schedules: TriggerDefinition[]
+}) {
+  const { data: me } = useCurrentUser()
+  const ownerName = me?.display_name || me?.username || 'system'
+  const ownerEmail = me?.email ?? ''
+  const firstSched = schedules[0] ?? null
+
+  return (
+    <div className="job-overview-grid">
+      <section className="card" style={{ padding: 0 }}>
+        <div className="row between" style={{ padding: '14px 16px 8px' }}>
+          <p className="card-title">Recent runs</p>
+          <span className="dim" style={{ fontSize: 11.5 }}>
+            last {Math.min(executions.length, 12)}
+          </span>
+        </div>
+        {executions.length === 0 ? (
+          <EmptyState title="No runs yet" desc="Trigger the job to see executions here." />
+        ) : (
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>State</th>
+                <th>Runner</th>
+                <th>Fire at</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {executions.slice(0, 12).map((e) => (
+                <tr key={e.id}>
+                  <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
+                    {e.id.slice(0, 8)}
+                  </td>
+                  <td>
+                    <StatusPill state={e.state} />
+                  </td>
+                  <td className="mono dim" style={{ fontSize: 11.5 }}>
+                    {e.runner_id ? e.runner_id.slice(-8) : '—'}
+                  </td>
+                  <td className="dim">{formatRelative(e.fire_at)}</td>
+                  <td className="num">{durationFmt(e.duration_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <div className="col" style={{ gap: 14 }}>
+        <section className="card">
+          <div className="card-title" style={{ marginBottom: 12 }}>
+            Schedule
+          </div>
+          <div className="col" style={{ gap: 8 }}>
+            <DetailRow label="Cron / DSL" value={<span className="mono" style={{ color: 'var(--fg)' }}>{firstSched?.cron_expression ?? '—'}</span>} />
+            <DetailRow label="Timezone" value={<span className="mono">{firstSched?.timezone ?? '—'}</span>} />
+            <DetailRow
+              label="Calendar"
+              value={
+                firstSched?.calendar ? (
+                  <span className="mono" style={{ color: 'var(--accent-3)' }}>{firstSched.calendar}</span>
+                ) : (
+                  <span className="dim">—</span>
+                )
+              }
+            />
+            <DetailRow label="Timeout" value={<span className="mono">{job.timeout ?? '—'}</span>} />
+            <DetailRow label="Managed by" value={<span className="mono">{firstSched?.managed_by ?? '—'}</span>} />
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-title" style={{ marginBottom: 12 }}>
+            Routing
+          </div>
+          <div className="col" style={{ gap: 8 }}>
+            <DetailRow
+              label="Assigned runner"
+              value={
+                job.assigned_runner_id ? (
+                  <span className="mono">{job.assigned_runner_id.slice(-8)}</span>
+                ) : (
+                  <span className="dim">any</span>
+                )
+              }
+            />
+            <DetailRow label="Max retries" value={<span className="mono">{job.max_retries ?? '—'}</span>} />
+            <DetailRow
+              label="Dead letter"
+              value={
+                <StatusPill state={job.dead_letter_enabled ? 'enabled' : 'disabled'} />
+              }
+            />
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-title" style={{ marginBottom: 12 }}>
+            Owned by
+          </div>
+          <div className="row gap-8">
+            <Avatar name={ownerName} />
+            <div className="col" style={{ gap: 0 }}>
+              <div>{ownerName}</div>
+              {ownerEmail ? (
+                <div className="dim" style={{ fontSize: 11.5 }}>
+                  {ownerEmail}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="row between" style={{ fontSize: 13 }}>
+      <span className="dim">{label}</span>
+      <span>{value}</span>
+    </div>
+  )
+}
+
+function RunsTab({ executions, loading }: { executions: Execution[]; loading: boolean }) {
+  if (loading) {
+    return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
+  }
+  if (executions.length === 0) {
+    return <EmptyState title="No runs yet" desc="Trigger the job to see executions here." />
+  }
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>State</th>
+            <th>Runner</th>
+            <th>Fire at</th>
+            <th>Duration</th>
+            <th>Attempt</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {executions.map((e) => (
+            <tr key={e.id}>
+              <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
+                {e.id.slice(0, 8)}
+              </td>
+              <td>
+                <StatusPill state={e.state} />
+              </td>
+              <td className="mono dim" style={{ fontSize: 11.5 }}>
+                {e.runner_id ? e.runner_id.slice(-8) : '—'}
+              </td>
+              <td className="dim">{formatRelative(e.fire_at)}</td>
+              <td className="num">{durationFmt(e.duration_ms)}</td>
+              <td className="num">{e.attempt}</td>
+              <td className="ellipsis" style={{ maxWidth: 240, color: 'var(--error)' }}>
+                {e.error ?? ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
+}
+
+function ScheduleTab({
+  schedules,
+  loading,
+}: {
+  schedules: TriggerDefinition[]
+  loading: boolean
+}) {
+  if (loading) {
+    return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
+  }
+  if (schedules.length === 0) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="No schedules"
+        desc="Open the advanced editor to attach a cron expression or DSL rule."
+      />
+    )
+  }
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>Cron / DSL</th>
+            <th>Timezone</th>
+            <th>Calendar</th>
+            <th>Window</th>
+            <th>Managed by</th>
+            <th>Enabled</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {schedules.map((s) => (
+            <tr key={s.trigger_id}>
+              <td className="mono">{s.cron_expression ?? '—'}</td>
+              <td>{s.timezone ?? '—'}</td>
+              <td>{s.calendar ?? '—'}</td>
+              <td>{s.window ?? '—'}</td>
+              <td>
+                <span className={clsx('pill', s.managed_by === 'dsl' ? 'outline' : 'accent')}>
+                  {s.managed_by}
+                </span>
+              </td>
+              <td>
+                <StatusPill state={s.enabled ? 'enabled' : 'disabled'} />
+              </td>
+              <td className="dim">{formatRelative(s.updated_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
+}
+
+function DslTab({
+  job,
+  schedules,
+}: {
+  job: JobDefinition
+  schedules: TriggerDefinition[]
+}) {
+  const dsl = useMemo(() => renderDsl(job, schedules), [job, schedules])
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      <div className="between" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <div className="mono dim" style={{ fontSize: 12 }}>
+          Croniqfile
+        </div>
+        <div className="row gap-6">
+          <CopyBtn value={dsl} label="Copy" />
+        </div>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: '14px 16px',
+          fontFamily: 'var(--font-mono-app)',
+          fontSize: 12.5,
+          color: 'var(--fg-1)',
+          whiteSpace: 'pre-wrap',
+          lineHeight: 1.65,
+        }}
+      >
+        {dsl}
+      </pre>
+    </section>
+  )
+}
+
+function renderDsl(job: JobDefinition, schedules: TriggerDefinition[]): string {
+  const tags = JSON.stringify(job.tags ?? [])
+  const timeout = job.timeout ?? '5m'
+  const sched = schedules[0]
+  return [
+    `# ${job.job_key}`,
+    `# rendered from the live job + first attached schedule`,
+    ``,
+    `job "${job.job_key}" {`,
+    `  description = ${JSON.stringify(job.description ?? '')}`,
+    `  tags        = ${tags}`,
+    `  timeout     = "${timeout}"`,
+    ...(job.max_retries != null ? [`  max_retries = ${job.max_retries}`] : []),
+    ...(sched
+      ? [
+          ``,
+          `  schedule {`,
+          `    rule = ${JSON.stringify(sched.cron_expression ?? '')}`,
+          `    tz   = "${sched.timezone ?? 'UTC'}"`,
+          ...(sched.calendar ? [`    calendar = "${sched.calendar}"`] : []),
+          ...(sched.window ? [`    window   = "${sched.window}"`] : []),
+          `  }`,
+        ]
+      : []),
+    `}`,
+    ``,
+  ].join('\n')
+}
+
+function AlertsTab() {
+  return (
+    <EmptyState
+      icon={Bell}
+      title="Alerts are not wired yet"
+      desc="The /v1/alerts endpoints are planned for a follow-up PR. Attach Slack / email channels per job once the backend ships them."
+    />
+  )
+}
+
+function AuditTab({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+  if (loading) {
+    return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
+  }
+  if (events.length === 0) {
+    return <EmptyState title="No audit events" desc="Mutations to this job will appear here." />
+  }
+  return (
+    <section className="card">
+      <div className="row between" style={{ marginBottom: 10 }}>
+        <p className="card-title">Audit log</p>
+        <span className="dim" style={{ fontSize: 11.5 }}>
+          {events.length} events
+        </span>
+      </div>
+      <div className="audit-timeline">
+        {events.map((e) => {
+          const kind = auditKind(e.action)
+          const Icon = auditIcon(kind)
+          return (
+            <div key={e.event_id} className="audit-event">
+              <div className={`audit-marker audit-${kind}`}>
+                <Icon size={13} />
+              </div>
+              <div className="audit-content">
+                <div className="row gap-8" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--fg)', fontWeight: 500, fontSize: 13 }}>
+                    {e.actor_type}
+                    {e.actor_id ? <span className="dim mono" style={{ fontWeight: 400, marginLeft: 4 }}>· {e.actor_id.slice(0, 8)}</span> : null}
+                  </span>
+                  <span className="dim" style={{ fontSize: 13 }}>
+                    {humanizeAction(e.action)}
+                  </span>
+                  {e.target_id ? (
+                    <span className="mono" style={{ color: 'var(--accent-3)', fontSize: 12.5 }}>
+                      {e.target_id.slice(0, 8)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="row gap-6 dim mono" style={{ fontSize: 11 }}>
+                  <span>{formatDate(e.created_at)}</span>
+                  <span>·</span>
+                  <span>{formatRelative(e.created_at)}</span>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+type AuditKind = 'sync' | 'edit' | 'trigger' | 'create' | 'delete'
+
+function auditKind(action: string): AuditKind {
+  if (action.includes('trigger')) return 'trigger'
+  if (action.includes('create') || action.includes('register')) return 'create'
+  if (action.includes('delete') || action.includes('revoke')) return 'delete'
+  if (action.includes('dsl') || action.includes('sync')) return 'sync'
+  return 'edit'
+}
+
+function auditIcon(kind: AuditKind): typeof Edit3 {
+  if (kind === 'trigger') return Play
+  if (kind === 'create') return Plus
+  if (kind === 'delete') return Trash2
+  if (kind === 'sync') return RotateCcw
+  return Edit3
+}
+
+function humanizeAction(action: string): string {
+  return action.replace(/[._]/g, ' ')
 }

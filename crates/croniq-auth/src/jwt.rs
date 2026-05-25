@@ -1,10 +1,24 @@
 //! JWT token issuance and validation.
 
 use chrono::{Duration, Utc};
+use croniq_store::models::Role;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
-use crate::context::{CallerContext, CallerType};
+use crate::context::{AuthMethod, CallerContext, CallerType};
+
+/// Issuer of all JWTs minted by croniq-server.
+///
+/// **Hard-cut:** any token whose `iss` claim does not exactly match this
+/// constant is rejected by `validate_token`. When the auth model changes
+/// in a way that breaks existing claims (added required fields, role
+/// inference, etc.), bump the version suffix here. PR-A1 introduced the
+/// user_id + role + auth_method claims, which existing `iss: "croniq"`
+/// tokens lack, so the issuer moves to `"croniq-v1"`. Old tokens become
+/// invalid the moment a server with this constant rolls out — operators
+/// are expected to re-login (and runners re-mint their JWT through the
+/// API-key flow, which is unaffected because it doesn't carry a JWT).
+pub const JWT_ISSUER: &str = "croniq-v1";
 
 /// JWT configuration.
 #[derive(Debug, Clone)]
@@ -25,17 +39,30 @@ impl Default for JwtConfig {
             secret: "croniq-dev-secret-change-me".into(),
             access_ttl_secs: 3600,
             refresh_ttl_secs: 604800,
-            issuer: "croniq".into(),
+            issuer: JWT_ISSUER.into(),
         }
     }
 }
 
 /// Claims embedded in the JWT.
+///
+/// `user_id`, `role`, and `auth_method` were added in PR-A1. Old tokens
+/// that lack these fields are rejected via the issuer-version bump (see
+/// [`JWT_ISSUER`]). `user_id` and `role` are `Option` because API-key
+/// callers don't have a user.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub client_id: String,
     pub caller_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Authentication method used to mint this token. Stable enum
+    /// serialised as lowercase string ("password" / "apikey" /
+    /// "pat" / "oidc").
+    pub auth_method: String,
     pub scopes: Vec<String>,
     pub iss: String,
     pub exp: i64,
@@ -50,26 +77,57 @@ pub struct TokenPair {
     pub refresh_expires_at: chrono::DateTime<Utc>,
 }
 
+fn caller_type_to_str(t: CallerType) -> &'static str {
+    match t {
+        CallerType::ApiKey => "apikey",
+        CallerType::User => "user",
+    }
+}
+
+fn auth_method_to_str(m: AuthMethod) -> &'static str {
+    match m {
+        AuthMethod::Password => "password",
+        AuthMethod::ApiKey => "apikey",
+        AuthMethod::Pat => "pat",
+        AuthMethod::Oidc => "oidc",
+    }
+}
+
+fn parse_auth_method(s: &str) -> AuthMethod {
+    match s {
+        "password" => AuthMethod::Password,
+        "pat" => AuthMethod::Pat,
+        "oidc" => AuthMethod::Oidc,
+        _ => AuthMethod::ApiKey,
+    }
+}
+
 /// Issue an access + refresh token pair.
+///
+/// For users: pass `Some(user_id)` and `Some(role)`. For API keys: pass
+/// `None` for both — the caller's permissions come from `scopes` directly.
+#[allow(clippy::too_many_arguments)]
 pub fn issue_token_pair(
     config: &JwtConfig,
     caller_id: &str,
     client_id: &str,
     caller_type: CallerType,
+    user_id: Option<&str>,
+    role: Option<Role>,
+    auth_method: AuthMethod,
     scopes: &[String],
 ) -> Result<TokenPair, AuthError> {
     let now = Utc::now();
     let access_exp = now + Duration::seconds(config.access_ttl_secs);
     let refresh_exp = now + Duration::seconds(config.refresh_ttl_secs);
-    let caller_type_str = match caller_type {
-        CallerType::ApiKey => "apikey",
-        CallerType::User => "user",
-    };
 
     let access_claims = Claims {
         sub: caller_id.to_string(),
         client_id: client_id.to_string(),
-        caller_type: caller_type_str.to_string(),
+        caller_type: caller_type_to_str(caller_type).to_string(),
+        user_id: user_id.map(|s| s.to_string()),
+        role: role.map(|r| r.as_str().to_string()),
+        auth_method: auth_method_to_str(auth_method).to_string(),
         scopes: scopes.to_vec(),
         iss: config.issuer.clone(),
         exp: access_exp.timestamp(),
@@ -94,7 +152,63 @@ pub fn issue_token_pair(
     })
 }
 
+/// Short-lived token issued between password-success and TOTP-verify
+/// during step-up login. Distinct claim shape (no scopes, no role) so
+/// `validate_token` rejects it for normal API calls — the only valid
+/// consumer is `/v1/auth/login/totp` which calls
+/// [`validate_mfa_token`] instead.
+#[derive(Debug, Serialize, Deserialize)]
+struct MfaClaims {
+    sub: String,
+    purpose: String, // always "mfa"
+    iss: String,
+    exp: i64,
+    iat: i64,
+}
+
+/// Mint an MFA step-up token for `user_id`. TTL is 5 minutes —
+/// generous enough to switch to an authenticator app, short enough
+/// that a leaked half-state-token decays quickly.
+pub fn issue_mfa_token(config: &JwtConfig, user_id: &str) -> Result<(String, i64), AuthError> {
+    let now = Utc::now();
+    let exp = now + Duration::seconds(300);
+    let claims = MfaClaims {
+        sub: user_id.to_string(),
+        purpose: "mfa".into(),
+        iss: config.issuer.clone(),
+        exp: exp.timestamp(),
+        iat: now.timestamp(),
+    };
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.secret.as_bytes()),
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    Ok((token, 300))
+}
+
+/// Validate an MFA step-up token. Returns the user_id it was issued for.
+pub fn validate_mfa_token(config: &JwtConfig, token: &str) -> Result<String, AuthError> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[&config.issuer]);
+    let data = decode::<MfaClaims>(
+        token,
+        &DecodingKey::from_secret(config.secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    if data.claims.purpose != "mfa" {
+        return Err(AuthError::TokenError("not an MFA token".into()));
+    }
+    Ok(data.claims.sub)
+}
+
 /// Validate a JWT and extract the caller context.
+///
+/// Rejects tokens whose `iss` claim doesn't match the configured issuer.
+/// PR-A1 bumped the default issuer from `"croniq"` to `"croniq-v1"`, so
+/// any pre-A1 token is rejected here (hard-cut migration; see [`JWT_ISSUER`]).
 pub fn validate_token(config: &JwtConfig, token: &str) -> Result<CallerContext, AuthError> {
     let mut validation = Validation::default();
     validation.set_issuer(&[&config.issuer]);
@@ -106,16 +220,22 @@ pub fn validate_token(config: &JwtConfig, token: &str) -> Result<CallerContext, 
     )
     .map_err(|e| AuthError::TokenError(e.to_string()))?;
 
-    let caller_type = match token_data.claims.caller_type.as_str() {
+    let claims = token_data.claims;
+    let caller_type = match claims.caller_type.as_str() {
         "apikey" => CallerType::ApiKey,
         _ => CallerType::User,
     };
+    let role = claims.role.as_deref().and_then(|s| s.parse::<Role>().ok());
+    let auth_method = parse_auth_method(&claims.auth_method);
 
     Ok(CallerContext {
         caller_type,
-        caller_id: token_data.claims.sub,
-        client_id: token_data.claims.client_id,
-        scopes: token_data.claims.scopes,
+        caller_id: claims.sub,
+        client_id: claims.client_id,
+        user_id: claims.user_id,
+        role,
+        auth_method,
+        scopes: claims.scopes,
     })
 }
 
@@ -142,23 +262,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn issue_and_validate_round_trip() {
+    fn issue_and_validate_round_trip_for_user() {
         let config = JwtConfig::default();
         let pair = issue_token_pair(
             &config,
             "user-1",
-            "client-1",
+            "user-1",
             CallerType::User,
+            Some("user-1"),
+            Some(Role::Operator),
+            AuthMethod::Password,
             &["jobs:read".into(), "runners:read".into()],
         )
         .unwrap();
 
         let ctx = validate_token(&config, &pair.access_token).unwrap();
         assert_eq!(ctx.caller_id, "user-1");
-        assert_eq!(ctx.client_id, "client-1");
+        assert_eq!(ctx.user_id.as_deref(), Some("user-1"));
+        assert_eq!(ctx.role, Some(Role::Operator));
+        assert_eq!(ctx.auth_method, AuthMethod::Password);
         assert_eq!(ctx.caller_type, CallerType::User);
         assert!(ctx.has_scope("jobs:read"));
         assert!(!ctx.has_scope("admin"));
+    }
+
+    #[test]
+    fn issue_and_validate_round_trip_for_api_key() {
+        let config = JwtConfig::default();
+        let pair = issue_token_pair(
+            &config,
+            "key-1",
+            "client-1",
+            CallerType::ApiKey,
+            None,
+            None,
+            AuthMethod::ApiKey,
+            &["jobs:read".into()],
+        )
+        .unwrap();
+
+        let ctx = validate_token(&config, &pair.access_token).unwrap();
+        assert_eq!(ctx.caller_id, "key-1");
+        assert!(ctx.user_id.is_none());
+        assert!(ctx.role.is_none());
+        assert_eq!(ctx.auth_method, AuthMethod::ApiKey);
+        assert_eq!(ctx.caller_type, CallerType::ApiKey);
     }
 
     #[test]
@@ -179,8 +327,44 @@ mod tests {
             ..Default::default()
         };
 
-        let pair = issue_token_pair(&config1, "u", "c", CallerType::User, &[]).unwrap();
+        let pair = issue_token_pair(
+            &config1,
+            "u",
+            "c",
+            CallerType::User,
+            Some("u"),
+            Some(Role::Admin),
+            AuthMethod::Password,
+            &[],
+        )
+        .unwrap();
         let result = validate_token(&config2, &pair.access_token);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn old_issuer_rejected_as_hard_cut() {
+        // Mint a token under the legacy issuer "croniq" and verify that
+        // validating it against the default config (issuer "croniq-v1")
+        // is rejected. This is the PR-A1 hard-cut migration guarantee.
+        let legacy = JwtConfig {
+            issuer: "croniq".into(),
+            ..Default::default()
+        };
+        let pair = issue_token_pair(
+            &legacy,
+            "u",
+            "c",
+            CallerType::User,
+            Some("u"),
+            Some(Role::Admin),
+            AuthMethod::Password,
+            &["admin".into()],
+        )
+        .unwrap();
+
+        // Default config uses "croniq-v1" — old issuer must be rejected.
+        let current = JwtConfig::default();
+        assert!(validate_token(&current, &pair.access_token).is_err());
     }
 }

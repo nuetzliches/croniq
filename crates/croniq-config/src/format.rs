@@ -46,6 +46,11 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             format_directives(out, &m.directives, indent + 1);
             out.push_str("}\n");
         }
+        Item::Oidc(o) => {
+            out.push_str("oidc {\n");
+            format_directives(out, &o.directives, indent + 1);
+            out.push_str("}\n");
+        }
         Item::Policy(p) => {
             out.push_str("policy {\n");
             format_directives(out, &p.directives, indent + 1);

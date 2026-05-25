@@ -9,6 +9,25 @@ export function useHealth() {
   return useQuery({ queryKey: ['health'], queryFn: () => apiFetch<T.HealthResponse>('/health'), refetchInterval: 5000 })
 }
 
+// Version + environment metadata (public, no auth). Failures are
+// expected against older backends that don't ship /version yet — the
+// caller treats `null` data as "chip / badge stays hidden".
+export function useVersion() {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: async () => {
+      try {
+        return await apiFetch<T.VersionResponse>('/version')
+      } catch {
+        return null
+      }
+    },
+    // The build never changes between renders; fetch once and pin.
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
 // Jobs
 export function useJobs() {
   return useQuery({ queryKey: ['jobs'], queryFn: () => apiFetch<T.JobDefinition[]>('/v1/jobs') })
@@ -440,5 +459,162 @@ export function useRevokeApiKey() {
   return useMutation({
     mutationFn: (keyId: string) => apiDelete(`/v1/api-keys/${keyId}`),
     meta: { action: 'Revoke API key' },
+  })
+}
+
+// PR-B1 stats + audit ─────────────────────────────────────────────
+export function useAuditEvents(params?: {
+  limit?: number
+  actor_id?: string
+  target_type?: string
+  action?: string
+}) {
+  const search = new URLSearchParams()
+  if (params?.limit) search.set('limit', String(params.limit))
+  if (params?.actor_id) search.set('actor_id', params.actor_id)
+  if (params?.target_type) search.set('target_type', params.target_type)
+  if (params?.action) search.set('action', params.action)
+  const qs = search.toString()
+  return useQuery({
+    queryKey: ['audit', params ?? {}],
+    queryFn: () => apiFetch<T.AuditEvent[]>(`/v1/audit${qs ? `?${qs}` : ''}`),
+    staleTime: 30_000,
+  })
+}
+
+export function useJobStats(jobKey: string, days = 7) {
+  return useQuery({
+    queryKey: ['jobs', jobKey, 'stats', days],
+    enabled: !!jobKey,
+    queryFn: () =>
+      apiFetch<T.JobStatsResponse>(`/v1/jobs/${encodeURIComponent(jobKey)}/stats?days=${days}`),
+    staleTime: 60_000,
+  })
+}
+
+export function useThroughput(window: '1h' | '6h' | '24h' | '7d' = '24h') {
+  return useQuery({
+    queryKey: ['executions', 'throughput', window],
+    queryFn: () => apiFetch<T.ThroughputResponse>(`/v1/executions/throughput?window=${window}`),
+    refetchInterval: 30_000,
+    staleTime: 30_000,
+  })
+}
+
+export function useFailureHeatmap(days = 28) {
+  return useQuery({
+    queryKey: ['insights', 'failures', days],
+    queryFn: () => apiFetch<T.FailureHeatmap>(`/v1/insights/failures?days=${days}`),
+    staleTime: 60_000,
+  })
+}
+
+// Users (admin)
+export function useUsers() {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: () => apiFetch<T.User[]>('/v1/users'),
+    staleTime: 30_000,
+  })
+}
+export function useDeleteUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => apiDelete(`/v1/users/${userId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    meta: { action: 'Delete user' },
+  })
+}
+
+// Invitations (admin)
+export function useInvitations() {
+  return useQuery({
+    queryKey: ['invitations'],
+    queryFn: () => apiFetch<T.Invitation[]>('/v1/invitations'),
+    staleTime: 30_000,
+  })
+}
+export function useCreateInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { email: string; role: T.Role; expires_in_hours?: number }) =>
+      apiPost<T.CreateInvitationResponse>('/v1/invitations', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }),
+    meta: { action: 'Create invitation' },
+  })
+}
+export function useRevokeInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/invitations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }),
+    meta: { action: 'Revoke invitation' },
+  })
+}
+
+// Personal Access Tokens (self)
+export function usePersonalAccessTokens() {
+  return useQuery({
+    queryKey: ['users', 'me', 'tokens'],
+    queryFn: () => apiFetch<T.PersonalAccessToken[]>('/v1/users/me/tokens'),
+    staleTime: 30_000,
+  })
+}
+export function useCreatePat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; scopes: string[]; expires_in_hours?: number }) =>
+      apiPost<T.CreatePatResponse>('/v1/users/me/tokens', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+    meta: { action: 'Create PAT' },
+  })
+}
+export function useRevokePat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/users/me/tokens/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+    meta: { action: 'Revoke PAT' },
+  })
+}
+
+// TOTP (self) — setup returns the secret + recovery codes, confirm enables it.
+export function useTotpSetup() {
+  return useMutation({
+    mutationFn: () => apiPost<T.TotpSetupResponse>('/v1/users/me/totp/setup', {}),
+    meta: { action: 'Begin TOTP setup' },
+  })
+}
+export function useTotpConfirm() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiPost('/v1/users/me/totp/confirm', { code }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me'] }),
+    meta: { action: 'Confirm TOTP' },
+  })
+}
+export function useTotpDisable() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiPost('/v1/users/me/totp/disable', { code }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me'] }),
+    meta: { action: 'Disable TOTP' },
+  })
+}
+
+// Current user — only resolves for password/OIDC/PAT logins, not anonymous
+// API-key sessions. Returns 404 for callers without a user record; the hook
+// surfaces that as `data === null` so the UI can branch cleanly.
+export function useCurrentUser() {
+  const token = useAuthStore((s) => s.token)
+  return useQuery({
+    queryKey: ['users', 'me'],
+    enabled: !!token,
+    queryFn: () =>
+      apiFetch<T.User>('/v1/users/me').catch((err) => {
+        if (err instanceof Error && err.message.toLowerCase().includes('not found')) return null
+        throw err
+      }),
+    staleTime: 60_000,
   })
 }

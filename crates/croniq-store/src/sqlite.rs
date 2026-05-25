@@ -711,6 +711,712 @@ impl AuthStore for SqliteStore {
         .map_err(map_err)?;
         Ok(())
     }
+
+    fn users_create(&self, user: &User) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                email = excluded.email,
+                display_name = excluded.display_name,
+                role = excluded.role,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at",
+            params![
+                user.user_id,
+                user.username,
+                user.email,
+                user.display_name,
+                user.role.as_str(),
+                user.is_active as i64,
+                dt_to_sql(&user.created_at),
+                dt_to_sql(&user.updated_at),
+                opt_dt_to_sql(&user.last_login_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE user_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![user_id], map_user_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE username = ?1")
+            .map_err(map_err)?
+            .query_row(params![username], map_user_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn users_list(&self) -> Result<Vec<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY username")
+            .map_err(map_err)?;
+        let rows = stmt.query_map([], map_user_row).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn users_update(&self, user: &User) -> Result<(), StoreError> {
+        // users_create is upsert-on-user_id, so update is the same write.
+        // The last-admin-demotion check lives in the API layer (calls
+        // users_count_active_admins before mutating).
+        self.users_create(user)
+    }
+
+    fn users_delete(&self, user_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM users WHERE user_id = ?1", params![user_id])
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET last_login_at = ?1, updated_at = ?1 WHERE user_id = ?2",
+            params![dt_to_sql(&at), user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_count_active_admins(&self) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
+
+    fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO invitations (invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                invite.invitation_id,
+                invite.email,
+                invite.role.as_str(),
+                invite.token_hash,
+                invite.invited_by,
+                dt_to_sql(&invite.expires_at),
+                opt_dt_to_sql(&invite.accepted_at),
+                opt_dt_to_sql(&invite.revoked_at),
+                dt_to_sql(&invite.created_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE invitation_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![invitation_id], map_invitation_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn invitations_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE token_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![token_hash], map_invitation_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations ORDER BY created_at DESC")
+            .map_err(map_err)?;
+        let rows = stmt.query_map([], map_invitation_row).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn invitations_mark_accepted(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invitations SET accepted_at = ?1 WHERE invitation_id = ?2",
+            params![dt_to_sql(&at), invitation_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invitations SET revoked_at = ?1 WHERE invitation_id = ?2",
+            params![dt_to_sql(&at), invitation_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO password_resets (reset_id, user_id, token_hash, expires_at, used_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                reset.reset_id,
+                reset.user_id,
+                reset.token_hash,
+                dt_to_sql(&reset.expires_at),
+                opt_dt_to_sql(&reset.used_at),
+                dt_to_sql(&reset.created_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn password_resets_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordReset>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT reset_id, user_id, token_hash, expires_at, used_at, created_at FROM password_resets WHERE token_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![token_hash], |row| {
+                Ok(PasswordReset {
+                    reset_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    token_hash: row.get(2)?,
+                    expires_at: sql_to_dt(&row.get::<_, String>(3)?),
+                    used_at: sql_to_opt_dt(row.get(4)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn password_resets_mark_used(
+        &self,
+        reset_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE password_resets SET used_at = ?1 WHERE reset_id = ?2",
+            params![dt_to_sql(&at), reset_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO totp_secrets (user_id, secret_enc, enabled, confirmed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id) DO UPDATE SET
+                secret_enc = excluded.secret_enc,
+                enabled = excluded.enabled,
+                confirmed_at = excluded.confirmed_at",
+            params![
+                secret.user_id,
+                secret.secret_enc,
+                secret.enabled as i64,
+                opt_dt_to_sql(&secret.confirmed_at),
+                dt_to_sql(&secret.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT user_id, secret_enc, enabled, confirmed_at, created_at FROM totp_secrets WHERE user_id = ?1",
+        )
+        .map_err(map_err)?
+        .query_row(params![user_id], |row| {
+            Ok(TotpSecret {
+                user_id: row.get(0)?,
+                secret_enc: row.get(1)?,
+                enabled: row.get::<_, bool>(2)?,
+                confirmed_at: sql_to_opt_dt(row.get(3)?),
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn totp_set_enabled(
+        &self,
+        user_id: &str,
+        enabled: bool,
+        confirmed_at: Option<DateTime<Utc>>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE totp_secrets SET enabled = ?1, confirmed_at = ?2 WHERE user_id = ?3",
+            params![enabled as i64, opt_dt_to_sql(&confirmed_at), user_id,],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn totp_delete(&self, user_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Recovery codes cascade via FK ON DELETE CASCADE (foreign_keys PRAGMA on),
+        // but be explicit to keep the contract test stable across backends.
+        conn.execute(
+            "DELETE FROM totp_secrets WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM recovery_codes WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_replace_all(
+        &self,
+        user_id: &str,
+        codes: &[RecoveryCode],
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        tx.execute(
+            "DELETE FROM recovery_codes WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        for code in codes {
+            tx.execute(
+                "INSERT INTO recovery_codes (code_id, user_id, code_hash, used_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    code.code_id,
+                    code.user_id,
+                    code.code_hash,
+                    opt_dt_to_sql(&code.used_at),
+                    dt_to_sql(&code.created_at),
+                ],
+            )
+            .map_err(map_err)?;
+        }
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_find_unused(
+        &self,
+        user_id: &str,
+        code_hash: &str,
+    ) -> Result<Option<RecoveryCode>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT code_id, user_id, code_hash, used_at, created_at FROM recovery_codes
+             WHERE user_id = ?1 AND code_hash = ?2 AND used_at IS NULL",
+        )
+        .map_err(map_err)?
+        .query_row(params![user_id, code_hash], |row| {
+            Ok(RecoveryCode {
+                code_id: row.get(0)?,
+                user_id: row.get(1)?,
+                code_hash: row.get(2)?,
+                used_at: sql_to_opt_dt(row.get(3)?),
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE recovery_codes SET used_at = ?1 WHERE code_id = ?2",
+            params![dt_to_sql(&at), code_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?1 AND used_at IS NULL",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
+
+    fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let scopes_json =
+            serde_json::to_string(&pat.scopes).map_err(|e| StoreError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO personal_access_tokens (token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                pat.token_id,
+                pat.user_id,
+                pat.name,
+                pat.token_hash,
+                pat.token_prefix,
+                scopes_json,
+                opt_dt_to_sql(&pat.expires_at),
+                opt_dt_to_sql(&pat.revoked_at),
+                opt_dt_to_sql(&pat.last_used_at),
+                dt_to_sql(&pat.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn pat_find_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PersonalAccessToken>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at
+             FROM personal_access_tokens WHERE token_hash = ?1",
+        )
+        .map_err(map_err)?
+        .query_row(params![token_hash], map_pat_row)
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at FROM personal_access_tokens WHERE user_id = ?1 ORDER BY created_at DESC")
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![user_id], map_pat_row)
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE personal_access_tokens SET revoked_at = ?1 WHERE token_id = ?2",
+            params![dt_to_sql(&at), token_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE personal_access_tokens SET last_used_at = ?1 WHERE token_id = ?2",
+            params![dt_to_sql(&at), token_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oidc_identities (provider, subject, user_id, email, linked_at, last_login_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(provider, subject) DO UPDATE SET
+                user_id = excluded.user_id,
+                email = excluded.email,
+                last_login_at = excluded.last_login_at",
+            params![
+                identity.provider,
+                identity.subject,
+                identity.user_id,
+                identity.email,
+                dt_to_sql(&identity.linked_at),
+                opt_dt_to_sql(&identity.last_login_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_get_by_subject(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<OidcIdentity>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT provider, subject, user_id, email, linked_at, last_login_at FROM oidc_identities WHERE provider = ?1 AND subject = ?2",
+        )
+        .map_err(map_err)?
+        .query_row(params![provider, subject], |row| {
+            Ok(OidcIdentity {
+                provider: row.get(0)?,
+                subject: row.get(1)?,
+                user_id: row.get(2)?,
+                email: row.get(3)?,
+                linked_at: sql_to_dt(&row.get::<_, String>(4)?),
+                last_login_at: sql_to_opt_dt(row.get(5)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn oidc_touch_last_login(
+        &self,
+        provider: &str,
+        subject: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oidc_identities SET last_login_at = ?1 WHERE provider = ?2 AND subject = ?3",
+            params![dt_to_sql(&at), provider, subject],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oidc_pending_logins (state, nonce, redirect_to, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                pending.state,
+                pending.nonce,
+                pending.redirect_to,
+                dt_to_sql(&pending.created_at),
+                dt_to_sql(&pending.expires_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Atomic read+delete to make state single-use even under
+        // concurrent callbacks. SQLite has no RETURNING DELETE in older
+        // versions, so we select first, then delete by PK.
+        let found: Option<OidcPendingLogin> = conn
+            .prepare(
+                "SELECT state, nonce, redirect_to, created_at, expires_at FROM oidc_pending_logins WHERE state = ?1",
+            )
+            .map_err(map_err)?
+            .query_row(params![state], |row| {
+                Ok(OidcPendingLogin {
+                    state: row.get(0)?,
+                    nonce: row.get(1)?,
+                    redirect_to: row.get(2)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(3)?),
+                    expires_at: sql_to_dt(&row.get::<_, String>(4)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)?;
+        if found.is_some() {
+            conn.execute(
+                "DELETE FROM oidc_pending_logins WHERE state = ?1",
+                params![state],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(found)
+    }
+
+    fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "DELETE FROM oidc_pending_logins WHERE expires_at < ?1",
+                params![dt_to_sql(&now)],
+            )
+            .map_err(map_err)?;
+        Ok(affected as u64)
+    }
+
+    fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO audit_log (event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                event.event_id,
+                event.actor_type,
+                event.actor_id,
+                event.action,
+                event.target_type,
+                event.target_id,
+                event.diff_json,
+                event.ip_address,
+                event.user_agent,
+                dt_to_sql(&event.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Build a dynamic WHERE clause. Bind params in the same order
+        // they're pushed onto `clauses`/`vals`.
+        let mut clauses: Vec<&str> = Vec::new();
+        let mut vals: Vec<String> = Vec::new();
+        if let Some(v) = &filter.actor_type {
+            clauses.push("actor_type = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.actor_id {
+            clauses.push("actor_id = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.action {
+            clauses.push("action = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.target_type {
+            clauses.push("target_type = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.target_id {
+            clauses.push("target_id = ?");
+            vals.push(v.clone());
+        }
+        if let Some(t) = filter.since {
+            clauses.push("created_at >= ?");
+            vals.push(dt_to_sql(&t));
+        }
+        if let Some(t) = filter.until {
+            clauses.push("created_at <= ?");
+            vals.push(dt_to_sql(&t));
+        }
+
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let limit = filter.limit.unwrap_or(200).min(1000);
+        let sql = format!(
+            "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at
+             FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT {limit}"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let bind_params: Vec<&dyn rusqlite::ToSql> =
+            vals.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(bind_params.as_slice(), |row| {
+                Ok(AuditEvent {
+                    event_id: row.get(0)?,
+                    actor_type: row.get(1)?,
+                    actor_id: row.get(2)?,
+                    action: row.get(3)?,
+                    target_type: row.get(4)?,
+                    target_id: row.get(5)?,
+                    diff_json: row.get(6)?,
+                    ip_address: row.get(7)?,
+                    user_agent: row.get(8)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(9)?),
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+}
+
+fn map_pat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
+    let scopes_json: String = row.get(5)?;
+    let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+    Ok(PersonalAccessToken {
+        token_id: row.get(0)?,
+        user_id: row.get(1)?,
+        name: row.get(2)?,
+        token_hash: row.get(3)?,
+        token_prefix: row.get(4)?,
+        scopes,
+        expires_at: sql_to_opt_dt(row.get(6)?),
+        revoked_at: sql_to_opt_dt(row.get(7)?),
+        last_used_at: sql_to_opt_dt(row.get(8)?),
+        created_at: sql_to_dt(&row.get::<_, String>(9)?),
+    })
+}
+
+fn map_invitation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Invitation> {
+    use std::str::FromStr;
+    let role_str: String = row.get(2)?;
+    let role = Role::from_str(&role_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            2,
+            rusqlite::types::Type::Text,
+            format!("unknown role: {role_str}").into(),
+        )
+    })?;
+    Ok(Invitation {
+        invitation_id: row.get(0)?,
+        email: row.get(1)?,
+        role,
+        token_hash: row.get(3)?,
+        invited_by: row.get(4)?,
+        expires_at: sql_to_dt(&row.get::<_, String>(5)?),
+        accepted_at: sql_to_opt_dt(row.get(6)?),
+        revoked_at: sql_to_opt_dt(row.get(7)?),
+        created_at: sql_to_dt(&row.get::<_, String>(8)?),
+    })
+}
+
+fn map_user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
+    use std::str::FromStr;
+    let role_str: String = row.get(4)?;
+    let role = Role::from_str(&role_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Text,
+            format!("unknown role: {role_str}").into(),
+        )
+    })?;
+    Ok(User {
+        user_id: row.get(0)?,
+        username: row.get(1)?,
+        email: row.get(2)?,
+        display_name: row.get(3)?,
+        role,
+        is_active: row.get::<_, bool>(5)?,
+        created_at: sql_to_dt(&row.get::<_, String>(6)?),
+        updated_at: sql_to_dt(&row.get::<_, String>(7)?),
+        last_login_at: sql_to_opt_dt(row.get(8)?),
+    })
 }
 
 // ─── JobDefinitionStore ───

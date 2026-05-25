@@ -1,8 +1,7 @@
 import { Fragment, useState } from 'react'
-import { TriangleAlert, RotateCcw, Trash2, MailX, CheckCircle2 } from 'lucide-react'
+import { useNavigate, useParams } from 'react-router'
+import { TriangleAlert, RotateCcw, Trash2, MailX, CheckCircle2, MousePointerClick } from 'lucide-react'
 import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter } from '@/api/hooks'
-import { Sheet } from '@/components/ui/sheet'
-import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -13,16 +12,15 @@ import { formatDate, truncate } from '@/lib/utils'
 function DeadLetterDetail({
   id,
   onReplay,
-  onClose,
+  onDelete,
 }: {
   id: string
   onReplay: (result: { execution_id: string; attempt: number }) => void
   onClose: () => void
+  onDelete: () => void
 }) {
   const { data, isLoading } = useDeadLetter(id)
   const replay = useReplayDeadLetter()
-  const del = useDeleteDeadLetter()
-  const { confirm, dialog: confirmDialog } = useConfirm()
 
   if (isLoading) return <div className="flex justify-center py-8"><Spinner className="h-5 w-5" /></div>
   if (!data) return null
@@ -31,83 +29,102 @@ function DeadLetterDetail({
     if (!data) return
     const result = await replay.mutateAsync(data.id)
     onReplay(result)
-    onClose()
-  }
-
-  async function handleDelete() {
-    if (!data) return
-    const ok = await confirm({
-      title: 'Delete dead letter?',
-      description:
-        'The failed execution record will be removed permanently. The job itself is unaffected — only the dead-letter entry is purged.',
-      confirmLabel: 'Delete',
-      destructive: true,
-    })
-    if (ok) {
-      del.mutate(data.id)
-      onClose()
-    }
   }
 
   return (
-    <div className="space-y-4">
-      {confirmDialog}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-        {[
-          ['Job', data.job_key],
-          ['Attempt', data.attempt],
-          ['Reason', data.dead_reason],
-          ['Execution ID', (
-            <span key="x" className="flex items-center gap-1.5 font-mono">
-              {data.execution_id}
-              <CopyButton value={data.execution_id} label="Copy execution id" />
-            </span>
-          )],
-          ['Created', formatDate(data.created_at)],
-          ['Expires', data.expires_at ? formatDate(data.expires_at) : '—'],
-        ].map(([label, value]) => (
-          // Plain `<>` fragments don't accept `key`; React warns when one
-          // element of a list is rendered through them. The label/value
-          // pair sits inside a CSS grid, so we need the two spans as
-          // siblings — Fragment with a key gives us both.
-          <Fragment key={String(label)}>
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-medium text-foreground">{value}</span>
-          </Fragment>
-        ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--card-gap)' }}>
+      <div className="card" style={{ padding: '16px 20px' }}>
+        <div className="row between" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+          <div className="col" style={{ gap: 4, minWidth: 0, flex: '1 1 280px' }}>
+            <h1
+              className="mono ellipsis"
+              style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--fg)' }}
+              title={data.job_key}
+            >
+              {data.job_key}
+            </h1>
+            <span className="dim" style={{ fontSize: 12 }}>{data.dead_reason} · attempt {data.attempt}</span>
+          </div>
+          <div className="row gap-6">
+            <button
+              type="button"
+              className="btn sm primary"
+              onClick={handleReplay}
+              disabled={replay.isPending}
+            >
+              {replay.isPending ? <Spinner className="h-3.5 w-3.5" /> : <RotateCcw size={13} />} Replay
+            </button>
+            <button
+              type="button"
+              className="btn sm ghost"
+              onClick={onDelete}
+              title="Delete dead letter"
+            >
+              <Trash2 size={13} /> Delete
+            </button>
+          </div>
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 6, fontSize: 12.5 }}>
+          {[
+            ['Execution', (
+              <span key="x" className="row mono" style={{ gap: 6, alignItems: 'center' }}>
+                {data.execution_id}
+                <CopyButton value={data.execution_id} label="Copy execution id" />
+              </span>
+            )],
+            ['Created', formatDate(data.created_at)],
+            ['Expires', data.expires_at ? formatDate(data.expires_at) : '—'],
+          ].map(([label, value]) => (
+            <Fragment key={String(label)}>
+              <span className="dim">{label}</span>
+              <span style={{ minWidth: 0, overflow: 'hidden' }}>{value}</span>
+            </Fragment>
+          ))}
+        </div>
       </div>
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-1">Error</p>
-        <pre className="text-xs bg-muted rounded-md p-3 overflow-auto max-h-40 whitespace-pre-wrap">{data.error}</pre>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+          <p className="card-title">Error</p>
+        </div>
+        <pre
+          className="mono"
+          style={{
+            margin: 0,
+            padding: '14px 20px',
+            fontSize: 12,
+            color: 'var(--fg-1)',
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.55,
+            overflow: 'auto',
+            maxHeight: 320,
+          }}
+        >
+          {data.error}
+        </pre>
       </div>
 
       {Object.keys(data.metadata).length > 0 && (
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">Metadata</p>
-          <pre className="text-xs bg-muted rounded-md p-3 overflow-auto">{JSON.stringify(data.metadata, null, 2)}</pre>
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+            <p className="card-title">Metadata</p>
+          </div>
+          <pre
+            className="mono"
+            style={{
+              margin: 0,
+              padding: '14px 20px',
+              fontSize: 12,
+              color: 'var(--fg-1)',
+              whiteSpace: 'pre-wrap',
+              lineHeight: 1.55,
+              overflow: 'auto',
+            }}
+          >
+            {JSON.stringify(data.metadata, null, 2)}
+          </pre>
         </div>
       )}
-
-      <div className="flex gap-2 pt-2">
-        <Button
-          size="sm"
-          onClick={handleReplay}
-          disabled={replay.isPending}
-        >
-          {replay.isPending ? <Spinner className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
-          Replay
-        </Button>
-        <Button
-          size="sm"
-          variant="destructive"
-          onClick={handleDelete}
-          disabled={del.isPending}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </Button>
-      </div>
     </div>
   )
 }
@@ -115,9 +132,13 @@ function DeadLetterDetail({
 export function DeadLettersPage() {
   const { data: items, isLoading } = useDeadLetters()
   const deleteDL = useDeleteDeadLetter()
-  const replay = useReplayDeadLetter()
   const { confirm, dialog: confirmDialog } = useConfirm()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const { id: routeId } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const selectedId = routeId ?? null
+  const setSelectedId = (id: string | null) => {
+    navigate(id ? `/dead-letters/${id}` : '/dead-letters', { replace: false })
+  }
   // The dead-letter row vanishes after replay (the server invalidates
   // and our `dead-letters` query refetches), so we surface the new
   // execution_id at the page level — otherwise the user would never see
@@ -136,121 +157,124 @@ export function DeadLettersPage() {
       confirmLabel: 'Delete',
       destructive: true,
     })
-    if (ok) deleteDL.mutate(dl.id)
+    if (ok) {
+      deleteDL.mutate(dl.id)
+      if (selectedId === dl.id) setSelectedId(null)
+    }
   }
 
-  async function handleRowReplay(dl: { id: string; job_key: string }) {
-    const result = await replay.mutateAsync(dl.id)
-    setLastReplay({ job_key: dl.job_key, ...result })
-  }
+  const selectedDL = items?.find((i) => i.id === selectedId) ?? null
 
   return (
-    <div className="space-y-4">
+    <div className="split">
       {confirmDialog}
-      {lastReplay && (
-        <div className="rounded-md border border-status-ok-fg/40 bg-status-ok-fg/10 p-3 text-xs flex items-start gap-3">
-          <CheckCircle2 className="h-4 w-4 text-status-ok-fg shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-status-ok-fg">
-              Replay queued for {lastReplay.job_key} (attempt {lastReplay.attempt})
-            </p>
-            <p className="flex items-center gap-1.5 font-mono text-foreground mt-0.5">
-              <span className="truncate">New execution: {lastReplay.execution_id}</span>
-              <CopyButton value={lastReplay.execution_id} label="Copy new execution id" />
-            </p>
+      <aside className="master" aria-label="Dead letters list">
+        <div className="master-filter" style={{ padding: '12px 14px' }}>
+          <div className="row between">
+            <span className="mono dim" style={{ fontSize: 12 }}>
+              {items?.length ?? 0} pending
+            </span>
           </div>
-          <button
-            onClick={() => setLastReplay(null)}
-            aria-label="Dismiss replay confirmation"
-            className="text-muted-foreground hover:text-foreground p-0.5"
-          >
-            <span aria-hidden="true">×</span>
-          </button>
-        </div>
-      )}
-      {isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
-
-      {!isLoading && items?.length === 0 && (
-        <EmptyState
-          icon={<MailX className="h-10 w-10" />}
-          title="No dead letters"
-          description="Failed executions that exhaust retries appear here"
-        />
-      )}
-
-      {(items?.length ?? 0) > 0 && (
-        <div className="rounded-lg border border-border bg-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                {['Job', 'Attempt', 'Error', 'Created', ''].map((h, i) => (
-                  <th key={i} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items?.map((dl) => (
-                <tr
-                  key={dl.id}
-                  onClick={() => setSelectedId(dl.id)}
-                  className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-accent/40 ${selectedId === dl.id ? 'bg-accent/60' : ''}`}
-                >
-                  <td className="px-3 py-2.5">
-                    <span className="flex items-center gap-1.5 font-mono text-xs">
-                      {dl.dead_reason === 'max_retries_exceeded' && (
-                        <TriangleAlert className="h-3.5 w-3.5 text-destructive shrink-0" aria-label="Max retries exceeded" />
-                      )}
-                      {dl.job_key}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{dl.attempt}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{truncate(dl.error, 50)}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">
-                    <RelativeTime iso={dl.created_at} />
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost" size="sm"
-                        onClick={() => handleRowReplay(dl)}
-                        disabled={replay.isPending}
-                        aria-label="Replay"
-                        title="Replay"
-                        className="h-7 w-7 p-0"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="sm"
-                        onClick={() => handleRowDelete(dl)}
-                        aria-label="Delete"
-                        className="h-7 w-7 p-0 hover:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <Sheet open={!!selectedId} onOpenChange={(o) => !o && setSelectedId(null)} title="Dead Letter Detail">
-        {selectedId && (() => {
-          const current = items?.find((i) => i.id === selectedId)
-          return (
-            <DeadLetterDetail
-              id={selectedId}
-              onReplay={(result) => {
-                setLastReplay({ job_key: current?.job_key ?? '', ...result })
+          {lastReplay && (
+            <div
+              className="row"
+              style={{
+                marginTop: 10,
+                gap: 8,
+                padding: '8px 10px',
+                borderRadius: 'var(--r-2)',
+                background: 'var(--success-bg)',
+                border: '1px solid var(--success)',
+                fontSize: 12,
+                alignItems: 'flex-start',
               }}
-              onClose={() => setSelectedId(null)}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: 'var(--success)' }} />
+              <div className="grow" style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, color: 'var(--success)' }}>
+                  Replay queued for {lastReplay.job_key} · attempt {lastReplay.attempt}
+                </p>
+                <p className="row mono dim" style={{ margin: '2px 0 0', gap: 4, alignItems: 'center' }}>
+                  <span className="ellipsis">{lastReplay.execution_id}</span>
+                  <CopyButton value={lastReplay.execution_id} label="Copy new execution id" />
+                </p>
+              </div>
+              <button
+                onClick={() => setLastReplay(null)}
+                aria-label="Dismiss replay confirmation"
+                className="btn icon sm ghost"
+                style={{ padding: 0 }}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="master-list">
+          {isLoading ? (
+            <div className="dim center" style={{ padding: 30 }}>Loading…</div>
+          ) : (items?.length ?? 0) === 0 ? (
+            <EmptyState
+              icon={<MailX className="h-10 w-10" />}
+              title="No dead letters"
+              description="Failed executions that exhaust retries appear here"
             />
-          )
-        })()}
-      </Sheet>
+          ) : (
+            items?.map((dl) => {
+              const active = dl.id === selectedId
+              return (
+                <button
+                  key={dl.id}
+                  type="button"
+                  className={`job-row${active ? ' active' : ''}`}
+                  onClick={() => setSelectedId(dl.id)}
+                >
+                  <div className="row between">
+                    <span className="key ellipsis row" style={{ minWidth: 0, flex: 1, gap: 6, alignItems: 'center' }}>
+                      {dl.dead_reason === 'max_retries_exceeded' && (
+                        <TriangleAlert size={13} style={{ color: 'var(--error)', flexShrink: 0 }} aria-label="Max retries exceeded" />
+                      )}
+                      <span className="ellipsis">{dl.job_key}</span>
+                    </span>
+                    <span className="dim mono" style={{ fontSize: 10.5, flexShrink: 0 }}>
+                      attempt {dl.attempt}
+                    </span>
+                  </div>
+                  <div className="dim ellipsis" style={{ fontSize: 11.5 }}>
+                    {truncate(dl.error, 80)}
+                  </div>
+                  <div className="row between">
+                    <span className="dim mono" style={{ fontSize: 10.5 }}>
+                      <RelativeTime iso={dl.created_at} />
+                    </span>
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </aside>
+
+      <section className="detail" aria-label="Dead letter detail">
+        {selectedDL ? (
+          <DeadLetterDetail
+            id={selectedDL.id}
+            onReplay={(result) => {
+              setLastReplay({ job_key: selectedDL.job_key, ...result })
+              setSelectedId(null)
+            }}
+            onClose={() => setSelectedId(null)}
+            onDelete={() => handleRowDelete(selectedDL)}
+          />
+        ) : (
+          <EmptyState
+            icon={<MousePointerClick className="h-10 w-10" />}
+            title="Select a dead letter"
+            description="Pick an entry on the left to see the failure envelope, error and metadata."
+          />
+        )}
+      </section>
     </div>
   )
 }

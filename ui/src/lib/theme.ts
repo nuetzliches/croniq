@@ -20,7 +20,11 @@ function resolve(pref: ThemePref): ResolvedTheme {
 }
 
 function applyResolved(resolved: ResolvedTheme) {
+  // .dark drives the legacy Tailwind @theme overrides; data-theme drives
+  // the new design tokens in ui/src/styles/tokens.css. Both must stay in
+  // sync until the legacy theme is fully retired.
   document.documentElement.classList.toggle('dark', resolved === 'dark')
+  document.documentElement.dataset.theme = resolved
 }
 
 function persist(pref: ThemePref) {
@@ -57,7 +61,7 @@ export function useTheme() {
     setPref((p) => (p === 'light' ? 'dark' : p === 'dark' ? 'auto' : 'light'))
   }
 
-  return { theme: resolved, pref, toggle }
+  return { theme: resolved, pref, toggle, setPref }
 }
 
 // Apply theme immediately on module load to avoid a flash of the wrong

@@ -71,10 +71,27 @@ pub struct RuntimeConfig {
     pub pull_api: Option<PullApiConfig>,
     pub observability: Option<ObservabilityConfig>,
     pub mcp: Option<McpConfig>,
+    /// OIDC/SSO provider. None unless an `oidc {}` block is present.
+    /// Only `client_secret` stays out of the DSL — server boot pulls
+    /// it from `CRONIQ_OIDC_CLIENT_SECRET` and merges with this struct.
+    pub oidc: Option<OidcDslConfig>,
     /// Server-wide opt-in flags. Absent block ⇒ all defaults (deny).
     pub policy: PolicyConfig,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
+}
+
+/// OIDC settings parsed from the Croniqfile `oidc {}` block. All
+/// fields are optional in the DSL; the server merges them with the
+/// `CRONIQ_OIDC_*` env vars at startup (DSL wins where both are set).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OidcDslConfig {
+    pub issuer: Option<String>,
+    pub client_id: Option<String>,
+    pub redirect_url: Option<String>,
+    pub default_role: Option<String>,
+    pub provider_name: Option<String>,
+    pub post_login_redirect: Option<String>,
 }
 
 /// HTTP MCP-server configuration. Absent block ⇒ default (enabled).
@@ -317,6 +334,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut pull_api = None;
     let mut observability = None;
     let mut mcp: Option<McpConfig> = None;
+    let mut oidc: Option<OidcDslConfig> = None;
     let mut policy = PolicyConfig::default();
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
@@ -560,6 +578,23 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     }
                 }
             }
+            Item::Oidc(o) => {
+                let mut cfg = OidcDslConfig::default();
+                for d in &o.directives {
+                    let Some(a) = d.args.first() else { continue };
+                    let v = resolve_str(a, &vars);
+                    match d.key.value.as_str() {
+                        "issuer" => cfg.issuer = Some(v),
+                        "client_id" => cfg.client_id = Some(v),
+                        "redirect_url" => cfg.redirect_url = Some(v),
+                        "default_role" => cfg.default_role = Some(v),
+                        "provider_name" => cfg.provider_name = Some(v),
+                        "post_login_redirect" => cfg.post_login_redirect = Some(v),
+                        _ => {}
+                    }
+                }
+                oidc = Some(cfg);
+            }
             _ => {}
         }
     }
@@ -569,6 +604,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         pull_api,
         observability,
         mcp,
+        oidc,
         policy,
         jobs,
         calendars,

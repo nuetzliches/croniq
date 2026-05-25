@@ -6,6 +6,198 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **OpenAPI 3.1 spec covers the PR-A1…B1b surface (PR-B1c).** Every
+  new endpoint added between PR-A1 and PR-B1b is documented in
+  `openapi.yaml` — User CRUD, Invitations, Password-Reset, TOTP,
+  PATs, OIDC (login + callback + config), the MFA step-up exchange,
+  Audit-Log read, per-job stats, throughput, failure heatmap. Schema
+  components include `User`, `Role`, `Invitation`, `PersonalAccessToken`,
+  `TotpSetupResponse`, `OidcConfigResponse`, `MfaRequiredResponse`,
+  `AuditEvent`, `JobStatsResponse`, `ThroughputResponse`, and
+  `FailureHeatmap`. SDK generators and external API clients can pick
+  up the new surface mechanically.
+
+- **UI login flow understands the MFA step-up + OIDC button (PR-B2).**
+  `LoginPage` now drives the two-step exchange added in PR-A3: when
+  `/v1/auth/login` returns `{requires_totp, mfa_token}` it switches
+  to a 6-digit code prompt with an inline "Use recovery code"
+  toggle. An "OIDC sign-in" button appears when
+  `/v1/auth/oidc/config` reports the provider is configured;
+  otherwise the SSO panel stays hidden so the page is unchanged for
+  password-only deploys. New TypeScript types in
+  `ui/src/api/types.ts` cover the full PR-A1…B1 surface (User,
+  Invitation, PAT, TotpSetupResponse, AuditEvent, JobStatsResponse,
+  ThroughputResponse, FailureHeatmap).
+
+- **Audit log + per-job stats + throughput + failure heatmap (PR-B1).**
+  Backend foundation for the redesigned Dashboard / Insights pages.
+  Read-only aggregations, all computed on-the-fly from the existing
+  executions table (no extra materialisation yet).
+  - `GET /v1/audit` — list events with optional filters
+    (`actor_type`, `actor_id`, `action`, `target_type`, `target_id`,
+    `since`, `until`, `limit ≤ 1000`). Scope: `users:admin` or
+    `admin` wildcard.
+  - `GET /v1/jobs/{job_key}/stats?days=N` — total / completed /
+    failed / dead, success_rate, p50/p95/p99 duration, last failure
+    timestamp. Default window 7 days, clamped to [1, 90].
+  - `GET /v1/executions/throughput?window=24h|7d|30d` — stacked
+    `{ok, err}` buckets aligned to UTC hour/day starts.
+  - `GET /v1/insights/failures?days=N` — 2D heatmap rows (day × hour
+    of UTC), plus top-3 hourly hotspots. Default 28 days,
+    clamped to [7, 90].
+  New `audit_log` table (migration 016) — append-only, indexed on
+  `created_at`, `(target_type, target_id)`, `(actor_type, actor_id)`.
+  Mutation handlers in subsequent PRs will call
+  `audit::record(...)` to populate it.
+
+- **Optional SMTP transport for invitations + password-reset (PR-A6).**
+  New cargo feature `smtp` gates a lettre-backed `SmtpSender`. When
+  the feature is built in AND `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM`
+  are set, outbound mail is sent for real; otherwise the `NoopSender`
+  default keeps working and the token URL still comes back in the
+  API response (the explicit-fallback mode the operator picked over
+  SMTP-mandatory in the spike Q&A). URL format follows lettre's
+  conventions: `smtp://user:pass@host:587/?tls=required`.
+
+- **OIDC/SSO login (PR-A5).** Manual Authorization-Code flow against
+  any OpenID-Connect provider with Discovery — tested mentally
+  against Authentik, Keycloak, Auth0. New env-only config (a DSL
+  `oidc {}` block follows in PR-A5b):
+  - `CRONIQ_OIDC_ISSUER` — base URL, `.well-known/openid-configuration` is appended
+  - `CRONIQ_OIDC_CLIENT_ID`, `CRONIQ_OIDC_CLIENT_SECRET`, `CRONIQ_OIDC_REDIRECT_URL`
+  - `CRONIQ_OIDC_DEFAULT_ROLE` (default `viewer`), `CRONIQ_OIDC_PROVIDER_NAME` (default `oidc`)
+  - When any required var is missing, OIDC stays disabled and the
+    routes return 404.
+
+  New endpoints:
+  - `GET /v1/auth/oidc/config` — read-only metadata (`enabled`,
+    `provider_name`, `login_url`) for the login UI's "Sign in with SSO" button.
+  - `GET /v1/auth/oidc/login` — 302-redirect to the IdP's authorize
+    URL. Random `state` + `nonce` persisted in `oidc_pending_logins`
+    (TTL 10 min, single-use take-and-delete).
+  - `GET /v1/auth/oidc/callback?code=&state=` — atomic state lookup,
+    token exchange, JWKS-based ID-token verify (RS256/384/512), nonce
+    check, userinfo fetch. Returns the standard `TokenResponse`.
+
+  JIT user provisioning: first sign-in creates a `users` row with
+  `role=viewer` (or whatever `CRONIQ_OIDC_DEFAULT_ROLE` sets). The
+  link lives in `oidc_identities (provider, subject) → user_id`.
+  Username collision with an existing local password user is refused
+  with 409 to prevent silent account hijack.
+
+  Schema: `015_oidc.sql` (oidc_identities + oidc_pending_logins).
+  Dependencies: `reqwest` (rustls), `jsonwebtoken`, `base64`, `rand`.
+  `auth_method=oidc` is set on every OIDC-issued token so the audit
+  log distinguishes SSO sessions from password ones.
+
+- **Personal Access Tokens (PR-A4).** User-bound API credentials,
+  distinct from `api_keys` (which belong to service identities). PATs
+  carry a stable `user_id`, a human label ("laptop", "ci-personal"),
+  and a scope subset of the owning user's role's default-scope set —
+  a Viewer can't mint a PAT with `jobs:write`, the API refuses with 403.
+  - `POST /v1/users/me/tokens` — issue. Raw `croniq_pat_…` token is
+    returned ONCE; only the SHA-256 hash is persisted.
+  - `GET /v1/users/me/tokens` — list the caller's tokens.
+  - `DELETE /v1/users/me/tokens/{id}` — revoke.
+  - Auth middleware accepts `Authorization: Bearer croniq_pat_…` and
+    the explicit `Authorization: PAT …` header. `last_used_at` is
+    stamped best-effort on every successful request.
+  New migration: `014_personal_access_tokens.sql`. `CallerType::User`
+  with `auth_method: pat` distinguishes PAT-authenticated requests
+  from password-authenticated sessions in the audit log.
+
+- **TOTP/2FA with single-use recovery codes (PR-A3).** Users can
+  enable a second factor in self-service. The login flow becomes
+  two-step when 2FA is on:
+  - `POST /v1/auth/login` returns
+    `{ requires_totp: true, mfa_token, mfa_token_expires_in }` instead
+    of access tokens. The MFA token is a short-lived JWT
+    (`purpose: "mfa"`, 5 min TTL) that `validate_token` rejects for
+    every other endpoint.
+  - `POST /v1/auth/login/totp` exchanges the MFA token + a 6-digit
+    code (or single-use recovery code) for normal access + refresh
+    tokens.
+  - `POST /v1/users/me/totp/setup` returns the base32 seed, an
+    `otpauth://` URL for QR-code rendering, and 10 fresh recovery
+    codes (8 lowercase alphanumerics each). Idempotent until
+    confirmed.
+  - `POST /v1/users/me/totp/confirm` (body `{ code }`) flips
+    `enabled=true`.
+  - `POST /v1/users/me/totp/disable` (body `{ password }`) requires
+    fresh password proof and wipes the secret + all recovery codes.
+  - `POST /v1/users/me/totp/recovery-codes/regenerate` (body
+    `{ password }`) mints a new set, invalidating the previous batch.
+  TOTP secrets are wrapped at rest with AES-256-GCM using a key
+  derived from `CRONIQ_JWT_SECRET` via HKDF-SHA256
+  ([`croniq-auth::crypto`](crates/croniq-auth/src/crypto.rs)).
+  Recovery codes are SHA-256 hashed and case-/whitespace-normalised
+  for paste-from-PDF UX. New migration:
+  `013_totp_and_recovery.sql`.
+
+- **User-CRUD + Invitations + Password-Reset (PR-A2).** New endpoints
+  build on the role model from PR-A1 so a workspace admin can grow the
+  team beyond the seeded admin user:
+  - `GET/POST /v1/users`, `GET/PATCH/DELETE /v1/users/{id}` — admin-only.
+    PATCH and DELETE refuse with 409 Conflict when the operation would
+    leave zero active admins (role-demotion, deactivation, deletion).
+  - `GET /v1/users/me`, `PATCH /v1/users/me`, `POST /v1/users/me/change-password`
+    — self-only (display name + email + own password).
+  - `POST/GET /v1/invitations`, `DELETE /v1/invitations/{id}` (admin),
+    `POST /v1/invitations/accept` (public, body `{token, username, password}`).
+    Invitations carry a single-use SHA-256-hashed token; the raw token
+    is returned **once** in the create response together with the
+    pre-built `accept_url`. Expiry: 7 days.
+  - `POST /v1/auth/password-reset/request` (always returns 202 to avoid
+    user-enumeration), `POST /v1/auth/password-reset/confirm`. Reset
+    tokens live 1 hour, single-use.
+  - New `users:admin` scope. `admin` wildcard still implies it.
+  - New migration `012_invitations_and_resets.sql`.
+  ([`crates/croniq-server/src/api/users.rs`](crates/croniq-server/src/api/users.rs),
+  [`invitations.rs`](crates/croniq-server/src/api/invitations.rs),
+  [`password_reset.rs`](crates/croniq-server/src/api/password_reset.rs))
+
+- **`EmailSender` trait with `NoopSender` default.** Outbound mail is
+  abstracted behind a trait so PR-A6 can drop in an `lettre`-backed
+  `SmtpSender` behind the `smtp` cargo feature. Until then, every
+  invite + reset endpoint returns the token URL in the API response
+  (and logs an audit line) so admins can deliver it out-of-band.
+  ([`crates/croniq-server/src/email.rs`](crates/croniq-server/src/email.rs))
+
+- **Multi-user identity model with role-based scopes** — new `users` table
+  (migration 011) splits identity from credentials. Three roles map to
+  pre-defined scope sets via `croniq_auth::default_scopes_for_role`:
+  `admin` (wildcard, unchanged), `operator` (read everything + write
+  jobs/schedules/calendars + trigger), `viewer` (read-only across the
+  board). The login handler embeds the user's role-scopes in the JWT
+  instead of the previous hardcoded `["admin"]`; existing single-admin
+  deploys are backfilled into `users` with `role=admin` so behaviour is
+  preserved. User-CRUD endpoints (`/v1/users`, `/v1/users/me`, invite
+  flow, TOTP, OIDC) land in follow-up PRs A2-A5.
+  ([`crates/croniq-store/src/migrations/011_users.sql`](crates/croniq-store/src/migrations/011_users.sql),
+  [`crates/croniq-auth/src/context.rs`](crates/croniq-auth/src/context.rs))
+
+- **`CallerContext` now carries `user_id`, `role`, and `auth_method`.**
+  Audit-log consumers, alert routing, and the upcoming `/v1/users/me`
+  endpoint depend on knowing which user (not just which client) made a
+  request, and which auth method was used (password / API key / PAT /
+  OIDC — the latter two reserved for follow-up PRs but enumerated now
+  to avoid a breaking JSON change later).
+  ([`crates/croniq-auth/src/context.rs`](crates/croniq-auth/src/context.rs))
+
+### Changed
+
+- **BREAKING — JWT issuer hard-cut.** The issuer claim moves from
+  `"croniq"` to `"croniq-v1"` to invalidate tokens minted before the
+  Multi-User schema landed (those tokens lack the new `user_id` / `role` /
+  `auth_method` claims). All UI sessions are forced to re-login on the
+  first request after upgrade; API-key authentication is unaffected
+  because it bypasses JWT validation. The bump is centralised in
+  `croniq_auth::JWT_ISSUER` — future migrations follow the same `-vN`
+  pattern.
+  ([`crates/croniq-auth/src/jwt.rs`](crates/croniq-auth/src/jwt.rs))
+
 ## [0.14.0] - 2026-05-21
 
 ### Changed

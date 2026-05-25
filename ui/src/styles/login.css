@@ -1,0 +1,644 @@
+/* ────────────────────────────────────────────────────────────
+   Croniq design — login page (operator-console two-column).
+   Ported from /tmp/croniq-design/croniq-ui/project/styles.css.
+   ──────────────────────────────────────────────────────────── */
+
+.login {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Marketing background — always-on, spans the whole .login viewport
+ * so the form (on the right pane in desktop, the only column on
+ * mobile) sits on the same operator-console palette as the left
+ * stage instead of cutting off at the gutter. */
+.login-stage-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% in oklch at 18% 0%, oklch(0.32 0.13 285 / 0.40) 0%, oklch(0.32 0.13 285 / 0) 60%),
+    radial-gradient(ellipse 60% 50% in oklch at 110% 90%, oklch(0.36 0.18 250 / 0.32) 0%, oklch(0.36 0.18 250 / 0) 55%),
+    linear-gradient(180deg, oklch(0.13 0.020 265) 0%, oklch(0.10 0.015 265) 100%);
+  pointer-events: none;
+}
+.login-stage-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(oklch(1 0 0 / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(ellipse 100% 80% at 50% 40%, black 30%, transparent 80%);
+}
+/* Stage spotlights — large coloured radial blobs that drift across
+ * the marketing background to give the page a slow, alive feel.
+ * The two spots use different sizes, colours and easings so they
+ * never sync. Spot A is the warm purple key light, spot B the
+ * cooler cyan fill. translate(Xvw, Yvh) keeps the motion in
+ * viewport units so the path covers both desktop and mobile
+ * stages without re-tuning. */
+.login-spot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+.login-spot-a {
+  width: 700px;
+  height: 700px;
+  margin: -350px 0 0 -350px;
+  background: radial-gradient(circle in oklch,
+    oklch(0.62 0.18 285 / 0.7) 0%,
+    oklch(0.62 0.18 285 / 0)   100%
+  );
+  filter: blur(120px);
+  animation: croniq-spot-a 90s linear infinite;
+}
+.login-spot-b {
+  width: 600px;
+  height: 600px;
+  margin: -300px 0 0 -300px;
+  background: radial-gradient(circle in oklch,
+    oklch(0.60 0.16 230 / 0.65) 0%,
+    oklch(0.60 0.16 230 / 0)    100%
+  );
+  filter: blur(100px);
+  animation: croniq-spot-b 130s linear infinite;
+}
+
+@keyframes croniq-spot-a {
+  0%   { transform: translate(-15vw, -20vh); }
+  25%  { transform: translate( 20vw, -15vh); }
+  50%  { transform: translate( 25vw,  22vh); }
+  75%  { transform: translate(-10vw,  18vh); }
+  100% { transform: translate(-15vw, -20vh); }
+}
+@keyframes croniq-spot-b {
+  0%   { transform: translate( 22vw,  18vh); }
+  25%  { transform: translate(-18vw,  15vh); }
+  50%  { transform: translate(-20vw, -18vh); }
+  75%  { transform: translate( 18vw, -20vh); }
+  100% { transform: translate( 22vw,  18vh); }
+}
+/* ── light mode overrides ──────────────────────────────────── */
+[data-theme="light"] .login-stage-bg {
+  background:
+    radial-gradient(ellipse 80% 60% in oklch at 18% 0%, oklch(0.78 0.10 285 / 0.30) 0%, oklch(0.78 0.10 285 / 0) 60%),
+    radial-gradient(ellipse 60% 50% in oklch at 110% 90%, oklch(0.75 0.12 230 / 0.25) 0%, oklch(0.75 0.12 230 / 0) 55%),
+    linear-gradient(180deg, oklch(0.95 0.008 265) 0%, oklch(0.92 0.010 265) 100%);
+}
+[data-theme="light"] .login-stage-bg::before {
+  background-image:
+    linear-gradient(oklch(0 0 0 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0 0 0 / 0.05) 1px, transparent 1px);
+}
+[data-theme="light"] .login-spot {
+  mix-blend-mode: multiply;
+}
+[data-theme="light"] .login-spot-a {
+  background: radial-gradient(circle in oklch,
+    oklch(0.72 0.16 285 / 0.45) 0%,
+    oklch(0.72 0.16 285 / 0)    100%
+  );
+}
+[data-theme="light"] .login-spot-b {
+  background: radial-gradient(circle in oklch,
+    oklch(0.70 0.14 230 / 0.40) 0%,
+    oklch(0.70 0.14 230 / 0)    100%
+  );
+}
+[data-theme="light"] .login-stat {
+  background: oklch(0.99 0.003 265);
+  border-color: oklch(0 0 0 / 0.08);
+}
+[data-theme="light"] .login-console {
+  background: oklch(0.18 0.016 265);
+  border-color: oklch(0 0 0 / 0.12);
+  --fg:       oklch(0.965 0.004 265);
+  --fg-1:     oklch(0.86  0.008 265);
+  --fg-2:     oklch(0.70  0.012 265);
+  --fg-3:     oklch(0.54  0.012 265);
+  --fg-mute:  oklch(0.42  0.012 265);
+  --info:     oklch(0.74  0.13  230);
+  --success:  oklch(0.74  0.15  152);
+  --warn:     oklch(0.80  0.16   82);
+  --error:    oklch(0.68  0.20   25);
+  --accent-3: oklch(0.74  0.13  285);
+}
+[data-theme="light"] .login-console-head {
+  background: oklch(0.22 0.018 265);
+  border-bottom-color: oklch(1 0 0 / 0.08);
+}
+
+/* Respect user motion preferences — keep the spots in their
+ * resting positions instead of looping. */
+@media (prefers-reduced-motion: reduce) {
+  .login-spot-a,
+  .login-spot-b {
+    animation: none;
+  }
+  .login-spot-a { transform: translate(20vw, 25vh); }
+  .login-spot-b { transform: translate(75vw, 70vh); }
+}
+
+/* Compact strip only matters at the narrow breakpoint; hidden by
+ * default. Responsive overrides live at the BOTTOM of this file so
+ * they win in the cascade against the default rules. */
+.login-compact-strip { display: none; }
+
+.login-stage {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  padding: 48px 40px 48px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  align-items: flex-end;
+  /* No bg here — the marketing palette lives on .login-stage-bg
+   * so it can extend across the form pane too. */
+}
+
+.login-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 520px;
+}
+.login-mark {
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 4px 16px -4px oklch(0.66 0.19 285 / 0.5), inset 0 1px 0 oklch(1 0 0 / 0.15);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: white;
+}
+.login-name {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.login-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 520px;
+}
+.login-tag {
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  margin: 0;
+  color: var(--fg);
+  text-wrap: balance;
+}
+.login-tag-accent {
+  color: var(--accent-3);
+  text-shadow: 0 0 28px oklch(0.66 0.19 285 / 0.45);
+}
+[data-theme="light"] .login-tag-accent {
+  color: var(--accent);
+  text-shadow: none;
+}
+.login-sub {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+  max-width: 480px;
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.login-stats {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+}
+.login-stat {
+  padding: 14px 16px;
+  border-radius: var(--r-3);
+  border: 1px solid var(--border);
+  background: oklch(0.13 0.013 265 / 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.login-stat-label {
+  font-family: var(--font-mono-app);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.login-stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono-app);
+}
+.login-stat-sub {
+  font-size: 11px;
+  color: var(--fg-3);
+  font-family: var(--font-mono-app);
+}
+.login-stat-up   { color: var(--success); }
+.login-stat-warn { color: var(--warn); }
+.login-stat-down { color: var(--error); }
+
+.login-console {
+  position: relative;
+  background: oklch(0.08 0.01 265 / 0.80);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-4);
+  box-shadow: 0 24px 60px -20px oklch(0 0 0 / 0.6), 0 2px 0 oklch(1 0 0 / 0.04) inset;
+  overflow: hidden;
+  width: 100%;
+  max-width: 520px;
+  font-family: var(--font-mono-app);
+  font-size: 11.5px;
+}
+.login-console-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: oklch(0.10 0.012 265 / 0.7);
+  border-bottom: 1px solid var(--border);
+}
+.login-traffic { display: flex; gap: 6px; }
+.login-traffic span {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  display: block;
+}
+.login-console-body {
+  padding: 10px 14px 12px;
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.55;
+}
+.login-console-line {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity .4s var(--easing);
+}
+.login-console-ts {
+  color: var(--fg-mute);
+  width: 64px;
+  flex-shrink: 0;
+}
+.login-console-line .lvl-info  { color: var(--info);    width: 38px; display: inline-block; flex-shrink: 0; }
+.login-console-line .lvl-warn  { color: var(--warn);    width: 38px; display: inline-block; flex-shrink: 0; }
+.login-console-line .lvl-error { color: var(--error);   width: 38px; display: inline-block; flex-shrink: 0; }
+.login-console-line .lvl-debug { color: var(--fg-3);    width: 38px; display: inline-block; flex-shrink: 0; }
+.login-console-cursor { opacity: 1 !important; color: var(--fg-2); }
+.login-blink {
+  animation: croniq-blink 1s steps(2) infinite;
+  color: var(--accent-3);
+  margin-left: 4px;
+}
+@keyframes croniq-blink { to { opacity: 0; } }
+
+/* ── hero verb rotation ────────────────────────────────────── */
+.login-tag-verb {
+  display: inline-block;
+  animation: croniq-verb-in .55s var(--easing) both;
+}
+@keyframes croniq-verb-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── hero intro (one-shot on first render) ─────────────────── */
+.login-hero > * {
+  opacity: 0;
+  animation: croniq-hero-up .6s var(--easing) both;
+}
+.login-hero > *:nth-child(2) { animation-delay: .12s; }
+.login-hero > *:nth-child(3) { animation-delay: .22s; }
+@keyframes croniq-hero-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── demo console (replaces fake log stream) ───────────────── */
+.login-console-output {
+  animation: croniq-tip-in .35s var(--easing) both;
+}
+.login-console-output .lvl-ok {
+  width: 38px;
+  display: inline-block;
+  flex-shrink: 0;
+  color: var(--success);
+}
+.login-console-body.login-console-fading > .login-console-line {
+  animation: croniq-tip-out .3s var(--easing) both;
+}
+@keyframes croniq-tip-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes croniq-tip-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* Countdown bar that shrinks during the hold phase to visualise how
+ * long until the next demo. The animation pauses while the user
+ * hovers (the React component drives animation-play-state). */
+.login-console-countdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), oklch(0.78 0.20 240));
+  transform-origin: left center;
+  animation-name: croniq-console-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes croniq-console-countdown {
+  from { transform: scaleX(1); opacity: 0.85; }
+  to   { transform: scaleX(0); opacity: 0.4; }
+}
+/* Subtle wash that pulses while paused so it's clear hover is doing
+ * something even when the bar is frozen. */
+.login-console:hover {
+  outline: 1px solid oklch(0.66 0.19 285 / 0.35);
+  outline-offset: 0;
+}
+
+.login-foot {
+  position: relative;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--fg-3);
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 520px;
+}
+
+/* ── form side ─────────────────────────────────────────────── */
+.login-formwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  gap: 18px;
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+
+.login-form {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: relative;
+  /* Card chrome — glass over the marketing background so the
+   * drifting spots tint the form gently. Fallback opaque
+   * appearance when backdrop-filter isn't supported. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-4);
+  padding: 28px 28px 24px;
+  box-shadow: var(--shadow);
+}
+.login-form.shake { animation: croniq-shake .4s; }
+@keyframes croniq-shake {
+  0%, 100%  { transform: translateX(0); }
+  20%, 60%  { transform: translateX(-6px); }
+  40%, 80%  { transform: translateX(6px); }
+}
+.login-form-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  margin: 0;
+}
+.login-form-sub {
+  color: var(--fg-2);
+  font-size: 13.5px;
+  margin: -10px 0 0;
+}
+
+.login-method-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+}
+.login-method-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-2);
+  font-size: 12.5px;
+  color: var(--fg-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background .12s var(--easing), color .12s var(--easing);
+  border: 0;
+  font-family: inherit;
+}
+.login-method-tab:hover { color: var(--fg); background: var(--hover); }
+.login-method-tab.active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border);
+}
+
+.login-sso-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  border-radius: var(--r-3);
+}
+.login-sso-icon {
+  width: 34px; height: 34px;
+  border-radius: var(--r-2);
+  background: var(--accent-bg);
+  color: var(--accent-3);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: var(--font-mono-app);
+}
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--divider);
+}
+
+.login-recovery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background .12s var(--easing), color .12s var(--easing);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+}
+.login-recovery:hover { background: var(--hover); color: var(--fg); border-color: var(--border-2); }
+
+.login-formfoot {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--fg-mute);
+  font-family: var(--font-mono-app);
+  justify-content: center;
+}
+
+/* ────────────────────────────────────────────────────────────
+   Responsive overrides — placed at the bottom of the file so
+   they win in the cascade against the defaults above. (The
+   default rule for .login-stage etc. would otherwise re-assert
+   display:flex after our @media display:none.)
+   ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  /* Stack to a single column. The marketing bg layer is always on
+   * (top of the file), so the form lands on the same palette here
+   * without re-declaring it. */
+  .login {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .login-stage { display: none !important; }
+
+  .login-formwrap {
+    padding: 20px 20px 32px;
+    /* Top-aligned so brand → stats → form stack with USERNAME above
+     * the fold. The centered layout from desktop pushes the form
+     * below the initial viewport on phones. */
+    justify-content: flex-start;
+    gap: 14px;
+  }
+  /* The compact strip already carries the brand mark + name. Hide
+   * the form's own .login-mark at narrow viewport so the logo
+   * doesn't appear twice on the page. */
+  .login-formwrap > .login-form > .login-mark {
+    display: none;
+  }
+
+  .login-compact-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 400px;
+  }
+  .login-compact-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .login-compact-brand .login-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+  .login-compact-brand .login-name {
+    font-size: 16px;
+  }
+  /* Slimmer stat tiles in the compact strip. */
+  .login-compact-strip .login-stats {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .login-compact-strip .login-stat {
+    padding: 9px 10px;
+  }
+  .login-compact-strip .login-stat-value {
+    font-size: 18px;
+  }
+  .login-compact-strip .login-stat-sub {
+    font-size: 10.5px;
+  }
+
+  /* Tighter vertical rhythm so USERNAME lands above the fold. */
+  .login-form { gap: 14px; padding: 22px 22px 20px; }
+  .login-form-title { font-size: 20px; }
+}
+
+@media (max-width: 380px) {
+  /* Sub-380 px (narrow phones in portrait): drop status tile to keep
+   * the two most useful stats prominent. */
+  .login-compact-strip .login-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .login-compact-strip .login-stat:nth-child(3) {
+    display: none;
+  }
+}
+

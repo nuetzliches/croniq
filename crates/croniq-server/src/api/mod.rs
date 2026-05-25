@@ -1,16 +1,24 @@
 //! Extended HTTP API: runner Pull-API, auth, and management endpoints.
 
 pub mod admin;
+pub mod audit;
 pub mod auth_endpoints;
 pub mod auth_middleware;
 pub mod calendars;
 pub mod dashboard;
 pub mod dead_letters;
 pub mod execution_logs;
+pub mod invitations;
 pub mod jobs;
+pub mod oidc;
+pub mod password_reset;
+pub mod pat;
 pub mod runners_sse;
 pub mod schedules;
+pub mod stats;
 pub mod tags;
+pub mod totp;
+pub mod users;
 pub mod work;
 
 use std::collections::HashMap;
@@ -39,6 +47,8 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
+use crate::email::EmailSender;
+use crate::oidc::SharedOidcProvider;
 use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
@@ -86,6 +96,17 @@ pub struct ServerState {
     /// Counters for `croniq_config_reload_total`, incremented by both the
     /// file-watcher reload path and the admin reload endpoint.
     pub reload_counters: Arc<ReloadCounters>,
+    /// Outbound email sender — used for invitations and password resets.
+    /// Defaults to `NoopSender` (logs but doesn't deliver); SMTP backend
+    /// lands in PR-A6 behind the `smtp` cargo feature.
+    pub email_sender: Arc<dyn EmailSender>,
+    /// Public base URL used to build invite + reset links. Read from
+    /// `CRONIQ_APP_URL` at startup; defaults to `http://localhost:4000`
+    /// for fresh installs. The admin can override per environment.
+    pub app_base_url: String,
+    /// OIDC provider for SSO login. `None` disables the OIDC routes.
+    /// Discovered once at startup (see `oidc::OidcProvider::discover`).
+    pub oidc: SharedOidcProvider,
 }
 
 impl ServerState {
@@ -106,6 +127,9 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 
@@ -129,6 +153,9 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 
@@ -151,6 +178,9 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 }
@@ -229,6 +259,11 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
+        // Job stats + insights + audit (PR-B1)
+        .route("/v1/jobs/{job_key}/stats", get(stats::handle_job_stats))
+        .route("/v1/executions/throughput", get(stats::handle_throughput))
+        .route("/v1/insights/failures", get(stats::handle_failure_heatmap))
+        .route("/v1/audit", get(audit::handle_list))
         // Tags
         .route("/v1/tags", get(tags::handle_list_tags))
         // Executions + logs
@@ -257,18 +292,79 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/api-keys/{id}",
             delete(auth_endpoints::handle_revoke_api_key),
         )
+        // Users
+        .route(
+            "/v1/users",
+            get(users::handle_list).post(users::handle_create),
+        )
+        .route(
+            "/v1/users/me",
+            get(users::handle_get_me).patch(users::handle_update_me),
+        )
+        .route(
+            "/v1/users/me/change-password",
+            post(users::handle_change_password),
+        )
+        .route(
+            "/v1/users/{id}",
+            get(users::handle_get)
+                .patch(users::handle_update)
+                .delete(users::handle_delete),
+        )
+        // Invitations
+        .route(
+            "/v1/invitations",
+            get(invitations::handle_list).post(invitations::handle_create),
+        )
+        .route("/v1/invitations/{id}", delete(invitations::handle_revoke))
+        // TOTP / 2FA (self-service)
+        .route("/v1/users/me/totp/setup", post(totp::handle_setup))
+        .route("/v1/users/me/totp/confirm", post(totp::handle_confirm))
+        .route("/v1/users/me/totp/disable", post(totp::handle_disable))
+        .route(
+            "/v1/users/me/totp/recovery-codes/regenerate",
+            post(totp::handle_regenerate),
+        )
+        // Personal Access Tokens (self-service)
+        .route(
+            "/v1/users/me/tokens",
+            get(pat::handle_list).post(pat::handle_create),
+        )
+        .route("/v1/users/me/tokens/{id}", delete(pat::handle_revoke))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
         ));
 
-    // Public routes (health + version + auth login/refresh/logout)
+    // Public routes — no auth required.
+    //
+    // Health + version metadata (anonymous service discovery), auth
+    // login / refresh / logout, password-reset request/confirm, invite
+    // acceptance, and OIDC discovery/login/callback. Pre-login UI hits
+    // /health, /version and /v1/auth/oidc/config from this set.
     let public = Router::new()
         .route("/health", get(handle_health))
         .route("/version", get(handle_version))
         .route("/v1/auth/login", post(auth_endpoints::handle_login))
+        .route(
+            "/v1/auth/login/totp",
+            post(auth_endpoints::handle_totp_login),
+        )
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
-        .route("/v1/auth/logout", post(auth_endpoints::handle_logout));
+        .route("/v1/auth/logout", post(auth_endpoints::handle_logout))
+        .route(
+            "/v1/auth/password-reset/request",
+            post(password_reset::handle_request),
+        )
+        .route(
+            "/v1/auth/password-reset/confirm",
+            post(password_reset::handle_confirm),
+        )
+        .route("/v1/invitations/accept", post(invitations::handle_accept))
+        // OIDC/SSO
+        .route("/v1/auth/oidc/login", get(oidc::handle_login))
+        .route("/v1/auth/oidc/callback", get(oidc::handle_callback))
+        .route("/v1/auth/oidc/config", get(oidc::handle_config));
 
     let cors = tower_http::cors::CorsLayer::permissive();
 
@@ -920,6 +1016,9 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         (state, rx)
     }
@@ -992,6 +1091,9 @@ mod tests {
             "test-user",
             "test-client",
             croniq_auth::CallerType::User,
+            Some("test-user"),
+            Some(croniq_auth::Role::Admin),
+            croniq_auth::AuthMethod::Password,
             &["admin".into()],
         )
         .unwrap();
@@ -1084,6 +1186,9 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1149,6 +1254,9 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         let app = server_router(Arc::clone(&state));
 
