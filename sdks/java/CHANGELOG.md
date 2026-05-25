@@ -6,6 +6,18 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — PR-6 of [#133](https://github.com/nuetzliches/croniq/issues/133)
+
+- `io.croniq:runner-kotlin-ext` is now functional:
+  - Suspend-handler overloads of `CroniqRunner.Builder.addJob()` — extension
+    functions in Kotlin take `suspend (CroniqExecutionContext) -> Unit`.
+  - `runBlocking(Dispatchers.IO)` bridge: handlers run on the SDK's virtual
+    thread, suspend calls inside use the IO dispatcher.
+  - Cancellation bridge: a watcher coroutine polls the server-side
+    `CroniqCancellation` flag (50ms cadence) and cancels the runBlocking
+    root job, so suspending calls unwind via `CancellationException`.
+  - `croniqRunner { … }` top-level DSL — build, run, drain on exit.
+
 ### Added — PR-5 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - `io.croniq:runner-spring-boot-starter` is now functional:
