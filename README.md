@@ -437,6 +437,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Runners | `runners:read` (incl. SSE) | `runners:write` |
 | Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |
 | Dashboard forecast | `jobs:read` | — |
+| Failure alerts (`/v1/alerts/config`, `/v1/alerts/deliveries`) | `alerts:read` | — (rules + channels are DSL-managed; no write API yet) |
 | API clients | `api-clients:admin` | `api-clients:admin` |
 | API keys | — | `api-keys:admin` |
 | Admin reload | — | `admin` |

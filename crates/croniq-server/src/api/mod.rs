@@ -1,6 +1,7 @@
 //! Extended HTTP API: runner Pull-API, auth, and management endpoints.
 
 pub mod admin;
+pub mod alerts;
 pub mod audit;
 pub mod auth_endpoints;
 pub mod auth_middleware;
@@ -114,6 +115,13 @@ pub struct ServerState {
     /// the public password-login + password-reset endpoints return
     /// `403 password login disabled` and the UI hides the password form.
     pub password_login_enabled: bool,
+    /// Effective failure-alert configuration after
+    /// `alerts::merge_legacy_env_hook` (issue #140 PR-5). Backs the
+    /// read-only `GET /v1/alerts/config` endpoint. The
+    /// `ChannelKind::Webhook::signing_key` field is
+    /// `#[serde(skip_serializing)]` so the HMAC secret cannot leak
+    /// via this endpoint — verified by an integration test.
+    pub alerts: croniq_config::compile::AlertsConfig,
 }
 
 impl ServerState {
@@ -138,6 +146,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         })
     }
 
@@ -165,6 +174,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         })
     }
 
@@ -191,6 +201,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         })
     }
 }
@@ -266,6 +277,15 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route(
             "/v1/dead-letters/{id}/replay",
             post(dead_letters::handle_replay),
+        )
+        // Failure alerts (issue #140 PR-5): read-only view of the
+        // effective config + the per-fire delivery log. Channels and
+        // rules are DSL-managed today, so no POST/PUT/DELETE here.
+        .route("/v1/alerts/config", get(alerts::handle_get_config))
+        .route("/v1/alerts/deliveries", get(alerts::handle_list_deliveries))
+        .route(
+            "/v1/alerts/deliveries/{id}",
+            get(alerts::handle_get_delivery),
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
@@ -1033,6 +1053,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         });
         (state, rx)
     }
@@ -1204,6 +1225,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1273,6 +1295,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            alerts: croniq_config::compile::AlertsConfig::default(),
         });
         let app = server_router(Arc::clone(&state));
 
