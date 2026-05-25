@@ -42,7 +42,12 @@
         </module>
         <module name="TypeName"/>
         <module name="MethodName"/>
-        <module name="ConstantName"/>
+        <module name="ConstantName">
+            <!-- Allow `log` for SLF4J `private static final Logger log = ...`,
+                 plus the standard SCREAMING_SNAKE_CASE for everything else.
+                 Matches the universal Java convention used by Lombok's @Slf4j. -->
+            <property name="format" value="^(log|[A-Z][A-Z0-9]*(_[A-Z0-9]+)*)$"/>
+        </module>
         <module name="ParameterName"/>
         <module name="LocalVariableName"/>
         <module name="MemberName"/>

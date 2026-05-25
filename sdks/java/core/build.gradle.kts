@@ -18,16 +18,18 @@ publishing {
 }
 
 dependencies {
-  // JSON over the wire. Aligned with the .NET SDK's
-  // System.Text.Json + source-generated context.
-  implementation(libs.jackson.databind)
+  // JSON over the wire. Aligned with the .NET SDK's System.Text.Json
+  // + source-generated context. `api` because JsonNode appears in the
+  // public CroniqExecutionContext.metadata() signature.
+  api(libs.jackson.databind)
   implementation(libs.jackson.datatype.jsr310)
 
-  // SLF4J is the only logging surface the SDK exposes. The starter and
-  // examples wire Logback (or Log4j2) downstream. We deliberately do
-  // NOT pull a binding into core — that would conflict with consumer
-  // logging frameworks.
-  implementation(libs.slf4j.api)
+  // SLF4J is the only logging surface the SDK exposes. `api` because
+  // CroniqExecutionContext.logger() returns org.slf4j.Logger. The
+  // starter and examples wire Logback (or Log4j2) downstream. We
+  // deliberately do NOT pull a binding into core — that would conflict
+  // with consumer logging frameworks.
+  api(libs.slf4j.api)
 
   testImplementation(platform(libs.junit.bom))
   testImplementation(libs.bundles.junit)
