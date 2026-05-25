@@ -1900,8 +1900,9 @@ mod tests {
         assert!(cfg.alerts.channels.contains_key("x"));
     }
 
-    // ─── #140 PR-3 email channel ───────────────────────────────────
+    // ─── #140 PR-4 SLA-miss trigger ─────────────────────────────────
 
+    #[test]
     fn compile_alerts_sla_miss_without_expected_within_drops() {
         // `when job_sla_missed` without `expected_within` is
         // meaningless — must drop, not fire on every claimed
@@ -1950,6 +1951,8 @@ mod tests {
         assert_eq!(rule.expected_within.as_deref(), Some("15m"));
         assert_eq!(rule.throttle.as_deref(), Some("1h"));
     }
+
+    // ─── #140 PR-3 email channel ───────────────────────────────────
 
     #[test]
     fn compile_alerts_email_single_recipient() {
