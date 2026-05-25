@@ -2,7 +2,6 @@ import { Fragment, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { TriangleAlert, RotateCcw, Trash2, MailX, CheckCircle2, MousePointerClick } from 'lucide-react'
 import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter } from '@/api/hooks'
-import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -133,7 +132,6 @@ function DeadLetterDetail({
 export function DeadLettersPage() {
   const { data: items, isLoading } = useDeadLetters()
   const deleteDL = useDeleteDeadLetter()
-  const replay = useReplayDeadLetter()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const { id: routeId } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -163,12 +161,6 @@ export function DeadLettersPage() {
       deleteDL.mutate(dl.id)
       if (selectedId === dl.id) setSelectedId(null)
     }
-  }
-
-  async function handleRowReplay(dl: { id: string; job_key: string }) {
-    const result = await replay.mutateAsync(dl.id)
-    setLastReplay({ job_key: dl.job_key, ...result })
-    if (selectedId === dl.id) setSelectedId(null)
   }
 
   const selectedDL = items?.find((i) => i.id === selectedId) ?? null
