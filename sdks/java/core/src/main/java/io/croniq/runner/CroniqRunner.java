@@ -8,6 +8,7 @@ import io.croniq.runner.internal.HandlerRegistry;
 import io.croniq.runner.internal.RunnerIdentityResolver;
 import io.croniq.runner.protocol.PollRequest;
 import io.croniq.runner.protocol.PollResponse;
+import io.croniq.runner.protocol.RegisterJobRequest;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -78,6 +79,7 @@ public final class CroniqRunner implements AutoCloseable {
                 runnerId,
                 options.serverUrl(),
                 options.capabilities());
+        selfRegister();
         try {
             while (!stopped.get()) {
                 int slotsFree = options.maxInflight() - dispatcher.inflightCount();
@@ -124,6 +126,24 @@ public final class CroniqRunner implements AutoCloseable {
         long ms = d == null ? 0 : Math.max(0, d.toMillis());
         if (ms > 0) {
             Thread.sleep(ms);
+        }
+    }
+
+    /**
+     * POST a {@code /v1/jobs/register} for every handler that was registered
+     * with a schedule. Best-effort: failures are logged and swallowed —
+     * registration is idempotent so the next runner start retries naturally.
+     */
+    private void selfRegister() {
+        for (var entry : registry.scheduled()) {
+            var request = new RegisterJobRequest(
+                    entry.jobKey(), entry.schedule(), null, null, runnerId, options.capabilities(), null);
+            try {
+                client.registerJob(request);
+                log.info("Self-registered job {} with schedule {}", entry.jobKey(), entry.schedule());
+            } catch (Exception e) {
+                log.warn("Self-register failed for {}: {}", entry.jobKey(), e.toString());
+            }
         }
     }
 
@@ -208,6 +228,18 @@ public final class CroniqRunner implements AutoCloseable {
 
         public Builder addJob(String jobKey, CroniqJobHandler handler) {
             registryBuilder.add(jobKey, handler);
+            return this;
+        }
+
+        /**
+         * Register a handler with a server-side schedule. The runner calls
+         * {@code POST /v1/jobs/register} at startup for every job registered
+         * this way — the server then drives execution via the regular poll
+         * loop. Schedule format follows the Croniqfile DSL ({@code "5m"},
+         * {@code "*\/15 * * * *"}, etc.).
+         */
+        public Builder addJob(String jobKey, String schedule, CroniqJobHandler handler) {
+            registryBuilder.add(jobKey, schedule, handler);
             return this;
         }
 
