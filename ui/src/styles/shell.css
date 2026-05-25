@@ -393,6 +393,11 @@
   color: var(--fg);
   border-color: var(--border);
 }
+/* Below 768px the sidebar is force-collapsed (see .app rule above), so
+ * the toggle would just bounce the same state — hide it. */
+@media (max-width: 768px) {
+  .topbar-toggle { display: none; }
+}
 .crumbs {
   display: flex; align-items: center; gap: 6px;
   font-size: 13px;
@@ -423,7 +428,14 @@
   font-family: inherit;
 }
 .search-trigger:hover { border-color: var(--border-2); }
-.search-trigger > .grow { flex: 1; text-align: left; }
+.search-trigger > .grow {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .topbar .live {
