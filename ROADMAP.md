@@ -100,28 +100,6 @@ Last reviewed: 2026-05-09.
   hit Stable. Currently spans use Croniq-native attribute names
   (`job_key`, `execution_id`, `runner_id`).
 
-## Integrations
-
-- **`runner publish { … }` — hookaido bridge** — thin DSL block that
-  publishes to a [hookaido](https://github.com/nuetzliches/hookaido) channel
-  on fire instead of running a subprocess. Croniq stays the scheduler;
-  hookaido handles durable HTTP delivery, HMAC signing, retries on the
-  delivery side, and DLQ for failed callbacks. Shape (proposal):
-  ```croniqfile
-  job ops:nightly-poke {
-    every day at 04:00
-    runner publish {
-      endpoint http://hookaido:8080/c/ops-nightly
-      auth hmac {env.HOOKAIDO_INGRESS_SECRET}
-      payload { window 24h; tag {vars.env} }
-    }
-  }
-  ```
-  Implementation lives next to `croniq-shell-runner`: a sibling
-  `croniq-publish-runner` crate that consumes the same `__runner_*` metadata
-  pattern. Until then, `runner shell { command "curl -X POST … " }` covers
-  the use case.
-
 ## Tags follow-ups
 
 Tags shipped for jobs (DSL `tags "k=v" …`) and runners (`RUNNER_TAGS` env)
