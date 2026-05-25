@@ -175,18 +175,23 @@ calendar business-days {
 
 # Failure alerts (issue #140) — fire per-rule when an execution
 # permanently fails (dead-letter or drop). Throttled per (rule, job)
-# so a job that loops failing doesn't flood the channel. PR-1 ships
-# the `shell` channel kind only; `webhook` and `email` follow.
+# so a job that loops failing doesn't flood the channel. Shell and
+# webhook channels ship today; `email` follows in PR-3.
 alerts {
   channel "ops-paging" {
     shell "/usr/local/bin/page-oncall.sh"
+  }
+  channel "slack" {
+    webhook https://hooks.slack.com/services/xxx/yyy/zzz
+    sign hmac {env.SLACK_SIGNING_SECRET}
+    timeout 5s
   }
   rule "billing-fail" {
     when job_failed
     job_key "billing:*"
     min_attempts 2     # fire only after retry exhaustion
     throttle 10m       # one alert per (rule, job_key) per window
-    channels "ops-paging"
+    channels "ops-paging" "slack"
   }
 }
 
@@ -298,12 +303,39 @@ exposed to whoever can ship a Croniqfile change. Run separate shell-runner
 pools per blast-radius bracket and use `runner { require <pool> }` /
 `exclude <pool>` to pin sensitive jobs to the right pool.
 
-**Webhook delivery.** Croniq does not yet ship a native `runner http` mode
-for sending outgoing webhooks from a job. Until that lands, use
-`runner shell { command "curl -X POST … " }`. Durable delivery (HMAC
-signing, retry/DLQ) for *failure alerts* is being built separately as
-part of the alert delivery layer; a future first-class `runner http`
-mode is expected to share that infrastructure.
+**Webhook delivery for failure alerts** — the `alerts { channel "…" { webhook … } }`
+DSL (issue #140 PR-2) sends an HMAC-signed JSON envelope to the configured URL on
+every matching permanent failure:
+
+```jsonc
+POST <channel.webhook>
+Content-Type: application/json
+X-Croniq-Event: alerts.fired
+X-Croniq-Delivery-Id: <uuid>
+X-Croniq-Signature: sha256=<hex(hmac-sha256(secret, raw_body))>
+
+{
+  "rule":           "billing-fail",
+  "event":          "job_failed",
+  "job_key":        "billing:invoice",
+  "execution_id":   "…",
+  "attempt":        3,
+  "reason":         "dead_letter",       // or "dropped"
+  "error":          "runner exited 1: connection refused",
+  "fired_at":       "2026-05-25T08:12:00Z",
+  "croniq_version": "0.4.2"
+}
+```
+
+The envelope is a stable contract; future versions only add fields. To verify
+a receiver, recompute `sha256=hex(hmac_sha256(secret, raw_body))` and
+constant-time-compare against `X-Croniq-Signature`. One retry on 5xx /
+network error with a 3-second backoff before recording `delivery_failed`;
+4xx responses are recorded immediately without retry.
+
+**Webhook delivery from a job** (different concern — outbound trigger of a
+business action) is not yet a first-class `runner http` mode. Use
+`runner shell { command "curl -X POST … " }` for that today.
 
 ---
 

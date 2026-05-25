@@ -196,7 +196,27 @@ pub enum ChannelKind {
     /// failure context in `CRONIQ_*` env vars (back-compat with the
     /// pre-#140 `CRONIQ_ON_FAILURE_CMD` env-var hook).
     Shell { command: String },
-    /// Placeholder for unknown or future kinds (webhook, email).
+    /// `webhook <url>` — POST a JSON envelope to the target URL.
+    ///
+    /// Signing is optional but recommended: when `signing_key` is set,
+    /// the server adds an `X-Croniq-Signature: sha256=<hex>` header
+    /// whose value is HMAC-SHA256 of the raw body (issue #140 PR-2).
+    /// Keep secrets out of the Croniqfile by using a placeholder:
+    /// `sign hmac {env.SLACK_SIGNING_SECRET}`.
+    ///
+    /// `timeout_secs` caps the HTTP request to that many seconds
+    /// (default 5). The handler retries exactly once on a 5xx or
+    /// network error before recording `delivery_failed`.
+    Webhook {
+        url: String,
+        /// Pre-resolved HMAC secret. `None` means the webhook fires
+        /// unsigned — fine for trusted internal endpoints, dangerous
+        /// for anything over the open internet.
+        #[serde(skip_serializing)] // secret never leaks via /v1/dsl preview
+        signing_key: Option<String>,
+        timeout_secs: u64,
+    },
+    /// Placeholder for unknown or future kinds (email, slack-native, …).
     /// Channels with this kind compile cleanly so rule references
     /// resolve; the evaluator logs and skips them.
     Unknown { reason: String },
@@ -803,6 +823,17 @@ fn compile_alerts(block: &AlertsBlock, vars: &HashMap<String, String>) -> Alerts
 }
 
 fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> ChannelKind {
+    // Two-phase: phase 1 collects every directive into local vars so
+    // sibling directives like `sign hmac …` and `timeout …` are visible
+    // alongside the kind directive (`webhook …`). Phase 2 picks the
+    // first recognised kind directive seen and builds the matching
+    // ChannelKind from the collected siblings.
+    let mut shell_cmd: Option<String> = None;
+    let mut webhook_url: Option<String> = None;
+    let mut webhook_signing_key: Option<String> = None;
+    let mut webhook_timeout_secs: u64 = 5;
+    let mut saw_email = false;
+
     for dob in &block.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
             continue;
@@ -810,31 +841,82 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
         match d.key.value.as_str() {
             "shell" => {
                 if let Some(arg) = d.args.first() {
-                    return ChannelKind::Shell {
-                        command: resolve_str(arg, vars),
-                    };
+                    shell_cmd = Some(resolve_str(arg, vars));
                 }
-                return ChannelKind::Unknown {
-                    reason: "shell directive requires a command argument".into(),
-                };
             }
-            // Reserved for future PRs — recognised at compile time so the
-            // evaluator can produce a clearer "not implemented in this
-            // build" message than "unknown channel kind".
-            "webhook" | "email" => {
-                return ChannelKind::Unknown {
-                    reason: format!(
-                        "channel kind `{}` is not yet implemented (PR-1 of #140 ships shell only)",
-                        d.key.value
-                    ),
-                };
+            "webhook" => {
+                if let Some(arg) = d.args.first() {
+                    webhook_url = Some(resolve_str(arg, vars));
+                }
+            }
+            "sign" => {
+                // Grammar: `sign hmac <secret>`. Currently HMAC is the
+                // only scheme; the first arg names the scheme so we can
+                // extend with `sign basic <user>:<pass>` etc. later
+                // without breaking existing files.
+                if let (Some(scheme), Some(value)) = (d.args.first(), d.args.get(1)) {
+                    let scheme = resolve_str(scheme, vars);
+                    if scheme == "hmac" {
+                        let v = resolve_str(value, vars);
+                        if !v.is_empty() {
+                            webhook_signing_key = Some(v);
+                        }
+                    }
+                }
+            }
+            "timeout" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    if let Some(secs) = parse_duration_secs(&v) {
+                        webhook_timeout_secs = secs.max(1);
+                    }
+                }
+            }
+            "email" => {
+                saw_email = true;
             }
             _ => {}
         }
     }
+
+    if let Some(command) = shell_cmd {
+        return ChannelKind::Shell { command };
+    }
+    if let Some(url) = webhook_url {
+        return ChannelKind::Webhook {
+            url,
+            signing_key: webhook_signing_key,
+            timeout_secs: webhook_timeout_secs,
+        };
+    }
+    if saw_email {
+        return ChannelKind::Unknown {
+            reason: "channel kind `email` is not yet implemented (lands in PR-3 of #140)".into(),
+        };
+    }
     ChannelKind::Unknown {
         reason: "no channel kind directive (expected `shell`, `webhook`, or `email`)".into(),
     }
+}
+
+/// Minimal duration parser for channel `timeout 5s` / `timeout 2m` /
+/// bare integer seconds. Kept local to this module to avoid pulling
+/// `croniq-server::parse_duration_secs` (different crate, slightly
+/// different error model). Returns `None` on garbage; caller falls
+/// back to the directive default.
+fn parse_duration_secs(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (digits, mult): (&str, u64) = match s.chars().last()? {
+        's' => (&s[..s.len() - 1], 1),
+        'm' => (&s[..s.len() - 1], 60),
+        'h' => (&s[..s.len() - 1], 3600),
+        c if c.is_ascii_digit() => (s, 1),
+        _ => return None,
+    };
+    digits.parse::<u64>().ok()?.checked_mul(mult)
 }
 
 fn compile_rule(
@@ -1776,15 +1858,80 @@ mod tests {
     }
 
     #[test]
-    fn compile_alerts_unknown_channel_kind_is_unknown_variant() {
-        // `webhook` is recognised at compile time (so the error
-        // message is specific) but produces ChannelKind::Unknown —
-        // PR-2 will ship the real implementation.
+    fn compile_alerts_email_kind_is_unknown_variant() {
+        // `email` is reserved for PR-3 of #140 — recognised at compile
+        // time so the error message points at the right PR rather than
+        // a generic "unknown kind".
         let ast = Parser::parse(
             r#"
             alerts {
+                channel "ops-email" {
+                    email ops@example.com
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg
+            .alerts
+            .channels
+            .get("ops-email")
+            .expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Unknown { reason } => {
+                assert!(reason.contains("email"), "reason mentions kind: {reason}");
+            }
+            other => panic!("expected Unknown for email in PR-2, got {other:?}"),
+        }
+    }
+
+    // ─── #140 PR-2 webhook channel ─────────────────────────────────
+
+    #[test]
+    fn compile_alerts_webhook_minimal() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "internal-hook" {
+                    webhook http://internal.svc/hook
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg
+            .alerts
+            .channels
+            .get("internal-hook")
+            .expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Webhook {
+                url,
+                signing_key,
+                timeout_secs,
+            } => {
+                assert_eq!(url, "http://internal.svc/hook");
+                assert!(signing_key.is_none(), "no `sign hmac` ⇒ unsigned");
+                assert_eq!(*timeout_secs, 5, "default timeout is 5s");
+            }
+            other => panic!("expected Webhook, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_webhook_with_hmac_and_timeout() {
+        let ast = Parser::parse(
+            r#"
+            vars {
+                slack_secret "shh-do-not-leak"
+            }
+            alerts {
                 channel "slack" {
                     webhook https://hooks.slack.com/services/xxx
+                    sign hmac {vars.slack_secret}
+                    timeout 10s
                 }
             }
             "#,
@@ -1793,11 +1940,44 @@ mod tests {
         let cfg = compile(&ast);
         let ch = cfg.alerts.channels.get("slack").expect("channel parsed");
         match &ch.kind {
-            ChannelKind::Unknown { reason } => {
-                assert!(reason.contains("webhook"), "reason mentions kind: {reason}");
+            ChannelKind::Webhook {
+                url,
+                signing_key,
+                timeout_secs,
+            } => {
+                assert_eq!(url, "https://hooks.slack.com/services/xxx");
+                assert_eq!(signing_key.as_deref(), Some("shh-do-not-leak"));
+                assert_eq!(*timeout_secs, 10);
             }
-            other => panic!("expected Unknown for webhook in PR-1, got {other:?}"),
+            other => panic!("expected Webhook, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compile_alerts_webhook_signing_key_redacted_from_serialize() {
+        // The `signing_key` field is `#[serde(skip_serializing)]` so a
+        // `/v1/dsl/preview` (or any other Serialize consumer) can't
+        // leak the secret. Verify by JSON-encoding the channel.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" {
+                    webhook https://example.com/hook
+                    sign hmac secret-do-not-leak
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let json = serde_json::to_string(&cfg.alerts.channels).unwrap();
+        assert!(
+            !json.contains("secret-do-not-leak"),
+            "signing_key must not appear in serialized output: {json}"
+        );
+        // The other fields should still be present.
+        assert!(json.contains("https://example.com/hook"));
+        assert!(json.contains("webhook"));
     }
 
     #[test]

@@ -117,7 +117,7 @@ impl CompletionProcessor {
     /// `notify::notify_failure()` env-var hook — back-compat for that
     /// env var lives in [`crate::alerts::merge_legacy_env_hook`] at
     /// boot, so this method needs no special-cases.
-    fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
+    async fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
         // Fast-path: no rules configured means no work to do. Important
         // because the evaluator otherwise walks `alerts.rules` and may
         // open a store cursor — wasteful on the common path.
@@ -132,7 +132,8 @@ impl CompletionProcessor {
             reason: reason.to_string(),
         };
         let _ =
-            crate::alerts::evaluate_failure(&self.alerts, &ctx, &self.alert_throttle, &self.store);
+            crate::alerts::evaluate_failure(&self.alerts, &ctx, &self.alert_throttle, &self.store)
+                .await;
     }
 
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
@@ -344,7 +345,7 @@ impl CompletionProcessor {
                 }
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                self.fire_alerts(&execution.job_key, &event, &reason);
+                self.fire_alerts(&execution.job_key, &event, &reason).await;
                 ProcessedOutcome::DeadLettered { reason }
             }
 
@@ -358,7 +359,7 @@ impl CompletionProcessor {
                     now,
                 );
                 tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
-                self.fire_alerts(&execution.job_key, &event, &reason);
+                self.fire_alerts(&execution.job_key, &event, &reason).await;
                 ProcessedOutcome::Dropped { reason }
             }
 
