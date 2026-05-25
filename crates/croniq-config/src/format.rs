@@ -63,6 +63,13 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             format_directives(out, &p.directives, indent + 1);
             out.push_str("}\n");
         }
+        Item::Alerts(a) => {
+            out.push_str("alerts {\n");
+            for block in &a.sub_blocks {
+                format_named_block(out, block, indent + 1);
+            }
+            out.push_str("}\n");
+        }
         Item::Observability(o) => {
             out.push_str("observability {\n");
             for block in &o.sub_blocks {

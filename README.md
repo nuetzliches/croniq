@@ -52,7 +52,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure notifications** — `CRONIQ_ON_FAILURE_CMD` runs a shell command when executions fail. Pipe to Slack, PagerDuty, or any webhook endpoint.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Each permanent failure (dead-letter or drop) is matched against your rules, throttled per `(rule, job_key)`, and dispatched to the configured channels — with a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -171,6 +171,23 @@ defaults {
 calendar business-days {
   include weekly monday tuesday wednesday thursday friday
   exclude annual 01-01 12-25 12-26
+}
+
+# Failure alerts (issue #140) — fire per-rule when an execution
+# permanently fails (dead-letter or drop). Throttled per (rule, job)
+# so a job that loops failing doesn't flood the channel. PR-1 ships
+# the `shell` channel kind only; `webhook` and `email` follow.
+alerts {
+  channel "ops-paging" {
+    shell "/usr/local/bin/page-oncall.sh"
+  }
+  rule "billing-fail" {
+    when job_failed
+    job_key "billing:*"
+    min_attempts 2     # fire only after retry exhaustion
+    throttle 10m       # one alert per (rule, job_key) per window
+    channels "ops-paging"
+  }
 }
 
 job billing:invoice {
@@ -492,7 +509,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
 | `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset) | _generated_ |
 | `CRONIQ_INIT_API_KEY` | Seed a default admin API client on first run. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). Fails fast on first run if the prefix is missing. | — |
-| `CRONIQ_ON_FAILURE_CMD` | Shell command on execution failure | — |
+| `CRONIQ_ON_FAILURE_CMD` | **Deprecated** — single global shell command on permanent failure. At boot, croniq-server synthesises a catch-all rule from this var when no `alerts {}` block is present. Migrate to `alerts { channel "…" { shell "…" } rule "…" { when job_failed; channels "…" } }` and unset. | — |
 | `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
 
 ---

@@ -19,6 +19,7 @@ pub enum Item {
     Oidc(OidcBlock),
     Auth(AuthBlock),
     Policy(PolicyBlock),
+    Alerts(AlertsBlock),
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
     Calendar(CalendarBlock),
@@ -114,6 +115,26 @@ pub struct AuthBlock {
 #[derive(Debug, Clone, Serialize)]
 pub struct PolicyBlock {
     pub directives: Vec<Directive>,
+    pub span: Span,
+}
+
+// ─── Alerts (failure-notification rules + channels, issue #140) ───
+
+/// `alerts { channel "…" { … } rule "…" { … } }` — operator-managed
+/// failure notifications. Holds two kinds of named sub-block:
+///
+///   - `channel "name" { … }`  — delivery target. Channel type is
+///     determined by the *kind* directive inside the block (e.g.
+///     `shell "/usr/bin/page-oncall.sh"`).
+///   - `rule "name" { … }`  — trigger predicate + the named channels
+///     it dispatches to (`channels "a" "b"`).
+///
+/// Mixed order of `channel` and `rule` sub-blocks is allowed; the
+/// compile step resolves channel-name references after both have
+/// been collected.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertsBlock {
+    pub sub_blocks: Vec<NamedBlock>,
     pub span: Span,
 }
 

@@ -28,6 +28,7 @@
 //!                                          Runner agents
 //! ```
 
+pub mod alerts;
 pub mod api;
 pub mod completion;
 pub mod dashboard;

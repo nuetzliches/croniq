@@ -476,6 +476,72 @@ pub struct DslAdoption {
     pub adopted_by: Option<String>,
 }
 
+// ─── Alert deliveries (issue #140) ───
+
+/// One row per alert-rule fire. Inserted by the evaluator the moment a
+/// rule matches (`state = Throttled`) or before the channel handler
+/// runs (`state = Delivered/Failed` after completion).
+///
+/// `execution_id` is optional because future trigger types (e.g.
+/// `job_sla_missed`) may not be tied to a specific execution row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertDelivery {
+    pub delivery_id: String,
+    pub rule_name: String,
+    pub channel_name: String,
+    pub job_key: String,
+    pub execution_id: Option<String>,
+    pub state: AlertDeliveryState,
+    pub error: Option<String>,
+    pub fired_at: DateTime<Utc>,
+    pub delivered_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlertDeliveryState {
+    /// Channel handler completed successfully.
+    Delivered,
+    /// Channel handler returned an error. See `error` for the reason.
+    Failed,
+    /// Rule matched but the per-(rule, job_key) throttle window
+    /// suppressed the fire. Recorded so operators can see what *would*
+    /// have fired without the throttle.
+    Throttled,
+}
+
+impl AlertDeliveryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Delivered => "delivered",
+            Self::Failed => "failed",
+            Self::Throttled => "throttled",
+        }
+    }
+
+    /// Parse a state string from the DB. Distinct name from
+    /// `FromStr::from_str` because the trait would require us to
+    /// commit to a public error type — overkill for a tiny internal
+    /// helper.
+    pub fn parse_db(s: &str) -> Option<Self> {
+        match s {
+            "delivered" => Some(Self::Delivered),
+            "failed" => Some(Self::Failed),
+            "throttled" => Some(Self::Throttled),
+            _ => None,
+        }
+    }
+}
+
+/// Filter for listing alert deliveries.
+#[derive(Debug, Clone, Default)]
+pub struct AlertDeliveryFilter {
+    pub job_key: Option<String>,
+    pub rule_name: Option<String>,
+    pub since: Option<DateTime<Utc>>,
+    pub limit: Option<u32>,
+}
+
 // ─── Work Item Tracking ───
 
 /// A log entry pushed by a runner during execution.

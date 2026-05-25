@@ -333,6 +333,36 @@ pub trait DslAdoptionStore {
     fn list_adoptions(&self, resource_type: &str) -> Result<Vec<DslAdoption>, StoreError>;
 }
 
+/// Alert delivery log (issue #140). Recorded by the evaluator for
+/// each rule fire so operators (and the future Alerts UI tab) can
+/// see what fired, when, and whether delivery succeeded.
+pub trait AlertStore {
+    /// Insert a delivery row. Idempotent on `delivery_id` (PRIMARY KEY)
+    /// — re-inserting the same id with the same payload is a no-op,
+    /// re-inserting with different payload is an error.
+    fn record_alert_delivery(&self, delivery: &AlertDelivery) -> Result<(), StoreError>;
+
+    /// List recent deliveries, newest first. Used by the future Alerts
+    /// tab and an admin diagnostic endpoint.
+    fn list_alert_deliveries(
+        &self,
+        filter: &AlertDeliveryFilter,
+    ) -> Result<Vec<AlertDelivery>, StoreError>;
+
+    /// Look up the most recent fire timestamp for a (rule, job_key)
+    /// pair across `Delivered`, `Failed`, and `Throttled` states.
+    ///
+    /// Used by the evaluator on boot to seed the in-memory throttle
+    /// map so a server restart doesn't reset the suppression window
+    /// for jobs that were recently quieted. Returns `None` when the
+    /// rule has never fired for that job_key.
+    fn last_alert_fire_at(
+        &self,
+        rule_name: &str,
+        job_key: &str,
+    ) -> Result<Option<DateTime<Utc>>, StoreError>;
+}
+
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
@@ -367,5 +397,6 @@ pub trait Store:
     + CalendarDefinitionStore
     + DslAdoptionStore
     + ExecutionLogStore
+    + AlertStore
 {
 }
