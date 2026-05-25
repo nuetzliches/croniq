@@ -21,8 +21,9 @@ dependencies {
   testImplementation(project(":core"))
   testImplementation(platform(libs.junit.bom))
   testImplementation(libs.bundles.junit)
-  testImplementation(libs.wiremock)
   testImplementation(libs.snakeyaml)
+  // The SDK pulls jackson-databind via :core; we depend on it explicitly
+  // here for harness-side serialisation (scripted response bodies).
   testImplementation(libs.jackson.databind)
   testImplementation(libs.awaitility)
   testRuntimeOnly(libs.logback.classic)
