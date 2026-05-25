@@ -301,3 +301,64 @@ export interface ReplayResponse {
   execution_id: string
   attempt: number
 }
+
+// ─── #140 Failure alerts ─────────────────────────────────────────
+
+/// One of the channel kinds. Tagged JSON: `{ "type": "shell", "command": "…" }`.
+/// `signing_key` is intentionally absent — the server never serialises
+/// the HMAC secret. `unknown` is a forward-compat placeholder used when
+/// the DSL referenced a channel kind that the running build doesn't
+/// implement.
+export type AlertChannelKind =
+  | { type: 'shell'; command: string }
+  | { type: 'webhook'; url: string; timeout_secs: number }
+  | { type: 'unknown'; reason: string }
+
+export interface AlertChannelConfig {
+  name: string
+  kind: AlertChannelKind
+}
+
+export type AlertRuleTrigger = 'job_failed'
+
+export interface AlertRuleConfig {
+  name: string
+  trigger: AlertRuleTrigger
+  job_key_glob: string
+  min_attempts: number
+  dead_letter_only: boolean
+  throttle: string | null
+  expected_within: string | null
+  channels: string[]
+}
+
+/// Shape returned by `GET /v1/alerts/config`. The `channels` field is
+/// an object keyed by channel name (server uses `HashMap<String, ...>`).
+export interface AlertsConfig {
+  channels: Record<string, AlertChannelConfig>
+  rules: AlertRuleConfig[]
+}
+
+export type AlertDeliveryState = 'delivered' | 'failed' | 'throttled'
+
+/// One row from `alert_deliveries`. Returned by `GET /v1/alerts/deliveries`
+/// (list) and `GET /v1/alerts/deliveries/{id}` (single).
+export interface AlertDelivery {
+  delivery_id: string
+  rule_name: string
+  channel_name: string
+  job_key: string
+  execution_id: string | null
+  state: AlertDeliveryState
+  error: string | null
+  fired_at: string
+  delivered_at: string | null
+}
+
+export interface AlertDeliveryListQuery {
+  job_key?: string
+  rule_name?: string
+  state?: AlertDeliveryState
+  since?: string
+  limit?: number
+}
