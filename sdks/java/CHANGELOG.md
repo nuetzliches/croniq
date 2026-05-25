@@ -6,6 +6,19 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — PR-5 of [#133](https://github.com/nuetzliches/croniq/issues/133)
+
+- `io.croniq:runner-spring-boot-starter` is now functional:
+  - `@CroniqJob(key=..., schedule=...)` annotation for marking handler methods.
+  - `@ConfigurationProperties("croniq.runner")` binding via `CroniqProperties`.
+  - `CroniqRunnerAutoConfiguration` with `@ConditionalOnMissingBean` so apps
+    can supply their own runner/options for testing.
+  - `CroniqRunnerLifecycle` (Spring `SmartLifecycle`) — late start, early
+    stop so the runner drains before data sources / brokers tear down.
+  - Auto-config metadata file at
+    `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.
+- `croniq.runner.enabled=false` disables the auto-configured runner.
+
 ### Added — PR-4 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - `io.croniq.runner.handler.CroniqLogWriter` public interface — streaming
