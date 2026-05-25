@@ -156,4 +156,7 @@ jobs:
           name: nupkg-${{ steps.version.outputs.version }}
           path: sdks/dotnet/artifacts/
           if-no-files-found: error
-          retention-days: 30
+          # Capped at the repo-wide retention max (currently 14 days).
+          # NuGet itself is the durable copy; the artifact is just a
+          # post-mortem aid if a publish fails partway through.
+          retention-days: 14

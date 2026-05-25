@@ -32,6 +32,13 @@ permissions:
   contents: read
   id-token: write  # npm provenance via OIDC
 
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # setup-node/checkout/upload-artifact/etc. Matches the env block in
+  # ci.yml, release.yml, and the other SDK release pipelines.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   publish:
     name: Build, verify, publish
