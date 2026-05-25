@@ -85,5 +85,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # opentelemetry-api on Python 3.11 calls importlib.metadata.entry_points().values()
+    # at import time, which trips a DeprecationWarning fixed upstream in 3.12. The
+    # warning is harmless and out of our control — let it through so the OTel extra
+    # remains usable on the minimum supported Python.
+    "ignore:SelectableGroups dict interface is deprecated:DeprecationWarning",
+]
 addopts = "-ra --strict-markers --strict-config"
