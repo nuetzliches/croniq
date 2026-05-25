@@ -3,26 +3,26 @@
 // don't pull this module.
 
 plugins {
-    id("croniq.kotlin-conventions")
-    id("croniq.publish-conventions")
+  id("croniq.kotlin-conventions")
+  id("croniq.publish-conventions")
 }
 
 description = "Kotlin coroutine extensions for the Croniq Runner SDK."
 
 publishing {
-    publications.named<MavenPublication>("maven") {
-        artifactId = "runner-kotlin-ext"
-    }
+  publications.named<MavenPublication>("maven") {
+    artifactId = "runner-kotlin-ext"
+  }
 }
 
 dependencies {
-    api(project(":core"))
-    api(libs.kotlinx.coroutines.core)
-    // Bridges CompletableFuture <-> coroutine — we use this to adapt the
-    // core SDK's CompletionStage-returning handler signature to suspend
-    // functions in PR-6.
-    implementation(libs.kotlinx.coroutines.jdk8)
+  api(project(":core"))
+  api(libs.kotlinx.coroutines.core)
+  // Bridges CompletableFuture <-> coroutine — we use this to adapt the
+  // core SDK's CompletionStage-returning handler signature to suspend
+  // functions in PR-6.
+  implementation(libs.kotlinx.coroutines.jdk8)
 
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.bundles.junit)
+  testImplementation(platform(libs.junit.bom))
+  testImplementation(libs.bundles.junit)
 }

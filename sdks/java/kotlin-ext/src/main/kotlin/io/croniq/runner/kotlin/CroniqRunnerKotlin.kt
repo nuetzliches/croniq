@@ -10,7 +10,6 @@ import io.croniq.runner.CroniqRunner
  * compile config, and ktlint integration are exercised by the smoke test.
  */
 public object CroniqRunnerKotlin {
-
     /** Convenience accessor for the Java SDK's version string. */
     public val sdkVersion: String
         get() = CroniqRunner.sdkVersion()

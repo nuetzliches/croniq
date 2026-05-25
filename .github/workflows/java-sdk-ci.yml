@@ -29,7 +29,9 @@ permissions:
 
 env:
   # Gradle daemon is unhelpful in CI (single-use containers); skip it.
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.configuration-cache=true"
+  # Configuration cache is currently disabled in gradle.properties (see
+  # comment there about Spotless cache-staleness — diffplug/spotless#987).
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:

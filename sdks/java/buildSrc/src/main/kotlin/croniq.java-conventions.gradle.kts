@@ -30,6 +30,11 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 tasks.withType<Javadoc>().configureEach {
+    // Tolerate modules with no public types yet (PR-1 stubs, package-info-only
+    // modules). The javadoc tool errors out on empty source by default; we
+    // want the build to succeed and produce an empty javadoc.jar — Maven
+    // Central rejects publication without one but doesn't validate contents.
+    isFailOnError = false
     (options as StandardJavadocDocletOptions).apply {
         addStringOption("Xdoclint:none", "-quiet")
         encoding = "UTF-8"
