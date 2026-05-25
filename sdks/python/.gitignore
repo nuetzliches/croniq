@@ -1,0 +1,14 @@
+# Build / distribution
+build/
+dist/
+*.egg-info/
+
+# Caches
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime artefacts
+*.pyc

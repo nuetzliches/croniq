@@ -1,0 +1,75 @@
+"""Runner and log-writer configuration."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(slots=True)
+class LogWriterOptions:
+    """Tunables for the streaming :class:`LogWriter`.
+
+    Defaults mirror the Rust and .NET runner SDKs so observable behaviour stays
+    consistent across implementations.
+    """
+
+    channel_capacity: int = 256
+    """Bounded queue capacity. Backpressure (await) kicks in when full."""
+
+    batch_size_threshold: int = 32
+    """Flush when this many events have accumulated."""
+
+    batch_time_threshold_ms: int = 200
+    """Flush at least this often, even if the size threshold isn't reached."""
+
+    max_batch_per_post: int = 100
+    """Maximum events per outgoing HTTP POST."""
+
+    shutdown_timeout_ms: int = 5000
+    """How long the runner waits for queued events to flush before sending the ack."""
+
+
+@dataclass(slots=True)
+class RunnerOptions:
+    """Configuration for a single Croniq runner instance."""
+
+    server_url: str = "http://localhost:4000"
+    """Base URL of the Croniq server."""
+
+    runner_id: str | None = None
+    """Stable runner identifier. Falls back to ``$RUNNER_ID`` / a generated value."""
+
+    runner_id_prefix: str = "runner"
+    """Prefix used when generating a fresh runner ID."""
+
+    api_key: str | None = None
+    """API key for ``Authorization: ApiKey <key>``. Takes precedence over bearer."""
+
+    bearer_token: str | None = None
+    """Bearer token for ``Authorization: Bearer <token>``."""
+
+    capabilities: list[str] = field(default_factory=list)
+    """Capabilities the runner advertises (used by server-side routing)."""
+
+    tags: list[str] = field(default_factory=list)
+    """Free-form key=value tags self-declared by the runner. Filter-only."""
+
+    max_inflight: int = 5
+    """Maximum concurrent in-flight executions."""
+
+    poll_timeout_ms: int = 35_000
+    """Per-request timeout for the long-poll work endpoint."""
+
+    renew_interval_ms: int = 15_000
+    """Heartbeat interval for in-flight lease renewals."""
+
+    drain_timeout_ms: int = 30_000
+    """How long :meth:`Runner.run` waits for in-flight executions on shutdown."""
+
+    poll_retry_delay_ms: int = 5_000
+    """Back-off after a failed poll request."""
+
+    capacity_backoff_ms: int = 500
+    """Idle delay when the runner is at ``max_inflight`` capacity."""
+
+    log_writer: LogWriterOptions = field(default_factory=LogWriterOptions)
