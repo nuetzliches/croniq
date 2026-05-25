@@ -72,6 +72,11 @@ pub struct CompletionProcessor {
     /// at boot from `alert_deliveries.fired_at` so a server restart
     /// doesn't reset suppression windows.
     alert_throttle: crate::alerts::ThrottleMap,
+    /// Email sender used by the `email` alert channel (issue #140
+    /// PR-3). Defaults to `NoopSender` — real delivery requires
+    /// `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM` and the `smtp` cargo
+    /// feature.
+    email_sender: Arc<dyn crate::email::EmailSender>,
 }
 
 impl CompletionProcessor {
@@ -82,10 +87,12 @@ impl CompletionProcessor {
             runner,
             croniq_config::compile::AlertsConfig::default(),
             crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
         )
     }
 
-    /// Construct with an explicit alerts config + throttle map.
+    /// Construct with an explicit alerts config + throttle map + email
+    /// sender.
     ///
     /// Used by `main.rs` to wire the Croniqfile `alerts {}` block (plus
     /// any synthesised legacy env-var rule) into the failure pipeline.
@@ -96,6 +103,7 @@ impl CompletionProcessor {
         runner: Arc<AppState>,
         alerts: croniq_config::compile::AlertsConfig,
         alert_throttle: crate::alerts::ThrottleMap,
+        email_sender: Arc<dyn crate::email::EmailSender>,
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
@@ -104,6 +112,7 @@ impl CompletionProcessor {
             runner,
             alerts,
             alert_throttle,
+            email_sender,
         }
     }
 
@@ -131,9 +140,14 @@ impl CompletionProcessor {
             attempt: event.attempt,
             reason: reason.to_string(),
         };
-        let _ =
-            crate::alerts::evaluate_failure(&self.alerts, &ctx, &self.alert_throttle, &self.store)
-                .await;
+        let _ = crate::alerts::evaluate_failure(
+            &self.alerts,
+            &ctx,
+            &self.alert_throttle,
+            &self.store,
+            &self.email_sender,
+        )
+        .await;
     }
 
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
@@ -715,6 +729,7 @@ mod tests {
             runner,
             alerts,
             crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
         );
 
         let outcome = processor
