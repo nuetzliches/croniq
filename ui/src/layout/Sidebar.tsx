@@ -6,6 +6,7 @@ import {
   Cpu,
   List,
   MailX,
+  Bell,
   CalendarDays,
   Settings,
   MoreHorizontal,
@@ -44,6 +45,7 @@ function navItems(deadLetters: number): (NavSpec | NavSection)[] {
           ? { count: deadLetters, tone: 'alert' as const }
           : undefined,
     },
+    { to: '/alerts', label: 'Alerts', icon: Bell },
     { kind: 'section', label: 'Config' },
     { to: '/calendars', label: 'Calendars', icon: CalendarDays },
     { to: '/settings', label: 'Settings', icon: Settings },

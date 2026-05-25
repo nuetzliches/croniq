@@ -25,7 +25,9 @@ import {
   useDeleteJob,
   useAuditEvents,
   useForecast,
+  useAlertDeliveries,
 } from '@/api/hooks'
+import { DeliveriesList } from '@/pages/AlertsPage'
 import {
   EmptyState,
   StatusPill,
@@ -410,7 +412,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
           {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
           {tab === 'schedule' ? <ScheduleTab schedules={schedules.data ?? []} loading={schedules.isLoading} /> : null}
           {tab === 'dsl' ? <DslTab job={j} schedules={schedules.data ?? []} /> : null}
-          {tab === 'alerts' ? <AlertsTab /> : null}
+          {tab === 'alerts' ? <AlertsTab jobKey={jobKey} /> : null}
           {tab === 'audit' ? <AuditTab events={jobAudit} loading={audit.isLoading} /> : null}
         </div>
       </div>
@@ -917,13 +919,34 @@ function renderDsl(job: JobDefinition, schedules: TriggerDefinition[]): string {
   ].join('\n')
 }
 
-function AlertsTab() {
+function AlertsTab({ jobKey }: { jobKey: string }) {
+  // Per-job slice of the delivery log. The full filterable view lives on
+  // the standalone Alerts page (linked from the sidebar) — here we only
+  // show the rows that fired against THIS job_key so operators don't
+  // have to switch pages while triaging a failing job.
+  const { data, isLoading } = useAlertDeliveries({ job_key: jobKey, limit: 100 })
   return (
-    <EmptyState
-      icon={Bell}
-      title="Alerts are not wired yet"
-      desc="The /v1/alerts endpoints are planned for a follow-up PR. Attach Slack / email channels per job once the backend ships them."
-    />
+    <section className="card" style={{ padding: 0 }}>
+      <header
+        className="row between"
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--border)',
+          alignItems: 'center',
+        }}
+      >
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Bell size={14} />
+          <p className="card-title" style={{ margin: 0 }}>
+            Alert deliveries for this job
+          </p>
+        </div>
+        <span className="dim mono" style={{ fontSize: 11.5 }}>
+          {data?.length ?? 0} row{data?.length === 1 ? '' : 's'}
+        </span>
+      </header>
+      <DeliveriesList rows={data ?? []} isLoading={isLoading} />
+    </section>
   )
 }
 
