@@ -250,6 +250,11 @@
 .nav-item .badge.warn  { background: var(--warn-bg);  color: var(--warn);  border-color: transparent; }
 
 /* ── collapsed state ───────────────────────────────────────── */
+/* User-toggled (data-collapsed) AND viewport-forced (<= 768px) collapse
+ * apply the same visual rules. .app's grid already shrinks the column
+ * at that breakpoint, but the sidebar's children still rendered at full
+ * width and overflowed (visible "Cr" of "Croniq", horizontal scroller
+ * under the foot). */
 .sidebar[data-collapsed] .nav-item { padding: 0 14px; justify-content: flex-start; }
 .sidebar[data-collapsed] .brand { padding: 0; height: var(--topbar-h); justify-content: center; gap: 0; }
 .sidebar[data-collapsed] .brand .gear { width: 26px; height: 26px; }
@@ -262,6 +267,24 @@
   display: none !important;
 }
 .sidebar[data-collapsed] .user-pill { padding: 6px; justify-content: center; }
+
+/* Auto-collapse at narrow viewports — replicate the rules above without
+ * the data-collapsed gate, because the React state doesn't track the
+ * media query. */
+@media (max-width: 768px) {
+  .sidebar .nav-item { padding: 0 14px; justify-content: flex-start; }
+  .sidebar .brand { padding: 0; height: var(--topbar-h); justify-content: center; gap: 0; }
+  .sidebar .brand .gear { width: 26px; height: 26px; }
+  .sidebar .brand .name,
+  .sidebar .nav-item > span,
+  .sidebar .nav-item > .badge,
+  .sidebar .nav-section,
+  .sidebar .user-pill > .col,
+  .sidebar .user-pill > .more-icon {
+    display: none !important;
+  }
+  .sidebar .user-pill { padding: 6px; justify-content: center; }
+}
 
 /* ── sidebar foot + user pill ──────────────────────────────── */
 .sidebar-foot {
