@@ -6,6 +6,34 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — PR-4 of [#133](https://github.com/nuetzliches/croniq/issues/133)
+
+- `io.croniq.runner.handler.CroniqLogWriter` public interface — streaming
+  structured-log sink available on every `CroniqExecutionContext`.
+- `BoundedLogWriter` implementation: virtual-thread flusher, batched POSTs
+  to `/v1/work/{execution_id}/events` (32 events per batch), time-based
+  flush every `renewInterval`, drain-before-ack guarantee.
+- `CroniqRunner.Builder.addJob(jobKey, schedule, handler)` overload —
+  scheduled handlers self-register via `POST /v1/jobs/register` at runner
+  startup. Best-effort; failures are logged but don't block the poll loop
+  (registration is idempotent on the server side).
+- Conformance cases 07 (ApiKey header), 08 (self-register), 09 (drain-before-ack),
+  10 (time-threshold flush) now pass — the Java SDK passes all 12 conformance
+  cases the wire protocol describes.
+
+### Added — PR-3 of [#133](https://github.com/nuetzliches/croniq/issues/133)
+
+- Lease renewal: each in-flight execution gets a virtual-thread renewer
+  that calls `POST /v1/work/renew` at `renewInterval`. Renewer is
+  interrupted when the handler returns or fails.
+- Graceful drain in `CroniqRunner.close()`: stops the poll loop, waits up
+  to `drainTimeout` for in-flight handlers to complete naturally, then
+  force-cancels any stragglers. Mirrors the .NET SDK's `StopAsync` and the
+  Rust SDK's drain semantics — host shutdown stops new work but does NOT
+  cancel running handlers.
+- Conformance cases 05 (lease renewal), 06 (drain on shutdown),
+  11 (poll 409 conflict), 12 (poll 500 backoff) pass against the Java SDK.
+
 ### Added — PR-2 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - Wire-protocol DTOs in `io.croniq.runner.protocol`: `PollRequest`,

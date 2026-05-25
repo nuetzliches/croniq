@@ -3,6 +3,7 @@ package io.croniq.runner.internal;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.croniq.runner.handler.CroniqCancellation;
 import io.croniq.runner.handler.CroniqExecutionContext;
+import io.croniq.runner.handler.CroniqLogWriter;
 import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
@@ -24,6 +25,7 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
     private final List<String> runnerTags;
     private final Logger logger;
     private final CroniqCancellation cancellation;
+    private final CroniqLogWriter logWriter;
 
     ExecutionContextImpl(
             String executionId,
@@ -33,7 +35,8 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
             Duration timeout,
             String runnerId,
             List<String> runnerTags,
-            CroniqCancellation cancellation) {
+            CroniqCancellation cancellation,
+            CroniqLogWriter logWriter) {
         this.executionId = executionId;
         this.jobKey = jobKey;
         this.attempt = attempt;
@@ -42,6 +45,7 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
         this.runnerId = runnerId;
         this.runnerTags = runnerTags;
         this.cancellation = cancellation;
+        this.logWriter = logWriter;
         // PR-4 will install an MDC adapter; for now a plain per-job logger is
         // enough for the conformance sentinels.
         this.logger = LoggerFactory.getLogger("io.croniq.runner.job." + jobKey);
@@ -90,5 +94,10 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
     @Override
     public CroniqCancellation cancellation() {
         return cancellation;
+    }
+
+    @Override
+    public CroniqLogWriter logWriter() {
+        return logWriter;
     }
 }

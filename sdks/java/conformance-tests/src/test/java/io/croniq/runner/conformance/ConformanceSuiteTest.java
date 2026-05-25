@@ -22,17 +22,23 @@ class ConformanceSuiteTest {
     private static final Path CASES_DIR =
             Path.of("..", "..", "conformance", "cases").toAbsolutePath().normalize();
 
-    /**
-     * Whitelist of cases this PR is expected to pass. Each subsequent PR
-     * extends the set in lockstep with the feature it implements:
-     *
-     * <ul>
-     *   <li>PR-3 adds 05, 06, 11, 12 (renewal, drain, 409, 500-backoff).
-     *   <li>PR-4 adds 07, 08, 09, 10 (auth-already-here, self-register, streaming).
-     * </ul>
-     */
-    private static final Set<String> PR2_SCOPE = Set.of(
-            "01-poll-empty.yaml", "02-poll-single-success.yaml", "03-handler-failure.yaml", "04-cancel-via-poll.yaml");
+    /** Cases covered by the current Java SDK. Expanded as features land. */
+    private static final Set<String> SCOPE = Set.of(
+            // PR-2: poll/ack loop + cancellation
+            "01-poll-empty.yaml",
+            "02-poll-single-success.yaml",
+            "03-handler-failure.yaml",
+            "04-cancel-via-poll.yaml",
+            // PR-3: lease renewal, drain, transient-error backoff
+            "05-lease-renewal.yaml",
+            "06-drain-on-shutdown.yaml",
+            "11-poll-409-conflict.yaml",
+            "12-poll-500-backoff-retry.yaml",
+            // PR-4: auth header assertion, self-register, streaming logs
+            "07-auth-apikey-header.yaml",
+            "08-self-register-schedule.yaml",
+            "09-streaming-logs-flush-before-ack.yaml",
+            "10-streaming-logs-time-threshold.yaml");
 
     static Stream<Arguments> cases() throws Exception {
         if (!Files.isDirectory(CASES_DIR)) {
@@ -41,7 +47,7 @@ class ConformanceSuiteTest {
         try (Stream<Path> files = Files.list(CASES_DIR)) {
             return files
                     .filter(p -> p.toString().endsWith(".yaml"))
-                    .filter(p -> PR2_SCOPE.contains(p.getFileName().toString()))
+                    .filter(p -> SCOPE.contains(p.getFileName().toString()))
                     .sorted()
                     .map(p -> Arguments.of(p.getFileName().toString(), p))
                     .toList()

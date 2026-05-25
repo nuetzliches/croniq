@@ -11,9 +11,10 @@ import java.util.Locale;
  * {@link CroniqJobHandler} registrations on the
  * {@link io.croniq.runner.CroniqRunner.Builder}.
  *
- * <p>PR-2 implements the {@code noop}, {@code throw}, and {@code sleep}
- * behaviours — enough to make cases 01-04 pass. {@code log} / {@code stream_logs}
- * land in PR-4 with the streaming log writer.
+ * <p>All five behaviours are wired: {@code noop}, {@code throw}, {@code sleep},
+ * {@code log}, {@code stream_logs}. {@code stream_logs} emits via
+ * {@link io.croniq.runner.handler.CroniqLogWriter}; the dispatcher drains the
+ * writer before acking.
  */
 final class HandlerSentinels {
 
@@ -24,6 +25,8 @@ final class HandlerSentinels {
             CroniqJobHandler handler = forBehavior(h);
             if (Boolean.TRUE.equals(h.isDefault())) {
                 builder.defaultHandler(handler);
+            } else if (h.schedule() != null && !h.schedule().isBlank()) {
+                builder.addJob(h.jobKey(), h.schedule(), handler);
             } else {
                 builder.addJob(h.jobKey(), handler);
             }
@@ -59,9 +62,17 @@ final class HandlerSentinels {
     }
 
     private static CroniqJobHandler streamLogsSentinel(CaseSpec.HandlerSpec h) {
-        // PR-4 wires the LogWriter; until then this is a no-op so cases that
-        // *only* depend on stream_logs being installable don't block PR-2.
-        return ctx -> {};
+        return ctx -> {
+            int count = h.count() == null ? 1 : h.count();
+            long interval = h.intervalMs() == null ? 0L : h.intervalMs();
+            String level = h.level() == null ? "info" : h.level().toLowerCase(Locale.ROOT);
+            for (int i = 0; i < count; i++) {
+                ctx.logWriter().write(level, "line " + i);
+                if (interval > 0) {
+                    Thread.sleep(interval);
+                }
+            }
+        };
     }
 
     private static void logAtLevel(CroniqExecutionContext ctx, String level, String msg) {
