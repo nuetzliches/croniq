@@ -46,6 +46,13 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 base64 = "0.22"
 rand = "0.9"
 
+# #140 PR-2: HMAC-SHA256 signing for outbound webhook alert channels.
+# Standard pairing (hmac 0.12 ⇄ sha2 0.10) and same versions as
+# croniq-auth so the workspace resolves to a single copy of each crate.
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
 # PR-A6: optional SMTP transport for invitations + password resets.
 # Off by default — NoopSender keeps working and the API still returns
 # the token URL in the JSON response. Enable the `smtp` cargo feature
