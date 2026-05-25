@@ -281,12 +281,12 @@ exposed to whoever can ship a Croniqfile change. Run separate shell-runner
 pools per blast-radius bracket and use `runner { require <pool> }` /
 `exclude <pool>` to pin sensitive jobs to the right pool.
 
-**Webhook delivery.** Croniq deliberately does not ship a `runner http` mode —
-durable HTTP delivery, HMAC signing, retry/DLQ for failed callbacks, and
-DMZ-safe pull/push split are the job of [hookaido](https://github.com/nuetzliches/hookaido).
-The natural composition is `Croniq (when) → hookaido (where/how) → consumer`.
-Until a first-class bridge lands (see [`ROADMAP.md`](ROADMAP.md)), use
-`runner shell { command "curl -X POST … http://hookaido:8080/c/<channel>" }`.
+**Webhook delivery.** Croniq does not yet ship a native `runner http` mode
+for sending outgoing webhooks from a job. Until that lands, use
+`runner shell { command "curl -X POST … " }`. Durable delivery (HMAC
+signing, retry/DLQ) for *failure alerts* is being built separately as
+part of the alert delivery layer; a future first-class `runner http`
+mode is expected to share that infrastructure.
 
 ---
 
