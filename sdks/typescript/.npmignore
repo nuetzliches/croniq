@@ -1,0 +1,12 @@
+src/
+test/
+examples/
+coverage/
+.vitest-cache/
+node_modules/
+tsconfig*.json
+vitest.config.ts
+eslint.config.js
+*.tsbuildinfo
+.gitignore
+.editorconfig

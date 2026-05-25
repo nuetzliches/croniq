@@ -8,6 +8,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Automated .NET SDK release pipeline.** New workflow
+  `.github/workflows/dotnet-sdk-release.yml` triggers on
+  `dotnet-sdk-v*` tags: restores → builds → runs unit + conformance
+  tests → `dotnet pack` (MinVer reads the tag, sets the version on
+  both `Croniq.Runner.Sdk` and `Croniq.Runner.Sdk.OpenTelemetry`) →
+  `dotnet nuget push` to nuget.org (with `--skip-duplicate` so a
+  re-run after a partial failure doesn't 409). Requires the
+  `NUGET_API_KEY` repo secret. Symbol packages (`.snupkg`) push
+  alongside the main `.nupkg`. Closes the gap between PR-time CI
+  (which only `pack-smoke`d) and a real release.
+
+- **Automated TypeScript SDK release pipeline.** New workflow
+  `.github/workflows/typescript-sdk-release.yml` triggers on
+  `ts-sdk-v*` tags: typecheck → lint → unit + conformance tests →
+  build → `npm publish --provenance --access public` to npm.
+  Pre-release tags (with `-`) ship under the `next` dist-tag so
+  `npm install @nuetzliches/croniq-runner` keeps pointing at stable.
+  Requires the `NPM_TOKEN` repo secret.
+
+- **TypeScript / Node.js runner SDK (closes #132).** New package
+  `@nuetzliches/croniq-runner` at [`sdks/typescript/`](sdks/typescript). ESM-only,
+  Node ≥ 18, native `fetch` and `AbortController`. Ports the .NET SDK's
+  semantics: poll / ack / renew / events / register loop, per-execution
+  `AbortSignal` honouring `PollResponse.cancel`, streaming `LogWriter`
+  with bounded backpressure, batch-by-count (32), batch-by-time (200 ms),
+  drain-before-ack, self-registration of schedule-bearing handlers, and
+  `ApiKey`/`Bearer` precedence. Passes all 12 cases in
+  [`sdks/conformance/cases/`](sdks/conformance/cases) via a new TS
+  binding at [`sdks/conformance/bindings/typescript/`](sdks/conformance/bindings/typescript).
+  Dedicated CI workflow at `.github/workflows/typescript-sdk-ci.yml`
+  (schema → build & test on Node 18/20/22 × Linux/macOS/Windows →
+  conformance → pack-smoke → required aggregator) mirrors the .NET
+  workflow's branch-protection contract.
+
 - **OpenAPI 3.1 spec covers the PR-A1…B1b surface (PR-B1c).** Every
   new endpoint added between PR-A1 and PR-B1b is documented in
   `openapi.yaml` — User CRUD, Invitations, Password-Reset, TOTP,
