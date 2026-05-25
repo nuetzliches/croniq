@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup JDK 21 (Temurin)
-        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -73,7 +73,7 @@ jobs:
         # gradle/actions/setup-gradle handles wrapper validation, daemon
         # tuning, and the build-cache for us. Reads the wrapper version
         # from gradle/wrapper/gradle-wrapper.properties.
-        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5.0.0
         with:
           cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
       - name: Spotless check (formatting)
@@ -111,12 +111,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup JDK 21 (Temurin)
-        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '21'
       - name: Setup Gradle (with caching)
-        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5.0.0
       - name: Run conformance binding
         run: ./gradlew --no-daemon :conformance-tests:test
       - name: Upload conformance results
@@ -143,12 +143,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup JDK 21 (Temurin)
-        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '21'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5.0.0
       - name: Assemble + publish to Maven local
         run: ./gradlew --no-daemon publishToMavenLocal
       - name: List produced artefacts
