@@ -34,11 +34,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Rust: new `ClientError::PollInstanceConflict { body }` variant returned from `runner.start()` after N conflicts.
   - .NET: new public `PollInstanceConflictException` (carries `RunnerId` + `ConsecutiveCount`) thrown out of `RunAsync`.
 
-  Companion conformance case
-  [`sdks/conformance/cases/11a-poll-409-fatal-after-n.yaml`](sdks/conformance/cases/11a-poll-409-fatal-after-n.yaml)
-  documents the new wire contract; the YAML harness can't assert exit
-  codes yet, so the SDKs verify the behaviour at the unit-test layer.
-  Case 11 (single 409 → transient) stays unchanged.
+  The conformance schema gains a `max_consecutive_poll_conflicts`
+  field on `runner_config` (and the .NET binding wires it through to
+  `CroniqRunnerOptions`), so a future shared case can pin the wire
+  contract once the Go, Python, and TypeScript SDKs implement the
+  same behaviour. The Rust + .NET behaviour is verified at the
+  SDK unit-test layer for now. Case 11 (single 409 → transient
+  retry) stays unchanged.
 
 ## [0.15.0] - 2026-05-26
 
