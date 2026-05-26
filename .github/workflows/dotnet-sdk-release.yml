@@ -120,8 +120,14 @@ jobs:
         # (lightweight tag vs annotated, shallow-but-tagged refs, etc.).
         # This is the supported MinVer escape hatch — see
         # https://github.com/adamralph/minver#can-i-disable-minver
+        #
+        # Intentionally no --no-build: combined with MinVerVersionOverride,
+        # --no-build skips the SymbolPack target so artifacts/*.snupkg never
+        # gets written and the symbol push below has nothing to upload. The
+        # incremental rebuild is cheap (sources unchanged since the Build
+        # step) and restores the snupkg output Directory.Build.props asks for.
         run: |
-          dotnet pack Croniq.Runner.Sdk.slnx --configuration Release --no-build --output ./artifacts \
+          dotnet pack Croniq.Runner.Sdk.slnx --configuration Release --no-restore --output ./artifacts \
             -p:MinVerVersionOverride=${{ steps.version.outputs.version }}
 
       - name: List packed artefacts
@@ -160,7 +166,7 @@ jobs:
           dotnet nuget push "artifacts/*.snupkg" \
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json \
-            --skip-duplicate || true
+            --skip-duplicate
           echo "Published Croniq.Runner.Sdk@${{ steps.version.outputs.version }} + .OpenTelemetry"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
