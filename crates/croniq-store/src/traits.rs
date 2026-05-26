@@ -99,6 +99,11 @@ pub trait ExecutionStore {
 
     /// Count executions by state.
     fn count_by_state(&self) -> Result<std::collections::HashMap<ExecutionState, u64>, StoreError>;
+
+    /// Per-job execution aggregates for the `/metrics` endpoint, computed on
+    /// demand with one grouped scan (no separate counters are persisted).
+    /// Returns one entry per `job_key` that has at least one execution.
+    fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError>;
 }
 
 /// Runner persistence.

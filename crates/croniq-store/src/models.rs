@@ -151,6 +151,39 @@ pub struct ExecutionFilter {
     pub limit: Option<u32>,
 }
 
+/// Upper bounds, in seconds, for the per-job execution-duration histogram
+/// exposed at `/metrics`. Shared by the store aggregation and the Prometheus
+/// renderer so the two never drift; the renderer appends the synthetic
+/// `+Inf` bucket (which equals [`JobExecutionMetrics::duration_count`]).
+pub const JOB_DURATION_BUCKETS_SECONDS: &[f64] =
+    &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0];
+
+/// Per-job execution aggregates computed on demand from the executions table
+/// (one grouped scan per `/metrics` scrape — nothing is persisted separately).
+/// Backs the `croniq_job_*` Prometheus metrics.
+#[derive(Debug, Clone)]
+pub struct JobExecutionMetrics {
+    pub job_key: String,
+    /// Terminal-state tallies. Each only ever grows, so they map cleanly onto
+    /// Prometheus counters.
+    pub completed: u64,
+    pub failed: u64,
+    pub dead: u64,
+    pub cancelled: u64,
+    /// Cumulative duration-histogram counts, one entry per
+    /// [`JOB_DURATION_BUCKETS_SECONDS`] boundary (same length and order).
+    /// Entry `i` counts executions whose `duration_ms` is `<=` boundary `i`.
+    pub duration_buckets: Vec<u64>,
+    /// Executions that recorded a duration — the histogram `_count` and its
+    /// `+Inf` bucket.
+    pub duration_count: u64,
+    /// Sum of recorded durations in milliseconds — the histogram `_sum`
+    /// (the renderer converts to seconds).
+    pub duration_sum_ms: i64,
+    /// Completion time of the most recent finished execution, if any.
+    pub last_run_at: Option<DateTime<Utc>>,
+}
+
 /// Filter for listing dead letters.
 #[derive(Debug, Clone, Default)]
 pub struct DeadLetterFilter {

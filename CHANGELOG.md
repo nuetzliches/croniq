@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-job metrics on the `/metrics` endpoint.** Three new series are
+  computed from the executions store on each scrape — no schema change and no
+  separately-persisted counters: `croniq_job_executions_total{job_key,state}`
+  (terminal-state counter), `croniq_job_duration_seconds{job_key}` (a
+  histogram with `_bucket`/`_sum`/`_count`), and
+  `croniq_job_last_run_timestamp{job_key}` (gauge). Backed by a new
+  `ExecutionStore::job_execution_metrics` aggregate query (one grouped scan).
+  The previously planned `croniq_job_log_bytes_total` series remains a
+  follow-up.
+
 ### Security
 
 - **`croniq init` / `quickstart` no longer leak secrets to a non-interactive
