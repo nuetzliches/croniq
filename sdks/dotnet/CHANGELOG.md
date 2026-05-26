@@ -7,6 +7,19 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 ## [Unreleased]
 
 ### Added
+- **`LogWriter` accepts `TimeProvider` for deterministic flush testing
+  ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 3).**
+  The internal flusher's `PeriodicTimer` is now driven through the same
+  `TimeProvider` pipeline `CroniqRunner` and the health check already
+  use. Production code paths default to `TimeProvider.System` and stay
+  byte-equivalent. Unit tests wire `Microsoft.Extensions.Time.Testing.FakeTimeProvider`
+  to advance the 200 ms batch-time threshold deterministically — the
+  partial-batch flush path that conformance case 10
+  (`10-streaming-logs-time-threshold.yaml`) can only assert with
+  `min_count: 1` because of `Task.WhenAny`'s read-bias under real-time
+  scheduling is now reliably covered in
+  `Croniq.Runner.Sdk.Tests.LogWriterTests`.
+
 - Initial `Croniq.Runner.Sdk` package with poll/ack/renew/events loop, Generic Host integration, options-pattern configuration, server-side cancellation wiring, and streaming `ILogWriter` backed by `System.Threading.Channels`.
 - Initial `Croniq.Runner.Sdk.OpenTelemetry` package with `ActivitySource`/`Meter` constants and `Add…Instrumentation()` extensions.
 - Multi-target build for `net8.0` (LTS) and `net10.0` (LTS).

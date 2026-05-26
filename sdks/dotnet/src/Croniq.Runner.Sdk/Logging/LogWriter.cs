@@ -21,6 +21,7 @@ internal sealed class LogWriter : ILogWriter
     private readonly LogEnrichment _enrichment;
     private readonly LogWriterOptions _options;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
 
     private readonly Channel<Command> _channel;
     private readonly CancellationTokenSource _shutdownCts = new();
@@ -33,13 +34,21 @@ internal sealed class LogWriter : ILogWriter
         string executionId,
         LogEnrichment enrichment,
         LogWriterOptions options,
-        ILogger logger)
+        ILogger logger,
+        TimeProvider? timeProvider = null)
     {
         _client = client;
         _executionId = executionId;
         _enrichment = enrichment;
         _options = options;
         _logger = logger;
+        // Default to TimeProvider.System so production code paths are
+        // byte-equivalent to the pre-TimeProvider behaviour. Tests pass
+        // a FakeTimeProvider to drive the time-threshold flush loop
+        // deterministically (see #134 sub-item 3 — the case-10
+        // conformance scenario's `Task.WhenAny` read-bias is impossible
+        // to verify without controllable time).
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         _channel = Channel.CreateBounded<Command>(new BoundedChannelOptions(options.ChannelCapacity)
         {
@@ -119,13 +128,23 @@ internal sealed class LogWriter : ILogWriter
         var buffer = new List<WorkEvent>(_options.MaxBatchPerPost);
         var pendingFlushes = new List<TaskCompletionSource>(2);
 
-        var timer = new PeriodicTimer(_options.BatchTimeThreshold);
+        var timer = new PeriodicTimer(_options.BatchTimeThreshold, _timeProvider);
+        // PeriodicTimer.WaitForNextTickAsync supports only **one pending
+        // consumer at a time** — calling it again before the previous
+        // task has completed throws InvalidOperationException. Keep one
+        // tickTask in flight across loop iterations and only re-arm it
+        // after the timer-branch consumes it. Without this, every
+        // channel-read win would attempt a fresh WaitForNextTickAsync
+        // while the prior tickTask is still pending; in real time the
+        // 200 ms window often masked the race, but with TimeProvider /
+        // FakeTimeProvider it surfaces immediately.
+        Task<bool>? tickTask = null;
         try
         {
             while (true)
             {
+                tickTask ??= timer.WaitForNextTickAsync(shutdownCt).AsTask();
                 var readTask = _channel.Reader.WaitToReadAsync(shutdownCt).AsTask();
-                var tickTask = timer.WaitForNextTickAsync(shutdownCt).AsTask();
                 var winner = await Task.WhenAny(readTask, tickTask).ConfigureAwait(false);
 
                 if (winner == readTask)
@@ -168,18 +187,24 @@ internal sealed class LogWriter : ILogWriter
                         await FlushBufferAsync(buffer).ConfigureAwait(false);
                         CompletePendingFlushes(pendingFlushes);
                     }
+
+                    // tickTask stays in flight — we re-use it on the
+                    // next iteration so the PeriodicTimer never sees
+                    // two concurrent WaitForNextTickAsync calls.
                 }
                 else if (winner == tickTask)
                 {
+                    bool hadTick;
                     try
                     {
-                        var hadTick = await tickTask.ConfigureAwait(false);
-                        if (!hadTick)
-                        {
-                            break;
-                        }
+                        hadTick = await tickTask.ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    tickTask = null; // re-arm on the next iteration
+                    if (!hadTick)
                     {
                         break;
                     }

@@ -6,18 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- **Demo build pre-enables TOTP for admin
-  ([#137](https://github.com/nuetzliches/croniq/issues/137)).** New
-  opt-in switch `CRONIQ_DEMO_MFA=1` (or `--demo-mfa` on `croniq init`)
-  seeds the admin user with a real TOTP secret and bakes the recovery
-  code `123456` into all 10 slots, so a marketing walkthrough of the
-  docker demo image (`admin / admin / 123456`) actually exercises the
-  MFA step instead of jumping straight to the dashboard. The seed is
-  first-boot only, and the docker entrypoint warns loudly if the flag
-  is set without `CRONIQ_DEMO_MODE=1`. Production seeds must never set
-  it — see `docs/operations.md#demo-only-seed-flags`.
+- **.NET runner SDK: `LogWriter` accepts a `TimeProvider` for
+  deterministic flush testing
+  ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 3).**
+  The internal flusher's `PeriodicTimer` now runs through the same
+  `TimeProvider` plumbing `CroniqRunner` and the health check already
+  used; production paths still default to `TimeProvider.System`, so the
+  on-the-wire behaviour is unchanged. New `LogWriterTests` exercise the
+  partial-batch and multi-tick flush paths via `FakeTimeProvider`,
+  giving the team a deterministic regression marker for the scenario
+  that conformance case 10 can only describe weakly (`min_count: 1`)
+  because of `Task.WhenAny`'s read-bias under real-time scheduling.
+  See [`sdks/dotnet/CHANGELOG.md`](sdks/dotnet/CHANGELOG.md) for the
+  SDK-track entry.
 
 ## [0.15.0] - 2026-05-26
 
