@@ -43,9 +43,12 @@ sdks/conformance/
 ```
 
 Bindings live with their SDK (each SDK author knows its own ecosystem
-best — central bindings would force a polyglot test runner). Current bindings:
+best — central bindings would force a polyglot test runner). Current
+bindings:
 
 - .NET: [`sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests`](../dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests)
+- Python: [`sdks/python/tests/conformance`](../python/tests/conformance)
+- Go: [`sdks/go/conformance`](../go/conformance)
 - Java: [`sdks/java/conformance-tests`](../java/conformance-tests) (skeleton — full harness lands in PR-2 of [#133](https://github.com/nuetzliches/croniq/issues/133))
 
 ## Case anatomy

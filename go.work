@@ -1,0 +1,16 @@
+go 1.22
+
+// Local workspace for cross-module development of the Go runner SDK
+// and its OpenTelemetry adapter. Without this file, the otel
+// sub-module's `require github.com/nuetzliches/croniq/sdks/go` would
+// only resolve against published versions on proxy.golang.org —
+// breaking local edits to the core SDK that the otel package needs to
+// pick up immediately.
+//
+// `go.work` is honoured by `go build`/`go test` only when invoked
+// inside this directory tree; it has no effect on downstream consumers
+// of either module.
+use (
+	./sdks/go
+	./sdks/go/otel
+)

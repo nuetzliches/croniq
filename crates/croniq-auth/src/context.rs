@@ -128,6 +128,11 @@ impl Scope {
     // HTTP MCP transport (Streamable-HTTP at /mcp)
     pub const MCP_READ: &str = "mcp:read";
     pub const MCP_WRITE: &str = "mcp:write";
+
+    // Failure alerts (issue #140). Read-only access to the current
+    // alerts config + delivery log. There is no `alerts:write` yet —
+    // rules and channels are DSL-managed today.
+    pub const ALERTS_READ: &str = "alerts:read";
 }
 
 /// Default scope set for a user role. The login handler embeds these in
@@ -148,6 +153,7 @@ pub fn default_scopes_for_role(role: Role) -> Vec<String> {
             Scope::DEAD_LETTERS_READ.to_string(),
             Scope::DEAD_LETTERS_WRITE.to_string(),
             Scope::RUNNERS_READ.to_string(),
+            Scope::ALERTS_READ.to_string(),
         ],
         Role::Viewer => vec![
             Scope::JOBS_READ.to_string(),
@@ -156,6 +162,7 @@ pub fn default_scopes_for_role(role: Role) -> Vec<String> {
             Scope::EXECUTIONS_READ.to_string(),
             Scope::DEAD_LETTERS_READ.to_string(),
             Scope::RUNNERS_READ.to_string(),
+            Scope::ALERTS_READ.to_string(),
         ],
     }
 }

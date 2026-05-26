@@ -52,7 +52,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Each permanent failure (dead-letter or drop) is matched against your rules, throttled per `(rule, job_key)`, and dispatched to the configured channels — with a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Two triggers ship: `job_failed` (permanent failure: dead-letter or drop) and `job_sla_missed` (in-flight execution exceeded its `expected_within`). Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -64,12 +64,18 @@ Build custom job execution runners in your language of choice. Runners poll the 
 |----------|--------|---------|--------|
 | Rust     | [`crates/croniq-runner-sdk`](crates/croniq-runner-sdk) | (bundled with workspace, not published separately yet) | ✅ available |
 | .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) | ✅ available |
-| Python | [#130](https://github.com/nuetzliches/croniq/issues/130) | PyPI (planned) | 🛠 planned |
-| Go | [#131](https://github.com/nuetzliches/croniq/issues/131) | Go modules (planned) | 🛠 planned |
-| TypeScript / Node.js | [#132](https://github.com/nuetzliches/croniq/issues/132) | npm (planned) | 🛠 planned |
-| Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.croniq:runner` + `runner-spring-boot-starter` + `runner-kotlin-ext` (Maven Central — planned) | 🚧 in progress ([#133](https://github.com/nuetzliches/croniq/issues/133)) |
+| Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI — pre-release) | ✅ available |
+| Go (1.22+) | [`sdks/go`](sdks/go) | `github.com/nuetzliches/croniq/sdks/go` + `.../sdks/go/otel` (Go modules) | ✅ available |
+| TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm — pre-release) | ✅ available |
+| Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.github.nuetzliches:croniq-runner` + `croniq-runner-spring-boot-starter` + `croniq-runner-kotlin-ext` (Maven Central — planned) | 🚧 in progress ([#133](https://github.com/nuetzliches/croniq/issues/133)) |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
+
+The Python SDK is `asyncio`-first (`httpx.AsyncClient` + Pydantic v2), supports server-side cancellation, lease renewal, self-registration via `schedule=`, streaming logs over a bounded `asyncio.Queue` with drain-before-ack, and opt-in OpenTelemetry tracing via the `[otel]` extra. See [`sdks/python/README.md`](sdks/python/README.md) for the quickstart.
+
+The Go SDK ships idiomatic `context.Context` propagation, `log/slog` structured logging, server-side cancellation, a bounded-channel streaming `LogWriter`, lease renewal, drain-on-shutdown, persistent runner identity, and an opt-in OpenTelemetry tracing adapter in a sibling module. See [`sdks/go/README.md`](sdks/go/README.md) for the quickstart.
+
+The TypeScript / Node.js SDK is ESM-first, uses native `fetch` and `AbortController`, and ships the same streaming log writer (batch + drain-before-ack) and server-side cancellation semantics as the .NET SDK. See [`sdks/typescript/README.md`](sdks/typescript/README.md) for the quickstart.
 
 ### Language-agnostic conformance suite
 
@@ -174,19 +180,44 @@ calendar business-days {
 }
 
 # Failure alerts (issue #140) — fire per-rule when an execution
-# permanently fails (dead-letter or drop). Throttled per (rule, job)
-# so a job that loops failing doesn't flood the channel. PR-1 ships
-# the `shell` channel kind only; `webhook` and `email` follow.
+# permanently fails OR overruns its SLA. Throttled per (rule, job)
+# so a job that loops failing doesn't flood the channel. Shell,
+# webhook, and email channels all ship today.
 alerts {
   channel "ops-paging" {
     shell "/usr/local/bin/page-oncall.sh"
   }
+  channel "slack" {
+    webhook https://hooks.slack.com/services/xxx/yyy/zzz
+    sign hmac {env.SLACK_SIGNING_SECRET}
+    timeout 5s
+  }
+  channel "ops-mail" {
+    # One address per arg, multiple addresses get one mail each.
+    # Needs CRONIQ_SMTP_URL + CRONIQ_SMTP_FROM (server built with
+    # --features smtp); otherwise NoopSender just logs the recipient.
+    email "ops@example.com" "oncall@example.com"
+  }
+
+  # Permanent-failure rule: fires when retries are exhausted.
   rule "billing-fail" {
     when job_failed
     job_key "billing:*"
     min_attempts 2     # fire only after retry exhaustion
     throttle 10m       # one alert per (rule, job_key) per window
-    channels "ops-paging"
+    channels "ops-paging" "slack" "ops-mail"
+  }
+
+  # SLA-miss rule: fires when an in-flight execution exceeds the
+  # expected runtime. The watchdog (~30 s sweep) scans claimed
+  # executions and fires once per (rule, execution_id), so a long-
+  # running job won't re-alert every sweep.
+  rule "billing-slow" {
+    when job_sla_missed
+    job_key "billing:*"
+    expected_within 15m
+    throttle 1h
+    channels "slack"
   }
 }
 
@@ -298,12 +329,39 @@ exposed to whoever can ship a Croniqfile change. Run separate shell-runner
 pools per blast-radius bracket and use `runner { require <pool> }` /
 `exclude <pool>` to pin sensitive jobs to the right pool.
 
-**Webhook delivery.** Croniq does not yet ship a native `runner http` mode
-for sending outgoing webhooks from a job. Until that lands, use
-`runner shell { command "curl -X POST … " }`. Durable delivery (HMAC
-signing, retry/DLQ) for *failure alerts* is being built separately as
-part of the alert delivery layer; a future first-class `runner http`
-mode is expected to share that infrastructure.
+**Webhook delivery for failure alerts** — the `alerts { channel "…" { webhook … } }`
+DSL (issue #140 PR-2) sends an HMAC-signed JSON envelope to the configured URL on
+every matching permanent failure:
+
+```jsonc
+POST <channel.webhook>
+Content-Type: application/json
+X-Croniq-Event: alerts.fired
+X-Croniq-Delivery-Id: <uuid>
+X-Croniq-Signature: sha256=<hex(hmac-sha256(secret, raw_body))>
+
+{
+  "rule":           "billing-fail",
+  "event":          "job_failed",
+  "job_key":        "billing:invoice",
+  "execution_id":   "…",
+  "attempt":        3,
+  "reason":         "dead_letter",       // or "dropped"
+  "error":          "runner exited 1: connection refused",
+  "fired_at":       "2026-05-25T08:12:00Z",
+  "croniq_version": "0.4.2"
+}
+```
+
+The envelope is a stable contract; future versions only add fields. To verify
+a receiver, recompute `sha256=hex(hmac_sha256(secret, raw_body))` and
+constant-time-compare against `X-Croniq-Signature`. One retry on 5xx /
+network error with a 3-second backoff before recording `delivery_failed`;
+4xx responses are recorded immediately without retry.
+
+**Webhook delivery from a job** (different concern — outbound trigger of a
+business action) is not yet a first-class `runner http` mode. Use
+`runner shell { command "curl -X POST … " }` for that today.
 
 ---
 
@@ -379,6 +437,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Runners | `runners:read` (incl. SSE) | `runners:write` |
 | Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |
 | Dashboard forecast | `jobs:read` | — |
+| Failure alerts (`/v1/alerts/config`, `/v1/alerts/deliveries`) | `alerts:read` | — (rules + channels are DSL-managed; no write API yet) |
 | API clients | `api-clients:admin` | `api-clients:admin` |
 | API keys | — | `api-keys:admin` |
 | Admin reload | — | `admin` |

@@ -26,6 +26,9 @@ const DeadLettersPage = lazy(() =>
 const ExecutionsPage = lazy(() =>
   import('@/pages/ExecutionsPage').then((m) => ({ default: m.ExecutionsPage })),
 )
+const AlertsPage = lazy(() =>
+  import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })),
+)
 const CalendarsPage = lazy(() =>
   import('@/pages/CalendarsPage').then((m) => ({ default: m.CalendarsPage })),
 )
@@ -67,6 +70,7 @@ export default function App() {
               <Route path="/dead-letters" element={<DeadLettersPage />} />
               <Route path="/dead-letters/:id" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />
+              <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/calendars" element={<CalendarsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>

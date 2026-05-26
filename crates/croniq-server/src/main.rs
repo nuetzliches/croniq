@@ -218,7 +218,14 @@ async fn main() -> Result<()> {
         jwt_config,
         Some(Arc::clone(&store)),
     );
-    // Inject scheduler_tx, dsl_jobs, and config_path into the shared state
+    // Inject scheduler_tx, dsl_jobs, config_path, password-login
+    // flag, the EmailSender, and the merged alerts config into the
+    // shared state. The EmailSender is resolved once here so both
+    // the user-management endpoints (invitations / password-reset)
+    // and the alerts evaluator share the same SMTP transport —
+    // operators only configure it once. Must happen BEFORE the
+    // MCP/metrics tasks take their own Arc::clone of `server_state`
+    // — Arc::get_mut requires a unique strong-ref.
     {
         let s = Arc::get_mut(&mut server_state).unwrap();
         s.scheduler_tx = Some(scheduler_cmd_tx);
@@ -230,6 +237,11 @@ async fn main() -> Result<()> {
         );
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
+        s.email_sender = croniq_server::email::build_from_env();
+        // Issue #140 PR-5: surface the effective alerts config
+        // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
+        // `GET /v1/alerts/config` endpoint can serve it.
+        s.alerts = croniq_server::alerts::merge_legacy_env_hook(loaded.runtime.alerts.clone());
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
@@ -413,7 +425,13 @@ async fn main() -> Result<()> {
     // that haven't migrated yet. Throttle map is seeded from the
     // existing delivery log so a server restart doesn't reset
     // suppression windows.
-    let alerts_cfg = croniq_server::alerts::merge_legacy_env_hook(loaded.runtime.alerts.clone());
+    // alerts_cfg was already resolved at boot (before the MCP task
+    // took an Arc::clone of server_state) so the read-only
+    // `GET /v1/alerts/config` endpoint can serve it. Reuse the
+    // snapshot stored on ServerState rather than re-running
+    // merge_legacy_env_hook here — keeps a single source of truth
+    // for "what the server thinks the alerts config is".
+    let alerts_cfg = server_state.alerts.clone();
     let alert_throttle = croniq_server::alerts::load_throttle_state(&proc_store, &alerts_cfg);
     if !alerts_cfg.rules.is_empty() {
         tracing::info!(
@@ -422,6 +440,13 @@ async fn main() -> Result<()> {
             "failure-alert evaluator armed"
         );
     }
+    // Watchdog gets its own clones of the config + throttle Arc so
+    // the SLA-miss sweep dispatches through the same evaluator
+    // pipeline as `job_failed`. Sharing the throttle Arc is what
+    // makes `throttle 10m` apply across both trigger types for the
+    // same (rule, job_key).
+    let alerts_cfg_for_watchdog = alerts_cfg.clone();
+    let alert_throttle_for_watchdog = Arc::clone(&alert_throttle);
 
     let processor = Arc::new(CompletionProcessor::with_alerts(
         proc_jobs,
@@ -429,6 +454,7 @@ async fn main() -> Result<()> {
         Arc::clone(&runner_state),
         alerts_cfg,
         alert_throttle,
+        Arc::clone(&server_state.email_sender),
     ));
 
     let _completion_task = tokio::spawn(async move {
@@ -439,10 +465,20 @@ async fn main() -> Result<()> {
     });
 
     // ── Watchdog task ─────────────────────────────────────────────────────────
-    let watchdog = WatchdogLoop::new(
+    //
+    // Watchdog shares the alerts config + throttle map with the
+    // completion processor: the SLA-miss sweep (#140 PR-4) uses the
+    // same `evaluate_failure` pipeline as `job_failed`, so a rule
+    // with `throttle 10m` correctly suppresses both kinds of fires
+    // in the same window.
+    let watchdog = WatchdogLoop::with_alerts(
         loaded.runtime.jobs.clone(),
         Arc::clone(&store),
         Arc::clone(&runner_state),
+        alerts_cfg_for_watchdog,
+        alert_throttle_for_watchdog,
+        croniq_server::watchdog::empty_sla_fired_set(),
+        Arc::clone(&server_state.email_sender),
     );
     let watchdog_store = Arc::clone(&store);
 
@@ -458,6 +494,12 @@ async fn main() -> Result<()> {
                     dead = result.dead_runners.len(),
                     requeued = result.requeued.len(),
                     "watchdog: processed dead runners"
+                );
+            }
+            if !result.sla_missed.is_empty() {
+                tracing::warn!(
+                    count = result.sla_missed.len(),
+                    "watchdog: SLA-miss alerts fired"
                 );
             }
 

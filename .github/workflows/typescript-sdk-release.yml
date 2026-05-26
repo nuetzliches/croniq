@@ -1,0 +1,126 @@
+name: TypeScript SDK Release
+
+# Publishes @nuetzliches/croniq-runner to npm when a tag of the form `ts-sdk-vX.Y.Z` is
+# pushed. The tag prefix lets the .NET / Go / future SDKs ship on their own
+# cadence without colliding on the global `v*` tag namespace used by the
+# Rust server release.
+#
+# Prerequisites (one-time, set by a repo admin):
+#   * Repo secret `NPM_TOKEN` — an npm "automation" or "granular" token with
+#     publish rights to the `@nuetzliches` scope. Provenance attaches via
+#     OIDC, no extra cert plumbing needed.
+#
+# Tag examples:
+#   ts-sdk-v0.1.0           → publishes with `latest` dist-tag
+#   ts-sdk-v0.2.0-rc.1      → publishes with `next` dist-tag (any tag with `-`)
+
+on:
+  push:
+    tags: ['ts-sdk-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing tag to (re-)publish, e.g. ts-sdk-v0.1.0. Use with care — npm rejects re-publishing the same version.'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write  # npm provenance via OIDC
+
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # setup-node/checkout/upload-artifact/etc. Matches the env block in
+  # ci.yml, release.yml, and the other SDK release pipelines.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  publish:
+    name: Build, verify, publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js (LTS) with npm registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Resolve tag → version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ inputs.version }}"
+          else
+            REF="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ ! "$REF" =~ ^ts-sdk-v(.+)$ ]]; then
+            echo "::error::tag '$REF' does not match ts-sdk-vX.Y.Z"
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Pre-release tags (anything containing `-`) publish to the `next`
+          # dist-tag so consumers on `npm install @nuetzliches/croniq-runner` don't get
+          # an RC by default.
+          if [[ "$VERSION" == *-* ]]; then
+            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved version=$VERSION, dist_tag=$(grep dist_tag "$GITHUB_OUTPUT" | cut -d= -f2)"
+
+      - name: Verify package.json version matches tag
+        # Guard against a tag/manifest mismatch. npm publish would error
+        # anyway (and worse: the package on disk would carry the OLD version
+        # number, not the tagged one). Fail fast with a clear message.
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::package.json version ($PKG_VERSION) ≠ tag version (${{ steps.version.outputs.version }})"
+            echo "Bump package.json to match the tag, commit, then re-tag."
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Run conformance suite against the just-built SDK
+        # Same wire-protocol guard the PR-time CI applies. We re-run it on
+        # publish so a regression that slipped past PR review can't ship
+        # to npm.
+        run: |
+          cd ../conformance/bindings/typescript
+          npm install --no-audit --no-fund
+          npm test
+
+      - name: npm publish (provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          npm publish --access public --tag "${{ steps.version.outputs.dist_tag }}"
+          echo "Published @nuetzliches/croniq-runner@${{ steps.version.outputs.version }} with dist-tag ${{ steps.version.outputs.dist_tag }}"

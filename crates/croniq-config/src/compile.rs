@@ -196,7 +196,40 @@ pub enum ChannelKind {
     /// failure context in `CRONIQ_*` env vars (back-compat with the
     /// pre-#140 `CRONIQ_ON_FAILURE_CMD` env-var hook).
     Shell { command: String },
-    /// Placeholder for unknown or future kinds (webhook, email).
+    /// `webhook <url>` — POST a JSON envelope to the target URL.
+    ///
+    /// Signing is optional but recommended: when `signing_key` is set,
+    /// the server adds an `X-Croniq-Signature: sha256=<hex>` header
+    /// whose value is HMAC-SHA256 of the raw body (issue #140 PR-2).
+    /// Keep secrets out of the Croniqfile by using a placeholder:
+    /// `sign hmac {env.SLACK_SIGNING_SECRET}`.
+    ///
+    /// `timeout_secs` caps the HTTP request to that many seconds
+    /// (default 5). The handler retries exactly once on a 5xx or
+    /// network error before recording `delivery_failed`.
+    Webhook {
+        url: String,
+        /// Pre-resolved HMAC secret. `None` means the webhook fires
+        /// unsigned — fine for trusted internal endpoints, dangerous
+        /// for anything over the open internet.
+        #[serde(skip_serializing)] // secret never leaks via /v1/dsl preview
+        signing_key: Option<String>,
+        timeout_secs: u64,
+    },
+    /// `email "addr@example.com" ["second@…" …]` — send plain-text
+    /// notification to each recipient via the server's configured
+    /// `EmailSender` (issue #140 PR-3).
+    ///
+    /// With no SMTP backend (the default `NoopSender`), delivery is a
+    /// noop that logs `to` + `subject` and never emits the body. The
+    /// evaluator still records `delivered` in `alert_deliveries` so
+    /// operators can see what *would* have been sent.
+    ///
+    /// Operators enable real delivery by setting
+    /// `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM` and building
+    /// croniq-server with the `smtp` cargo feature.
+    Email { recipients: Vec<String> },
+    /// Placeholder for unknown or future kinds (slack-native, …).
     /// Channels with this kind compile cleanly so rule references
     /// resolve; the evaluator logs and skips them.
     Unknown { reason: String },
@@ -204,9 +237,9 @@ pub enum ChannelKind {
 
 /// A rule = trigger predicate + named channels to dispatch to.
 ///
-/// Trigger types in PR-1: `job_failed` only. `job_sla_missed` is
-/// reserved and rejected at compile time so a typo doesn't silently
-/// match nothing.
+/// Trigger types so far: `job_failed` (PR-1) and `job_sla_missed`
+/// (PR-4). Unknown values silently drop the rule at compile time so a
+/// typo doesn't accidentally match every job.
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleConfig {
     pub name: String,
@@ -215,17 +248,24 @@ pub struct RuleConfig {
     /// (default).
     pub job_key_glob: String,
     /// Minimum attempt number that must have been reached before this
-    /// rule fires. Defaults to 1.
+    /// rule fires. Defaults to 1. Used by `job_failed` only — SLA-miss
+    /// triggers ignore this field (SLA breaches are about runtime, not
+    /// retry count).
     pub min_attempts: u32,
     /// When `true`, only fire on dead-letter (not on dropped-because-
     /// dead-letter-disabled). Defaults to false (fire on any permanent
-    /// failure).
+    /// failure). `job_failed` only.
     pub dead_letter_only: bool,
     /// Per-(rule, job_key) suppression window. `None` disables
     /// throttling — every matching failure fires. Stored as duration
     /// string (parsed by the server at boot, kept as a string in the
     /// DSL so the formatter can round-trip).
     pub throttle: Option<String>,
+    /// `job_sla_missed` only: max in-flight runtime before the rule
+    /// fires. Stored as a duration string (`"10m"`, `"30s"`, `"1h"`)
+    /// for DSL round-trip. Compile rejects (drops) a `job_sla_missed`
+    /// rule without this directive.
+    pub expected_within: Option<String>,
     /// Channel names this rule dispatches to. Compile validates that
     /// every name resolves; unknown names become a compile error
     /// (returned as part of the rule for downstream diagnostic display
@@ -233,12 +273,16 @@ pub struct RuleConfig {
     pub channels: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleTrigger {
-    /// Permanent failure (dead-letter or dropped). The only trigger
-    /// shipped in PR-1.
+    /// Permanent failure (dead-letter or dropped). Shipped in PR-1.
     JobFailed,
+    /// In-flight execution exceeded its `expected_within` runtime
+    /// without completing. Shipped in PR-4. The
+    /// [`crate::WatchdogLoop`] periodically scans claimed executions
+    /// and fires for the first sweep that observes the breach.
+    JobSlaMissed,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -803,6 +847,17 @@ fn compile_alerts(block: &AlertsBlock, vars: &HashMap<String, String>) -> Alerts
 }
 
 fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> ChannelKind {
+    // Two-phase: phase 1 collects every directive into local vars so
+    // sibling directives like `sign hmac …` and `timeout …` are visible
+    // alongside the kind directive (`webhook …`). Phase 2 picks the
+    // first recognised kind directive seen and builds the matching
+    // ChannelKind from the collected siblings.
+    let mut shell_cmd: Option<String> = None;
+    let mut webhook_url: Option<String> = None;
+    let mut webhook_signing_key: Option<String> = None;
+    let mut webhook_timeout_secs: u64 = 5;
+    let mut email_recipients: Vec<String> = Vec::new();
+
     for dob in &block.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
             continue;
@@ -810,31 +865,91 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
         match d.key.value.as_str() {
             "shell" => {
                 if let Some(arg) = d.args.first() {
-                    return ChannelKind::Shell {
-                        command: resolve_str(arg, vars),
-                    };
+                    shell_cmd = Some(resolve_str(arg, vars));
                 }
-                return ChannelKind::Unknown {
-                    reason: "shell directive requires a command argument".into(),
-                };
             }
-            // Reserved for future PRs — recognised at compile time so the
-            // evaluator can produce a clearer "not implemented in this
-            // build" message than "unknown channel kind".
-            "webhook" | "email" => {
-                return ChannelKind::Unknown {
-                    reason: format!(
-                        "channel kind `{}` is not yet implemented (PR-1 of #140 ships shell only)",
-                        d.key.value
-                    ),
-                };
+            "webhook" => {
+                if let Some(arg) = d.args.first() {
+                    webhook_url = Some(resolve_str(arg, vars));
+                }
+            }
+            "sign" => {
+                // Grammar: `sign hmac <secret>`. Currently HMAC is the
+                // only scheme; the first arg names the scheme so we can
+                // extend with `sign basic <user>:<pass>` etc. later
+                // without breaking existing files.
+                if let (Some(scheme), Some(value)) = (d.args.first(), d.args.get(1)) {
+                    let scheme = resolve_str(scheme, vars);
+                    if scheme == "hmac" {
+                        let v = resolve_str(value, vars);
+                        if !v.is_empty() {
+                            webhook_signing_key = Some(v);
+                        }
+                    }
+                }
+            }
+            "timeout" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    if let Some(secs) = parse_duration_secs(&v) {
+                        webhook_timeout_secs = secs.max(1);
+                    }
+                }
+            }
+            "email" => {
+                // Grammar: `email "a@x.com" ["b@y.com" …]` — one or
+                // more recipient addresses, space-separated. Each is
+                // resolved against vars/env placeholders independently
+                // so `email {env.OPS_PAGER_EMAIL}` is valid.
+                for arg in &d.args {
+                    let v = resolve_str(arg, vars);
+                    if !v.trim().is_empty() {
+                        email_recipients.push(v);
+                    }
+                }
             }
             _ => {}
         }
     }
+
+    if let Some(command) = shell_cmd {
+        return ChannelKind::Shell { command };
+    }
+    if let Some(url) = webhook_url {
+        return ChannelKind::Webhook {
+            url,
+            signing_key: webhook_signing_key,
+            timeout_secs: webhook_timeout_secs,
+        };
+    }
+    if !email_recipients.is_empty() {
+        return ChannelKind::Email {
+            recipients: email_recipients,
+        };
+    }
     ChannelKind::Unknown {
         reason: "no channel kind directive (expected `shell`, `webhook`, or `email`)".into(),
     }
+}
+
+/// Minimal duration parser for channel `timeout 5s` / `timeout 2m` /
+/// bare integer seconds. Kept local to this module to avoid pulling
+/// `croniq-server::parse_duration_secs` (different crate, slightly
+/// different error model). Returns `None` on garbage; caller falls
+/// back to the directive default.
+fn parse_duration_secs(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (digits, mult): (&str, u64) = match s.chars().last()? {
+        's' => (&s[..s.len() - 1], 1),
+        'm' => (&s[..s.len() - 1], 60),
+        'h' => (&s[..s.len() - 1], 3600),
+        c if c.is_ascii_digit() => (s, 1),
+        _ => return None,
+    };
+    digits.parse::<u64>().ok()?.checked_mul(mult)
 }
 
 fn compile_rule(
@@ -847,6 +962,7 @@ fn compile_rule(
     let mut min_attempts: u32 = 1;
     let mut dead_letter_only = false;
     let mut throttle: Option<String> = None;
+    let mut expected_within: Option<String> = None;
     let mut channels: Vec<String> = Vec::new();
 
     for dob in &block.directives {
@@ -859,12 +975,11 @@ fn compile_rule(
                     let v = resolve_str(arg, vars);
                     trigger = match v.as_str() {
                         "job_failed" => Some(RuleTrigger::JobFailed),
-                        // `job_sla_missed` and any other future
-                        // trigger are reserved and silently produce
-                        // `None`, which causes the rule to be dropped
+                        "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
+                        // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
-                        // the next reload (TBD in PR-4).
+                        // the next reload (TBD).
                         _ => None,
                     };
                 }
@@ -893,6 +1008,11 @@ fn compile_rule(
                     throttle = Some(resolve_str(arg, vars));
                 }
             }
+            "expected_within" => {
+                if let Some(arg) = d.args.first() {
+                    expected_within = Some(resolve_str(arg, vars));
+                }
+            }
             "channels" => {
                 for arg in &d.args {
                     let v = resolve_str(arg, vars);
@@ -906,6 +1026,12 @@ fn compile_rule(
     }
 
     let trigger = trigger?;
+    // SLA-miss without `expected_within` is meaningless — drop the
+    // rule so a typo doesn't silently turn into a "fire on every
+    // claimed execution" rule.
+    if trigger == RuleTrigger::JobSlaMissed && expected_within.is_none() {
+        return None;
+    }
     Some(RuleConfig {
         name: name.to_string(),
         trigger,
@@ -913,6 +1039,7 @@ fn compile_rule(
         min_attempts,
         dead_letter_only,
         throttle,
+        expected_within,
         channels,
     })
 }
@@ -1750,16 +1877,14 @@ mod tests {
 
     #[test]
     fn compile_alerts_unknown_trigger_drops_rule() {
-        // `job_sla_missed` is reserved but not implemented in PR-1 —
-        // rules with unsupported triggers must not silently match
-        // every failure. Dropping the rule (with a future warning
-        // path) is safer than synthesising a default trigger.
+        // `when garbage_value` silently drops the rule — a typo must
+        // not turn into "fire on every job_failed" by default.
         let ast = Parser::parse(
             r#"
             alerts {
                 channel "x" { shell "/bin/true" }
                 rule "future-rule" {
-                    when job_sla_missed
+                    when typo_or_future_trigger
                     channels "x"
                 }
             }
@@ -1775,16 +1900,188 @@ mod tests {
         assert!(cfg.alerts.channels.contains_key("x"));
     }
 
+    // ─── #140 PR-4 SLA-miss trigger ─────────────────────────────────
+
     #[test]
-    fn compile_alerts_unknown_channel_kind_is_unknown_variant() {
-        // `webhook` is recognised at compile time (so the error
-        // message is specific) but produces ChannelKind::Unknown —
-        // PR-2 will ship the real implementation.
+    fn compile_alerts_sla_miss_without_expected_within_drops() {
+        // `when job_sla_missed` without `expected_within` is
+        // meaningless — must drop, not fire on every claimed
+        // execution.
         let ast = Parser::parse(
             r#"
             alerts {
+                channel "x" { shell "/bin/true" }
+                rule "broken-sla" {
+                    when job_sla_missed
+                    channels "x"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            cfg.alerts.rules.is_empty(),
+            "SLA rule without expected_within must drop"
+        );
+    }
+
+    #[test]
+    fn compile_alerts_sla_miss_with_expected_within() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "slow-billing" {
+                    when job_sla_missed
+                    job_key "billing:*"
+                    expected_within 15m
+                    throttle 1h
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert!(matches!(rule.trigger, RuleTrigger::JobSlaMissed));
+        assert_eq!(rule.job_key_glob, "billing:*");
+        assert_eq!(rule.expected_within.as_deref(), Some("15m"));
+        assert_eq!(rule.throttle.as_deref(), Some("1h"));
+    }
+
+    // ─── #140 PR-3 email channel ───────────────────────────────────
+
+    #[test]
+    fn compile_alerts_email_single_recipient() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops-email" {
+                    email ops@example.com
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg
+            .alerts
+            .channels
+            .get("ops-email")
+            .expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Email { recipients } => {
+                assert_eq!(recipients, &vec!["ops@example.com".to_string()]);
+            }
+            other => panic!("expected Email, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_email_multiple_recipients() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops-team" {
+                    email "ops@example.com" "oncall@example.com" "leads@example.com"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg.alerts.channels.get("ops-team").expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Email { recipients } => {
+                assert_eq!(
+                    recipients,
+                    &vec![
+                        "ops@example.com".to_string(),
+                        "oncall@example.com".to_string(),
+                        "leads@example.com".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected Email, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_email_with_placeholder() {
+        // The `{vars.X}` placeholder resolution path must work for
+        // each recipient — useful when ops mailbox is per-environment.
+        let ast = Parser::parse(
+            r#"
+            vars {
+                ops_mailbox "ops-prod@example.com"
+            }
+            alerts {
+                channel "ops" {
+                    email {vars.ops_mailbox}
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg.alerts.channels.get("ops").expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Email { recipients } => {
+                assert_eq!(recipients, &vec!["ops-prod@example.com".to_string()]);
+            }
+            other => panic!("expected Email, got {other:?}"),
+        }
+    }
+
+    // ─── #140 PR-2 webhook channel ─────────────────────────────────
+
+    #[test]
+    fn compile_alerts_webhook_minimal() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "internal-hook" {
+                    webhook http://internal.svc/hook
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg
+            .alerts
+            .channels
+            .get("internal-hook")
+            .expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Webhook {
+                url,
+                signing_key,
+                timeout_secs,
+            } => {
+                assert_eq!(url, "http://internal.svc/hook");
+                assert!(signing_key.is_none(), "no `sign hmac` ⇒ unsigned");
+                assert_eq!(*timeout_secs, 5, "default timeout is 5s");
+            }
+            other => panic!("expected Webhook, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_webhook_with_hmac_and_timeout() {
+        let ast = Parser::parse(
+            r#"
+            vars {
+                slack_secret "shh-do-not-leak"
+            }
+            alerts {
                 channel "slack" {
                     webhook https://hooks.slack.com/services/xxx
+                    sign hmac {vars.slack_secret}
+                    timeout 10s
                 }
             }
             "#,
@@ -1793,11 +2090,44 @@ mod tests {
         let cfg = compile(&ast);
         let ch = cfg.alerts.channels.get("slack").expect("channel parsed");
         match &ch.kind {
-            ChannelKind::Unknown { reason } => {
-                assert!(reason.contains("webhook"), "reason mentions kind: {reason}");
+            ChannelKind::Webhook {
+                url,
+                signing_key,
+                timeout_secs,
+            } => {
+                assert_eq!(url, "https://hooks.slack.com/services/xxx");
+                assert_eq!(signing_key.as_deref(), Some("shh-do-not-leak"));
+                assert_eq!(*timeout_secs, 10);
             }
-            other => panic!("expected Unknown for webhook in PR-1, got {other:?}"),
+            other => panic!("expected Webhook, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compile_alerts_webhook_signing_key_redacted_from_serialize() {
+        // The `signing_key` field is `#[serde(skip_serializing)]` so a
+        // `/v1/dsl/preview` (or any other Serialize consumer) can't
+        // leak the secret. Verify by JSON-encoding the channel.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" {
+                    webhook https://example.com/hook
+                    sign hmac secret-do-not-leak
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let json = serde_json::to_string(&cfg.alerts.channels).unwrap();
+        assert!(
+            !json.contains("secret-do-not-leak"),
+            "signing_key must not appear in serialized output: {json}"
+        );
+        // The other fields should still be present.
+        assert!(json.contains("https://example.com/hook"));
+        assert!(json.contains("webhook"));
     }
 
     #[test]

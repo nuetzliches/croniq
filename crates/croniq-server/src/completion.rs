@@ -72,6 +72,11 @@ pub struct CompletionProcessor {
     /// at boot from `alert_deliveries.fired_at` so a server restart
     /// doesn't reset suppression windows.
     alert_throttle: crate::alerts::ThrottleMap,
+    /// Email sender used by the `email` alert channel (issue #140
+    /// PR-3). Defaults to `NoopSender` — real delivery requires
+    /// `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM` and the `smtp` cargo
+    /// feature.
+    email_sender: Arc<dyn crate::email::EmailSender>,
 }
 
 impl CompletionProcessor {
@@ -82,10 +87,12 @@ impl CompletionProcessor {
             runner,
             croniq_config::compile::AlertsConfig::default(),
             crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
         )
     }
 
-    /// Construct with an explicit alerts config + throttle map.
+    /// Construct with an explicit alerts config + throttle map + email
+    /// sender.
     ///
     /// Used by `main.rs` to wire the Croniqfile `alerts {}` block (plus
     /// any synthesised legacy env-var rule) into the failure pipeline.
@@ -96,6 +103,7 @@ impl CompletionProcessor {
         runner: Arc<AppState>,
         alerts: croniq_config::compile::AlertsConfig,
         alert_throttle: crate::alerts::ThrottleMap,
+        email_sender: Arc<dyn crate::email::EmailSender>,
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
@@ -104,6 +112,7 @@ impl CompletionProcessor {
             runner,
             alerts,
             alert_throttle,
+            email_sender,
         }
     }
 
@@ -117,7 +126,7 @@ impl CompletionProcessor {
     /// `notify::notify_failure()` env-var hook — back-compat for that
     /// env var lives in [`crate::alerts::merge_legacy_env_hook`] at
     /// boot, so this method needs no special-cases.
-    fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
+    async fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
         // Fast-path: no rules configured means no work to do. Important
         // because the evaluator otherwise walks `alerts.rules` and may
         // open a store cursor — wasteful on the common path.
@@ -131,8 +140,14 @@ impl CompletionProcessor {
             attempt: event.attempt,
             reason: reason.to_string(),
         };
-        let _ =
-            crate::alerts::evaluate_failure(&self.alerts, &ctx, &self.alert_throttle, &self.store);
+        let _ = crate::alerts::evaluate_failure(
+            &self.alerts,
+            &ctx,
+            &self.alert_throttle,
+            &self.store,
+            &self.email_sender,
+        )
+        .await;
     }
 
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
@@ -344,7 +359,7 @@ impl CompletionProcessor {
                 }
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                self.fire_alerts(&execution.job_key, &event, &reason);
+                self.fire_alerts(&execution.job_key, &event, &reason).await;
                 ProcessedOutcome::DeadLettered { reason }
             }
 
@@ -358,7 +373,7 @@ impl CompletionProcessor {
                     now,
                 );
                 tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
-                self.fire_alerts(&execution.job_key, &event, &reason);
+                self.fire_alerts(&execution.job_key, &event, &reason).await;
                 ProcessedOutcome::Dropped { reason }
             }
 
@@ -703,6 +718,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };
@@ -714,6 +730,7 @@ mod tests {
             runner,
             alerts,
             crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
         );
 
         let outcome = processor

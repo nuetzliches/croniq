@@ -349,6 +349,11 @@ pub trait AlertStore {
         filter: &AlertDeliveryFilter,
     ) -> Result<Vec<AlertDelivery>, StoreError>;
 
+    /// Look up a single delivery by `delivery_id`. Backs the
+    /// `GET /v1/alerts/deliveries/{id}` admin endpoint added in
+    /// issue #140 PR-5.
+    fn get_alert_delivery(&self, delivery_id: &str) -> Result<Option<AlertDelivery>, StoreError>;
+
     /// Look up the most recent fire timestamp for a (rule, job_key)
     /// pair across `Delivered`, `Failed`, and `Throttled` states.
     ///

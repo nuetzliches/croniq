@@ -11,16 +11,21 @@
 //!       - Rebuild a WorkItem (job config look-up for require/prefer/timeout)
 //!       - Enqueue the WorkItem back in the runner queue
 //! 3. Remove dead runners from the in-memory registry so they don't skew stats
+//! 4. SLA sweep (issue #140 PR-4): list claimed executions, fire
+//!    `job_sla_missed` rules whose `expected_within` has elapsed,
+//!    deduped per (rule, execution_id) so a long-running job doesn't
+//!    re-alert every 30 s.
 //! ```
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::loader::job_config_from_job_def;
 use crate::store::DynStore;
 use chrono::{DateTime, Utc};
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use croniq_store::models::{ExecutionFilter, ExecutionState};
 
 /// Result of a single watchdog sweep.
 #[derive(Debug, Clone, Default)]
@@ -31,6 +36,25 @@ pub struct WatchdogResult {
     pub requeued: Vec<uuid::Uuid>,
     /// Execution IDs cancelled due to queue_ttl expiry.
     pub expired: Vec<uuid::Uuid>,
+    /// `(rule_name, execution_id)` pairs whose SLA-miss alert fired in
+    /// this sweep (issue #140 PR-4). Useful for tests and a future
+    /// metric; not exposed via any public API today.
+    pub sla_missed: Vec<(String, uuid::Uuid)>,
+}
+
+/// In-memory set of `(rule_name, execution_id)` pairs that have
+/// already received an SLA-miss alert. Prevents the watchdog from
+/// re-alerting every sweep for the same long-running execution.
+///
+/// Reset on process restart — after a restart, a still-running
+/// execution will produce one duplicate alert. That cost is
+/// proportional to "how many SLAs you breached at restart time" and
+/// is bounded by sweep interval (~30s).
+pub type SlaFiredSet = Arc<Mutex<HashSet<(String, uuid::Uuid)>>>;
+
+/// Build an empty SLA dedup set. Used by `new()` and tests.
+pub fn empty_sla_fired_set() -> SlaFiredSet {
+    Arc::new(Mutex::new(HashSet::new()))
 }
 
 /// Periodically scans for dead runners and requeues their abandoned executions.
@@ -38,15 +62,60 @@ pub struct WatchdogLoop {
     jobs: HashMap<String, JobConfig>,
     store: DynStore,
     runner: Arc<AppState>,
+    /// Failure-alert configuration (issue #140). Empty default ⇒ the
+    /// SLA sweep is a no-op (no `job_sla_missed` rules to fire).
+    alerts: AlertsConfig,
+    /// Shared with [`crate::completion::CompletionProcessor`] so the
+    /// per-(rule, job_key) throttle applies across both `job_failed`
+    /// and `job_sla_missed` fires. Without this share, a rule with
+    /// `throttle 10m` would fire one failure + one SLA alert in the
+    /// same window.
+    alert_throttle: crate::alerts::ThrottleMap,
+    /// Tracks `(rule_name, execution_id)` already alerted on so the
+    /// SLA sweep doesn't re-alert every 30 s while the execution
+    /// stays in-flight.
+    sla_fired: SlaFiredSet,
+    /// Shared with the rest of the server so SLA-miss alerts that
+    /// route to an `email` channel actually deliver instead of
+    /// silently dropping. Defaults to `NoopSender` in tests.
+    email_sender: Arc<dyn crate::email::EmailSender>,
 }
 
 impl WatchdogLoop {
     pub fn new(jobs: Vec<JobConfig>, store: DynStore, runner: Arc<AppState>) -> Self {
+        Self::with_alerts(
+            jobs,
+            store,
+            runner,
+            AlertsConfig::default(),
+            crate::alerts::empty_throttle_map(),
+            empty_sla_fired_set(),
+            Arc::new(crate::email::NoopSender),
+        )
+    }
+
+    /// Construct with full alerting wiring. Used by main.rs to share
+    /// the same `AlertsConfig` + throttle map with the completion
+    /// processor — without sharing, a rule with `throttle 10m` would
+    /// allow one failure + one SLA alert in the same window.
+    pub fn with_alerts(
+        jobs: Vec<JobConfig>,
+        store: DynStore,
+        runner: Arc<AppState>,
+        alerts: AlertsConfig,
+        alert_throttle: crate::alerts::ThrottleMap,
+        sla_fired: SlaFiredSet,
+        email_sender: Arc<dyn crate::email::EmailSender>,
+    ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
             jobs,
             store,
             runner,
+            alerts,
+            alert_throttle,
+            sla_fired,
+            email_sender,
         }
     }
 
@@ -81,10 +150,10 @@ impl WatchdogLoop {
                 .collect()
         };
 
-        if dead_ids.is_empty() {
-            return result;
-        }
-
+        // The dead-runner branch only runs when there's actually a
+        // dead runner — but the queue_ttl expiry (step 4) and the
+        // SLA-miss sweep (step 5, issue #140 PR-4) always need to
+        // run, so we DON'T early-return when dead_ids is empty.
         for runner_id in &dead_ids {
             // 2a. Mark abandoned executions as queued again in the store
             let requeued_ids = match self.store.requeue_abandoned(runner_id, now) {
@@ -170,7 +239,116 @@ impl WatchdogLoop {
         // 4. Expire queued executions that have exceeded their queue_ttl
         self.expire_queued_by_ttl(now, &mut result).await;
 
+        // 5. SLA-miss sweep (issue #140 PR-4). Fast-path: no
+        //    `job_sla_missed` rules ⇒ skip the store query entirely.
+        if self
+            .alerts
+            .rules
+            .iter()
+            .any(|r| matches!(r.trigger, RuleTrigger::JobSlaMissed))
+        {
+            self.sweep_sla_missed(now, &mut result).await;
+        }
+
         result
+    }
+
+    /// Find claimed executions whose `expected_within` window has
+    /// elapsed and fire matching `job_sla_missed` rules.
+    ///
+    /// Dedup: each `(rule_name, execution_id)` pair fires at most
+    /// once per process lifetime (see [`SlaFiredSet`]).
+    async fn sweep_sla_missed(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        // List all currently claimed executions. The "since" filter
+        // is left wide-open because we want to find executions that
+        // have been claimed FOR A LONG TIME — the typical case is a
+        // job that started 30 minutes ago and is hung. A bounded
+        // limit keeps the sweep cheap on busy servers.
+        let filter = ExecutionFilter {
+            state: Some(ExecutionState::Claimed),
+            limit: Some(500),
+            ..Default::default()
+        };
+        let claimed = match self.store.list_executions(&filter) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    target: "croniq::alerts",
+                    error = %e,
+                    "watchdog: SLA sweep failed to list claimed executions"
+                );
+                return;
+            }
+        };
+
+        for execution in &claimed {
+            // Prefer started_at over claimed_at: SLA is about
+            // execution duration, not queue + claim latency. Fall
+            // back to claimed_at when started_at is None (runner
+            // claimed but hasn't reported back yet).
+            let Some(started) = execution.started_at.or(execution.claimed_at) else {
+                continue;
+            };
+            let elapsed = (now - started).num_seconds();
+            if elapsed <= 0 {
+                continue; // clock skew or just-claimed
+            }
+            let elapsed = elapsed as u64;
+
+            for rule in &self.alerts.rules {
+                if !matches!(rule.trigger, RuleTrigger::JobSlaMissed) {
+                    continue;
+                }
+                let Some(window_str) = rule.expected_within.as_deref() else {
+                    continue; // compile path drops these, defensive
+                };
+                let Some(window_secs) = crate::alerts::parse_throttle_secs(window_str) else {
+                    continue;
+                };
+                if elapsed < window_secs {
+                    continue;
+                }
+                if !crate::alerts::glob_match(&rule.job_key_glob, &execution.job_key) {
+                    continue;
+                }
+
+                // Dedup per-execution. The set is small (bounded by
+                // concurrent in-flight executions × matching rules)
+                // so the linear lookup is fine.
+                let key = (rule.name.clone(), execution.id);
+                {
+                    let mut guard = self.sla_fired.lock().unwrap();
+                    if !guard.insert(key.clone()) {
+                        continue;
+                    }
+                }
+
+                // Fire via the shared `dispatch_rule` helper so
+                // throttle + channels + audit behave identically to
+                // the `job_failed` path. The "reason" field
+                // distinguishes the two trigger types for shell
+                // channels (CRONIQ_REASON=sla_miss vs dead_letter).
+                let ctx = crate::alerts::FailureContext {
+                    job_key: execution.job_key.clone(),
+                    execution_id: execution.id.to_string(),
+                    error: format!(
+                        "SLA missed: started at {started}, in-flight for {elapsed}s (expected within {window_str})",
+                    ),
+                    attempt: execution.attempt,
+                    reason: "sla_miss".to_string(),
+                };
+                crate::alerts::dispatch_rule(
+                    rule,
+                    &self.alerts,
+                    &ctx,
+                    &self.alert_throttle,
+                    &self.store,
+                    &self.email_sender,
+                )
+                .await;
+                result.sla_missed.push(key);
+            }
+        }
     }
 
     /// Cancel queued executions whose age exceeds the job's `queue_ttl`.
@@ -470,5 +648,237 @@ mod tests {
 
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    // ─── #140 PR-4 SLA-miss sweep ──────────────────────────────────
+
+    use croniq_config::compile::{ChannelConfig, ChannelKind, RuleConfig, RuleTrigger};
+    use croniq_store::models::AlertDeliveryFilter;
+
+    /// Seed a Claimed execution with a fixed `claimed_at` / `started_at`
+    /// so SLA tests can control the elapsed time deterministically.
+    fn seed_claimed_at(
+        store: &dyn ExecutionStore,
+        job_key: &str,
+        runner_id: &str,
+        claimed_at: DateTime<Utc>,
+    ) -> Uuid {
+        let id = Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: claimed_at,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                metadata: HashMap::new(),
+                created_at: claimed_at,
+            })
+            .unwrap();
+        store.claim_execution(id, runner_id, claimed_at).unwrap();
+        id
+    }
+
+    fn sla_rule(name: &str, glob: &str, within: &str, channel: &str) -> RuleConfig {
+        RuleConfig {
+            name: name.into(),
+            trigger: RuleTrigger::JobSlaMissed,
+            job_key_glob: glob.into(),
+            min_attempts: 1,
+            dead_letter_only: false,
+            throttle: None,
+            expected_within: Some(within.into()),
+            channels: vec![channel.into()],
+        }
+    }
+
+    fn alerts_with_sla(rules: Vec<RuleConfig>) -> AlertsConfig {
+        AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Shell {
+                        command: "true".into(),
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules,
+        }
+    }
+
+    fn watchdog_with_alerts_only(store: DynStore, alerts: AlertsConfig) -> WatchdogLoop {
+        WatchdogLoop::with_alerts(
+            vec![],
+            store,
+            make_runner(),
+            alerts,
+            crate::alerts::empty_throttle_map(),
+            empty_sla_fired_set(),
+            Arc::new(crate::email::NoopSender),
+        )
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_fires_when_in_flight_past_window() {
+        let store = make_store();
+        let now = Utc::now();
+        // Execution claimed 15 minutes ago, still in-flight.
+        let exec_id = seed_claimed_at(
+            &*store,
+            "billing:invoice",
+            "runner-1",
+            now - ChronoDuration::minutes(15),
+        );
+
+        let alerts = alerts_with_sla(vec![sla_rule("slow-billing", "billing:*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(
+            result.sla_missed,
+            vec![("slow-billing".to_string(), exec_id)]
+        );
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1, "exactly one delivery row");
+        assert_eq!(deliveries[0].rule_name, "slow-billing");
+        assert_eq!(deliveries[0].job_key, "billing:invoice");
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_skips_when_within_window() {
+        let store = make_store();
+        let now = Utc::now();
+        let _exec_id = seed_claimed_at(
+            &*store,
+            "billing:invoice",
+            "runner-1",
+            now - ChronoDuration::minutes(5),
+        );
+
+        let alerts = alerts_with_sla(vec![sla_rule("slow-billing", "billing:*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.sla_missed.is_empty(), "5min elapsed < 10min window");
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert!(deliveries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_dedups_across_repeated_sweeps() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_claimed_at(
+            &*store,
+            "ops:long",
+            "runner-1",
+            now - ChronoDuration::minutes(15),
+        );
+
+        let alerts = alerts_with_sla(vec![sla_rule("slow", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+
+        // First sweep fires the alert.
+        let r1 = watchdog.sweep(now).await;
+        assert_eq!(r1.sla_missed.len(), 1);
+
+        // Second sweep, same execution still in-flight, must NOT fire again.
+        let r2 = watchdog.sweep(now + ChronoDuration::seconds(30)).await;
+        assert!(
+            r2.sla_missed.is_empty(),
+            "dedup must suppress repeat alerts for the same execution"
+        );
+
+        // Only one delivery row in the store.
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_respects_job_key_glob() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_claimed_at(
+            &*store,
+            "ops:cleanup",
+            "runner-1",
+            now - ChronoDuration::minutes(15),
+        );
+        seed_claimed_at(
+            &*store,
+            "billing:invoice",
+            "runner-1",
+            now - ChronoDuration::minutes(15),
+        );
+
+        // Rule only matches billing:*.
+        let alerts = alerts_with_sla(vec![sla_rule("only-billing", "billing:*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.sla_missed.len(), 1, "exactly the billing one fires");
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].job_key, "billing:invoice");
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_noop_when_no_sla_rules() {
+        // job_failed rules don't trigger the SLA path; the sweep
+        // must NOT query the store at all (we can't easily assert
+        // "no query happened" — assert by absence of side-effects).
+        let store = make_store();
+        let now = Utc::now();
+        seed_claimed_at(&*store, "x:y", "r1", now - ChronoDuration::minutes(15));
+
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Shell {
+                        command: "true".into(),
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "permanent-failures".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                expected_within: None,
+                channels: vec!["ops".into()],
+            }],
+        };
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.sla_missed.is_empty());
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert!(deliveries.is_empty());
     }
 }

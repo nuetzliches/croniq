@@ -618,3 +618,45 @@ export function useCurrentUser() {
     staleTime: 60_000,
   })
 }
+
+// ─── #140 Failure alerts ─────────────────────────────────────────
+
+/// `GET /v1/alerts/config` — the effective alerts config the server
+/// is running with. Channels + rules are DSL-managed today, so this
+/// is read-only and stays stable across renders (cached 60 s).
+export function useAlertsConfig() {
+  return useQuery({
+    queryKey: ['alerts', 'config'],
+    queryFn: () => apiFetch<T.AlertsConfig>('/v1/alerts/config'),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+/// `GET /v1/alerts/deliveries` with optional filters. Polled every
+/// 15 s so an operator watching the page sees new fires arrive
+/// without manual refresh.
+export function useAlertDeliveries(filter: T.AlertDeliveryListQuery = {}) {
+  const params = new URLSearchParams()
+  if (filter.job_key) params.set('job_key', filter.job_key)
+  if (filter.rule_name) params.set('rule_name', filter.rule_name)
+  if (filter.state) params.set('state', filter.state)
+  if (filter.since) params.set('since', filter.since)
+  if (filter.limit != null) params.set('limit', String(filter.limit))
+  const qs = params.toString() ? `?${params.toString()}` : ''
+  return useQuery({
+    queryKey: ['alerts', 'deliveries', filter],
+    queryFn: () => apiFetch<T.AlertDelivery[]>(`/v1/alerts/deliveries${qs}`),
+    refetchInterval: 15_000,
+  })
+}
+
+/// `GET /v1/alerts/deliveries/{id}` — single-row lookup for a
+/// detail pane / share-link.
+export function useAlertDelivery(id: string) {
+  return useQuery({
+    queryKey: ['alerts', 'delivery', id],
+    queryFn: () => apiFetch<T.AlertDelivery>(`/v1/alerts/deliveries/${id}`),
+    enabled: !!id,
+  })
+}
