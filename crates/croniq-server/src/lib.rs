@@ -43,6 +43,7 @@ pub mod reload;
 pub mod scheduler;
 pub mod store;
 pub mod telemetry;
+pub mod trace_propagation;
 pub mod watchdog;
 pub mod watcher;
 
