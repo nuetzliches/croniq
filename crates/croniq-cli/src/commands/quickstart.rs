@@ -6,6 +6,8 @@ use croniq_auth::api_key::generate_api_key;
 use miette::{Result, miette};
 use uuid::Uuid;
 
+use super::secret_output::CredentialSink;
+
 const SAMPLE_CRONIQFILE: &str = r#"# Croniqfile — Quickstart
 
 server {
@@ -36,7 +38,12 @@ job ops:heartbeat {
 }
 "#;
 
-pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) -> Result<()> {
+pub fn quickstart(
+    data_dir: &Path,
+    croniqfile: &Path,
+    password: Option<&str>,
+    print_secrets: bool,
+) -> Result<()> {
     // 1. Create Croniqfile if it doesn't exist
     if !croniqfile.exists() {
         std::fs::write(croniqfile, SAMPLE_CRONIQFILE)
@@ -54,6 +61,9 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
     // demo runner snippet below works end-to-end without a follow-up step.
     let (api_key, _, _) = generate_api_key();
 
+    let mut sink = CredentialSink::new(print_secrets);
+    sink.add("Admin login", format!("admin / {password}"));
+
     // 2. Init database
     super::init::init(
         data_dir,
@@ -62,6 +72,7 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
         Some(&api_key),
         None,
         false,
+        &mut sink,
     )?;
 
     // 3. Print next steps
@@ -83,7 +94,6 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
     );
     println!();
     println!("Then open: http://localhost:4000");
-    println!("Login:     admin / {}", password);
     println!();
     println!("Your first job (hello:world) fires every minute.");
     println!("Connect a runner to process it:");
@@ -94,6 +104,8 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
     println!("      .build();");
     println!("  runner.register(\"hello:world\", |ctx| async {{ Ok(()) }}).await;");
     println!("  runner.start().await;");
+
+    sink.flush(data_dir)?;
 
     Ok(())
 }

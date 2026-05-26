@@ -20,6 +20,8 @@ use croniq_store::traits::AuthStore;
 use miette::{IntoDiagnostic, Result, miette};
 use uuid::Uuid;
 
+use super::secret_output::CredentialSink;
+
 /// Recovery code baked into the demo seed so a marketing walkthrough
 /// can reach the MFA step at `admin/admin` and complete it with a
 /// fixed code. Mirrored from issue #137 — never use outside the demo
@@ -33,6 +35,7 @@ pub fn init(
     api_key_override: Option<&str>,
     scopes: Option<Vec<String>>,
     demo_mfa: bool,
+    sink: &mut CredentialSink,
 ) -> Result<()> {
     // Validate `--api-key` and `--scopes` up front, before any disk/DB writes,
     // so a malformed key cannot leave behind a half-initialized DB (admin user
@@ -171,12 +174,8 @@ pub fn init(
 
     match seeded_key {
         Some(raw_key) => {
-            println!("API Key (save this — it won't be shown again):");
-            println!("  {}", raw_key);
-            println!();
-            println!("Use the API key with:");
-            println!("  Authorization: ApiKey {}", raw_key);
-            println!();
+            let usage = format!("Authorization: ApiKey {raw_key}");
+            sink.add_with_usage("API Key", raw_key, usage);
         }
         None => {
             println!("No API key was seeded. Create scoped clients and keys via:");
@@ -297,7 +296,16 @@ mod tests {
     #[test]
     fn default_init_does_not_seed_mfa() {
         let dir = tempdir();
-        init(&dir, "admin", Some("pw"), None, None, false).unwrap();
+        init(
+            &dir,
+            "admin",
+            Some("pw"),
+            None,
+            None,
+            false,
+            &mut CredentialSink::new(true),
+        )
+        .unwrap();
         let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
         let user_id = admin_user_id(&store, "admin");
 
@@ -310,7 +318,16 @@ mod tests {
     #[test]
     fn demo_mfa_seeds_enabled_totp_and_fixed_recovery_code() {
         let dir = tempdir();
-        init(&dir, "admin", Some("pw"), None, None, true).unwrap();
+        init(
+            &dir,
+            "admin",
+            Some("pw"),
+            None,
+            None,
+            true,
+            &mut CredentialSink::new(true),
+        )
+        .unwrap();
         let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
         let user_id = admin_user_id(&store, "admin");
 
