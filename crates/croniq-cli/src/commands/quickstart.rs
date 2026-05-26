@@ -55,7 +55,14 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
     let (api_key, _, _) = generate_api_key();
 
     // 2. Init database
-    super::init::init(data_dir, "admin", Some(&password), Some(&api_key), None)?;
+    super::init::init(
+        data_dir,
+        "admin",
+        Some(&password),
+        Some(&api_key),
+        None,
+        false,
+    )?;
 
     // 3. Print next steps
     println!();

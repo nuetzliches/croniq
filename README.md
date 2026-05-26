@@ -67,7 +67,7 @@ Build custom job execution runners in your language of choice. Runners poll the 
 | Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI — pre-release) | ✅ available |
 | Go (1.22+) | [`sdks/go`](sdks/go) | `github.com/nuetzliches/croniq/sdks/go` + `.../sdks/go/otel` (Go modules) | ✅ available |
 | TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm — pre-release) | ✅ available |
-| Java / Kotlin | [#133](https://github.com/nuetzliches/croniq/issues/133) | Maven Central (planned) | 🛠 planned |
+| Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.github.nuetzliches:croniq-runner` + `croniq-runner-spring-boot-starter` + `croniq-runner-kotlin-ext` (Maven Central — planned) | 🚧 in progress ([#133](https://github.com/nuetzliches/croniq/issues/133)) |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
 

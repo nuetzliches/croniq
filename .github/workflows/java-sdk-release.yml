@@ -1,0 +1,171 @@
+name: Java SDK Release
+
+# Publishes the three Java SDK modules to the Sonatype Central Portal when
+# a tag of the form `java-sdk-vX.Y.Z` is pushed:
+#
+#   io.github.nuetzliches:croniq-runner                       (core)
+#   io.github.nuetzliches:croniq-runner-spring-boot-starter   (Spring Boot)
+#   io.github.nuetzliches:croniq-runner-kotlin-ext            (Kotlin ext)
+#
+# The tag prefix keeps Java releases independent of the .NET / Go / Python /
+# TS / Rust-server release cadences, mirroring the convention used by the
+# other SDKs.
+#
+# Prerequisites (one-time, set by a repo admin):
+#   * Repo secret `MAVEN_CENTRAL_USERNAME` — User Token username from
+#     https://central.sonatype.com → Account → Generate User Token. NOT
+#     your portal login password.
+#   * Repo secret `MAVEN_CENTRAL_PASSWORD` — User Token password from the
+#     same step. Shown only once.
+#   * Repo secret `MAVEN_GPG_PRIVATE_KEY` — ASCII-armored GPG private key
+#     (`gpg --armor --export-secret-keys <KEY_ID>`), full block including
+#     the BEGIN/END markers. Maven Central rejects unsigned artefacts.
+#   * Repo secret `MAVEN_GPG_PASSPHRASE` — passphrase for that GPG key.
+#   * Verified Maven namespace `io.github.nuetzliches` in the Central Portal.
+#
+# Tag examples:
+#   java-sdk-v0.0.1                → smoke-test line (pipeline validation)
+#   java-sdk-v0.1.0                → first feature release per issue #133
+#   java-sdk-v0.2.0-rc.1           → pre-release, no special handling needed —
+#                                    Maven Central treats it like any other
+#                                    version; Gradle resolvers respect the
+#                                    pre-release suffix per SemVer.
+
+on:
+  push:
+    tags: ['java-sdk-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing tag to (re-)publish, e.g. java-sdk-v0.0.1. Republishing the same version is rejected by Maven Central — published artefacts are immutable.'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02 default
+  # switch, matching the env block in ci.yml, release.yml, and the sibling
+  # SDK release pipelines.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Gradle daemon is unhelpful in single-use CI containers.
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+
+jobs:
+  publish:
+    name: Build, sign, publish (3 modules)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Resolve tag → version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ inputs.version }}"
+          else
+            REF="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ ! "$REF" =~ ^java-sdk-v(.+)$ ]]; then
+            echo "::error::tag '$REF' does not match java-sdk-vX.Y.Z"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${BASH_REMATCH[1]}"
+
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle (with caching)
+        # Reads the wrapper version from gradle/wrapper/gradle-wrapper.properties,
+        # validates the wrapper jar, and wires the Gradle build cache.
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5.0.0
+        with:
+          cache-read-only: false
+
+      - name: Build & verify (all modules)
+        # `check` runs spotless + checkstyle + test on every subproject.
+        # We always re-run on release even though the PR already did so —
+        # the release tag could point at a commit that hasn't been
+        # through PR CI (e.g. a hotfix tagged on main directly).
+        run: ./gradlew check -Pversion=${{ steps.version.outputs.version }}
+
+      - name: Verify the packaged versions match the tag
+        # Belt-and-braces. If `-Pversion` silently fails to override
+        # (e.g. gradle.properties drift), we'd push the wrong number to
+        # Maven Central. Maven Central artefacts are immutable, so this
+        # is the last chance to catch that mistake.
+        #
+        # Only the main jars exist at this point — Vanniktech generates
+        # sourcesJar/javadocJar as part of the publish task chain, not
+        # `gradle check`. Checking the main jar is sufficient: all three
+        # archive types share `archiveVersion`, so a -Pversion override
+        # mismatch would surface on the main jar first.
+        #
+        # The on-disk JAR filenames use the gradle project name as the
+        # archive base (core-X.Y.Z.jar etc.). Vanniktech remaps these to
+        # the publication's artifactId (croniq-runner-X.Y.Z) inside the
+        # Maven Central bundle, so the file-level check below uses the
+        # project name, not the published artifact name.
+        shell: bash
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}"
+          MISSING=0
+          for module in core spring-boot-starter kotlin-ext; do
+            f="${module}/build/libs/${module}-${EXPECTED}.jar"
+            if [ ! -f "$f" ]; then
+              echo "::error::expected ${f} not found"
+              ls "${module}/build/libs/" || true
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" = "1" ]; then exit 1; fi
+          echo "✓ all 3 main jars present at the expected version"
+
+      - name: Publish to Maven Central
+        # `publishAndReleaseToMavenCentral` (vanniktech 0.30) uploads the
+        # signed bundle to the Sonatype Central Portal and triggers the
+        # release without a manual click in the portal UI. With
+        # `automaticRelease = true` in publish-conventions.gradle.kts,
+        # `publishToMavenCentral` does the same thing — we use the explicit
+        # name so the intent is visible at the call site.
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          ./gradlew publishAndReleaseToMavenCentral \
+            -Pversion=${{ steps.version.outputs.version }} \
+            --no-configuration-cache
+          echo "Published:"
+          echo "  io.github.nuetzliches:croniq-runner@${{ steps.version.outputs.version }}"
+          echo "  io.github.nuetzliches:croniq-runner-spring-boot-starter@${{ steps.version.outputs.version }}"
+          echo "  io.github.nuetzliches:croniq-runner-kotlin-ext@${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: croniq-runner-java-${{ steps.version.outputs.version }}
+          path: |
+            sdks/java/core/build/libs/
+            sdks/java/spring-boot-starter/build/libs/
+            sdks/java/kotlin-ext/build/libs/
+          if-no-files-found: error
+          # Capped at the repo-wide retention max (currently 14 days).
+          # Maven Central is the durable copy; the artifact is just a
+          # post-mortem aid if a publish fails partway through.
+          retention-days: 14

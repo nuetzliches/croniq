@@ -2,6 +2,20 @@ use clap::{Parser, Subcommand};
 use miette::Result;
 use std::path::PathBuf;
 
+/// Parse common truthy/falsy strings so env-var inputs like
+/// `CRONIQ_DEMO_MFA=1` (docker convention) work alongside the bare
+/// `--demo-mfa` flag form. Clap's default bool parser only accepts
+/// the literal `true`/`false`.
+fn parse_truthy(s: &str) -> std::result::Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" | "" => Ok(false),
+        other => Err(format!(
+            "expected 1/true/yes/on or 0/false/no/off, got '{other}'"
+        )),
+    }
+}
+
 mod commands;
 
 // ─── Default server URL ───────────────────────────────────────────────────────
@@ -147,6 +161,22 @@ enum Commands {
         ///   `--scopes jobs:read,executions:read,dead-letters:read` (read-only dashboard)
         #[arg(long, value_delimiter = ',', requires = "api_key")]
         scopes: Option<Vec<String>>,
+
+        /// Demo-only: pre-enable TOTP for the seeded admin and bake the
+        /// literal "123456" into the recovery codes so a marketing
+        /// walkthrough can exercise the MFA step. Driven by
+        /// `CRONIQ_DEMO_MFA=1` in the docker entrypoint. Never use in
+        /// production — anyone with the demo image learns admin login
+        /// + a working recovery code.
+        #[arg(
+            long,
+            env = "CRONIQ_DEMO_MFA",
+            num_args = 0..=1,
+            default_value_t = false,
+            default_missing_value = "true",
+            value_parser = parse_truthy,
+        )]
+        demo_mfa: bool,
     },
 
     /// Zero-to-running in one command: creates Croniqfile, inits DB, prints next steps
@@ -225,12 +255,14 @@ fn main() -> Result<()> {
             password,
             api_key,
             scopes,
+            demo_mfa,
         } => commands::init::init(
             &data_dir,
             &username,
             password.as_deref(),
             api_key.as_deref(),
             scopes,
+            demo_mfa,
         ),
         Commands::Quickstart {
             data_dir,
