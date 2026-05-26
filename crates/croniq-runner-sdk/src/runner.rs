@@ -1,9 +1,11 @@
 //! CroniqRunner: the main orchestrator for job execution runners.
 
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::RwLock;
+use tokio::task::AbortHandle;
 
 use crate::client::{AckRequest, CroniqClient, PollRequest, RegisterJobRequest, RenewRequest};
 use crate::handler::{ExecutionContext, HandlerError, HandlerRegistry};
@@ -57,6 +59,30 @@ pub(crate) fn update_conflict_streak(
             *consecutive = 0;
             PollLoopAction::Continue
         }
+    }
+}
+
+/// Map the result of awaiting a handler task to an ack `(status, error,
+/// duration_ms)` triple. A handler that ran is `success`/`failure` as before;
+/// a task aborted by a server cancel (or one that panicked) is reported as
+/// `failure` so the server records a terminal outcome (issue #176).
+fn classify_join(
+    join: Result<Result<(), HandlerError>, tokio::task::JoinError>,
+    duration_ms: i64,
+) -> (String, Option<String>, i64) {
+    match join {
+        Ok(Ok(())) => ("success".to_string(), None, duration_ms),
+        Ok(Err(e)) => ("failure".to_string(), Some(e.to_string()), duration_ms),
+        Err(je) if je.is_cancelled() => (
+            "failure".to_string(),
+            Some("execution cancelled by server".to_string()),
+            duration_ms,
+        ),
+        Err(je) => (
+            "failure".to_string(),
+            Some(format!("handler task failed: {je}")),
+            duration_ms,
+        ),
     }
 }
 
@@ -115,14 +141,9 @@ impl RunnerBuilder {
     /// (capacity=0), so this is what paces the loop and prevents a
     /// stampede.
     ///
-    /// Note: the Rust SDK currently **does not act on** cancels received
-    /// in `PollResponse.cancel` — it polls correctly so the wire-protocol
-    /// behaviour matches the other SDKs, but the handler future is not
-    /// aborted. Operators using `POST /v1/executions/{id}/cancel` against
-    /// a Rust runner will see the cancel marked as delivered in the
-    /// server's response (`delivered_via_runner: true`) but the handler
-    /// continues to completion. Handler abort is tracked as a future
-    /// enhancement.
+    /// On a `PollResponse.cancel` the SDK aborts the matching in-flight
+    /// handler future and acks the execution as `failure`, matching the
+    /// other SDKs and conformance cases 04 / 04a (issue #176).
     pub fn capacity_backoff(mut self, delay: Duration) -> Self {
         self.capacity_backoff = delay;
         self
@@ -160,6 +181,7 @@ impl RunnerBuilder {
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
+            aborts: Arc::new(RwLock::new(HashMap::new())),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -179,6 +201,10 @@ pub struct CroniqRunner {
     handlers: Arc<RwLock<HandlerRegistry>>,
     schedules: Arc<RwLock<Vec<JobSchedule>>>,
     inflight: Arc<RwLock<Vec<String>>>,
+    /// Abort handles for the in-flight handler futures, keyed by execution
+    /// id. A server-issued cancel (`PollResponse.cancel`) looks the id up
+    /// here and aborts just that handler; the dispatch task then acks it.
+    aborts: Arc<RwLock<HashMap<String, AbortHandle>>>,
     draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -237,6 +263,23 @@ impl CroniqRunner {
         self.draining
             .store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(runner_id = %self.runner_id, "draining — no new work will be accepted");
+    }
+
+    /// Abort the in-flight handler futures for the given execution ids.
+    /// Unknown ids (already finished, or never claimed here) are ignored, so
+    /// this is safe to call with a stale cancel list. The aborted handler's
+    /// dispatch task acks the execution as a failure and frees its slot.
+    async fn abort_cancelled(aborts: &RwLock<HashMap<String, AbortHandle>>, cancel: &[String]) {
+        if cancel.is_empty() {
+            return;
+        }
+        let guard = aborts.read().await;
+        for exec_id in cancel {
+            if let Some(handle) = guard.get(exec_id) {
+                tracing::info!(execution_id = %exec_id, "server requested cancel — aborting handler");
+                handle.abort();
+            }
+        }
     }
 
     /// Start the runner: auto-register jobs, then poll loop + lease renewal.
@@ -320,20 +363,13 @@ impl CroniqRunner {
             );
             match poll_result {
                 Ok(resp) => {
-                    // The Rust SDK polls at capacity so the wire-protocol
-                    // behaviour matches the other SDKs (issue #176 PR2),
-                    // but **does not yet act on** `resp.cancel`. Surface
-                    // any cancel arrivals as a warn-log so an operator
-                    // who issued the cancel sees something instead of
-                    // silent no-op. Handler abort is a follow-up.
-                    if !resp.cancel.is_empty() {
-                        tracing::warn!(
-                            execution_ids = ?resp.cancel,
-                            "server requested cancellation of in-flight executions — \
-                             the Rust SDK does not yet abort handlers; executions will \
-                             run to completion. See conformance case 04 / issue #176."
-                        );
-                    }
+                    // Honour server-issued cancels (issue #176): abort the
+                    // matching in-flight handler futures. Each dispatch task
+                    // then acks its execution as a failure and releases the
+                    // inflight slot. Done before the at-capacity early-return
+                    // so a max_inflight=1 runner still acts on cancels.
+                    Self::abort_cancelled(&self.aborts, &resp.cancel).await;
+
                     if at_capacity {
                         // Server returned immediately (capacity=0 branch).
                         // Pace the loop to avoid hammering the server.
@@ -364,6 +400,7 @@ impl CroniqRunner {
                         let handlers = Arc::clone(&self.handlers);
                         let runner_id = self.runner_id.clone();
                         let inflight = Arc::clone(&self.inflight);
+                        let aborts = Arc::clone(&self.aborts);
 
                         tokio::spawn(async move {
                             let attempt = ctx.attempt;
@@ -392,16 +429,26 @@ impl CroniqRunner {
                                 });
 
                                 let start = std::time::Instant::now();
-                                let result = handler(ctx).await;
+
+                                // Run the handler on its own task so a server
+                                // cancel can abort *only* the handler future,
+                                // leaving this task free to ack + release the
+                                // inflight slot (issue #176). The abort handle
+                                // is registered under the execution id so the
+                                // poll loop can reach it.
+                                let handler_task =
+                                    tokio::spawn(async move { handler(ctx).await });
+                                aborts
+                                    .write()
+                                    .await
+                                    .insert(exec_id.clone(), handler_task.abort_handle());
+
+                                let join = handler_task.await;
                                 renew_handle.abort();
+                                aborts.write().await.remove(&exec_id);
 
                                 let duration_ms = start.elapsed().as_millis() as i64;
-                                match result {
-                                    Ok(()) => ("success".to_string(), None, duration_ms),
-                                    Err(e) => {
-                                        ("failure".to_string(), Some(e.to_string()), duration_ms)
-                                    }
-                                }
+                                classify_join(join, duration_ms)
                             } else {
                                 (
                                     "failure".to_string(),
@@ -564,5 +611,53 @@ mod tests {
         let action = update_conflict_streak(&conflict(), &mut streak, 1);
         assert_eq!(action, PollLoopAction::BailOut);
         assert_eq!(streak, 1);
+    }
+
+    #[tokio::test]
+    async fn abort_cancelled_aborts_only_the_matching_handler() {
+        let aborts: RwLock<HashMap<String, AbortHandle>> = RwLock::new(HashMap::new());
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        aborts
+            .write()
+            .await
+            .insert("exec-1".to_string(), task.abort_handle());
+
+        // A cancel for a different id must leave the handler running.
+        CroniqRunner::abort_cancelled(&aborts, &["other".to_string()]).await;
+        assert!(!task.is_finished(), "non-matching cancel must not abort");
+
+        // A cancel for the matching id aborts the handler future.
+        CroniqRunner::abort_cancelled(&aborts, &["exec-1".to_string()]).await;
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn classify_join_reports_server_cancel_as_failure() {
+        // An aborted handler task surfaces as a cancelled JoinError, which
+        // must be acked as "failure" (conformance cases 04 / 04a).
+        let task: tokio::task::JoinHandle<Result<(), HandlerError>> = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(())
+        });
+        task.abort();
+        let (status, error, duration_ms) = classify_join(task.await, 42);
+        assert_eq!(status, "failure");
+        assert!(error.unwrap().contains("cancelled"));
+        assert_eq!(duration_ms, 42);
+    }
+
+    #[test]
+    fn classify_join_reports_success_and_handler_error() {
+        let (status, error, duration_ms) = classify_join(Ok(Ok(())), 7);
+        assert_eq!(status, "success");
+        assert!(error.is_none());
+        assert_eq!(duration_ms, 7);
+
+        let (status, error, _) = classify_join(Ok(Err(HandlerError::msg("boom"))), 7);
+        assert_eq!(status, "failure");
+        assert_eq!(error.as_deref(), Some("boom"));
     }
 }
