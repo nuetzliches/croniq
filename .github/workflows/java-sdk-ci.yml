@@ -238,4 +238,4 @@ jobs:
           exit 1
       - name: All required jobs passed (or skipped because nothing relevant changed)
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: echo "Aggregator: all dependent jobs succeeded or were skipped (path filter)"
+        run: echo "Aggregator OK - all dependent jobs succeeded or were skipped (path filter)"
