@@ -5,9 +5,9 @@ description: |
   must fire, the handler must abort, and the runner must ack with
   status=failure.
 
-  This is a behaviour the Rust SDK currently leaves unused — explicit
-  coverage here documents the .NET SDK's improvement and keeps future
-  implementations honest.
+  Every runner SDK — including the Rust reference SDK — now implements this:
+  the in-flight handler future is aborted and the execution is acked as a
+  failure. This case keeps all current and future bindings honest.
 
 runner_config:
   # max_inflight: 2 so the runner keeps polling while one execution is in

@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rust runner SDK now aborts the handler on a server-issued cancel.**
+  The Rust SDK already polled at capacity so `PollResponse.cancel` arrived
+  (issue #176 PR2), but it only logged a warning and let the handler run to
+  completion. It now aborts the in-flight handler future for each cancelled
+  execution and acks it as `failure` — matching the .NET / Go / Python /
+  TypeScript SDKs and conformance cases 04 / 04a.
+
 ### Security
 
 - **`croniq init` / `quickstart` no longer leak secrets to a non-interactive
