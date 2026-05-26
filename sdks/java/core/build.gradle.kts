@@ -1,5 +1,5 @@
-// io.croniq:runner — the core SDK. Library-not-framework: no Spring or
-// Kotlin dependency leaks here. JDK 21 + Jackson + SLF4J only.
+// io.github.nuetzliches:croniq-runner — the core SDK. Library-not-framework:
+// no Spring or Kotlin dependency leaks here. JDK 21 + Jackson + SLF4J only.
 
 plugins {
   id("croniq.java-conventions")
@@ -8,13 +8,12 @@ plugins {
 
 description = "Croniq Runner SDK — polls work, dispatches handlers, streams logs."
 
-// Core publishes as `io.croniq:runner`. The Gradle project name is `core`
-// for filesystem clarity; renaming the publication keeps the published
-// coordinates short and discoverable.
-publishing {
-  publications.named<MavenPublication>("maven") {
-    artifactId = "runner"
-  }
+// Core publishes as `io.github.nuetzliches:croniq-runner`. The Gradle
+// project name is `core` for filesystem clarity; the explicit coordinates
+// keep the published artifact id short and unambiguous under the parent
+// namespace (which hosts other unrelated projects too).
+mavenPublishing {
+  coordinates(project.group.toString(), "croniq-runner", project.version.toString())
 }
 
 dependencies {

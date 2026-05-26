@@ -3,7 +3,10 @@
 // the convention plugins under buildSrc/.
 
 allprojects {
-    group = "io.croniq"
+    // Group ID matches the Sonatype-verified namespace
+    // (io.github.nuetzliches). See gradle.properties for the migration
+    // note about a potential future switch to io.croniq.
+    group = "io.github.nuetzliches"
 }
 
 // A repo-wide `check` aggregate that runs spotless + checkstyle + tests

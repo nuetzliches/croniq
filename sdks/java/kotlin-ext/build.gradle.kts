@@ -1,6 +1,6 @@
-// io.croniq:runner-kotlin-ext — coroutine adapters and Kotlin-idiomatic
-// DSL on top of the Java core. Pure Kotlin; consumers of :core in Java
-// don't pull this module.
+// io.github.nuetzliches:croniq-runner-kotlin-ext — coroutine adapters and
+// Kotlin-idiomatic DSL on top of the Java core. Pure Kotlin; consumers of
+// :core in Java don't pull this module.
 
 plugins {
   id("croniq.kotlin-conventions")
@@ -9,10 +9,8 @@ plugins {
 
 description = "Kotlin coroutine extensions for the Croniq Runner SDK."
 
-publishing {
-  publications.named<MavenPublication>("maven") {
-    artifactId = "runner-kotlin-ext"
-  }
+mavenPublishing {
+  coordinates(project.group.toString(), "croniq-runner-kotlin-ext", project.version.toString())
 }
 
 dependencies {

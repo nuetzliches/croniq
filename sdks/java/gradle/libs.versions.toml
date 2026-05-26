@@ -33,7 +33,13 @@ logback = "1.5.12"
 # Build / tooling plugins
 spotless = "6.25.0"
 checkstyle = "10.20.1"
-nexus-publish = "2.0.0"
+# Vanniktech maven-publish — wraps the Sonatype Central Portal API
+# (signing + bundle upload + auto-release in one plugin). Replaces the
+# `io.github.gradle-nexus.publish-plugin` originally planned for PR-7;
+# the nexus plugin only supports the legacy OSSRH UI (s01.oss.sonatype.org),
+# but new Maven Central namespaces verified after 2024-06 use the Central
+# Portal exclusively.
+maven-publish = "0.30.0"
 
 [libraries]
 # --- Runtime ---
@@ -73,4 +79,4 @@ junit = ["junit-jupiter", "assertj-core"]
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
-nexus-publish = { id = "io.github.gradle-nexus.publish-plugin", version.ref = "nexus-publish" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }

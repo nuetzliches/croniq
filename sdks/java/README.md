@@ -1,6 +1,6 @@
 # Croniq Runner SDK for Java
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.croniq/runner.svg)](https://central.sonatype.com/artifact/io.croniq/runner)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.nuetzliches/croniq-runner.svg)](https://central.sonatype.com/artifact/io.github.nuetzliches/croniq-runner)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) in Java (21+) or Kotlin. The SDK polls a Croniq server for work, dispatches typed handlers, streams structured logs back, and reports completion — using virtual threads (Project Loom), `java.net.http.HttpClient`, Jackson, and SLF4J only.
@@ -9,14 +9,16 @@ Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) 
 
 ## Modules
 
-| Coordinates                                       | Purpose                                                                       |
-| ------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `io.croniq:runner`                                | Core SDK. JDK 21 + Jackson + SLF4J. No Spring / Kotlin dependency.            |
-| `io.croniq:runner-spring-boot-starter`            | Opt-in Spring Boot 3 auto-config, `@CroniqJob`, `croniq.runner.*` properties. |
-| `io.croniq:runner-kotlin-ext`                     | Coroutine adapters + Kotlin DSL on top of the Java core.                      |
-| `conformance-tests` (not published)               | Runs `sdks/conformance/cases/*.yaml` against the SDK.                         |
+| Coordinates                                                | Purpose                                                                       |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `io.github.nuetzliches:croniq-runner`                      | Core SDK. JDK 21 + Jackson + SLF4J. No Spring / Kotlin dependency.            |
+| `io.github.nuetzliches:croniq-runner-spring-boot-starter`  | Opt-in Spring Boot 3 auto-config, `@CroniqJob`, `croniq.runner.*` properties. |
+| `io.github.nuetzliches:croniq-runner-kotlin-ext`           | Coroutine adapters + Kotlin DSL on top of the Java core.                      |
+| `conformance-tests` (not published)                        | Runs `sdks/conformance/cases/*.yaml` against the SDK.                         |
 
-The `io.croniq:runner-opentelemetry` opt-in instrumentation module is planned for PR-7 and is not yet wired into the build.
+The `io.github.nuetzliches:croniq-runner-opentelemetry` opt-in instrumentation module is planned for PR-7 and is not yet wired into the build.
+
+> **Java packages remain `io.croniq.runner.*`** so imports stay short and natural. Maven Central does not require the Java package to mirror the group ID — only the group ID itself must be under a verified namespace. If/when `io.croniq` gets verified as a separate Sonatype namespace, the group ID can switch over without renaming a single source file.
 
 ## Toolchain
 
@@ -48,9 +50,9 @@ sdks/java/
 ├── gradle/libs.versions.toml      central dependency catalogue
 ├── buildSrc/                      convention plugins (java/kotlin)
 ├── config/checkstyle/             style rules
-├── core/                          → io.croniq:runner
-├── spring-boot-starter/           → io.croniq:runner-spring-boot-starter
-├── kotlin-ext/                    → io.croniq:runner-kotlin-ext
+├── core/                          → io.github.nuetzliches:croniq-runner
+├── spring-boot-starter/           → io.github.nuetzliches:croniq-runner-spring-boot-starter
+├── kotlin-ext/                    → io.github.nuetzliches:croniq-runner-kotlin-ext
 └── conformance-tests/             YAML-driven wire-protocol suite
 ```
 

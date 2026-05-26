@@ -5,7 +5,7 @@
  * scans for {@code @CroniqJob}-annotated beans, and registers them with the
  * core {@code CroniqRunner}. Implementation lands in PR-5 of issue #133.
  *
- * <p>Consumers who don't use Spring should depend on {@code io.croniq:runner}
- * directly and avoid this artifact.
+ * <p>Consumers who don't use Spring should depend on
+ * {@code io.github.nuetzliches:croniq-runner} directly and avoid this artifact.
  */
 package io.croniq.runner.spring;

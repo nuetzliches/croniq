@@ -1,7 +1,7 @@
-// io.croniq:runner-spring-boot-starter — opt-in Spring Boot integration.
-// Auto-config + @ConfigurationProperties binding + @CroniqJob registration.
-// Adds Spring as a dependency; consumers who don't use Spring pull only
-// :core and avoid this artifact entirely.
+// io.github.nuetzliches:croniq-runner-spring-boot-starter — opt-in Spring
+// Boot integration. Auto-config + @ConfigurationProperties binding +
+// @CroniqJob registration. Adds Spring as a dependency; consumers who
+// don't use Spring pull only :core and avoid this artifact entirely.
 
 plugins {
   id("croniq.java-conventions")
@@ -10,12 +10,11 @@ plugins {
 
 description = "Spring Boot starter for the Croniq Runner SDK."
 
-// Override the default artifact id (the project name `spring-boot-starter`
-// would publish as `io.croniq:spring-boot-starter`, which is ambiguous).
-publishing {
-  publications.named<MavenPublication>("maven") {
-    artifactId = "runner-spring-boot-starter"
-  }
+// Override the default artifact id — the project name `spring-boot-starter`
+// would publish as `io.github.nuetzliches:spring-boot-starter`, which is
+// ambiguous since the parent namespace hosts other Spring Boot starters too.
+mavenPublishing {
+  coordinates(project.group.toString(), "croniq-runner-spring-boot-starter", project.version.toString())
 }
 
 dependencies {
