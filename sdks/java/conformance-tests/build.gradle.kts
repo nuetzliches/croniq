@@ -13,11 +13,9 @@ plugins {
 
 description = "Conformance binding — runs sdks/conformance/cases/*.yaml against the Java SDK."
 
-// Never published. The Java conventions plugin enables sourcesJar /
-// javadocJar by default; turn them off here so `./gradlew assemble`
-// doesn't produce artefacts we don't want on Maven Central.
-tasks.named<Jar>("sourcesJar") { enabled = false }
-tasks.named<Jar>("javadocJar") { enabled = false }
+// Never published. Sources/javadoc jar tasks are no longer auto-created
+// by the java-conventions plugin (Vanniktech wires them up on the
+// published modules instead), so there's nothing to disable here.
 
 dependencies {
   testImplementation(project(":core"))
