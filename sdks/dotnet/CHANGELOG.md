@@ -6,6 +6,24 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Changed
+
+- **Poll 409 Conflict is fatal after `MaxConsecutivePollConflicts`
+  (default 3) consecutive responses
+  ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 1).**
+  Today every poll failure (including the 409 the server returns when
+  another runner is already registered with the same `runner_id`) is
+  retried with `PollRetryDelay` backoff, forever. The new behaviour
+  counts *consecutive* 409s; after N the runner throws
+  `PollInstanceConflictException` (new public type) out of `RunAsync`,
+  so the host process exits with a non-zero status code instead of
+  looping silently. A successful poll or a non-409 transient error
+  (5xx, timeout) resets the counter, so a recovered 5xx doesn't
+  accumulate against the conflict budget. New option
+  `CroniqRunnerOptions.MaxConsecutivePollConflicts` (int, `[Range(1, 100)]`)
+  is exposed via the standard options-pattern binding (env / JSON
+  config / inline `AddCroniqRunner(o => o.MaxConsecutivePollConflicts = …)`).
+
 ### Added
 - Initial `Croniq.Runner.Sdk` package with poll/ack/renew/events loop, Generic Host integration, options-pattern configuration, server-side cancellation wiring, and streaming `ILogWriter` backed by `System.Threading.Channels`.
 - Initial `Croniq.Runner.Sdk.OpenTelemetry` package with `ActivitySource`/`Meter` constants and `Add…Instrumentation()` extensions.

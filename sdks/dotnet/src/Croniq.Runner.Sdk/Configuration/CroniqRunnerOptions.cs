@@ -78,6 +78,23 @@ public sealed class CroniqRunnerOptions
     /// <summary>Back-off after a failed poll request.</summary>
     public TimeSpan PollRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Maximum number of consecutive <c>409 Conflict</c> responses from
+    /// <c>POST /v1/work/poll</c> before the runner gives up and throws
+    /// <see cref="Croniq.Runner.Sdk.PollInstanceConflictException"/>.
+    /// Default: 3.
+    /// </summary>
+    /// <remarks>
+    /// A 409 means another process is already registered with the same
+    /// <c>runner_id</c>. Retrying forever just masks an operator
+    /// misconfiguration. The counter resets on any successful poll or
+    /// a non-409 transient error (5xx, network, timeout). See issue
+    /// <see href="https://github.com/nuetzliches/croniq/issues/134">#134</see>
+    /// sub-item 1.
+    /// </remarks>
+    [Range(1, 100)]
+    public int MaxConsecutivePollConflicts { get; set; } = 3;
+
     /// <summary>Idle delay when the runner is at <see cref="MaxInflight"/> capacity.</summary>
     public TimeSpan CapacityBackoff { get; set; } = TimeSpan.FromMilliseconds(500);
 

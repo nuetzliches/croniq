@@ -166,8 +166,49 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Pure helper that updates the consecutive-409 streak based on the
+    /// latest poll outcome and decides whether to keep polling or bail.
+    /// Extracted from <see cref="PollLoopAsync"/> for unit-testing; the
+    /// run-loop calls it on every poll outcome.
+    /// </summary>
+    /// <remarks>
+    /// <para>Reset cases (counter → 0):</para>
+    /// <list type="bullet">
+    /// <item>Successful poll — the other process must have died or released its slot.</item>
+    /// <item>Non-409 transient error (5xx, network, timeout) — unrelated to instance ownership.</item>
+    /// </list>
+    /// <para>Increment case: 409 Conflict. Returns <c>true</c> (bail) when the
+    /// counter reaches <paramref name="maxConsecutive"/>.</para>
+    /// </remarks>
+    internal static bool UpdateConflictStreak(
+        System.Net.HttpStatusCode? failureStatus,
+        ref int consecutive,
+        int maxConsecutive)
+    {
+        if (failureStatus == null)
+        {
+            // Success
+            consecutive = 0;
+            return false;
+        }
+        if (failureStatus == System.Net.HttpStatusCode.Conflict)
+        {
+            consecutive++;
+            return consecutive >= maxConsecutive;
+        }
+        // Transient non-409 — reset the streak so a recovered 5xx doesn't
+        // accumulate with later 409s.
+        consecutive = 0;
+        return false;
+    }
+
     private async Task PollLoopAsync(CancellationToken ct)
     {
+        // Tracks consecutive `409 Conflict` responses on poll. See
+        // UpdateConflictStreak for the reset/increment rules.
+        int consecutiveConflicts = 0;
+
         while (!ct.IsCancellationRequested)
         {
             if (_inflight.Count >= _options.MaxInflight)
@@ -197,6 +238,7 @@ public sealed class CroniqRunner : IAsyncDisposable
             {
                 response = await _client.PollAsync(request, _options.PollTimeout, ct).ConfigureAwait(false);
                 _stateProbe.MarkSuccessfulPoll(_timeProvider.GetUtcNow());
+                UpdateConflictStreak(null, ref consecutiveConflicts, _options.MaxConsecutivePollConflicts);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -205,7 +247,37 @@ public sealed class CroniqRunner : IAsyncDisposable
             catch (Exception ex)
             {
                 _stateProbe.MarkPollFailure(_timeProvider.GetUtcNow(), ex.Message);
-                _logger.LogWarning(ex, "poll failed — backing off {Delay}", _options.PollRetryDelay);
+
+                // Detect 409 Conflict — server says another runner is
+                // already registered with this runner_id. After enough
+                // consecutive 409s we propagate fatally so the host can
+                // exit non-zero instead of retrying forever (see #134).
+                var status = (ex as HttpRequestException)?.StatusCode;
+                var shouldBail = UpdateConflictStreak(
+                    status, ref consecutiveConflicts, _options.MaxConsecutivePollConflicts);
+
+                if (shouldBail)
+                {
+                    _logger.LogError(
+                        ex,
+                        "fatal: server returned 409 Conflict on poll {Count} times in a row — " +
+                        "another runner is registered with runner_id={RunnerId}. " +
+                        "Stop the duplicate process or rotate the runner_id.",
+                        consecutiveConflicts, _resolvedRunnerId);
+                    throw new PollInstanceConflictException(_resolvedRunnerId!, consecutiveConflicts, ex);
+                }
+
+                if (status == System.Net.HttpStatusCode.Conflict)
+                {
+                    _logger.LogWarning(
+                        "poll returned 409 Conflict ({Consecutive}/{Max}) — another runner instance may be active; retrying after {Delay}",
+                        consecutiveConflicts, _options.MaxConsecutivePollConflicts, _options.PollRetryDelay);
+                }
+                else
+                {
+                    _logger.LogWarning(ex, "poll failed — backing off {Delay}", _options.PollRetryDelay);
+                }
+
                 try
                 {
                     await Task.Delay(_options.PollRetryDelay, ct).ConfigureAwait(false);

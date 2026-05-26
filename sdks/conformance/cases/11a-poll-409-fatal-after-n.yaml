@@ -1,0 +1,60 @@
+name: "Poll returning 409 instance-conflict N times in a row exits the runner"
+description: |
+  Companion to case 11. After CRONIQ_DEMO_MFA-equivalent reasoning: a
+  409 from /v1/work/poll means another runner is already registered
+  with the same runner_id. Retrying that forever just masks a
+  configuration error — the runner ends up wedged silently while the
+  duplicate process keeps stealing its slot.
+
+  As of #134 sub-item 1, both SDKs (Rust and .NET) treat 409 as
+  *eventually fatal*: after `max_consecutive_poll_conflicts`
+  (default 3) consecutive 409s on the same poll endpoint, the runner
+  logs an actionable error and exits with non-zero status. The counter
+  resets on any successful poll or non-409 transient error (5xx,
+  timeout) — those genuinely transient failures don't accumulate
+  against the instance-conflict budget.
+
+  NOTE: The conformance binding does not currently expose
+  `runner_exit_code` assertions, so this YAML documents the wire
+  contract for cross-SDK symmetry but the behaviour is verified at
+  the SDK unit-test layer:
+
+    - Rust: `croniq_runner_sdk::runner::tests::*` in
+      `crates/croniq-runner-sdk/src/runner.rs`
+    - .NET: `Croniq.Runner.Sdk.Tests.PollConflictStreakTests` in
+      `sdks/dotnet/tests/Croniq.Runner.Sdk.Tests/PollConflictStreakTests.cs`
+
+  Once the harness gains a `runner_exit_code` field on `expectations`,
+  this case will assert `runner_exit_code: 1` directly.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 50         # keep CI fast — defaults to 5 s in production
+  drain_timeout_ms: 1000
+  max_consecutive_poll_conflicts: 3
+
+handlers: []
+
+server_script:
+  # Three 409s in a row exhaust the conflict budget. The runner
+  # should make exactly 3 polls before exiting; a 4th poll would
+  # indicate the budget isn't being enforced.
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 409
+      body:
+        error: "runner instance conflict"
+
+expectations:
+  # ~3 * 50 ms backoff + start/shutdown overhead. Real runners using
+  # the 5 s default would take ~15 s; CI knob trims that to keep the
+  # case fast.
+  duration_max_ms: 3000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 3
+      max_count: 3

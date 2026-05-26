@@ -25,7 +25,8 @@
         "renew_interval_ms": { "type": "integer", "minimum": 1 },
         "drain_timeout_ms": { "type": "integer", "minimum": 1 },
         "poll_retry_delay_ms": { "type": "integer", "minimum": 1 },
-        "capacity_backoff_ms": { "type": "integer", "minimum": 1 }
+        "capacity_backoff_ms": { "type": "integer", "minimum": 1 },
+        "max_consecutive_poll_conflicts": { "type": "integer", "minimum": 1, "maximum": 100 }
       }
     },
 
