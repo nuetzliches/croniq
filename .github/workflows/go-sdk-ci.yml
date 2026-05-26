@@ -14,6 +14,10 @@ on:
       - 'openapi.yaml'
       - '.github/workflows/go-sdk-ci.yml'
   pull_request:
+    # No `paths-ignore` — `Go SDK CI required` is a required status check
+    # so the workflow must always trigger on PRs. Heavy build / vet /
+    # staticcheck / conformance jobs short-circuit via the `changes`
+    # filter below when nothing relevant changed.
     branches: [main]
 
 concurrency:
@@ -22,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   GO_VERSION: '1.25'
@@ -32,6 +37,26 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  changes:
+    # Detect whether anything in this SDK's relevant paths changed on the
+    # PR. Heavy jobs gate on `needs.changes.outputs.go == 'true'` so a
+    # server / UI / other-SDK PR skips the Go toolchain entirely.
+    name: Detect path changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'sdks/go/**'
+              - 'sdks/conformance/**'
+              - 'openapi.yaml'
+              - '.github/workflows/go-sdk-ci.yml'
+
   schema:
     name: Conformance YAML schema
     runs-on: ubuntu-latest
@@ -47,6 +72,8 @@ jobs:
 
   build:
     name: Build, vet, test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -90,6 +117,8 @@ jobs:
 
   staticcheck:
     name: staticcheck
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -112,7 +141,8 @@ jobs:
   conformance:
     name: Conformance suite
     runs-on: ubuntu-latest
-    needs: [schema]
+    needs: [schema, changes]
+    if: needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -131,17 +161,18 @@ jobs:
     name: Go SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [schema, build, staticcheck, conformance]
+    needs: [changes, schema, build, staticcheck, conformance]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
+          echo "  changes:      ${{ needs.changes.result }}"
           echo "  schema:       ${{ needs.schema.result }}"
           echo "  build:        ${{ needs.build.result }}"
           echo "  staticcheck:  ${{ needs.staticcheck.result }}"
           echo "  conformance:  ${{ needs.conformance.result }}"
           exit 1
-      - name: All required jobs passed
+      - name: All required jobs passed (or skipped because nothing relevant changed)
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: echo "schema, build, staticcheck, conformance all succeeded"
+        run: echo "Aggregator OK - all dependent jobs succeeded or were skipped (path filter)"

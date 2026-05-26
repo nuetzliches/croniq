@@ -1,10 +1,19 @@
 name: Java SDK CI
 
 # Branch-protection contract:
-# This workflow gates merges into main once feat/java-sdk-init lands. Add
-# the `Java SDK CI required` job (at the bottom of this file) as the single
-# required status check — it aggregates schema, build, conformance, and
-# publish-smoke into one signal, mirroring the .NET SDK CI pattern.
+# This workflow gates merges into main. Add the `Java SDK CI required` job
+# (at the bottom of this file) as the single required status check — it
+# aggregates schema, build, conformance, and publish-smoke into one signal,
+# mirroring the .NET SDK CI pattern.
+#
+# Cost optimisation: the workflow still triggers on every PR (so the
+# required check is always reported), but the heavy build/conformance/
+# publish-smoke jobs short-circuit via the `changes` filter below when
+# nothing in `sdks/java/**`, `sdks/conformance/**`, `openapi.yaml`, or
+# this workflow file has changed. The required aggregator at the bottom
+# uses `contains(needs.*.result, 'failure'|'cancelled')`, which treats
+# `skipped` as success — so a PR that doesn't touch Java still satisfies
+# the required check without burning JDK build minutes.
 
 on:
   push:
@@ -15,9 +24,11 @@ on:
       - 'openapi.yaml'
       - '.github/workflows/java-sdk-ci.yml'
   pull_request:
-    # No `paths-ignore` — once a job here becomes a required status check,
-    # path-based skipping makes the requirement unsatisfiable. See ci.yml
-    # #98 incident note and the .NET SDK CI for prior art.
+    # No `paths-ignore` on the PR trigger — `Java SDK CI required` is a
+    # required status check. If the entire workflow were path-skipped,
+    # the requirement would stay pending forever (see ci.yml #98). The
+    # workflow runs every PR; only the heavy jobs short-circuit via the
+    # `changes` filter below.
     branches: [main]
 
 concurrency:
@@ -26,6 +37,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   # Gradle daemon is unhelpful in CI (single-use containers); skip it.
@@ -35,6 +47,31 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  changes:
+    # Detect whether anything in this SDK's relevant paths changed on the
+    # PR. Heavy jobs gate on `needs.changes.outputs.java == 'true'` so a
+    # pure server / UI / other-SDK PR skips the JDK build entirely.
+    # Push events bypass the gate via the `paths:` filter above — they
+    # only fire when relevant files changed anyway.
+    name: Detect path changes
+    runs-on: ubuntu-latest
+    outputs:
+      java: ${{ steps.filter.outputs.java }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          # On push events, paths-filter falls back to comparing against
+          # the previous commit, which is fine — the `paths:` filter on
+          # the trigger already pre-selects only relevant pushes.
+          filters: |
+            java:
+              - 'sdks/java/**'
+              - 'sdks/conformance/**'
+              - 'openapi.yaml'
+              - '.github/workflows/java-sdk-ci.yml'
+
   schema:
     name: Conformance YAML schema
     runs-on: ubuntu-latest
@@ -52,6 +89,8 @@ jobs:
 
   build:
     name: Build & test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.java == 'true'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -106,7 +145,8 @@ jobs:
     # error first (more actionable than a Java deserialisation failure).
     name: Conformance suite
     runs-on: ubuntu-latest
-    needs: [schema]
+    needs: [schema, changes]
+    if: needs.changes.outputs.java == 'true'
     defaults:
       run:
         working-directory: sdks/java
@@ -138,7 +178,8 @@ jobs:
     # attachments. Maven Central staging itself is wired in PR-7.
     name: Publish smoke (publishToMavenLocal)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, changes]
+    if: needs.changes.outputs.java == 'true'
     defaults:
       run:
         working-directory: sdks/java
@@ -175,20 +216,26 @@ jobs:
     # schema, build, conformance, and publish-smoke. Mirrors the .NET SDK
     # CI's `required` job exactly so the protection-rule UI only ever
     # references one check per SDK.
+    #
+    # `if: always()` so the check still reports on PRs where the heavy
+    # jobs were skipped via `changes`. `contains(needs.*.result, ...)` only
+    # trips on `failure` / `cancelled` — `skipped` is treated as success,
+    # which is the whole point of the skip optimisation.
     name: Java SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [schema, build, conformance, publish-smoke]
+    needs: [changes, schema, build, conformance, publish-smoke]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
+          echo "  changes:       ${{ needs.changes.result }}"
           echo "  schema:        ${{ needs.schema.result }}"
           echo "  build:         ${{ needs.build.result }}"
           echo "  conformance:   ${{ needs.conformance.result }}"
           echo "  publish-smoke: ${{ needs.publish-smoke.result }}"
           exit 1
-      - name: All required jobs passed
+      - name: All required jobs passed (or skipped because nothing relevant changed)
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: echo "schema, build, conformance, publish-smoke all succeeded"
+        run: echo "Aggregator OK - all dependent jobs succeeded or were skipped (path filter)"
