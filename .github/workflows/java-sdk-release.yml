@@ -1,0 +1,141 @@
+name: Java SDK Release
+
+# Publishes io.github.nuetzliches:croniq-runner to the Sonatype Central
+# Portal when a tag of the form `java-sdk-vX.Y.Z` is pushed. The tag prefix
+# keeps Java releases independent of the .NET / Go / Python / TS / Rust-server
+# release cadences, mirroring the convention used by the other SDKs.
+#
+# Prerequisites (one-time, set by a repo admin):
+#   * Repo secret `MAVEN_CENTRAL_USERNAME` — User Token username from
+#     https://central.sonatype.com/account → Generate User Token. NOT your
+#     portal login password.
+#   * Repo secret `MAVEN_CENTRAL_PASSWORD` — User Token password from the
+#     same step. Shown only once.
+#   * Repo secret `MAVEN_GPG_PRIVATE_KEY` — ASCII-armored GPG private key
+#     (`gpg --armor --export-secret-keys <KEY_ID>`), full block including
+#     the BEGIN/END markers. Maven Central rejects unsigned artefacts.
+#   * Repo secret `MAVEN_GPG_PASSPHRASE` — passphrase for that GPG key.
+#   * Verified Maven namespace `io.github.nuetzliches` in the Central Portal.
+#
+# Tag examples:
+#   java-sdk-v0.0.1                → publishes 0.0.1 (smoke-test line)
+#   java-sdk-v0.1.0                → first feature release per issue #133
+#   java-sdk-v0.2.0-rc.1           → pre-release, no special handling needed —
+#                                    Maven Central treats it like any other
+#                                    version; Gradle resolvers respect the
+#                                    pre-release suffix per SemVer.
+
+on:
+  push:
+    tags: ['java-sdk-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing tag to (re-)publish, e.g. java-sdk-v0.0.1. Republishing the same version is rejected by Maven Central.'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02 default
+  # switch, matching the env block in ci.yml, release.yml, and the sibling
+  # SDK release pipelines.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  publish:
+    name: Build, verify, publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Resolve tag → version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ inputs.version }}"
+          else
+            REF="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ ! "$REF" =~ ^java-sdk-v(.+)$ ]]; then
+            echo "::error::tag '$REF' does not match java-sdk-vX.Y.Z"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${BASH_REMATCH[1]}"
+
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        # `gradle/actions/setup-gradle` installs the requested Gradle, wires
+        # build-scan publishing, and enables the read/write cache for
+        # ~/.gradle. No wrapper checked into the repo — `gradle-version`
+        # pins the runtime here so PRs and releases agree on the toolchain.
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11'
+          cache-read-only: false
+
+      - name: Build (Release)
+        run: gradle build -Pversion=${{ steps.version.outputs.version }} --no-daemon
+
+      - name: Verify the packaged version matches the tag
+        # Belt-and-braces. If the `-Pversion` override silently fails (e.g.
+        # gradle.properties drift), we'd otherwise push the wrong number to
+        # Maven Central. Glob the JAR filenames and assert.
+        shell: bash
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}"
+          MISSING=0
+          for kind in "" "-sources" "-javadoc"; do
+            f="build/libs/croniq-runner-${EXPECTED}${kind}.jar"
+            if [ ! -f "$f" ]; then
+              echo "::error::expected ${f} not found"
+              ls "build/libs/" || true
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" = "1" ]; then exit 1; fi
+
+      - name: Publish to Maven Central
+        # `publishAndReleaseToMavenCentral` (alias `publishToMavenCentral`
+        # when `automaticRelease=true` in build.gradle.kts) uploads the
+        # signed bundle to the Sonatype Central Portal and triggers the
+        # release without a manual click in the portal UI.
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          gradle publishAndReleaseToMavenCentral \
+            -Pversion=${{ steps.version.outputs.version }} \
+            --no-daemon \
+            --no-configuration-cache
+          echo "Published io.github.nuetzliches:croniq-runner@${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: croniq-runner-${{ steps.version.outputs.version }}
+          path: sdks/java/build/libs/
+          if-no-files-found: error
+          # Capped at the repo-wide retention max (currently 14 days).
+          # Maven Central is the durable copy; the artifact is just a
+          # post-mortem aid if a publish fails partway through.
+          retention-days: 14

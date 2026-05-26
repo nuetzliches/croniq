@@ -1,0 +1,10 @@
+.gradle/
+build/
+out/
+bin/
+*.class
+
+# IDE — IntelliJ / VS Code
+.idea/
+*.iml
+.vscode/
