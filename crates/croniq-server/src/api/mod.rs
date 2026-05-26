@@ -484,30 +484,64 @@ async fn handle_poll(
             new_instance = ?req.instance_id,
             "runner reconnected under same id after previous session went dead — taking over"
         );
-        // Requeue any executions still claimed-in-store by this runner_id.
-        // Without this, the next watchdog sweep wouldn't see the dead
-        // session (we just evicted it) and the orphaned claimed rows would
-        // sit forever.
-        if let Some(ref store) = state.store {
+        // Requeue any executions still claimed-in-store by this runner_id
+        // on a background task so the poll request returns promptly. The
+        // runner won't see the requeued items in *this* response (we polled
+        // with `inflight: []` which capped capacity at zero); they appear
+        // on the next poll, by which time the spawned task has finished
+        // even on a slow disk. Without spawning, a stale runner with many
+        // orphaned executions could stall the takeover poll past the
+        // long-poll deadline.
+        if let (Some(store), Some(dsl_jobs)) = (state.store.clone(), state.dsl_jobs.clone()) {
+            let runner_state = Arc::clone(&state.runner);
+            let runner_id = req.runner_id.clone();
+            tokio::spawn(async move {
+                let now = Utc::now();
+                let store_clone = store.clone();
+                let dsl_jobs_handle = dsl_jobs.clone();
+                let requeued = crate::watchdog::requeue_abandoned_for_runner(
+                    &store,
+                    &runner_state,
+                    &runner_id,
+                    now,
+                    |job_key| {
+                        // Acquire the lock once per lookup so we don't
+                        // clone the entire DSL job list up-front (which
+                        // can be expensive on deployments with hundreds
+                        // of DSL-managed jobs).
+                        if let Ok(jobs) = dsl_jobs_handle.try_read()
+                            && let Some(c) = jobs.iter().find(|j| j.key == job_key)
+                        {
+                            return Some(c.clone());
+                        }
+                        match store_clone.get_job_definition(job_key) {
+                            Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                            _ => None,
+                        }
+                    },
+                )
+                .await;
+                if !requeued.is_empty() {
+                    tracing::info!(
+                        runner_id = %runner_id,
+                        count = requeued.len(),
+                        "inline takeover: requeued abandoned executions"
+                    );
+                }
+            });
+        } else if let Some(ref store) = state.store {
+            // No DSL jobs map (test mode); fall back to the synchronous
+            // path so behaviour stays consistent with pre-fix tests.
             let now = Utc::now();
-            let dsl_jobs_snapshot = match state.dsl_jobs {
-                Some(ref jobs) => jobs.read().await.clone(),
-                None => Vec::new(),
-            };
             let store_clone = Arc::clone(store);
             let requeued = crate::watchdog::requeue_abandoned_for_runner(
                 store,
                 &state.runner,
                 &req.runner_id,
                 now,
-                |job_key| {
-                    if let Some(c) = dsl_jobs_snapshot.iter().find(|j| j.key == job_key) {
-                        return Some(c.clone());
-                    }
-                    match store_clone.get_job_definition(job_key) {
-                        Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
-                        _ => None,
-                    }
+                |job_key| match store_clone.get_job_definition(job_key) {
+                    Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                    _ => None,
                 },
             )
             .await;

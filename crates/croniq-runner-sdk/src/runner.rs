@@ -106,16 +106,23 @@ impl RunnerBuilder {
     }
 
     /// Idle delay between polls when the runner is at `max_inflight`
-    /// capacity. Default: 5 seconds.
+    /// capacity. Default: **500 ms**, matching the .NET / Go / Python /
+    /// TypeScript / Java SDK defaults.
     ///
     /// Even at capacity the SDK keeps polling so the server can deliver
     /// admin-issued cancels via `PollResponse.cancel` (issue #176). The
     /// at-capacity branch returns immediately on the server side
     /// (capacity=0), so this is what paces the loop and prevents a
-    /// stampede. A long-poll cadence (~5 s, well under the 35 s the
-    /// server long-polls on the normal path) trades a small extra
-    /// load on the server for sub-5 s cancel-delivery latency on a
-    /// single-slot runner.
+    /// stampede.
+    ///
+    /// Note: the Rust SDK currently **does not act on** cancels received
+    /// in `PollResponse.cancel` — it polls correctly so the wire-protocol
+    /// behaviour matches the other SDKs, but the handler future is not
+    /// aborted. Operators using `POST /v1/executions/{id}/cancel` against
+    /// a Rust runner will see the cancel marked as delivered in the
+    /// server's response (`delivered_via_runner: true`) but the handler
+    /// continues to completion. Handler abort is tracked as a future
+    /// enhancement.
     pub fn capacity_backoff(mut self, delay: Duration) -> Self {
         self.capacity_backoff = delay;
         self
@@ -185,7 +192,7 @@ impl CroniqRunner {
             max_inflight: 5,
             tags: Vec::new(),
             poll_retry_delay: Duration::from_secs(5),
-            capacity_backoff: Duration::from_secs(5),
+            capacity_backoff: Duration::from_millis(500),
             max_consecutive_poll_conflicts: 3,
         }
     }
@@ -313,13 +320,20 @@ impl CroniqRunner {
             );
             match poll_result {
                 Ok(resp) => {
-                    // Note: `resp.cancel` is not acted upon by the Rust SDK
-                    // today — handler abort on server-requested cancel is
-                    // tracked separately (conformance case 04 documents the
-                    // gap). The poll itself still happens at capacity to
-                    // keep the wire-protocol behaviour identical to the
-                    // other SDKs and to make adding cancel handling later
-                    // a localised change.
+                    // The Rust SDK polls at capacity so the wire-protocol
+                    // behaviour matches the other SDKs (issue #176 PR2),
+                    // but **does not yet act on** `resp.cancel`. Surface
+                    // any cancel arrivals as a warn-log so an operator
+                    // who issued the cancel sees something instead of
+                    // silent no-op. Handler abort is a follow-up.
+                    if !resp.cancel.is_empty() {
+                        tracing::warn!(
+                            execution_ids = ?resp.cancel,
+                            "server requested cancellation of in-flight executions — \
+                             the Rust SDK does not yet abort handlers; executions will \
+                             run to completion. See conformance case 04 / issue #176."
+                        );
+                    }
                     if at_capacity {
                         // Server returned immediately (capacity=0 branch).
                         // Pace the loop to avoid hammering the server.

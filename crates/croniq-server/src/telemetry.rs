@@ -20,9 +20,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{EnvFilter, Layer, fmt, prelude::*};
 
 use crate::live_console::{ConsoleHub, LiveConsoleLayer};
+
+/// Build the `RUST_LOG`/`info` filter the Live Console subscribes through.
+/// Constructed fresh per layer because `EnvFilter` is not `Clone`.
+fn console_env_filter() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+}
 
 /// Telemetry mode derived from environment variables.
 ///
@@ -155,12 +161,20 @@ pub fn init() -> Result<(TelemetryGuard, Arc<ConsoleHub>)> {
 
     let guard = match mode {
         TelemetryMode::StderrOnly => {
-            let env_filter =
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+            // The global `EnvFilter` filters everything for the fmt layer.
+            // We also attach a per-layer filter to `LiveConsoleLayer` so
+            // dashboard subscribers see exactly what the operator's
+            // `RUST_LOG` allows — without this, the layer would receive
+            // events that the registry-level filter dropped only after
+            // them, leading to the broadcast/ring-buffer pumping debug
+            // events on an `info`-configured server.
+            let env_filter = console_env_filter();
+            let console_layer =
+                LiveConsoleLayer::new(Arc::clone(&hub)).with_filter(console_env_filter());
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(fmt::layer().with_writer(std::io::stderr))
-                .with(LiveConsoleLayer::new(Arc::clone(&hub)))
+                .with(console_layer)
                 .init();
             TelemetryGuard::empty()
         }
@@ -223,11 +237,12 @@ fn init_otlp(endpoint: String, hub: Arc<ConsoleHub>) -> Result<TelemetryGuard> {
         .unwrap_or_else(|| EnvFilter::new("info"));
     let otel_log_layer = otel_log_layer.with_filter(otlp_filter);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = console_env_filter();
+    let console_layer = LiveConsoleLayer::new(hub).with_filter(console_env_filter());
     tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt::layer().with_writer(std::io::stderr))
-        .with(LiveConsoleLayer::new(hub))
+        .with(console_layer)
         .with(otel_span_layer)
         .with(otel_log_layer)
         .init();

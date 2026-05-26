@@ -6,6 +6,93 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-26
+
+### Added
+
+- **Live Console: tail server tracing events in real time from the
+  dashboard ([#141](https://github.com/nuetzliches/croniq/issues/141)).**
+  New `/console` route in the UI streams every server-side tracing
+  event (filtered by the operator's `RUST_LOG`) as soon as it's
+  emitted. Level chips (debug/info/warn/error) toggle the SSE
+  subscription server-side; a substring search runs locally over
+  message/target/structured-field values. Sticky auto-scroll with
+  scroll-lock, Pause/Resume (buffers without dropping), Clear, Copy,
+  and Download `.ndjson` actions cover the common operator workflows.
+  Backed by a new `GET /v1/events/stream` SSE endpoint and an
+  in-process `ConsoleHub` (bounded 1000-entry ring buffer +
+  `tokio::sync::broadcast` channel). Required scope:
+  `executions:read`. Stream-open is audited as `console.opened`. The
+  hub honours `RUST_LOG` via an explicit per-layer `EnvFilter` so a
+  server started with `RUST_LOG=info` does not pump debug events into
+  the dashboard. Persistent long-term log search is intentionally
+  out of scope — use OTLP for that; the ring buffer exists to give a
+  freshly opened dashboard ~1 min of backfill before the live tail.
+
+- **Server routes admin-issued cancels to runners via `PollResponse.cancel`
+  ([#176](https://github.com/nuetzliches/croniq/issues/176)).** Closes the
+  long-standing gap where the wire contract had a `cancel` field but the
+  server never populated it. Two-PR landing:
+  - **Server side (PR-1 of 2,
+    [#193](https://github.com/nuetzliches/croniq/pull/193)):** new
+    `POST /v1/executions/{id}/cancel` endpoint. Queued executions
+    flip directly to `cancelled` in the store; claimed (in-flight)
+    executions are flipped AND pushed onto the owning runner's
+    in-memory cancel queue, delivered on its next poll. Idempotent
+    on already-cancelled (returns 200), 409 on terminal states
+    (`completed`/`failed`/`dead`). New `executions:cancel` scope —
+    granted to Operator by default; admin's wildcard covers it.
+    Cancel issuance is audited as `execution.cancelled`. The
+    Executions page in the dashboard gets a per-row Cancel button
+    for `queued`/`claimed` rows.
+  - **SDK side (PR-2 of 2,
+    [#197](https://github.com/nuetzliches/croniq/pull/197)):**
+    every SDK now keeps polling while at capacity, sending its
+    current inflight list, so the server can deliver cancels via
+    `PollResponse.cancel`. Before this, the SDKs' `sleep
+    (capacity_backoff)` branch suppressed polling and a
+    `max_inflight=1` runner could never receive a cancel until the
+    handler finished naturally. The server's poll handler returns
+    immediately on capacity=0 (no long-poll), so each at-capacity
+    poll round-trips through `capacity_backoff` (default 500 ms in
+    .NET/Go/Python/TS/Java; **now 500 ms in Rust too**, was 5 s in
+    the original PR before review). New conformance case
+    `04a-cancel-at-max-inflight-1.yaml` pins the behaviour for the
+    five SDKs that act on cancels. **Caveat:** the Rust SDK polls
+    correctly at capacity but **does not yet abort the handler
+    future** on `PollResponse.cancel` — it surfaces the cancel as
+    a `warn` log instead. Handler abort is a future enhancement;
+    operators using cancels against a Rust runner will see
+    `delivered_via_runner: true` from the server but the handler
+    runs to completion.
+  - **Drive-by Java SDK wire fix:** the Java SDK was sending
+    `slotsFree` (max_inflight minus current inflight) AS
+    `PollRequest.max_inflight`, which the server then double-
+    discounted. A Java runner with `maxInflight=5` and 2 inflight
+    was effectively running with 3 slots, not the configured 5.
+    Fix sends the configured `options.maxInflight()` like the other
+    SDKs — silent correctness restoration; no migration steps.
+
+- **Inline stale-runner takeover replaces the 10-minute watchdog wait
+  ([#190](https://github.com/nuetzliches/croniq/issues/190),
+  [#192](https://github.com/nuetzliches/croniq/pull/192)).** When a
+  runner restarts under the same `runner_id` with a fresh
+  `instance_id` after its previous session went silent, the
+  registry's instance guard used to reject every poll with `409
+  Conflict` until the watchdog evicted the dead entry — observed
+  delay in production: ~10 minutes. The registry now disambiguates a
+  real conflict (two live processes racing) from a takeover (old
+  session past `lease_ttl_secs`) and evicts the dead entry inline.
+  Any executions still claimed-in-store by that `runner_id` are
+  requeued by a spawned task so the poll returns promptly. New
+  `RegisterOutcome` enum (`New` / `Updated` / `TookOver {
+  previous_instance_id }`) on `register_or_update` replaces the
+  previous `Result<bool, _>`. The watchdog's per-runner cleanup is
+  shared via a new `requeue_abandoned_for_runner` helper so the
+  inline takeover and the periodic sweep stay behaviourally
+  identical. Watchdog also drops the dead runner's `cancel_queues`
+  entry to prevent unbounded growth on long-lived servers.
+
 ### Changed
 
 - **Runner SDKs (Rust + .NET) treat repeated `409 Conflict` on poll as
@@ -42,6 +129,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SDK unit-test layer for now. Case 11 (single 409 → transient
   retry) stays unchanged.
 
+- **CI: SDK build/conformance/smoke jobs short-circuit when nothing
+  relevant changed ([#196](https://github.com/nuetzliches/croniq/pull/196)).**
+  Each of the five SDK CI workflows (`dotnet`, `go`, `java`, `python`,
+  `typescript`) gains a `changes` job that uses `dorny/paths-filter`
+  to detect whether anything under `sdks/<lang>/**`,
+  `sdks/conformance/**`, `openapi.yaml`, or its own workflow file
+  was touched. Heavy build / conformance / pack-smoke jobs gate on
+  the filter via `if: needs.changes.outputs.<lang> == 'true'` and
+  skip otherwise. The required aggregator job (`<Lang> SDK CI
+  required`) treats `skipped` as success because its existing
+  `contains(needs.*.result, 'failure'|'cancelled')` check excludes
+  `skipped`, so the branch-protection contract is preserved.
+  Schema validation stays always-on (3 s job, catches typos in
+  conformance YAMLs independently). Result: a typical server-only
+  PR drops from ~35 long-matrix SDK jobs to ~5 short `changes` +
+  5 aggregators — roughly 5+ CI-hours → ~3 minutes.
+
 ### Added
 
 - **Server stamps W3C `traceparent` into `WorkAssignment.metadata`
@@ -57,6 +161,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tracer provider is installed, the helper is a no-op — metadata is
   byte-identical to today.
 
+### Fixed
+
+- **Java SDK: root `build.gradle.kts` no longer references the
+  removed `nexus-publish` plugin
+  ([#195](https://github.com/nuetzliches/croniq/pull/195)).** The
+  Maven-Central migration in
+  [#188](https://github.com/nuetzliches/croniq/pull/188) switched the
+  per-module publishing convention to the Vanniktech plugin but left
+  a stale `alias(libs.plugins.nexus.publish)` + `nexusPublishing {…}`
+  block in the root build script. The nexus alias was removed from
+  `libs.versions.toml` in the same PR, so every Java SDK CI run
+  failed at configuration time with `Unresolved reference: nexus`,
+  which in turn blocked every PR (including pure-Rust changes)
+  because Java SDK CI is a required check. Drive-by: the `otel`
+  module's `publishing { publications.named<MavenPublication>("maven")
+  }` (legacy OSSRH form) is replaced with Vanniktech's
+  `mavenPublishing { coordinates(…) }` to fix the matching
+  `Publication with name 'maven' not found` Spotless failure.
+
+### Security
+
+- **Dependabot: vite + esbuild in
+  `sdks/conformance/bindings/typescript`
+  ([#191](https://github.com/nuetzliches/croniq/pull/191)).** Vitest
+  was pinned to `^2.1.9`, which pulled in vite 5.x (Path Traversal
+  in Optimized Deps `.map` Handling) and esbuild <=0.24.2 (dev
+  server CORS bug enabling cross-site requests). Bumped to vitest
+  `^4.1.7`, matching the sibling `sdks/typescript` workspace — vite
+  ^8 / esbuild ^0.27/0.28, both past the vulnerable ranges. Vitest
+  is dev-only so no runtime behaviour changes.
+
 ### Documentation
 
 - **`openapi.yaml`: `POST /v1/work/poll` documents `cancel` as
@@ -71,7 +206,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reserved so SDK behaviour doesn't have to change when the server
   side lands; the endpoint description now spells out the current
   state and points operators at the `max_inflight >= 2` workaround
-  for any runner that needs in-flight cancellation.
+  for any runner that needs in-flight cancellation. **Superseded
+  later in this release by [#193](https://github.com/nuetzliches/croniq/pull/193) +
+  [#197](https://github.com/nuetzliches/croniq/pull/197):** the
+  workaround note has been removed; the field is now actively
+  routed.
 
 ## [0.15.0] - 2026-05-26
 
