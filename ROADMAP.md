@@ -1,55 +1,7 @@
 # Croniq Roadmap
 
 Living punchlist of known improvements. Each item is sized for a single focused PR.
-Last reviewed: 2026-05-09.
-
-## Security hardening
-
-- **Verify checksums in `install.sh`** — publish `SHA256SUMS` alongside release
-  tarballs and verify before extraction. Optional: minisign/cosign signatures.
-  ([install.sh](install.sh))
-- **Non-root Docker image** — add a dedicated `croniq` user in the Dockerfile;
-  chown `/var/lib/croniq` and drop privileges via `USER`. ([Dockerfile](Dockerfile))
-- **Persist the JWT secret** — server currently regenerates a random secret on
-  every restart when none is configured, invalidating all runner tokens. Persist
-  an auto-generated secret to `$DATA_DIR/jwt.secret` (mode 0600) on first boot.
-  ([crates/croniq-server/src/main.rs:100](crates/croniq-server/src/main.rs))
-- **Reject `admin/admin` outside demo mode** — the quickstart compose file sets
-  a fixed admin password; refuse to start with that password unless
-  `CRONIQ_DEMO_MODE=1` is explicitly set, or force a password change on first
-  login. ([docker-compose.yml](docker-compose.yml))
-- **Safer arg handling in entrypoint** — build an argv array in
-  `docker-entrypoint.sh` so admin passwords containing spaces or shell-special
-  characters survive. ([docker-entrypoint.sh](docker-entrypoint.sh))
-
-## Release & CI hygiene
-
-- **Pin GitHub Actions to commit SHAs** — enable Dependabot for the
-  `github-actions` ecosystem so `actions/checkout`, `docker/*`, etc. get pinned
-  and auto-updated.
-- **Add `concurrency` blocks** — prevent overlapping CI runs and racing GHCR
-  release pushes. ([.github/workflows/ci.yml](.github/workflows/ci.yml),
-  [.github/workflows/release.yml](.github/workflows/release.yml))
-- **Multi-arch Docker image** — release builds ARM64 tarballs but the Docker
-  image is amd64-only. Add `platforms: linux/amd64,linux/arm64` to the
-  `docker/build-push-action` call.
-  ([.github/workflows/release.yml](.github/workflows/release.yml))
-- **Explicit workflow-level `permissions: contents: read`** — belt-and-braces
-  guard against future secret leakage.
-- **Make `install.sh` resilient to GitHub rate limits** — use the
-  `/releases/latest/download/…` redirect instead of parsing API JSON.
-
-## UX loose ends
-
-- **Client-creation scopes picker** — the Settings dialog currently hardcodes
-  `['admin']` on every new client. Add a multi-select, default to `[]`, and let
-  the server 400 if empty. ([ui/src/api/hooks.ts:220](ui/src/api/hooks.ts))
-- **Calendar rules validation** — the `rules` field is a free-form textarea
-  submitted without client-side parse feedback. Parse with the shared grammar
-  before POST and surface 4xx errors inline.
-  ([ui/src/pages/CalendarsPage.tsx](ui/src/pages/CalendarsPage.tsx))
-- **Code-split large UI bundle** — the UI build warns about a >500 kB chunk;
-  consider `manualChunks` in `vite.config.ts`.
+Last reviewed: 2026-05-26.
 
 ## Observability
 
@@ -75,12 +27,15 @@ Last reviewed: 2026-05-09.
   `/metrics` as the default and add `otlp-metrics` as a follow-up Cargo feature
   once the job-level metrics above stabilise.
 
-- **Trace propagation runner ↔ server** — the `#[instrument]` spans on the
-  server side currently terminate at the enqueue boundary. Have
-  `croniq-shell-runner` (and custom runners via `croniq-runner-sdk`) accept
-  and forward a W3C `traceparent` so a job span continues into the runner
-  process. Bigger design discussion; tracked separately now that the server
-  side ships.
+- **Trace propagation runner ↔ server** — the server now stamps a W3C
+  `traceparent` into `WorkAssignment.metadata` (#172), but runners don't yet
+  consume it: `croniq-runner-sdk` forwards the metadata opaquely and
+  `croniq-shell-runner` never extracts it, so a job span still ends at the
+  server's enqueue boundary. Have runners read the `traceparent` from
+  execution metadata and continue the trace into the handler/subprocess
+  (export `TRACEPARENT` for shell-runner subprocesses; attach a remote parent
+  context in the SDK OpenTelemetry observers). Closes the runner half of #172.
+  ([crates/croniq-runner-sdk/src/handler.rs](crates/croniq-runner-sdk/src/handler.rs))
 
 - **OTel semantic conventions** — align span attribute names with the
   stabilising `messaging.*` / `cron.*` OTel semantic conventions once those
@@ -150,10 +105,3 @@ are the deliberate gaps left for follow-up:
   a freshly-minted scoped API key. v2 scope: full code-skeleton
   generation per language (Rust / Python / Shell-runner). Issue #93
   Wish 2. ([ui/src/pages/RunnersPage.tsx](ui/src/pages/RunnersPage.tsx))
-- **Aggregate stats on Job detail page** — surface success rate (7d),
-  p50/p95 duration, last-failure timestamp at the top of
-  `/jobs/{key}`. Reads the same data the planned per-job Prometheus
-  metrics aggregate, just displayed inline so operators don't need to
-  go through Grafana for the obvious questions. Issue #94 bonus.
-  ([ui/src/pages/JobDetailPage.tsx](ui/src/pages/JobDetailPage.tsx),
-  [crates/croniq-store/src/traits.rs](crates/croniq-store/src/traits.rs))
