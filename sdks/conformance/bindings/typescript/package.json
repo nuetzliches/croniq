@@ -17,7 +17,7 @@
     "@types/node": "^20.11.30",
     "js-yaml": "^4.1.0",
     "typescript": "^5.5.4",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.7"
   },
   "engines": {
     "node": ">=18.0.0"
