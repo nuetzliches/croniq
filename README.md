@@ -67,7 +67,7 @@ Build custom job execution runners in your language of choice. Runners poll the 
 | Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI — pre-release) | ✅ available |
 | Go (1.22+) | [`sdks/go`](sdks/go) | `github.com/nuetzliches/croniq/sdks/go` + `.../sdks/go/otel` (Go modules) | ✅ available |
 | TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm — pre-release) | ✅ available |
-| Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.github.nuetzliches:croniq-runner` + `croniq-runner-spring-boot-starter` + `croniq-runner-kotlin-ext` (Maven Central — planned) | 🚧 in progress ([#133](https://github.com/nuetzliches/croniq/issues/133)) |
+| Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.github.nuetzliches:croniq-runner` + `croniq-runner-spring-boot-starter` + `croniq-runner-kotlin-ext` + `croniq-runner-opentelemetry` (Maven Central — first publish pending) | ✅ available ([#133](https://github.com/nuetzliches/croniq/issues/133)) |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
 
@@ -76,6 +76,8 @@ The Python SDK is `asyncio`-first (`httpx.AsyncClient` + Pydantic v2), supports 
 The Go SDK ships idiomatic `context.Context` propagation, `log/slog` structured logging, server-side cancellation, a bounded-channel streaming `LogWriter`, lease renewal, drain-on-shutdown, persistent runner identity, and an opt-in OpenTelemetry tracing adapter in a sibling module. See [`sdks/go/README.md`](sdks/go/README.md) for the quickstart.
 
 The TypeScript / Node.js SDK is ESM-first, uses native `fetch` and `AbortController`, and ships the same streaming log writer (batch + drain-before-ack) and server-side cancellation semantics as the .NET SDK. See [`sdks/typescript/README.md`](sdks/typescript/README.md) for the quickstart.
+
+The Java SDK is JDK 21+, virtual-thread-first (Project Loom), with `java.net.http.HttpClient`, Jackson, and SLF4J as its only runtime deps. Ships in four modules: `croniq-runner` (core), `croniq-runner-spring-boot-starter` (Spring Boot 3 auto-config + `@CroniqJob` discovery + `croniq.runner.*` properties), `croniq-runner-kotlin-ext` (coroutine adapters + Kotlin DSL on top of the Java core), and `croniq-runner-opentelemetry` (opt-in observer with one span per execution). Maven Central first-publish is queued behind the Sonatype Central Portal sign-off. See [`sdks/java/README.md`](sdks/java/README.md) for the quickstart.
 
 ### Language-agnostic conformance suite
 
