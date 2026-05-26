@@ -697,6 +697,46 @@ paths:
                     message: { type: string }
                     fields: { type: object }
 
+  /v1/executions/{id}/cancel:
+    post:
+      summary: Cancel an execution
+      description: |
+        Cancel a queued or claimed execution. For `queued` executions the
+        state is flipped to `cancelled` directly in the store. For
+        `claimed` (in-flight) executions the state is flipped in the store
+        AND the execution_id is pushed onto the owning runner's cancel
+        queue — the runner picks it up on its next poll and aborts the
+        handler (see the `cancel` field on `POST /v1/work/poll`).
+
+        Idempotent: a second cancel for an already-cancelled execution
+        returns 200. Returns 409 for executions in a terminal state
+        (`completed`, `failed`, `dead`).
+
+        Scope: `executions:cancel` or `admin`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution_id: { type: string, format: uuid }
+                  cancelled: { type: boolean }
+                  delivered_via_runner:
+                    type: boolean
+                    description: |
+                      `true` if the execution was in-flight and the cancel
+                      was pushed to a runner's cancel queue; `false` for
+                      cancels of still-queued executions.
+        "400": { description: Invalid execution id (not a UUID) }
+        "404": { description: Execution not found }
+        "409": { description: Execution is in a terminal state }
+
   /v1/dead-letters:
     get:
       summary: List dead letters
@@ -890,23 +930,19 @@ paths:
       description: |
         Runner ↔ server work loop. Long-poll up to ~35 s for new work.
 
-        **Server-initiated cancellation status (as of v0.15.x):** the
-        `cancel` field in the response is reserved by the wire protocol
-        and SDKs handle it correctly, but the server does not yet route
-        admin-issued cancels through this endpoint. The array is always
-        empty today. Cancellations are observed indirectly through
-        execution timeout, runner restart, or scheduler intervention.
+        **Server-initiated cancellation (issue #176):** when an operator
+        cancels an execution via `POST /v1/executions/{id}/cancel`, the
+        execution_id is pushed onto the owning runner's cancel queue and
+        delivered in the next poll's `cancel` array. SDKs that honour
+        `cancel` (currently .NET, Rust, Go, Python, TS) tear down the
+        handler's cancellation token/context.
 
-        When server-side cancel routing lands, a `max_inflight=1`
-        runner at capacity won't be polling and therefore can't receive
-        a cancel for the in-flight execution that's keeping it busy.
-        This is tracked separately in issue #134 sub-item 2; the
-        agreed direction is for the SDK to keep polling at capacity
-        (control-slot semantics) once the server has a cancel queue
-        to drain.
-
-        Workaround in the meantime: configure `max_inflight >= 2` for
-        any runner that needs to receive in-flight cancellations.
+        Caveat for `max_inflight=1` runners: today they stop polling
+        while at capacity, so they can't receive a cancel for the
+        in-flight execution keeping them busy. Workaround: configure
+        `max_inflight >= 2`. The SDK behavioural change (control-slot
+        polling at capacity) is tracked as the SDK-side follow-up in
+        issue #176.
       requestBody:
         content:
           application/json:
@@ -929,10 +965,12 @@ paths:
                   work: { type: array }
                   cancel:
                     type: array
+                    items: { type: string, format: uuid }
                     description: |
-                      Execution IDs the runner should cancel. Reserved
-                      for future server-side cancel routing; always
-                      empty in v0.15.x. See endpoint description.
+                      Execution IDs the runner should cancel. Drained
+                      from the per-runner cancel queue populated by
+                      `POST /v1/executions/{id}/cancel`. See endpoint
+                      description for delivery semantics.
         "409": { description: Runner instance conflict }
 
   /v1/work/ack:
