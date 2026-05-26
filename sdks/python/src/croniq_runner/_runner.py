@@ -171,9 +171,11 @@ class Runner:
     async def _poll_loop(self) -> None:
         opts = self._options
         while not self._drain_event.is_set():
-            if len(self._inflight) >= opts.max_inflight:
-                await self._sleep_or_drain(opts.capacity_backoff_ms / 1000.0)
-                continue
+            # Control-slot polling (issue #176): even at capacity we still
+            # poll so the server can deliver cancels via PollResponse.cancel.
+            # The server returns immediately when capacity=0 (no long-poll),
+            # so capacity_backoff_ms paces the loop and prevents a stampede.
+            at_capacity = len(self._inflight) >= opts.max_inflight
 
             request = PollRequest(
                 runner_id=self._runner_id or "",
@@ -194,6 +196,13 @@ class Runner:
                 continue
 
             self._handle_cancellations(response.cancel)
+
+            if at_capacity:
+                # Work is always empty in this branch (server-side capacity
+                # check). Cancels above are already processed; pace the loop.
+                await self._sleep_or_drain(opts.capacity_backoff_ms / 1000.0)
+                continue
+
             for assignment in response.work:
                 self._spawn_handler(assignment)
 

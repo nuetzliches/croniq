@@ -69,6 +69,7 @@ pub struct RunnerBuilder {
     max_inflight: u32,
     tags: Vec<String>,
     poll_retry_delay: Duration,
+    capacity_backoff: Duration,
     max_consecutive_poll_conflicts: u32,
 }
 
@@ -104,6 +105,22 @@ impl RunnerBuilder {
         self
     }
 
+    /// Idle delay between polls when the runner is at `max_inflight`
+    /// capacity. Default: 5 seconds.
+    ///
+    /// Even at capacity the SDK keeps polling so the server can deliver
+    /// admin-issued cancels via `PollResponse.cancel` (issue #176). The
+    /// at-capacity branch returns immediately on the server side
+    /// (capacity=0), so this is what paces the loop and prevents a
+    /// stampede. A long-poll cadence (~5 s, well under the 35 s the
+    /// server long-polls on the normal path) trades a small extra
+    /// load on the server for sub-5 s cancel-delivery latency on a
+    /// single-slot runner.
+    pub fn capacity_backoff(mut self, delay: Duration) -> Self {
+        self.capacity_backoff = delay;
+        self
+    }
+
     /// Maximum number of consecutive `409 Conflict` responses from the
     /// poll endpoint before the runner gives up and exits with a fatal
     /// [`ClientError::PollInstanceConflict`]. Default: 3.
@@ -131,6 +148,7 @@ impl RunnerBuilder {
             tags: self.tags,
             instance_id: uuid::Uuid::new_v4().to_string(),
             poll_retry_delay: self.poll_retry_delay,
+            capacity_backoff: self.capacity_backoff,
             max_consecutive_poll_conflicts: self.max_consecutive_poll_conflicts,
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
@@ -149,6 +167,7 @@ pub struct CroniqRunner {
     tags: Vec<String>,
     instance_id: String,
     poll_retry_delay: Duration,
+    capacity_backoff: Duration,
     max_consecutive_poll_conflicts: u32,
     handlers: Arc<RwLock<HandlerRegistry>>,
     schedules: Arc<RwLock<Vec<JobSchedule>>>,
@@ -166,6 +185,7 @@ impl CroniqRunner {
             max_inflight: 5,
             tags: Vec::new(),
             poll_retry_delay: Duration::from_secs(5),
+            capacity_backoff: Duration::from_secs(5),
             max_consecutive_poll_conflicts: 3,
         }
     }
@@ -267,12 +287,15 @@ impl CroniqRunner {
 
             let inflight = self.inflight.read().await.clone();
             let capacity = (self.max_inflight as usize).saturating_sub(inflight.len());
+            let at_capacity = capacity == 0;
 
-            if capacity == 0 {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-
+            // Control-slot polling (issue #176): at capacity we still poll
+            // so the server can deliver cancels for in-flight executions
+            // via `PollResponse.cancel`. The server's poll handler returns
+            // immediately when `inflight.len() == max_inflight` (no
+            // long-poll), so `capacity_backoff` is what paces the loop and
+            // prevents a stampede. Work is never dequeued in this state
+            // because the server sees zero capacity from the request.
             let poll_req = PollRequest {
                 runner_id: self.runner_id.clone(),
                 capabilities: self.capabilities.clone(),
@@ -290,6 +313,19 @@ impl CroniqRunner {
             );
             match poll_result {
                 Ok(resp) => {
+                    // Note: `resp.cancel` is not acted upon by the Rust SDK
+                    // today — handler abort on server-requested cancel is
+                    // tracked separately (conformance case 04 documents the
+                    // gap). The poll itself still happens at capacity to
+                    // keep the wire-protocol behaviour identical to the
+                    // other SDKs and to make adding cancel handling later
+                    // a localised change.
+                    if at_capacity {
+                        // Server returned immediately (capacity=0 branch).
+                        // Pace the loop to avoid hammering the server.
+                        tokio::time::sleep(self.capacity_backoff).await;
+                        continue;
+                    }
                     for assignment in resp.work {
                         let exec_id = assignment.execution_id.clone();
                         let job_key = assignment.job_key.clone();
