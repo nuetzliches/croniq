@@ -71,7 +71,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let telemetry_guard = telemetry::init()?;
+    let (telemetry_guard, console_hub) = telemetry::init()?;
 
     let cli = Cli::parse();
 
@@ -242,6 +242,9 @@ async fn main() -> Result<()> {
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
         // `GET /v1/alerts/config` endpoint can serve it.
         s.alerts = croniq_server::alerts::merge_legacy_env_hook(loaded.runtime.alerts.clone());
+        // Issue #141: wire the in-memory tracing fan-out into ServerState
+        // so the Live Console SSE endpoint can subscribe.
+        s.console_hub = Some(Arc::clone(&console_hub));
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 

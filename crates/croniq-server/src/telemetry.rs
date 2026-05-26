@@ -17,9 +17,12 @@
 //! so it can be unit-tested without touching the global subscriber.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+use crate::live_console::{ConsoleHub, LiveConsoleLayer};
 
 /// Telemetry mode derived from environment variables.
 ///
@@ -136,25 +139,30 @@ impl Drop for TelemetryGuard {
 }
 
 /// Initialise the global tracing subscriber. Always installs the stderr
-/// `fmt` layer (matching pre-OTLP behaviour). When the `otlp` feature is
-/// compiled in and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, also installs
-/// OTLP span + log layers in parallel.
+/// `fmt` layer (matching pre-OTLP behaviour) and the [`LiveConsoleLayer`]
+/// powering the dashboard's live tail (issue #141). When the `otlp`
+/// feature is compiled in and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, also
+/// installs OTLP span + log layers in parallel.
 ///
 /// Returns a guard whose [`TelemetryGuard::shutdown`] should be called
-/// before the process exits, so the OTLP batch exporters can flush.
-pub fn init() -> Result<TelemetryGuard> {
+/// before the process exits (so the OTLP batch exporters can flush) and
+/// a handle to the in-memory [`ConsoleHub`] for the API layer to
+/// subscribe to.
+pub fn init() -> Result<(TelemetryGuard, Arc<ConsoleHub>)> {
     let env = Env::from_process();
     let mode = decide(&env);
+    let hub = ConsoleHub::new();
 
-    match mode {
+    let guard = match mode {
         TelemetryMode::StderrOnly => {
             let env_filter =
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(fmt::layer().with_writer(std::io::stderr))
+                .with(LiveConsoleLayer::new(Arc::clone(&hub)))
                 .init();
-            Ok(TelemetryGuard::empty())
+            TelemetryGuard::empty()
         }
         #[cfg_attr(not(feature = "otlp"), allow(unused_variables))]
         TelemetryMode::WithOtlp { endpoint } => {
@@ -164,14 +172,15 @@ pub fn init() -> Result<TelemetryGuard> {
             }
             #[cfg(feature = "otlp")]
             {
-                init_otlp(endpoint)
+                init_otlp(endpoint, Arc::clone(&hub))?
             }
         }
-    }
+    };
+    Ok((guard, hub))
 }
 
 #[cfg(feature = "otlp")]
-fn init_otlp(endpoint: String) -> Result<TelemetryGuard> {
+fn init_otlp(endpoint: String, hub: Arc<ConsoleHub>) -> Result<TelemetryGuard> {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
     use opentelemetry_sdk::Resource;
@@ -218,6 +227,7 @@ fn init_otlp(endpoint: String) -> Result<TelemetryGuard> {
     tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt::layer().with_writer(std::io::stderr))
+        .with(LiveConsoleLayer::new(hub))
         .with(otel_span_layer)
         .with(otel_log_layer)
         .init();
