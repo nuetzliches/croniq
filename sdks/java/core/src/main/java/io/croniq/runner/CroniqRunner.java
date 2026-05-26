@@ -85,17 +85,21 @@ public final class CroniqRunner implements AutoCloseable {
         selfRegister();
         try {
             while (!stopped.get()) {
+                // Control-slot polling (issue #176): even at capacity we
+                // still poll so the server can deliver cancels via
+                // PollResponse.cancel. We send the runner's full
+                // maxInflight() and the current inflight list — the server
+                // computes capacity = max - inflight.size() and returns
+                // immediately when zero. capacityBackoff() paces the loop
+                // and prevents a stampede after this at-capacity iteration.
                 int slotsFree = options.maxInflight() - dispatcher.inflightCount();
-                if (slotsFree <= 0) {
-                    sleep(options.capacityBackoff());
-                    continue;
-                }
+                boolean atCapacity = slotsFree <= 0;
                 PollResponse response;
                 try {
                     PollRequest request = new PollRequest(
                             runnerId,
                             options.capabilities(),
-                            slotsFree,
+                            options.maxInflight(),
                             java.util.List.copyOf(dispatcher.inflightIds()),
                             null,
                             options.tags());
@@ -112,6 +116,12 @@ public final class CroniqRunner implements AutoCloseable {
                     for (String id : response.cancel()) {
                         dispatcher.cancel(id);
                     }
+                }
+                if (atCapacity) {
+                    // Work is always empty in this branch (server-side
+                    // capacity check); cancels above are already processed.
+                    sleep(options.capacityBackoff());
+                    continue;
                 }
                 if (response != null && response.work() != null) {
                     for (var work : response.work()) {

@@ -233,18 +233,12 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 			return
 		}
 
-		// Capacity gate — if we're at max_inflight, wait before
-		// polling. Polling at capacity wastes a server-side long-poll
-		// and isn't reciprocated with work the runner could actually
-		// accept.
-		if r.inflightCount() >= r.opts.MaxInflight {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(r.opts.CapacityBackoff):
-				continue
-			}
-		}
+		// Control-slot polling (issue #176): even at capacity we still
+		// poll so the server can deliver cancels via PollResponse.cancel.
+		// The server's poll handler returns immediately on capacity=0
+		// (no long-poll), so CapacityBackoff paces the loop and prevents
+		// a stampede after this at-capacity iteration.
+		atCapacity := r.inflightCount() >= r.opts.MaxInflight
 
 		req := &PollRequest{
 			RunnerID:     r.opts.RunnerID,
@@ -279,6 +273,18 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 		// we want their goroutines to start tearing down ASAP.
 		for _, id := range resp.Cancel {
 			r.cancelInflight(id)
+		}
+
+		// At capacity: server returned immediately (work always empty);
+		// back off so we don't busy-poll. Cancels above are already
+		// processed.
+		if atCapacity {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(r.opts.CapacityBackoff):
+				continue
+			}
 		}
 
 		// Dispatch each assignment in its own goroutine.

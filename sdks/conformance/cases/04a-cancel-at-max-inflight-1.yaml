@@ -1,0 +1,83 @@
+name: "Server-requested cancel reaches a max_inflight=1 runner via control-slot poll"
+description: |
+  Companion to case 04, but pins the harder scenario: a runner configured with
+  `max_inflight=1` is fully busy with one execution and the server then issues
+  a cancel for that execution. The SDK MUST keep polling while at capacity so
+  the cancel can arrive via `PollResponse.cancel` — that's the control-slot
+  polling contract added in issue #176.
+
+  Before #176 the SDKs would `sleep(capacity_backoff)` while at capacity and
+  never poll, so a `max_inflight=1` runner would have to wait for the handler
+  to finish (or the execution to time out) before the cancel could be
+  observed. After #176 the SDK still polls — sending its inflight list — and
+  the server returns immediately with `work=[]` and the queued cancel.
+
+  Expected behaviour: the second poll (issued WHILE at capacity) returns the
+  cancel, the handler's cancellation token fires, and the runner acks with
+  status=failure. Matches case 04's expectations but with `max_inflight: 1`.
+
+runner_config:
+  capabilities: ["work"]
+  # Critical: max_inflight=1 means the slot is full as soon as the first
+  # execution is claimed. Without control-slot polling this case would
+  # deadlock — the runner would stop polling and never see the cancel.
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 500
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 3000
+  # Short so the test doesn't sit idle for half a second between the at-
+  # capacity polls. Production runners would set this higher.
+  capacity_backoff_ms: 50
+
+handlers:
+  - job_key: "long:running"
+    behavior: sleep
+    duration_ms: 10000          # would block far longer than the case allows
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-cancel-1slot"
+            job_key: "long:running"
+            fire_at: "2026-05-26T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    # Second poll — the SDK MUST issue this while at capacity (max_inflight=1
+    # and exec-cancel-1slot is still in flight). If the SDK skipped this
+    # poll the case would time out, because the cancel can't be delivered
+    # via any other channel.
+    respond:
+      status: 200
+      body: { work: [], cancel: ["exec-cancel-1slot"] }
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      # At least 2 polls — the second one is what tests the control-slot
+      # behaviour (poll while at capacity).
+      min_count: 2
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-cancel-1slot"
+        status: "failure"

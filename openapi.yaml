@@ -974,15 +974,20 @@ paths:
         cancels an execution via `POST /v1/executions/{id}/cancel`, the
         execution_id is pushed onto the owning runner's cancel queue and
         delivered in the next poll's `cancel` array. SDKs that honour
-        `cancel` (currently .NET, Rust, Go, Python, TS) tear down the
-        handler's cancellation token/context.
+        `cancel` (.NET, Go, Python, TS, Java) tear down the handler's
+        cancellation token/context. The Rust SDK polls correctly while
+        at capacity (so cancels are wire-delivered) but does not yet act
+        on them — handler abort is tracked as a separate enhancement.
 
-        Caveat for `max_inflight=1` runners: today they stop polling
-        while at capacity, so they can't receive a cancel for the
-        in-flight execution keeping them busy. Workaround: configure
-        `max_inflight >= 2`. The SDK behavioural change (control-slot
-        polling at capacity) is tracked as the SDK-side follow-up in
-        issue #176.
+        **Control-slot polling at `max_inflight=1`:** every SDK keeps
+        polling while at capacity, sending `inflight=[current ids]` so
+        the server can deliver cancels. The server's poll handler
+        returns immediately when capacity is zero (no long-poll), so the
+        SDK paces these at-capacity polls via `capacity_backoff` (default
+        500 ms in most SDKs). Pre-#176 runners would `sleep(capacity_backoff)`
+        without polling and a `max_inflight=1` runner could never receive
+        a cancel until the handler finished naturally — that limitation
+        is now gone.
       requestBody:
         content:
           application/json:

@@ -156,14 +156,11 @@ export class CroniqRunner {
 
   async #pollLoop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      if (this.#inflight.size >= this.#options.maxInflight) {
-        try {
-          await sleep(this.#options.capacityBackoffMs, signal);
-        } catch {
-          return;
-        }
-        continue;
-      }
+      // Control-slot polling (issue #176): even at capacity we still poll
+      // so the server can deliver cancels via PollResponse.cancel. The
+      // server returns immediately on capacity=0 (no long-poll), so
+      // capacityBackoffMs paces the loop and prevents a stampede.
+      const atCapacity = this.#inflight.size >= this.#options.maxInflight;
 
       const request: PollRequest = {
         runner_id: this.#runnerId!,
@@ -192,6 +189,17 @@ export class CroniqRunner {
       }
 
       this.#handleCancellations(response.cancel);
+
+      if (atCapacity) {
+        // Work is always empty in this branch (server-side capacity
+        // check); cancels above are already processed. Pace the loop.
+        try {
+          await sleep(this.#options.capacityBackoffMs, signal);
+        } catch {
+          return;
+        }
+        continue;
+      }
 
       for (const assignment of response.work) {
         if (this.#inflight.has(assignment.execution_id)) continue;
