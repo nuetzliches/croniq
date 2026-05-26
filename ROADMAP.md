@@ -21,19 +21,6 @@ Last reviewed: 2026-05-09.
 - **Safer arg handling in entrypoint** — build an argv array in
   `docker-entrypoint.sh` so admin passwords containing spaces or shell-special
   characters survive. ([docker-entrypoint.sh](docker-entrypoint.sh))
-- **TTY-aware secret output in `init` / `quickstart`** — both commands print
-  the seeded API key (`croniq init --api-key`) and the generated admin
-  password (`croniq quickstart`) directly to stdout. When the operator pipes
-  the output into a log (Docker/systemd journal, CI runs, `tee init.log`),
-  those secrets land in plaintext on persistent storage. Either refuse to
-  print credentials when stdout is not a TTY (with an explicit
-  `--print-secrets` opt-out for scripted setups), or write them to
-  `$DATA_DIR/initial-credentials` with mode 0600 and only print the path —
-  same shape as `kubeadm init` writing `admin.conf`. Surfaced by CodeQL
-  `rust/cleartext-logging` (alerts 4-9 dismissed; the runtime sink is
-  intentional console output but the sharp edge is real).
-  ([crates/croniq-cli/src/commands/init.rs](crates/croniq-cli/src/commands/init.rs),
-  [crates/croniq-cli/src/commands/quickstart.rs](crates/croniq-cli/src/commands/quickstart.rs))
 
 ## Release & CI hygiene
 

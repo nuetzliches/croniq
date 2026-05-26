@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **`croniq init` / `quickstart` no longer leak secrets to a non-interactive
+  stdout.** Both commands printed the seeded API key and the generated admin
+  password straight to stdout, so piping the output into a log (Docker /
+  systemd journal, CI runs, `tee init.log`) left those credentials in
+  plaintext on persistent storage. They are now revealed inline only when
+  stdout is a terminal; when stdout is redirected they are written to
+  `$DATA_DIR/initial-credentials` (mode 0600 on Unix) and only the path is
+  printed — the shape `kubeadm init` uses for `admin.conf`. A new
+  `--print-secrets` flag forces the inline reveal for scripted setups that
+  intentionally capture stdout. Closes the CodeQL `rust/cleartext-logging`
+  sharp edge that was tracked in the roadmap.
+
 ## [0.16.0] - 2026-05-26
 
 ### Added

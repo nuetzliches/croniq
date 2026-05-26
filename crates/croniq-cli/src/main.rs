@@ -177,6 +177,13 @@ enum Commands {
             value_parser = parse_truthy,
         )]
         demo_mfa: bool,
+
+        /// Print the seeded API key to stdout even when it is not a
+        /// terminal. Without this, a redirected stdout gets the key written
+        /// to `$DATA_DIR/initial-credentials` (mode 0600) instead, so it
+        /// does not leak into logs.
+        #[arg(long)]
+        print_secrets: bool,
     },
 
     /// Zero-to-running in one command: creates Croniqfile, inits DB, prints next steps
@@ -192,6 +199,13 @@ enum Commands {
         /// Admin password (random if not given)
         #[arg(long)]
         password: Option<String>,
+
+        /// Print the generated admin password + API key to stdout even when
+        /// it is not a terminal. Without this, a redirected stdout gets them
+        /// written to `$DATA_DIR/initial-credentials` (mode 0600) instead, so
+        /// they do not leak into logs.
+        #[arg(long)]
+        print_secrets: bool,
     },
 
     /// Migrate a crontab file to a Croniqfile
@@ -256,19 +270,26 @@ fn main() -> Result<()> {
             api_key,
             scopes,
             demo_mfa,
-        } => commands::init::init(
-            &data_dir,
-            &username,
-            password.as_deref(),
-            api_key.as_deref(),
-            scopes,
-            demo_mfa,
-        ),
+            print_secrets,
+        } => {
+            let mut sink = commands::secret_output::CredentialSink::new(print_secrets);
+            commands::init::init(
+                &data_dir,
+                &username,
+                password.as_deref(),
+                api_key.as_deref(),
+                scopes,
+                demo_mfa,
+                &mut sink,
+            )?;
+            sink.flush(&data_dir)
+        }
         Commands::Quickstart {
             data_dir,
             config,
             password,
-        } => commands::quickstart::quickstart(&data_dir, &config, password.as_deref()),
+            print_secrets,
+        } => commands::quickstart::quickstart(&data_dir, &config, password.as_deref(), print_secrets),
         Commands::Migrate { crontab, output } => {
             commands::migrate::migrate(&crontab, output.as_deref())
         }
