@@ -262,6 +262,19 @@ export function useExecutions(params?: { job_key?: string; state?: string; limit
     refetchInterval: 5_000,
   })
 }
+export function useCancelExecution() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (executionId: string) =>
+      apiFetch<{ execution_id: string; cancelled: boolean; delivered_via_runner: boolean }>(
+        `/v1/executions/${executionId}/cancel`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['executions'] })
+    },
+  })
+}
 export function useExecutionLogs(executionId: string) {
   return useQuery({
     queryKey: ['execution-logs', executionId],

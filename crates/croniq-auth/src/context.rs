@@ -97,6 +97,9 @@ impl Scope {
 
     // Executions + their logs
     pub const EXECUTIONS_READ: &str = "executions:read";
+    /// Cancel an inflight or queued execution (issue #176).
+    /// Granted to Operator by default; admin's wildcard implies it.
+    pub const EXECUTIONS_CANCEL: &str = "executions:cancel";
 
     // Dead letters
     pub const DEAD_LETTERS_READ: &str = "dead-letters:read";
@@ -150,6 +153,7 @@ pub fn default_scopes_for_role(role: Role) -> Vec<String> {
             Scope::CALENDARS_READ.to_string(),
             Scope::CALENDARS_WRITE.to_string(),
             Scope::EXECUTIONS_READ.to_string(),
+            Scope::EXECUTIONS_CANCEL.to_string(),
             Scope::DEAD_LETTERS_READ.to_string(),
             Scope::DEAD_LETTERS_WRITE.to_string(),
             Scope::RUNNERS_READ.to_string(),

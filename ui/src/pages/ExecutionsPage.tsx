@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useExecutions } from '@/api/hooks'
+import { useExecutions, useCancelExecution } from '@/api/hooks'
 import { EmptyState, StatusPill } from '@/components/primitives'
-import { Activity, X } from 'lucide-react'
+import { Activity, Ban, X } from 'lucide-react'
 import { shortId } from '@/lib/utils'
 import { RelativeTime } from '@/components/ui/relative-time'
 
@@ -17,6 +17,7 @@ export function ExecutionsPage() {
     job_key: jobFilter || undefined,
     limit,
   })
+  const cancelExecution = useCancelExecution()
 
   const rows = executions.data ?? []
   const hasFilters = !!(stateFilter || jobFilter)
@@ -119,27 +120,45 @@ export function ExecutionsPage() {
                 <th>Runner</th>
                 <th>Duration</th>
                 <th>Fire at</th>
+                <th style={{ width: 48 }}></th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((e) => (
-                <tr key={e.id}>
-                  <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
-                    {shortId(e.id)}
-                  </td>
-                  <td className="mono">{e.job_key}</td>
-                  <td>
-                    <StatusPill state={e.state} />
-                  </td>
-                  <td className="mono dim ellipsis" style={{ maxWidth: 180, fontSize: 11.5 }}>
-                    {e.runner_id ?? '—'}
-                  </td>
-                  <td className="num">{e.duration_ms ? `${e.duration_ms} ms` : '—'}</td>
-                  <td className="dim">
-                    <RelativeTime iso={e.fire_at} />
-                  </td>
-                </tr>
-              ))}
+              {rows.map((e) => {
+                const isCancellable = e.state === 'queued' || e.state === 'claimed'
+                return (
+                  <tr key={e.id}>
+                    <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
+                      {shortId(e.id)}
+                    </td>
+                    <td className="mono">{e.job_key}</td>
+                    <td>
+                      <StatusPill state={e.state} />
+                    </td>
+                    <td className="mono dim ellipsis" style={{ maxWidth: 180, fontSize: 11.5 }}>
+                      {e.runner_id ?? '—'}
+                    </td>
+                    <td className="num">{e.duration_ms ? `${e.duration_ms} ms` : '—'}</td>
+                    <td className="dim">
+                      <RelativeTime iso={e.fire_at} />
+                    </td>
+                    <td>
+                      {isCancellable ? (
+                        <button
+                          type="button"
+                          className="btn icon sm ghost"
+                          title={e.state === 'claimed' ? 'Cancel running execution' : 'Cancel queued execution'}
+                          aria-label="Cancel execution"
+                          disabled={cancelExecution.isPending}
+                          onClick={() => cancelExecution.mutate(e.id)}
+                        >
+                          <Ban size={12} />
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

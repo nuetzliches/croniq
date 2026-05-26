@@ -1,6 +1,7 @@
 //! HTTP Pull-API: axum handlers for `POST /v1/poll`, `POST /v1/complete`,
 //! and `GET /health`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -33,6 +34,13 @@ pub struct AppState {
     /// Lease TTL in seconds: after this duration without a poll, a runner is
     /// considered dead and its executions are requeued. Default: 120s.
     pub lease_ttl_secs: u64,
+    /// Per-runner queue of execution IDs the operator has requested to
+    /// cancel (issue #176). Drained on the runner's next poll and delivered
+    /// in `PollResponse.cancel`. In-memory only — a server restart loses
+    /// pending cancels; the operator can re-issue from the dashboard. The
+    /// store-side state transition to `cancelled` is recorded synchronously
+    /// when the cancel is issued, so a restart doesn't lose the *intent*.
+    pub cancel_queues: RwLock<HashMap<String, Vec<String>>>,
 }
 
 impl AppState {
@@ -42,6 +50,7 @@ impl AppState {
             queue: RwLock::new(WorkQueue::new()),
             work_notify: Notify::new(),
             lease_ttl_secs: 120,
+            cancel_queues: RwLock::new(HashMap::new()),
         })
     }
 
@@ -51,7 +60,32 @@ impl AppState {
             queue: RwLock::new(WorkQueue::new()),
             work_notify: Notify::new(),
             lease_ttl_secs,
+            cancel_queues: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Push an execution ID onto the runner's cancel queue. The cancel is
+    /// delivered on the runner's next poll; the in-process notify also
+    /// wakes any long-poll currently waiting on the work queue so the
+    /// runner sees it without an extra retry. Idempotent — pushing the
+    /// same id twice keeps a single entry.
+    pub async fn push_cancel(&self, runner_id: &str, execution_id: &str) {
+        let mut queues = self.cancel_queues.write().await;
+        let entry = queues.entry(runner_id.to_string()).or_default();
+        if !entry.iter().any(|id| id == execution_id) {
+            entry.push(execution_id.to_string());
+        }
+        drop(queues);
+        // Wake any long-poll waiter for this runner — they were sleeping
+        // on the work queue and won't notice the cancel otherwise.
+        self.work_notify.notify_waiters();
+    }
+
+    /// Drain (remove + return) all pending cancels for a runner. Called on
+    /// every poll so cancels are delivered exactly once.
+    pub async fn drain_cancels(&self, runner_id: &str) -> Vec<String> {
+        let mut queues = self.cancel_queues.write().await;
+        queues.remove(runner_id).unwrap_or_default()
     }
 }
 
@@ -62,6 +96,7 @@ impl Default for AppState {
             queue: RwLock::new(WorkQueue::new()),
             work_notify: Notify::new(),
             lease_ttl_secs: 120,
+            cancel_queues: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -118,10 +153,8 @@ pub async fn handle_poll(
         vec![]
     };
 
-    let response = PollResponse {
-        work,
-        cancel: vec![],
-    };
+    let cancel = state.drain_cancels(&req.runner_id).await;
+    let response = PollResponse { work, cancel };
 
     (StatusCode::OK, Json(response))
 }
@@ -414,6 +447,62 @@ mod tests {
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["runners_online"], 1);
         assert_eq!(resp["queued"], 2);
+    }
+
+    #[tokio::test]
+    async fn push_and_drain_cancels_round_trip() {
+        // AppState's per-runner cancel queue is push-once, drain-once.
+        let state = make_state().await;
+        state.push_cancel("r1", "exec-1").await;
+        state.push_cancel("r1", "exec-2").await;
+        // Idempotent: pushing the same id twice keeps a single entry.
+        state.push_cancel("r1", "exec-1").await;
+
+        let drained = state.drain_cancels("r1").await;
+        assert_eq!(drained, vec!["exec-1", "exec-2"]);
+        // After drain the queue is empty.
+        let drained_again = state.drain_cancels("r1").await;
+        assert!(drained_again.is_empty());
+    }
+
+    #[tokio::test]
+    async fn poll_delivers_pending_cancels() {
+        // A runner polling while at capacity (or with no work available)
+        // still gets any cancels pushed by the admin endpoint.
+        let state = make_state().await;
+        state.push_cancel("r1", "exec-cancel-me").await;
+
+        let app = router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1",
+                "capabilities": [],
+                "max_inflight": 1,
+                "inflight": []
+            }),
+        )
+        .await;
+
+        assert_eq!(resp["work"].as_array().unwrap().len(), 0);
+        assert_eq!(resp["cancel"].as_array().unwrap().len(), 1);
+        assert_eq!(resp["cancel"][0], "exec-cancel-me");
+
+        // Cancel was delivered exactly once — second poll yields nothing.
+        let app = router(Arc::clone(&state));
+        let resp2 = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1",
+                "capabilities": [],
+                "max_inflight": 1,
+                "inflight": []
+            }),
+        )
+        .await;
+        assert!(resp2["cancel"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

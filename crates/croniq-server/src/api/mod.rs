@@ -9,6 +9,7 @@ pub mod calendars;
 pub mod dashboard;
 pub mod dead_letters;
 pub mod execution_logs;
+pub mod executions;
 pub mod invitations;
 pub mod jobs;
 pub mod oidc;
@@ -299,6 +300,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
         .route(
+            "/v1/executions/{id}/cancel",
+            post(executions::handle_cancel),
+        )
+        .route(
             "/v1/executions/{id}/logs",
             get(execution_logs::handle_get_logs),
         )
@@ -509,18 +514,24 @@ async fn handle_poll(
     let capacity = (req.max_inflight as usize).saturating_sub(req.inflight.len());
 
     if capacity == 0 {
-        // Runner is at capacity — no point waiting
+        // Runner is at capacity — no work to hand out, but still deliver
+        // any pending cancels so an operator's cancel of a long-running job
+        // reaches the runner without waiting for the next slot to free up
+        // (issue #176).
+        let cancel = state.runner.drain_cancels(&req.runner_id).await;
         return (
             StatusCode::OK,
             Json(PollResponse {
                 work: vec![],
-                cancel: vec![],
+                cancel,
             }),
         );
     }
 
     // Try to dequeue immediately; if nothing available, long-poll for up to
-    // LONG_POLL_TIMEOUT waiting for a work_notify signal.
+    // LONG_POLL_TIMEOUT waiting for a work_notify signal. The same
+    // `work_notify` channel is also pinged by `AppState::push_cancel` so a
+    // long-poll wakes up when a cancel arrives, not only when work does.
     loop {
         // Set up the notification listener BEFORE checking the queue so we
         // cannot miss an enqueue that races with our check.
@@ -528,8 +539,9 @@ async fn handle_poll(
 
         let work =
             try_dequeue_for(&state.runner, &req.runner_id, &req.capabilities, capacity).await;
+        let cancel = state.runner.drain_cancels(&req.runner_id).await;
 
-        if !work.is_empty() {
+        if !work.is_empty() || !cancel.is_empty() {
             // Mark claimed executions in the persistent store so we track runner_id
             if let Some(ref store) = state.store {
                 let now = Utc::now();
@@ -539,19 +551,13 @@ async fn handle_poll(
                     }
                 }
             }
-            return (
-                StatusCode::OK,
-                Json(PollResponse {
-                    work,
-                    cancel: vec![],
-                }),
-            );
+            return (StatusCode::OK, Json(PollResponse { work, cancel }));
         }
 
-        // Queue empty — wait for a notification or timeout
+        // Queue empty AND no pending cancels — wait for a notification or timeout
         tokio::select! {
             _ = notified => {
-                // A new item was enqueued — loop and try again
+                // A new item was enqueued OR a cancel was pushed — loop and try again
             }
             _ = tokio::time::sleep(state.long_poll_timeout) => {
                 // Timeout: return empty response, runner will poll again
