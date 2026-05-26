@@ -109,19 +109,19 @@ jobs:
         # (e.g. gradle.properties drift), we'd push the wrong number to
         # Maven Central. Maven Central artefacts are immutable, so this
         # is the last chance to catch that mistake.
+        #
+        # The on-disk JAR filenames use the gradle project name as the
+        # archive base (core-X.Y.Z.jar etc.). Vanniktech remaps these to
+        # the publication's artifactId (croniq-runner-X.Y.Z) inside the
+        # Maven Central bundle, so the file-level check below uses the
+        # project name, not the published artifact name.
         shell: bash
         run: |
           EXPECTED="${{ steps.version.outputs.version }}"
           MISSING=0
-          declare -A MODULES=(
-            [core]="croniq-runner"
-            [spring-boot-starter]="croniq-runner-spring-boot-starter"
-            [kotlin-ext]="croniq-runner-kotlin-ext"
-          )
-          for module in "${!MODULES[@]}"; do
-            artifact="${MODULES[$module]}"
+          for module in core spring-boot-starter kotlin-ext; do
             for kind in "" "-sources" "-javadoc"; do
-              f="${module}/build/libs/${artifact}-${EXPECTED}${kind}.jar"
+              f="${module}/build/libs/${module}-${EXPECTED}${kind}.jar"
               if [ ! -f "$f" ]; then
                 echo "::error::expected ${f} not found"
                 ls "${module}/build/libs/" || true

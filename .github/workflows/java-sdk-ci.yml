@@ -156,9 +156,10 @@ jobs:
       - name: List produced artefacts
         # Surface what was published so a regression in the publishing
         # config (missing sources jar, wrong POM coordinates, etc.) is
-        # easy to spot at a glance in the CI log.
+        # easy to spot at a glance in the CI log. The group ID maps to
+        # io/github/nuetzliches in the local Maven repo layout.
         run: |
-          find ~/.m2/repository/io/croniq -type f \( -name "*.jar" -o -name "*.pom" \) | sort
+          find ~/.m2/repository/io/github/nuetzliches -type f \( -name "*.jar" -o -name "*.pom" \) | sort
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: maven-local-smoke
