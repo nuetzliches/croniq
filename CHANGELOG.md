@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **.NET runner SDK: `LogWriter` accepts a `TimeProvider` for
+  deterministic flush testing
+  ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 3).**
+  The internal flusher's `PeriodicTimer` now runs through the same
+  `TimeProvider` plumbing `CroniqRunner` and the health check already
+  used; production paths still default to `TimeProvider.System`, so the
+  on-the-wire behaviour is unchanged. New `LogWriterTests` exercise the
+  partial-batch and multi-tick flush paths via `FakeTimeProvider`,
+  giving the team a deterministic regression marker for the scenario
+  that conformance case 10 can only describe weakly (`min_count: 1`)
+  because of `Task.WhenAny`'s read-bias under real-time scheduling.
+  See [`sdks/dotnet/CHANGELOG.md`](sdks/dotnet/CHANGELOG.md) for the
+  SDK-track entry.
+
 ## [0.15.0] - 2026-05-26
 
 ### Added

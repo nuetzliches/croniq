@@ -96,7 +96,7 @@ public sealed class CroniqRunner : IAsyncDisposable
 
         _dispatcher = new ExecutionDispatcher(
             _client, _registry, _serviceProvider, _loggerFactory, _stateProbe,
-            _options, _resolvedRunnerId, _options.Tags.AsReadOnlyList());
+            _options, _resolvedRunnerId, _options.Tags.AsReadOnlyList(), _timeProvider);
 
         _logger.LogInformation(
             "Croniq runner starting: runner_id={RunnerId}, capabilities={Capabilities}, max_inflight={MaxInflight}",
