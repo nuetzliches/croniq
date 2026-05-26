@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Server stamps W3C `traceparent` into `WorkAssignment.metadata`
+  ([#134](https://github.com/nuetzliches/croniq/issues/134), sub-item
+  4).** With the `otlp` feature on and an OTLP endpoint configured,
+  the scheduler injects the active tick-span's `traceparent` (and
+  `tracestate`, when present) into the metadata of every work
+  assignment shipped to a runner. Runner SDKs that pass the metadata
+  through their platform's W3C propagator (`Propagators.DefaultTextMapPropagator.Extract`
+  in .NET, `opentelemetry.propagate` in Python, …) now produce
+  execute-spans that hang off the server's fire-span instead of
+  starting orphan traces. Without the `otlp` feature, or when no
+  tracer provider is installed, the helper is a no-op — metadata is
+  byte-identical to today.
+
 ### Documentation
 
 - **`openapi.yaml`: `POST /v1/work/poll` documents `cancel` as
