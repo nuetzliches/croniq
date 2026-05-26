@@ -5,17 +5,15 @@ Last reviewed: 2026-05-26.
 
 ## Observability
 
-- **Job-level metrics** — the `/metrics` endpoint currently only exposes
-  infrastructure-level gauges (runner count, queue depth). Add per-job metrics
-  aggregated from the `executions` store:
-  - `croniq_job_executions_total{job_key, status}` — counter, success/failure/timeout
-  - `croniq_job_duration_seconds{job_key, quantile}` — histogram of `duration_ms`
-  - `croniq_job_last_run_timestamp{job_key}` — gauge, Unix epoch of last fire
-  - `croniq_job_log_bytes_total{job_key}` — counter, cumulative log volume pushed
-    via `POST /v1/work/{id}/events`
-
-  All four can be computed on-the-fly from the existing SQLite store on each
-  `/metrics` scrape; no schema change required.
+- **Per-job log-volume metric** — the per-job execution counter
+  (`croniq_job_executions_total`), duration histogram
+  (`croniq_job_duration_seconds`), and last-run gauge
+  (`croniq_job_last_run_timestamp`) now ship, computed from the executions
+  store at scrape time via `ExecutionStore::job_execution_metrics`. The fourth
+  planned series, `croniq_job_log_bytes_total{job_key}` (cumulative log volume
+  pushed via `POST /v1/work/{id}/events`), is still open: it needs a sum over
+  the `execution_logs` table joined to executions — a heavier scan plus a
+  byte-vs-char counting decision the execution-derived metrics didn't have.
   ([crates/croniq-server/src/metrics.rs](crates/croniq-server/src/metrics.rs),
   [crates/croniq-store/src/traits.rs](crates/croniq-store/src/traits.rs))
 

@@ -398,6 +398,66 @@ fn count_by_state() {
 }
 
 #[test]
+fn job_execution_metrics_aggregates_per_job() {
+    let store = create_memory_store().unwrap();
+
+    // Two completed runs (4.5s and 120s) + one dead run (0.2s) all record a
+    // duration; a cancelled run never does.
+    let complete = |dur_ms: i64, state: ExecutionState| {
+        let exec = make_execution("metrics:job", utc(2026, 3, 29, 12, 0));
+        store.create_execution(&exec).unwrap();
+        store.claim_execution(exec.id, "r1", now()).unwrap();
+        store
+            .complete_execution(exec.id, state, Some(dur_ms), None, None, now())
+            .unwrap();
+    };
+    complete(4_500, ExecutionState::Completed);
+    complete(120_000, ExecutionState::Completed);
+    complete(200, ExecutionState::Dead);
+
+    let cancelled = make_execution("metrics:job", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&cancelled).unwrap();
+    store.cancel_execution(cancelled.id, now()).unwrap();
+
+    // A second job proves rows are grouped by job_key, not summed globally.
+    let other = make_execution("other:job", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&other).unwrap();
+    store.claim_execution(other.id, "r1", now()).unwrap();
+    store
+        .complete_execution(
+            other.id,
+            ExecutionState::Completed,
+            Some(50),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    let all = store.job_execution_metrics().unwrap();
+    let m = all
+        .iter()
+        .find(|m| m.job_key == "metrics:job")
+        .expect("metrics:job aggregate row");
+
+    assert_eq!(m.completed, 2);
+    assert_eq!(m.failed, 0);
+    assert_eq!(m.dead, 1);
+    assert_eq!(m.cancelled, 1);
+    assert_eq!(m.duration_count, 3);
+    assert_eq!(m.duration_sum_ms, 124_700);
+    assert_eq!(m.last_run_at, Some(now()));
+
+    // Cumulative buckets over {0.2s, 4.5s, 120s} for the shared boundaries
+    // [0.1, 0.5, 1, 5, 10, 30, 60, 300] seconds.
+    assert_eq!(m.duration_buckets, vec![0, 1, 1, 2, 2, 2, 2, 3]);
+
+    let other_m = all.iter().find(|m| m.job_key == "other:job").unwrap();
+    assert_eq!(other_m.completed, 1);
+    assert_eq!(other_m.duration_count, 1);
+}
+
+#[test]
 fn list_executions_with_filter() {
     let store = create_memory_store().unwrap();
 
