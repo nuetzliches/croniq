@@ -105,6 +105,50 @@ operator to either re-enable password login or finish the OIDC config —
 quietly booting into a state where nobody can sign in would be a much
 worse failure mode.
 
+### `auth.totp.required` — enforced 2FA
+
+```hcl
+auth {
+  totp {
+    required true   # default: false
+  }
+}
+```
+
+When `true`, every password login must present a valid TOTP (or recovery)
+code. The login UI reads this from `GET /v1/auth/config` and shows the code
+field up-front, so an enforced login is a **single request**:
+`POST /v1/auth/login` with `username` + `password` + `code`.
+
+**Accounts without a confirmed TOTP secret are refused** at login with
+`403 {"error":"totp_required_not_configured"}`. Enforcement only gates
+login — it does not auto-enrol anyone — so 2FA must be set up on every
+account *before* enforcement is switched on.
+
+#### Env override: `CRONIQ_REQUIRE_TOTP`
+
+Set to `true`/`yes`/`on`/`1` to enforce. Any other value (including empty,
+garbage, or unset) leaves enforcement off — mirroring
+`CRONIQ_PASSWORD_LOGIN_ENABLED`, a typo won't silently lock everyone out.
+The DSL block wins where set.
+
+#### Rollout & recovering from lockout
+
+Enrolment requires being logged in, so flipping `required true` before
+everyone has set up TOTP locks out the un-enrolled — potentially including
+the only admin. Recommended order:
+
+1. Leave enforcement **off**.
+2. Have every user enrol via **Settings → Two-factor authentication**.
+3. Only then set `auth { totp { required true } }` (or
+   `CRONIQ_REQUIRE_TOTP=true`) and reload/restart.
+
+If you do get locked out: temporarily relax the flag
+(`auth { totp { required false } }`, or `CRONIQ_REQUIRE_TOTP=false`),
+restart, sign in, finish enrolment, then re-harden. `croniq-server` logs a
+`WARN` at boot whenever enforcement is on, as a standing reminder of this
+footgun.
+
 ### Probing from the UI: `GET /v1/auth/config`
 
 ```jsonc
@@ -115,7 +159,8 @@ GET /v1/auth/config  →  200
     "provider_name": "Authentik",
     "login_url": "http://localhost:4000/v1/auth/oidc/login"
   },
-  "password": { "enabled": false }
+  "password": { "enabled": false },
+  "totp": { "required": false }
 }
 ```
 
@@ -124,6 +169,8 @@ uses the response to:
 
 * hide the password form when `password.enabled === false`
 * hide the SSO card when `oidc.enabled === false`
+* show the 2FA code field up-front (single-request login) when
+  `totp.required === true`
 * show a "no sign-in method configured" blocker if both are off
   (mostly a defence-in-depth — the server refuses to boot in that
   state, so this branch is mainly for misconfigured load-balancers

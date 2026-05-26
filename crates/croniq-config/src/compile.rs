@@ -104,10 +104,11 @@ pub struct OidcDslConfig {
 
 /// UI sign-in method gates, parsed from the Croniqfile `auth {}` block.
 /// All sub-blocks are optional; an absent `auth {}` means every method is
-/// enabled. Today only the `password {}` sub-block is defined.
+/// enabled and TOTP is not enforced.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AuthDslConfig {
     pub password: PasswordAuthConfig,
+    pub totp: TotpAuthConfig,
 }
 
 /// `auth { password { enabled bool } }`. The `enabled` flag governs the
@@ -117,6 +118,17 @@ pub struct AuthDslConfig {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PasswordAuthConfig {
     pub enabled: Option<bool>,
+}
+
+/// `auth { totp { required bool } }`. When `Some(true)`, every password
+/// login must present a valid TOTP (or recovery) code, and users without
+/// a confirmed TOTP secret are refused — so accounts must enrol *before*
+/// enforcement is switched on (see the rollout note in the docs). `None`
+/// means the DSL did not set it; the server merges with
+/// `CRONIQ_REQUIRE_TOTP` at boot, defaulting to off.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TotpAuthConfig {
+    pub required: Option<bool>,
 }
 
 /// HTTP MCP-server configuration. Absent block ⇒ default (enabled).
@@ -762,6 +774,18 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             {
                                 let v = resolve_str(arg, &vars);
                                 auth.password.enabled = parse_bool(&v);
+                            }
+                        }
+                    } else if nb.name.value == "totp" {
+                        for dob in &nb.directives {
+                            let DirectiveOrBlock::Directive(d) = dob else {
+                                continue;
+                            };
+                            if d.key.value == "required"
+                                && let Some(arg) = d.args.first()
+                            {
+                                let v = resolve_str(arg, &vars);
+                                auth.totp.required = parse_bool(&v);
                             }
                         }
                     }
@@ -1836,6 +1860,41 @@ mod tests {
             let cfg = compile(&ast);
             assert_eq!(
                 cfg.auth.password.enabled,
+                Some(want),
+                "value {value:?} should map to {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn compile_auth_totp_required_defaults_unset() {
+        let ast = Parser::parse("auth { password { enabled true } }").unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.auth.totp.required, None);
+    }
+
+    #[test]
+    fn compile_auth_totp_required_true() {
+        let ast = Parser::parse(
+            r#"
+            auth {
+                totp { required true }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.auth.totp.required, Some(true));
+    }
+
+    #[test]
+    fn compile_auth_totp_required_accepts_aliases() {
+        for (value, want) in [("yes", true), ("on", true), ("1", true), ("off", false)] {
+            let src = format!("auth {{ totp {{ required {value} }} }}");
+            let ast = Parser::parse(&src).unwrap();
+            let cfg = compile(&ast);
+            assert_eq!(
+                cfg.auth.totp.required,
                 Some(want),
                 "value {value:?} should map to {want}"
             );

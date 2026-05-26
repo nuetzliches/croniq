@@ -101,6 +101,19 @@ async fn main() -> Result<()> {
         tracing::info!("password login disabled by configuration — only OIDC will accept logins");
     }
 
+    // Enforced 2FA (auth { totp { required true } } / CRONIQ_REQUIRE_TOTP).
+    // Accounts without a confirmed TOTP secret are refused at login once this
+    // is on, so it must only be flipped after every account has enrolled —
+    // surfaced loudly at boot so a fresh deploy doesn't lock itself out.
+    let require_totp = resolve_require_totp(&loaded.runtime);
+    if require_totp {
+        tracing::warn!(
+            "enforced 2FA is ON — accounts without a confirmed TOTP secret cannot log in. \
+             If you are locked out, set auth {{ totp {{ required false }} }} (or \
+             CRONIQ_REQUIRE_TOTP=false), enrol, then re-enable."
+        );
+    }
+
     // Open (or create) the SQLite store
     std::fs::create_dir_all(&cli.data_dir)?;
     let db_path = cli.data_dir.join("croniq.db");
@@ -239,6 +252,7 @@ async fn main() -> Result<()> {
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url();
+        s.require_totp = require_totp;
         s.email_sender = croniq_server::email::build_from_env();
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
@@ -691,6 +705,28 @@ fn resolve_app_base_url() -> String {
     match std::env::var("CRONIQ_APP_URL") {
         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => "http://localhost:4000".into(),
+    }
+}
+
+/// Resolve the effective `require_totp` flag (enforced 2FA).
+///
+/// Precedence (highest first): DSL `auth { totp { required bool } }` → env
+/// `CRONIQ_REQUIRE_TOTP` → default `false`.
+///
+/// Mirror-image of [`resolve_password_login_enabled`]'s conservatism: only
+/// the explicit truthy set turns enforcement on. Anything unrecognised
+/// (typo, empty, garbage) leaves it OFF — accidentally enabling enforcement
+/// would lock out every account that hasn't enrolled yet.
+fn resolve_require_totp(rt: &croniq_config::compile::RuntimeConfig) -> bool {
+    if let Some(v) = rt.auth.totp.required {
+        return v;
+    }
+    match std::env::var("CRONIQ_REQUIRE_TOTP").ok() {
+        Some(s) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "yes" | "on" | "1"
+        ),
+        None => false,
     }
 }
 

@@ -375,6 +375,13 @@ paths:
   /v1/auth/login:
     post:
       summary: Login with username and password
+      description: >
+        Returns a token pair on success. If the account has TOTP enabled and
+        no `code`/`recovery_code` is supplied, returns `MfaRequiredResponse`
+        (`requires_totp: true`) instead — complete via `/v1/auth/login/totp`,
+        or supply the code here inline to finish in a single request. When the
+        server enforces 2FA (`auth { totp { required true } }`) and the account
+        has no confirmed secret, returns 403 `totp_required_not_configured`.
       security: []
       requestBody:
         required: true
@@ -386,13 +393,31 @@ paths:
               properties:
                 username: { type: string }
                 password: { type: string }
+                code:
+                  type: string
+                  description: >
+                    Optional current 6-digit TOTP, verified inline so a 2FA
+                    login completes in one request. At most one of
+                    `code` / `recovery_code`.
+                recovery_code:
+                  type: string
+                  description: Optional single-use recovery code (alternative to `code`).
       responses:
         "200":
-          description: JWT tokens
+          description: >
+            JWT tokens, or an MFA step-up challenge (`MfaRequiredResponse`) when
+            the account has 2FA and no code was supplied.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TokenResponse" }
-        "401": { description: Invalid credentials }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TokenResponse"
+                  - $ref: "#/components/schemas/MfaRequiredResponse"
+        "401": { description: Invalid credentials or TOTP/recovery code }
+        "403":
+          description: >
+            Password login is disabled, or enforced 2FA is on and the account
+            has no confirmed TOTP secret (`error: totp_required_not_configured`).
 
   /v1/auth/refresh:
     post:

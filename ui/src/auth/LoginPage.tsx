@@ -9,7 +9,6 @@ import {
   type AuthConfigResponse,
   type HealthResponse,
   type LoginResponse,
-  type TokenResponse,
   type VersionResponse,
 } from '@/api/types'
 import { BrandMark, EnvBadge } from '@/components/primitives'
@@ -160,6 +159,7 @@ export function LoginPage() {
         setAuthCfg({
           oidc: { enabled: false, provider_name: null, login_url: null },
           password: { enabled: true },
+          totp: { required: false },
         }),
       )
     apiFetch<HealthResponse>('/health').then(setHealth, () => setHealth(null))
@@ -174,6 +174,11 @@ export function LoginPage() {
   const showTabStrip = passwordEnabled && !!oidc?.enabled
   const bothDisabled =
     authCfg !== null && !passwordEnabled && !oidc?.enabled
+  // Server-enforced 2FA: show the code field from the start and submit it
+  // inline (single request). Otherwise the field is revealed only after the
+  // credential probe reports the account has 2FA.
+  const totpEnforced = authCfg?.totp.required ?? false
+  const showTotpField = totpEnforced || totpRequired
 
   function flashError(msg: string) {
     setError(msg)
@@ -190,28 +195,27 @@ export function LoginPage() {
     else flashError('Login failed. Check your credentials.')
   }
 
-  // Single submit handler for the whole password flow. We always re-probe
-  // credentials first: that both tells us whether the account needs 2FA and
-  // hands back a fresh 5-minute mfa_token, so the code exchange below can't
-  // race an expired token. The 2FA field only appears once the probe says
-  // it's required — the server can't reveal per-account 2FA status before
-  // the password is verified without leaking who has it enabled.
+  // One submit handler, one request. We POST username + password (+ the code
+  // if the field is filled) to /v1/auth/login. The server verifies the second
+  // factor inline and returns tokens directly. If the account has 2FA and we
+  // didn't send a code, the server answers `requires_totp` and we reveal the
+  // field for a follow-up submit. When 2FA is enforced server-wide the field
+  // is shown from the start, so enforced logins are a single round trip.
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      const res = await apiPost<LoginResponse>('/v1/auth/login', { username, password })
-      if (!isMfaRequired(res)) {
-        login(res.access_token, res.refresh_token)
-        navigate('/')
-        return
+      const body: Record<string, string> = { username, password }
+      const code = mfaCode.trim()
+      if (code) {
+        if (useRecovery) body.recovery_code = code
+        else body.code = code
       }
-      setTotpRequired(true)
-      const codeVal = mfaCode.trim()
-      if (!codeVal) {
-        // First submit for a 2FA account: reveal the field and stop so the
-        // user can enter the code. The field autofocuses on mount.
+      const res = await apiPost<LoginResponse>('/v1/auth/login', body)
+      if (isMfaRequired(res)) {
+        // Account has 2FA but no code was supplied — reveal the field.
+        setTotpRequired(true)
         flashError(
           useRecovery
             ? 'Enter one of your recovery codes.'
@@ -219,33 +223,27 @@ export function LoginPage() {
         )
         return
       }
-      try {
-        const body: Record<string, string> = { mfa_token: res.mfa_token }
-        if (useRecovery) body.recovery_code = codeVal
-        else body.code = codeVal
-        const tok = await apiPost<TokenResponse>('/v1/auth/login/totp', body)
-        login(tok.access_token, tok.refresh_token)
-        navigate('/')
-      } catch (err) {
-        // The password already verified (the login call above succeeded), so
-        // a failure here is the second factor itself. 401 = wrong/expired
-        // code — keep the user on the code field with a precise message.
-        const msg = err instanceof Error ? err.message : ''
-        if (/^401[: ]/.test(msg)) {
-          flashError(useRecovery ? 'Invalid recovery code.' : 'Invalid or expired code. Try again.')
-        } else {
-          reportFailure(err)
-        }
-      }
+      login(res.access_token, res.refresh_token)
+      navigate('/')
     } catch (err) {
-      reportFailure(err)
+      const msg = err instanceof Error ? err.message : ''
+      if (/totp_required_not_configured/.test(msg)) {
+        // Enforced 2FA, but this account never enrolled — only an admin can fix.
+        flashError('Two-factor is required but not set up for this account. Contact an administrator.')
+      } else if (mfaCode.trim() && /^401[: ]/.test(msg)) {
+        // A code was sent, so a 401 is the password or the code — we can't tell
+        // which from a bare 401, so name both.
+        flashError('Sign-in failed. Check your password and code.')
+      } else {
+        reportFailure(err)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  // Editing username/password invalidates an already-revealed 2FA prompt;
-  // the next submit re-probes from scratch.
+  // Editing username/password clears a *revealed* 2FA prompt (enforced ones
+  // stay visible); the next submit re-probes from scratch.
   function onCredentialChange(setter: (v: string) => void) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
       setter(e.target.value)
@@ -351,10 +349,14 @@ export function LoginPage() {
                       required
                     />
                   </LoginField>
-                  {totpRequired ? (
+                  {showTotpField ? (
                     <LoginField
                       label={useRecovery ? 'Recovery code' : 'Two-factor code'}
-                      hint="Required because two-factor is enabled on this account."
+                      hint={
+                        totpEnforced
+                          ? 'Two-factor is required to sign in.'
+                          : 'Required because two-factor is enabled on this account.'
+                      }
                     >
                       <input
                         className="input mono"
@@ -365,8 +367,8 @@ export function LoginPage() {
                         onChange={(e) => setMfaCode(e.target.value)}
                         placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
                         autoComplete="one-time-code"
-                        autoFocus
-                        required
+                        autoFocus={totpRequired}
+                        required={showTotpField}
                         style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
                       />
                       <button
@@ -385,10 +387,10 @@ export function LoginPage() {
                   {error ? <ErrorBanner msg={error} /> : null}
                   <SubmitButton loading={loading}>
                     {loading
-                      ? totpRequired
+                      ? showTotpField
                         ? 'Verifying…'
                         : 'Signing in…'
-                      : totpRequired
+                      : showTotpField
                         ? 'Verify & sign in'
                         : 'Sign in'}
                     {loading ? null : <ArrowRight size={14} />}
