@@ -70,6 +70,14 @@ internal static class ConformanceRunner
         {
             // expected when we cancel the runner
         }
+        catch (PollInstanceConflictException)
+        {
+            // Expected for case 11a (and any future case where the SDK is
+            // contractually allowed to bail out fatally). The HTTP-count
+            // assertions below still validate correctness: a case that
+            // doesn't anticipate this exit would fail on min_count/max_count
+            // mismatch.
+        }
         stopwatch.Stop();
 
         var recorded2 = mock.RecordedRequests;
@@ -120,6 +128,7 @@ internal static class ConformanceRunner
         if (cfg.DrainTimeoutMs is int dt) opts.DrainTimeout = TimeSpan.FromMilliseconds(dt);
         if (cfg.PollRetryDelayMs is int prd) opts.PollRetryDelay = TimeSpan.FromMilliseconds(prd);
         if (cfg.CapacityBackoffMs is int cb) opts.CapacityBackoff = TimeSpan.FromMilliseconds(cb);
+        if (cfg.MaxConsecutivePollConflicts is int mcpc) opts.MaxConsecutivePollConflicts = mcpc;
     }
 
     private static bool ExpectationsAreMet(ExpectationsSpec expectations, IReadOnlyList<RecordedRequest> recorded)

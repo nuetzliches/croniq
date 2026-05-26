@@ -6,6 +6,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Runner SDKs (Rust + .NET) treat repeated `409 Conflict` on poll as
+  fatal ([#134](https://github.com/nuetzliches/croniq/issues/134)
+  sub-item 1).** Today the SDKs back off and retry forever on any poll
+  failure — including the 409 the server returns when another process
+  is already registered with the same `runner_id`. That masks an
+  operator misconfiguration as a transient blip and ties up the runner
+  process indefinitely. The SDKs now count *consecutive* 409s; after
+  `max_consecutive_poll_conflicts` (default `3`) the run-loop exits
+  with a typed error so the host process terminates with a non-zero
+  status code instead of looping silently. The counter resets on any
+  successful poll or non-409 transient error (5xx, network, timeout),
+  so a single recovered 5xx doesn't accumulate against the conflict
+  budget.
+
+  Configuration knobs:
+
+  | SDK | Knob | Default |
+  |---|---|---|
+  | Rust (`RunnerBuilder`) | `.poll_retry_delay(Duration)` (newly configurable; was hard-coded 5 s) + `.max_consecutive_poll_conflicts(u32)` | `5s` / `3` |
+  | .NET (`CroniqRunnerOptions`) | existing `PollRetryDelay` + new `MaxConsecutivePollConflicts` (int, `[Range(1, 100)]`) | `5s` / `3` |
+
+  Error surface:
+
+  - Rust: new `ClientError::PollInstanceConflict { body }` variant returned from `runner.start()` after N conflicts.
+  - .NET: new public `PollInstanceConflictException` (carries `RunnerId` + `ConsecutiveCount`) thrown out of `RunAsync`.
+
+  The conformance schema gains a `max_consecutive_poll_conflicts`
+  field on `runner_config` (and the .NET binding wires it through to
+  `CroniqRunnerOptions`), so a future shared case can pin the wire
+  contract once the Go, Python, and TypeScript SDKs implement the
+  same behaviour. The Rust + .NET behaviour is verified at the
+  SDK unit-test layer for now. Case 11 (single 409 → transient
+  retry) stays unchanged.
+
 ### Added
 
 - **Server stamps W3C `traceparent` into `WorkAssignment.metadata`

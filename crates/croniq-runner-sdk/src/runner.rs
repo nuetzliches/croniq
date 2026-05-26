@@ -14,6 +14,52 @@ struct JobSchedule {
     schedule: String,
 }
 
+/// Outcome of feeding a poll result through the conflict-streak
+/// tracker. Returned by [`update_conflict_streak`] so the run-loop can
+/// either retry (with backoff) or exit fatally.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PollLoopAction {
+    /// Continue polling after the configured retry delay.
+    Continue,
+    /// Stop the loop and propagate the conflict as a fatal error.
+    BailOut,
+}
+
+/// Update the consecutive-409 counter based on the latest poll result
+/// and decide whether to keep polling. Extracted for unit-testing —
+/// the run-loop in [`CroniqRunner::start`] calls this on every poll
+/// outcome.
+///
+/// * Successful polls reset the counter (the conflict resolved itself).
+/// * Non-409 transient errors reset the counter too (a 5xx is unrelated
+///   to instance ownership; counting it would bail prematurely).
+/// * 409 conflicts increment and trip [`PollLoopAction::BailOut`] at the
+///   configured threshold.
+pub(crate) fn update_conflict_streak(
+    result: &Result<crate::client::PollResponse, crate::client::ClientError>,
+    consecutive: &mut u32,
+    max_consecutive: u32,
+) -> PollLoopAction {
+    match result {
+        Ok(_) => {
+            *consecutive = 0;
+            PollLoopAction::Continue
+        }
+        Err(crate::client::ClientError::PollInstanceConflict { .. }) => {
+            *consecutive = consecutive.saturating_add(1);
+            if *consecutive >= max_consecutive {
+                PollLoopAction::BailOut
+            } else {
+                PollLoopAction::Continue
+            }
+        }
+        Err(_) => {
+            *consecutive = 0;
+            PollLoopAction::Continue
+        }
+    }
+}
+
 /// Builder for constructing a CroniqRunner.
 pub struct RunnerBuilder {
     server_url: String,
@@ -22,6 +68,8 @@ pub struct RunnerBuilder {
     capabilities: Vec<String>,
     max_inflight: u32,
     tags: Vec<String>,
+    poll_retry_delay: Duration,
+    max_consecutive_poll_conflicts: u32,
 }
 
 impl RunnerBuilder {
@@ -48,6 +96,27 @@ impl RunnerBuilder {
         self
     }
 
+    /// How long to wait after a transient poll error (non-409 HTTP failure,
+    /// timeout, network error) before retrying. Default: 5 seconds. The
+    /// runner waits this long between retries, then resumes polling.
+    pub fn poll_retry_delay(mut self, delay: Duration) -> Self {
+        self.poll_retry_delay = delay;
+        self
+    }
+
+    /// Maximum number of consecutive `409 Conflict` responses from the
+    /// poll endpoint before the runner gives up and exits with a fatal
+    /// [`ClientError::PollInstanceConflict`]. Default: 3.
+    ///
+    /// A 409 means another process is already registered with the same
+    /// `runner_id` (instance guard); retrying forever just masks an
+    /// operator misconfiguration. The counter resets on any successful
+    /// poll or a non-409 transient error.
+    pub fn max_consecutive_poll_conflicts(mut self, n: u32) -> Self {
+        self.max_consecutive_poll_conflicts = n;
+        self
+    }
+
     pub fn build(self) -> CroniqRunner {
         let mut client = CroniqClient::new(&self.server_url);
         if let Some(key) = &self.api_key {
@@ -61,6 +130,8 @@ impl RunnerBuilder {
             max_inflight: self.max_inflight,
             tags: self.tags,
             instance_id: uuid::Uuid::new_v4().to_string(),
+            poll_retry_delay: self.poll_retry_delay,
+            max_consecutive_poll_conflicts: self.max_consecutive_poll_conflicts,
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
@@ -77,6 +148,8 @@ pub struct CroniqRunner {
     max_inflight: u32,
     tags: Vec<String>,
     instance_id: String,
+    poll_retry_delay: Duration,
+    max_consecutive_poll_conflicts: u32,
     handlers: Arc<RwLock<HandlerRegistry>>,
     schedules: Arc<RwLock<Vec<JobSchedule>>>,
     inflight: Arc<RwLock<Vec<String>>>,
@@ -92,6 +165,8 @@ impl CroniqRunner {
             capabilities: Vec::new(),
             max_inflight: 5,
             tags: Vec::new(),
+            poll_retry_delay: Duration::from_secs(5),
+            max_consecutive_poll_conflicts: 3,
         }
     }
 
@@ -171,6 +246,13 @@ impl CroniqRunner {
         }
         drop(schedules);
 
+        // Tracks consecutive `409 Conflict` responses on poll. Reset on
+        // any successful poll or non-409 transient error. When this hits
+        // `max_consecutive_poll_conflicts` we bail out of the loop with
+        // a fatal error so the host process can exit non-zero — see
+        // #134 sub-item 1.
+        let mut consecutive_conflicts: u32 = 0;
+
         loop {
             if self.draining.load(std::sync::atomic::Ordering::Relaxed) {
                 let inflight = self.inflight.read().await;
@@ -200,7 +282,13 @@ impl CroniqRunner {
                 tags: self.tags.clone(),
             };
 
-            match self.client.poll(&poll_req).await {
+            let poll_result = self.client.poll(&poll_req).await;
+            let action = update_conflict_streak(
+                &poll_result,
+                &mut consecutive_conflicts,
+                self.max_consecutive_poll_conflicts,
+            );
+            match poll_result {
                 Ok(resp) => {
                     for assignment in resp.work {
                         let exec_id = assignment.execution_id.clone();
@@ -299,11 +387,132 @@ impl CroniqRunner {
                         });
                     }
                 }
+                Err(e) if action == PollLoopAction::BailOut => {
+                    tracing::error!(
+                        runner_id = %self.runner_id,
+                        instance_id = %self.instance_id,
+                        consecutive = consecutive_conflicts,
+                        max = self.max_consecutive_poll_conflicts,
+                        "fatal: server returned 409 Conflict on poll repeatedly — \
+                         another runner is registered with this runner_id. \
+                         Stop the duplicate process or rotate runner_id."
+                    );
+                    return Err(e);
+                }
+                Err(crate::client::ClientError::PollInstanceConflict { .. }) => {
+                    tracing::warn!(
+                        runner_id = %self.runner_id,
+                        consecutive = consecutive_conflicts,
+                        max = self.max_consecutive_poll_conflicts,
+                        delay_ms = self.poll_retry_delay.as_millis() as u64,
+                        "poll returned 409 Conflict — another runner instance may be active; \
+                         will retry"
+                    );
+                    tokio::time::sleep(self.poll_retry_delay).await;
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, "poll failed — retrying in 5s");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tracing::warn!(
+                        error = %e,
+                        delay_ms = self.poll_retry_delay.as_millis() as u64,
+                        "poll failed — retrying"
+                    );
+                    tokio::time::sleep(self.poll_retry_delay).await;
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{ClientError, PollResponse};
+
+    fn ok() -> Result<PollResponse, ClientError> {
+        Ok(PollResponse {
+            work: vec![],
+            cancel: vec![],
+        })
+    }
+    fn conflict() -> Result<PollResponse, ClientError> {
+        Err(ClientError::PollInstanceConflict {
+            body: "runner instance conflict".into(),
+        })
+    }
+    fn server_error() -> Result<PollResponse, ClientError> {
+        Err(ClientError::Server {
+            status: 503,
+            body: "service unavailable".into(),
+        })
+    }
+
+    #[test]
+    fn successful_poll_resets_streak() {
+        let mut streak = 2;
+        let action = update_conflict_streak(&ok(), &mut streak, 3);
+        assert_eq!(action, PollLoopAction::Continue);
+        assert_eq!(streak, 0);
+    }
+
+    #[test]
+    fn non_conflict_error_resets_streak() {
+        // A 5xx in the middle of a 409 streak must NOT extend the streak —
+        // it has nothing to do with instance ownership.
+        let mut streak = 2;
+        let action = update_conflict_streak(&server_error(), &mut streak, 3);
+        assert_eq!(action, PollLoopAction::Continue);
+        assert_eq!(streak, 0);
+    }
+
+    #[test]
+    fn conflict_increments_and_bails_at_threshold() {
+        let mut streak = 0;
+        for expected_streak in 1..3 {
+            let action = update_conflict_streak(&conflict(), &mut streak, 3);
+            assert_eq!(action, PollLoopAction::Continue);
+            assert_eq!(streak, expected_streak);
+        }
+        // 3rd conflict → bail
+        let action = update_conflict_streak(&conflict(), &mut streak, 3);
+        assert_eq!(action, PollLoopAction::BailOut);
+        assert_eq!(streak, 3);
+    }
+
+    #[test]
+    fn conflict_then_success_then_conflicts_bails_correctly() {
+        // Real-world flow: brief conflict, recovery, then a *new* conflict
+        // streak. The recovery must reset the counter so the second
+        // streak gets its full N attempts before bailing.
+        let mut streak = 0;
+        assert_eq!(
+            update_conflict_streak(&conflict(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(
+            update_conflict_streak(&conflict(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        // Recovery resets.
+        assert_eq!(
+            update_conflict_streak(&ok(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(streak, 0);
+        // Fresh streak starts at 1.
+        assert_eq!(
+            update_conflict_streak(&conflict(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(streak, 1);
+    }
+
+    #[test]
+    fn max_one_bails_on_first_conflict() {
+        // Aggressive operator setting: refuse to tolerate any conflict at
+        // all. First 409 → fatal.
+        let mut streak = 0;
+        let action = update_conflict_streak(&conflict(), &mut streak, 1);
+        assert_eq!(action, PollLoopAction::BailOut);
+        assert_eq!(streak, 1);
     }
 }

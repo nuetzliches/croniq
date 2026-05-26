@@ -35,6 +35,7 @@ public sealed class RunnerConfigSpec
     public int? DrainTimeoutMs { get; set; }
     public int? PollRetryDelayMs { get; set; }
     public int? CapacityBackoffMs { get; set; }
+    public int? MaxConsecutivePollConflicts { get; set; }
 }
 
 public sealed class HandlerSpec

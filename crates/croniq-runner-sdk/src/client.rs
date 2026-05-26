@@ -11,6 +11,17 @@ pub enum ClientError {
 
     #[error("server error: {status} — {body}")]
     Server { status: u16, body: String },
+
+    /// The server returned `409 Conflict` from the poll endpoint —
+    /// another runner process is already registered under the same
+    /// `runner_id`. Reported separately so the runner loop can count
+    /// consecutive occurrences and bail with a clear diagnostic
+    /// instead of masking an operator misconfiguration as a transient
+    /// error (see issue #134 sub-item 1).
+    #[error(
+        "poll instance conflict — another runner is already registered with this runner_id: {body}"
+    )]
+    PollInstanceConflict { body: String },
 }
 
 /// Low-level HTTP client for Croniq API endpoints.
@@ -114,6 +125,13 @@ impl CroniqClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            // 409 on the poll endpoint specifically means another
+            // runner already holds this runner_id — surface it as a
+            // dedicated variant so the runner loop can distinguish
+            // "transient" from "operator must intervene".
+            if status == 409 {
+                return Err(ClientError::PollInstanceConflict { body });
+            }
             return Err(ClientError::Server { status, body });
         }
 
