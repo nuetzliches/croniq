@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Demo build pre-enables TOTP for admin
+  ([#137](https://github.com/nuetzliches/croniq/issues/137)).** New
+  opt-in switch `CRONIQ_DEMO_MFA=1` (or `--demo-mfa` on `croniq init`)
+  seeds the admin user with a real TOTP secret and bakes the recovery
+  code `123456` into all 10 slots, so a marketing walkthrough of the
+  docker demo image (`admin / admin / 123456`) actually exercises the
+  MFA step instead of jumping straight to the dashboard. The seed is
+  first-boot only, and the docker entrypoint warns loudly if the flag
+  is set without `CRONIQ_DEMO_MODE=1`. Production seeds must never set
+  it — see `docs/operations.md#demo-only-seed-flags`.
+
 ## [0.15.0] - 2026-05-26
 
 ### Added
