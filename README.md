@@ -48,7 +48,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization is enforced on every endpoint: a token must carry the matching scope (e.g. `jobs:write`, `dead-letters:write`, `runners:read`) or the wildcard `admin` scope. See [Scopes](#scopes) below.
 
-**React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer, dead letter detail panel.
+**React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (server-sent events, scope/level filters, scroll-lock, copy + `.ndjson` download).
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
@@ -412,9 +412,10 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | Schedules | `GET/POST /v1/schedules`, `GET/DELETE /v1/schedules/{id}` |
 | Runners | `GET /v1/runners`, `GET /v1/runners/stream` (SSE), `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
-| Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs` |
+| Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs`, `POST /v1/executions/{id}/cancel` |
 | Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay` |
 | Calendars | `GET/POST /v1/calendars`, `GET/DELETE /v1/calendars/{id}` |
+| Live Console | `GET /v1/events/stream` (SSE — server tracing events) |
 | Dashboard | `GET /v1/dashboard/forecast` |
 | API Clients | `GET/POST /v1/api-clients`, `DELETE .../api-clients/{id}`, `POST .../tokens` |
 | API Keys | `POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` |
@@ -432,7 +433,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Jobs | `jobs:read` | `jobs:write` (`jobs:register` for `/v1/jobs/register`, `jobs:trigger` for `/v1/trigger`) |
 | Schedules | `schedules:read` | `schedules:write` |
 | Calendars | `calendars:read` | `calendars:write` |
-| Executions + logs | `executions:read` | — |
+| Executions + logs | `executions:read` (incl. Live Console stream) | `executions:cancel` (`POST /v1/executions/{id}/cancel`) |
 | Dead letters | `dead-letters:read` | `dead-letters:write` (delete + replay) |
 | Runners | `runners:read` (incl. SSE) | `runners:write` |
 | Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |

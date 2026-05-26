@@ -263,11 +263,19 @@ impl WatchdogLoop {
             result.dead_runners.push(runner_id.clone());
         }
 
-        // 3. Evict dead runners from the in-memory registry
+        // 3. Evict dead runners from the in-memory registry AND drop any
+        //    pending cancels queued for them — a runner that never came
+        //    back can't act on its cancel queue, and the executions are
+        //    being requeued onto a (different) live runner in the next
+        //    sweep step. Without this cleanup `AppState::cancel_queues`
+        //    grows unboundedly on long-lived servers where operators
+        //    decommission hosts (issue #176 follow-up).
         {
             let mut reg = self.runner.registry.write().await;
+            let mut cancels = self.runner.cancel_queues.write().await;
             for runner_id in &result.dead_runners {
                 reg.remove(runner_id);
+                cancels.remove(runner_id);
             }
         }
 
