@@ -1,10 +1,16 @@
-// Root build — shared task wiring + Sonatype OSSRH staging for Maven Central.
-// Per-module config lives in each subproject's build.gradle.kts and
-// the convention plugins under buildSrc/.
-
-plugins {
-    alias(libs.plugins.nexus.publish)
-}
+// Root build — shared task wiring only.
+//
+// Maven Central publishing is configured per-module via the
+// `croniq.publish-conventions` convention plugin (see
+// `buildSrc/src/main/kotlin/croniq.publish-conventions.gradle.kts`), which
+// applies the Vanniktech maven-publish plugin to each published subproject.
+// That plugin handles bundle creation, GPG signing, Sonatype Central Portal
+// upload, and auto-release — no root-level publishing config is needed.
+//
+// (The previous `nexusPublishing { ... }` block was a stale leftover from
+// the legacy OSSRH approach. It targeted s01.oss.sonatype.org, which
+// rejects io.github.nuetzliches with HTTP 402 because the namespace was
+// verified after 2024-06 and exists only on the new Central Portal.)
 
 allprojects {
     // Group ID matches the Sonatype-verified namespace
@@ -28,25 +34,11 @@ tasks.register("formatAll") {
     dependsOn(subprojects.map { "${it.path}:spotlessApply" })
 }
 
-// Sonatype OSSRH staging. Credentials are read from environment variables
-// (OSSRH_USERNAME / OSSRH_PASSWORD) or `~/.gradle/gradle.properties` — never
-// committed. CI sets them from GitHub Actions secrets in PR-7 (this PR).
+// To publish to Maven Central from a release runner:
+//   ./gradlew publishAndReleaseToMavenCentral
 //
-// To publish:
-//   ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository
-//
-// Snapshots (-SNAPSHOT versions) auto-promote to s01.oss.sonatype.org's
-// snapshots repository; releases stage and require manual closeAndRelease.
-nexusPublishing {
-    repositories {
-        sonatype {
-            // s01 is the modern OSSRH endpoint — accounts registered after
-            // 2021 must use this URL. Older io.croniq registrations would
-            // use https://oss.sonatype.org/.
-            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
-            username.set(providers.environmentVariable("OSSRH_USERNAME").orElse(""))
-            password.set(providers.environmentVariable("OSSRH_PASSWORD").orElse(""))
-        }
-    }
-}
+// The Vanniktech plugin signs, bundles, and uploads to the new Central
+// Portal (https://central.sonatype.com) and auto-releases on successful
+// validation. PR builds run with empty credentials and skip the publish-
+// to-Central path while still exercising publishToMavenLocal as a smoke
+// check (see the `publish-smoke` job in the Java SDK CI workflow).
