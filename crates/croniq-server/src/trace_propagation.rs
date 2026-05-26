@@ -74,8 +74,8 @@ mod tests {
     fn injects_w3c_traceparent_when_span_is_active() {
         let provider = SdkTracerProvider::builder().build();
         let tracer = provider.tracer("test");
-        let subscriber = tracing_subscriber::registry()
-            .with(tracing_opentelemetry::layer().with_tracer(tracer));
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
 
         let mut metadata = serde_json::json!({ "user_field": "kept" });
 
