@@ -15,6 +15,7 @@ use axum::{
 
 use crate::api::ServerState;
 use croniq_runner::RunnerStatus;
+use croniq_store::models::{JOB_DURATION_BUCKETS_SECONDS, JobExecutionMetrics};
 
 /// Create a router for the metrics endpoint.
 pub fn metrics_router(state: Arc<ServerState>) -> Router {
@@ -42,7 +43,7 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         .load(Ordering::Relaxed);
     let reload_apply_err = state.reload_counters.apply_error.load(Ordering::Relaxed);
 
-    let body = format!(
+    let mut body = format!(
         "# HELP croniq_runners_total Number of known runners by status.\n\
          # TYPE croniq_runners_total gauge\n\
          croniq_runners_total{{status=\"online\"}} {runners_online}\n\
@@ -58,6 +59,17 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          croniq_config_reload_total{{result=\"apply_error\"}} {reload_apply_err}\n"
     );
 
+    // Per-job series are derived from the executions store at scrape time
+    // (one grouped query; nothing is persisted separately). Skipped when the
+    // server runs without a store, or logged-and-skipped on query error so a
+    // scrape never fails.
+    if let Some(store) = &state.store {
+        match store.job_execution_metrics() {
+            Ok(jobs) => render_job_metrics(&mut body, &jobs),
+            Err(e) => tracing::warn!(error = %e, "metrics: job_execution_metrics query failed"),
+        }
+    }
+
     (
         StatusCode::OK,
         [(
@@ -68,11 +80,94 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     )
 }
 
+/// Append the per-job metric families to the exposition body. Each family
+/// gets a single `# HELP`/`# TYPE` header followed by all of its job samples,
+/// so the output stays valid Prometheus text regardless of job count.
+fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
+    if jobs.is_empty() {
+        return;
+    }
+
+    out.push_str(
+        "# HELP croniq_job_executions_total Terminal executions per job, by final state.\n\
+         # TYPE croniq_job_executions_total counter\n",
+    );
+    for j in jobs {
+        let key = escape_label(&j.job_key);
+        out.push_str(&format!(
+            "croniq_job_executions_total{{job_key=\"{key}\",state=\"completed\"}} {}\n",
+            j.completed
+        ));
+        out.push_str(&format!(
+            "croniq_job_executions_total{{job_key=\"{key}\",state=\"failed\"}} {}\n",
+            j.failed
+        ));
+        out.push_str(&format!(
+            "croniq_job_executions_total{{job_key=\"{key}\",state=\"dead\"}} {}\n",
+            j.dead
+        ));
+        out.push_str(&format!(
+            "croniq_job_executions_total{{job_key=\"{key}\",state=\"cancelled\"}} {}\n",
+            j.cancelled
+        ));
+    }
+
+    out.push_str(
+        "# HELP croniq_job_duration_seconds Execution wall-clock duration per job, in seconds.\n\
+         # TYPE croniq_job_duration_seconds histogram\n",
+    );
+    for j in jobs {
+        let key = escape_label(&j.job_key);
+        for (idx, bound) in JOB_DURATION_BUCKETS_SECONDS.iter().enumerate() {
+            let count = j.duration_buckets.get(idx).copied().unwrap_or(0);
+            out.push_str(&format!(
+                "croniq_job_duration_seconds_bucket{{job_key=\"{key}\",le=\"{bound}\"}} {count}\n"
+            ));
+        }
+        out.push_str(&format!(
+            "croniq_job_duration_seconds_bucket{{job_key=\"{key}\",le=\"+Inf\"}} {}\n",
+            j.duration_count
+        ));
+        out.push_str(&format!(
+            "croniq_job_duration_seconds_sum{{job_key=\"{key}\"}} {}\n",
+            j.duration_sum_ms as f64 / 1000.0
+        ));
+        out.push_str(&format!(
+            "croniq_job_duration_seconds_count{{job_key=\"{key}\"}} {}\n",
+            j.duration_count
+        ));
+    }
+
+    out.push_str(
+        "# HELP croniq_job_last_run_timestamp Unix time (seconds) of the most recent finished execution per job.\n\
+         # TYPE croniq_job_last_run_timestamp gauge\n",
+    );
+    for j in jobs {
+        if let Some(ts) = j.last_run_at {
+            let key = escape_label(&j.job_key);
+            out.push_str(&format!(
+                "croniq_job_last_run_timestamp{{job_key=\"{key}\"}} {}\n",
+                ts.timestamp()
+            ));
+        }
+    }
+}
+
+/// Escape a Prometheus label value per the text exposition format
+/// (backslash, double-quote, newline).
+fn escape_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use chrono::{TimeZone, Utc};
     use croniq_runner::AppState;
     use http_body_util::BodyExt;
     use tokio::sync::mpsc;
@@ -116,5 +211,131 @@ mod tests {
 
         assert!(body.contains("croniq_runners_total"));
         assert!(body.contains("croniq_queue_depth"));
+    }
+
+    fn sample_job_metrics(job_key: &str) -> JobExecutionMetrics {
+        JobExecutionMetrics {
+            job_key: job_key.into(),
+            completed: 7,
+            failed: 1,
+            dead: 2,
+            cancelled: 0,
+            // Cumulative over {0.2s, 4.5s, 120s} for the shared boundaries.
+            duration_buckets: vec![0, 1, 1, 2, 2, 2, 2, 3],
+            duration_count: 3,
+            duration_sum_ms: 124_700,
+            last_run_at: Some(Utc.timestamp_opt(1_700_000_000, 0).unwrap()),
+        }
+    }
+
+    #[test]
+    fn render_job_metrics_emits_counter_histogram_and_gauge() {
+        let mut out = String::new();
+        render_job_metrics(&mut out, &[sample_job_metrics("billing:invoice")]);
+
+        assert!(out.contains("# TYPE croniq_job_executions_total counter"));
+        assert!(out.contains(
+            "croniq_job_executions_total{job_key=\"billing:invoice\",state=\"completed\"} 7"
+        ));
+        assert!(
+            out.contains(
+                "croniq_job_executions_total{job_key=\"billing:invoice\",state=\"dead\"} 2"
+            )
+        );
+
+        assert!(out.contains("# TYPE croniq_job_duration_seconds histogram"));
+        // The +Inf bucket equals the histogram _count.
+        assert!(out.contains(
+            "croniq_job_duration_seconds_bucket{job_key=\"billing:invoice\",le=\"+Inf\"} 3"
+        ));
+        assert!(out.contains("croniq_job_duration_seconds_sum{job_key=\"billing:invoice\"} 124.7"));
+        assert!(out.contains("croniq_job_duration_seconds_count{job_key=\"billing:invoice\"} 3"));
+
+        assert!(
+            out.contains("croniq_job_last_run_timestamp{job_key=\"billing:invoice\"} 1700000000")
+        );
+    }
+
+    #[test]
+    fn render_job_metrics_escapes_label_and_skips_missing_last_run() {
+        let mut metrics = sample_job_metrics("weird\"key");
+        metrics.last_run_at = None;
+        let mut out = String::new();
+        render_job_metrics(&mut out, &[metrics]);
+
+        assert!(out.contains("job_key=\"weird\\\"key\""));
+        // The gauge family header may still appear, but there must be no
+        // sample line (samples always carry a `{job_key=...}` label set).
+        assert!(!out.contains("croniq_job_last_run_timestamp{"));
+    }
+
+    #[tokio::test]
+    async fn metrics_includes_job_series_when_store_present() {
+        use croniq_store::models::{Execution, ExecutionState};
+        use croniq_store::traits::ExecutionStore;
+
+        let sqlite = croniq_store::sqlite::SqliteStore::in_memory().unwrap();
+        let exec = Execution {
+            id: uuid::Uuid::new_v4(),
+            job_key: "etl:sync".into(),
+            fire_at: Utc::now(),
+            attempt: 1,
+            state: ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            metadata: std::collections::HashMap::new(),
+            created_at: Utc::now(),
+        };
+        sqlite.create_execution(&exec).unwrap();
+        sqlite.claim_execution(exec.id, "r1", Utc::now()).unwrap();
+        sqlite
+            .complete_execution(
+                exec.id,
+                ExecutionState::Completed,
+                Some(2500),
+                None,
+                None,
+                Utc::now(),
+            )
+            .unwrap();
+
+        let store = crate::store::sqlite_store(sqlite);
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::with_auth(runner, tx, None, Some(store));
+        let app = metrics_router(Arc::clone(&state));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(
+            body.contains(
+                "croniq_job_executions_total{job_key=\"etl:sync\",state=\"completed\"} 1"
+            )
+        );
+        assert!(body.contains("croniq_job_duration_seconds_count{job_key=\"etl:sync\"} 1"));
+        assert!(body.contains("croniq_job_last_run_timestamp{job_key=\"etl:sync\"}"));
     }
 }

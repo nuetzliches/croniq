@@ -465,6 +465,60 @@ impl ExecutionStore for PgStore {
         }
         Ok(map)
     }
+
+    fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+
+        // Cumulative duration-bucket columns are generated from the shared
+        // boundary list so the SQL and the Prometheus renderer can't drift.
+        // `::bigint` casts keep SUM() out of Postgres `numeric` so each
+        // column reads back as i64.
+        let bucket_cols: String = JOB_DURATION_BUCKETS_SECONDS
+            .iter()
+            .map(|secs| {
+                let ms = (secs * 1000.0).round() as i64;
+                format!(
+                    ", SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms <= {ms} THEN 1 ELSE 0 END)::bigint"
+                )
+            })
+            .collect();
+
+        let sql = format!(
+            "SELECT job_key, \
+             SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END)::bigint, \
+             SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END)::bigint, \
+             SUM(CASE WHEN state = 'dead' THEN 1 ELSE 0 END)::bigint, \
+             SUM(CASE WHEN state = 'cancelled' THEN 1 ELSE 0 END)::bigint, \
+             SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END)::bigint, \
+             COALESCE(SUM(duration_ms), 0)::bigint, \
+             MAX(completed_at){bucket_cols} \
+             FROM executions GROUP BY job_key"
+        );
+
+        let rows = client.query(sql.as_str(), &[]).map_err(map_err)?;
+        let n_buckets = JOB_DURATION_BUCKETS_SECONDS.len();
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut duration_buckets = Vec::with_capacity(n_buckets);
+            for i in 0..n_buckets {
+                // Bucket columns follow the eight fixed leading columns.
+                duration_buckets.push(row.get::<usize, i64>(8 + i) as u64);
+            }
+            out.push(JobExecutionMetrics {
+                job_key: row.get(0),
+                completed: row.get::<usize, i64>(1) as u64,
+                failed: row.get::<usize, i64>(2) as u64,
+                dead: row.get::<usize, i64>(3) as u64,
+                cancelled: row.get::<usize, i64>(4) as u64,
+                duration_count: row.get::<usize, i64>(5) as u64,
+                duration_sum_ms: row.get::<usize, i64>(6),
+                last_run_at: row.get::<usize, Option<DateTime<Utc>>>(7),
+                duration_buckets,
+            });
+        }
+        Ok(out)
+    }
 }
 
 // ─── RunnerStore ───
