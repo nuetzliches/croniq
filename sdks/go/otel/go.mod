@@ -1,11 +1,12 @@
 module github.com/nuetzliches/croniq/sdks/go/otel
 
-go 1.22
+go 1.25
 
-// OTel deps pinned to v1.32.x — the last minor that supports Go 1.22.
-// Bumping past v1.32 would break consumers on Go 1.22.x because OTel
-// 1.33+ raised its minimum Go to 1.23, and 1.43+ raised it to 1.25.
-// If we ever bump the SDK's minimum Go, lift this floor in lock-step.
+// OTel deps track the latest available minor — the project's Go 1.25
+// floor (matching go.work and sdks/go/go.mod) lifts the previous 1.22
+// constraint that capped us at OTel 1.32.x. If the Go floor ever
+// changes again, re-evaluate the OTel version in lock-step (each OTel
+// minor raises its own Go requirement on its own cadence).
 //
 // Cross-module local development is handled by `go.work` at the repo
 // root — its `use ./sdks/go` line resolves the parent SDK to the
