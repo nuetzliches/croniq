@@ -21,8 +21,9 @@ croniq-mcp       = { path = "../croniq-mcp" }
 
 axum = { version = "0.8", features = ["json", "macros"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 futures-core = "0.3"
+async-stream = "0.3"
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"

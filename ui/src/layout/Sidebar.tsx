@@ -9,6 +9,7 @@ import {
   Bell,
   CalendarDays,
   Settings,
+  Terminal,
   MoreHorizontal,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -46,6 +47,7 @@ function navItems(deadLetters: number): (NavSpec | NavSection)[] {
           : undefined,
     },
     { to: '/alerts', label: 'Alerts', icon: Bell },
+    { to: '/console', label: 'Console', icon: Terminal },
     { kind: 'section', label: 'Config' },
     { to: '/calendars', label: 'Calendars', icon: CalendarDays },
     { to: '/settings', label: 'Settings', icon: Settings },

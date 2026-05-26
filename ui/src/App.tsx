@@ -35,6 +35,9 @@ const CalendarsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 )
+const ConsolePage = lazy(() =>
+  import('@/pages/ConsolePage').then((m) => ({ default: m.ConsolePage })),
+)
 
 // Surface every failed mutation as a toast. Individual callers can
 // still pass their own `onError` to override or augment. Auth-401
@@ -72,6 +75,7 @@ export default function App() {
               <Route path="/executions" element={<ExecutionsPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/calendars" element={<CalendarsPage />} />
+              <Route path="/console" element={<ConsolePage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Route>

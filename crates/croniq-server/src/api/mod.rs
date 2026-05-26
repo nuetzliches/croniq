@@ -8,6 +8,7 @@ pub mod auth_middleware;
 pub mod calendars;
 pub mod dashboard;
 pub mod dead_letters;
+pub mod events_sse;
 pub mod execution_logs;
 pub mod executions;
 pub mod invitations;
@@ -123,6 +124,11 @@ pub struct ServerState {
     /// `#[serde(skip_serializing)]` so the HMAC secret cannot leak
     /// via this endpoint — verified by an integration test.
     pub alerts: croniq_config::compile::AlertsConfig,
+    /// In-memory fan-out for the Live Console (issue #141). `None` in
+    /// tests and unconfigured servers — the SSE endpoint returns 503
+    /// in that case. Populated by `main.rs` from the telemetry init's
+    /// returned hub.
+    pub console_hub: Option<Arc<crate::live_console::ConsoleHub>>,
 }
 
 impl ServerState {
@@ -148,6 +154,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         })
     }
 
@@ -176,6 +183,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         })
     }
 
@@ -203,6 +211,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         })
     }
 }
@@ -223,6 +232,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/runners", get(handle_list_runners))
         .route("/v1/runners/{id}", delete(handle_delete_runner))
         .route("/v1/runners/stream", get(runners_sse::handle_runner_stream))
+        .route("/v1/events/stream", get(events_sse::handle_events_stream))
         .route("/v1/trigger", post(handle_trigger))
         // Jobs CRUD
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
@@ -1114,6 +1124,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         });
         (state, rx)
     }
@@ -1286,6 +1297,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1356,6 +1368,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
         });
         let app = server_router(Arc::clone(&state));
 
