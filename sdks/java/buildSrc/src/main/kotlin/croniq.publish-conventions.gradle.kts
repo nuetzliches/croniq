@@ -7,16 +7,25 @@
 // run with empty credentials and the plugin skips the publish-to-Central
 // path while still exercising publishToMavenLocal.
 
+import com.vanniktech.maven.publish.SonatypeHost
+
 plugins {
     id("com.vanniktech.maven.publish")
 }
 
 mavenPublishing {
-    // Stage to the new Central Portal (https://central.sonatype.com)
-    // and auto-release after the upload succeeds — no manual click in
-    // the portal UI. The release workflow's verify steps already gate
-    // the publish, so the manual stage isn't adding signal.
-    publishToMavenCentral(automaticRelease = true)
+    // Stage to the NEW Central Portal (https://central.sonatype.com) and
+    // auto-release after the upload succeeds — no manual click in the
+    // portal UI. The release workflow's verify steps already gate the
+    // publish, so the manual stage isn't adding signal.
+    //
+    // SonatypeHost.CENTRAL_PORTAL is mandatory: the Vanniktech 0.30
+    // default is SonatypeHost.DEFAULT which targets the LEGACY OSSRH UI
+    // (s01.oss.sonatype.org) via the stagingProfiles endpoint. Namespaces
+    // verified after 2024-06 — including io.github.nuetzliches — exist
+    // only on the new portal, and OSSRH responds with HTTP 402 to such
+    // accounts ("Cannot get stagingProfiles for account ...: 402").
+    publishToMavenCentral(host = SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
 
     // Maven Central rejects unsigned artefacts. The plugin reads the
     // ASCII-armored key + passphrase from ORG_GRADLE_PROJECT_signingInMemoryKey
