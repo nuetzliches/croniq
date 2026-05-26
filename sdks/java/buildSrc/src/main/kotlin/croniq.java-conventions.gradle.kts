@@ -12,12 +12,18 @@ plugins {
 // Project requires JDK 21+: virtual threads (Project Loom) are the
 // concurrency primitive used by the runner's poll loop and per-execution
 // handlers. Earlier JDKs would force a parallel implementation.
+//
+// NB: Do NOT call withSourcesJar() / withJavadocJar() here. The Vanniktech
+// maven-publish plugin (applied via croniq.publish-conventions on the
+// published modules) wires up its own sourcesJar + javadocJar tasks
+// (mavenPlainJavadocJar et al.) and configures the publication with them.
+// Layering withJavadocJar() on top produces a duplicate-classifier publish
+// error ("multiple artifacts with the identical extension and classifier
+// ('jar', 'javadoc')").
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
-    withSourcesJar()
-    withJavadocJar()
 }
 
 tasks.withType<JavaCompile>().configureEach {
