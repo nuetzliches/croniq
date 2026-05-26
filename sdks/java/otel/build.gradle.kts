@@ -9,8 +9,12 @@ plugins {
 
 description = "OpenTelemetry instrumentation for the Croniq Runner SDK."
 
-publishing {
-  publications.named<MavenPublication>("maven") { artifactId = "runner-opentelemetry" }
+// Vanniktech maven-publish (applied via croniq.publish-conventions) creates
+// its own `maven` publication lazily; the legacy `publications.named` form
+// here used to belong to the OSSRH plugin and is no longer wired. Match the
+// idiom used by the other published modules.
+mavenPublishing {
+  coordinates(project.group.toString(), "runner-opentelemetry", project.version.toString())
 }
 
 dependencies {
