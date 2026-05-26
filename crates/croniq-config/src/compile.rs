@@ -1418,6 +1418,52 @@ mod tests {
     }
 
     #[test]
+    fn compile_job_tags_directive_populates_tags() {
+        let ast = Parser::parse(
+            r#"
+            job billing:invoice {
+                every 15 minutes
+                tags "env=prod" "team=ops"
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs.len(), 1);
+        assert_eq!(
+            cfg.jobs[0].tags,
+            vec!["env=prod".to_string(), "team=ops".to_string()],
+            "DSL `tags` args must populate JobConfig.tags in order"
+        );
+    }
+
+    #[test]
+    fn compile_job_tags_dedupes_preserving_first_occurrence() {
+        let ast = Parser::parse(
+            r#"
+            job etl:sync {
+                every 15 minutes
+                tags "env=prod" "team=ops" "env=prod"
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].tags,
+            vec!["env=prod".to_string(), "team=ops".to_string()],
+            "duplicate tag values collapse, keeping first-seen order"
+        );
+    }
+
+    #[test]
+    fn compile_job_without_tags_directive_has_empty_tags() {
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].tags.is_empty());
+    }
+
+    #[test]
     fn vars_placeholder_resolves_in_calendar_timezone() {
         let ast = Parser::parse(
             r#"
