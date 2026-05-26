@@ -5,7 +5,7 @@
 
 Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) in Java (21+) or Kotlin. The SDK polls a Croniq server for work, dispatches typed handlers, streams structured logs back, and reports completion — using virtual threads (Project Loom), `java.net.http.HttpClient`, Jackson, and SLF4J only.
 
-> **Status:** PR-1 of [#133](https://github.com/nuetzliches/croniq/issues/133) — Gradle skeleton, CI, lint config. No runtime behaviour yet. The poll/ack loop lands in PR-2.
+> **Status:** PR-1 of [#133](https://github.com/nuetzliches/croniq/issues/133) — Gradle skeleton, CI, lint config, release wiring. No runtime behaviour yet. The poll/ack loop lands in PR-2.
 
 ## Modules
 
