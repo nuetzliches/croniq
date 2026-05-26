@@ -18,15 +18,15 @@ const MAX_BUFFER = 2000
 function levelColor(level: string): string {
   switch (level) {
     case 'error':
-      return 'var(--danger, #ef4444)'
+      return 'var(--error)'
     case 'warn':
-      return 'var(--warn, #f59e0b)'
+      return 'var(--warn)'
     case 'info':
-      return 'var(--info, #3b82f6)'
+      return 'var(--info)'
     case 'debug':
-      return 'var(--muted, #94a3b8)'
+      return 'var(--fg-3)'
     default:
-      return 'var(--text)'
+      return 'var(--fg)'
   }
 }
 
@@ -316,11 +316,9 @@ export function ConsolePage() {
         <div
           ref={listRef}
           onScroll={onScroll}
-          className="mono"
+          className="mono console-tail"
           style={{
             fontSize: 12,
-            background: 'var(--surface-2, #0b0f17)',
-            color: 'var(--text)',
             padding: 12,
             height: 'calc(100vh - 280px)',
             minHeight: 320,
