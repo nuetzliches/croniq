@@ -22,14 +22,7 @@ class ConformanceSuiteTest {
     private static final Path CASES_DIR =
             Path.of("..", "..", "conformance", "cases").toAbsolutePath().normalize();
 
-    /**
-     * Whitelist of cases this PR is expected to pass. Each subsequent PR
-     * extends the set in lockstep with the feature it implements:
-     *
-     * <ul>
-     *   <li>PR-4 adds 07, 08, 09, 10 (auth header, self-register, streaming logs).
-     * </ul>
-     */
+    /** Cases covered by the current Java SDK. Expanded as features land. */
     private static final Set<String> SCOPE = Set.of(
             // PR-2: poll/ack loop + cancellation
             "01-poll-empty.yaml",
@@ -40,7 +33,12 @@ class ConformanceSuiteTest {
             "05-lease-renewal.yaml",
             "06-drain-on-shutdown.yaml",
             "11-poll-409-conflict.yaml",
-            "12-poll-500-backoff-retry.yaml");
+            "12-poll-500-backoff-retry.yaml",
+            // PR-4: auth header assertion, self-register, streaming logs
+            "07-auth-apikey-header.yaml",
+            "08-self-register-schedule.yaml",
+            "09-streaming-logs-flush-before-ack.yaml",
+            "10-streaming-logs-time-threshold.yaml");
 
     static Stream<Arguments> cases() throws Exception {
         if (!Files.isDirectory(CASES_DIR)) {

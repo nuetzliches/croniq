@@ -75,6 +75,7 @@ public final class ExecutionDispatcher {
         // handler finishes; the virtual thread exits on its own and the JVM
         // doesn't care about lingering ones.
         Thread renewer = startRenewalLoop(work.executionId(), handle);
+        BoundedLogWriter logWriter = new BoundedLogWriter(client, work.executionId(), work.jobKey(), runnerId, options);
         String status = AckRequest.Status.SUCCESS;
         String error = null;
         try {
@@ -89,7 +90,8 @@ public final class ExecutionDispatcher {
                     timeout,
                     runnerId,
                     options.tags(),
-                    handle);
+                    handle,
+                    logWriter);
             try {
                 handler.handle(ctx);
                 // If the cancel arrived during a non-blocking handler the
@@ -121,6 +123,10 @@ public final class ExecutionDispatcher {
             log.warn("Dispatcher failure for execution {}", work.executionId(), e);
         } finally {
             renewer.interrupt();
+            // Drain log events BEFORE acking. This is the central
+            // streaming-log guarantee — late events would otherwise arrive
+            // on the server after the execution is already marked complete.
+            logWriter.closeAndDrain();
             inflight.remove(work.executionId());
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
             sendAck(work, status, error, durationMs);

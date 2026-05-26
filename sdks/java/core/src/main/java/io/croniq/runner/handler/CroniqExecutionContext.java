@@ -42,4 +42,12 @@ public interface CroniqExecutionContext {
 
     /** Cancellation handle — fires when the server requests cancellation or the runner is draining. */
     CroniqCancellation cancellation();
+
+    /**
+     * Streaming structured-log writer. Every event written here is shipped to
+     * the server via {@code POST /v1/work/{execution_id}/events}; the dispatcher
+     * drains and closes the writer before sending the final ack, so log lines
+     * for an execution always land before the execution is marked complete.
+     */
+    CroniqLogWriter logWriter();
 }
