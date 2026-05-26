@@ -133,3 +133,21 @@ The older `GET /v1/auth/oidc/config` continues to return its original
 flat shape (`{enabled, provider_name, login_url}`) and is unaffected
 by `auth.password.enabled` — keep using it if you have an external
 probe that only cares about the SSO half.
+
+### Demo-only seed flags
+
+The docker entrypoint understands two opt-in env vars for the
+marketing demo image. **Neither belongs in any production deployment.**
+
+| Variable | Effect |
+|---|---|
+| `CRONIQ_DEMO_MODE=1` | Allows `CRONIQ_ADMIN_PASSWORD=admin`. Without it, the entrypoint refuses to start with a fixed `admin` password. |
+| `CRONIQ_DEMO_MFA=1` | Pre-enables TOTP on the seeded admin and bakes the literal recovery code `123456` into all 10 slots. `admin/admin` then lands on the MFA prompt; typing `123456` completes login. The TOTP secret itself is still randomly generated, so a real authenticator code (if the secret is retrieved out-of-band) keeps working. |
+
+`CRONIQ_DEMO_MFA=1` set on its own (without `CRONIQ_DEMO_MODE=1`)
+emits a warning at first-boot init but still runs — the demo flag
+isn't gated by the demo-mode guard so the warning is the only line
+of defence against accidental production use.
+
+Both flags are read by `croniq init` at first-boot only; they do
+nothing on subsequent restarts where the database already exists.

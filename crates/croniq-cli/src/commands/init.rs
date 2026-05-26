@@ -8,12 +8,23 @@ use std::path::Path;
 
 use chrono::Utc;
 use croniq_auth::api_key::hash_api_key;
+use croniq_auth::crypto::wrap_totp_secret;
+use croniq_auth::jwt_secret;
 use croniq_auth::password::hash_password;
-use croniq_store::models::{ApiClient, ApiKey, PasswordCredential, Role, User};
+use croniq_auth::totp::{enroll_user, hash_recovery_code};
+use croniq_store::models::{
+    ApiClient, ApiKey, PasswordCredential, RecoveryCode, Role, TotpSecret, User,
+};
 use croniq_store::sqlite::SqliteStore;
 use croniq_store::traits::AuthStore;
 use miette::{IntoDiagnostic, Result, miette};
 use uuid::Uuid;
+
+/// Recovery code baked into the demo seed so a marketing walkthrough
+/// can reach the MFA step at `admin/admin` and complete it with a
+/// fixed code. Mirrored from issue #137 — never use outside the demo
+/// image.
+const DEMO_MFA_RECOVERY_CODE: &str = "123456";
 
 pub fn init(
     data_dir: &Path,
@@ -21,6 +32,7 @@ pub fn init(
     password: Option<&str>,
     api_key_override: Option<&str>,
     scopes: Option<Vec<String>>,
+    demo_mfa: bool,
 ) -> Result<()> {
     // Validate `--api-key` and `--scopes` up front, before any disk/DB writes,
     // so a malformed key cannot leave behind a half-initialized DB (admin user
@@ -138,6 +150,17 @@ pub fn init(
         None
     };
 
+    // Demo-only: pre-enable TOTP so a marketing walkthrough of admin/admin
+    // hits the MFA step instead of jumping straight to the dashboard. Real
+    // TOTP codes are time-based, so we bake "123456" into one of the
+    // recovery codes — operators in the demo image type that at the
+    // recovery prompt. The TOTP secret is generated normally so anyone who
+    // scans the (unprinted) QR with an authenticator app still gets valid
+    // 6-digit codes side-by-side with the fixed recovery code.
+    if demo_mfa {
+        seed_demo_mfa(&store, &user_id, username, data_dir, now)?;
+    }
+
     println!();
     println!("=== Initialization complete ===");
     println!();
@@ -171,4 +194,152 @@ pub fn init(
     );
 
     Ok(())
+}
+
+/// Pre-enable TOTP for the seeded admin and bake `123456` into every
+/// recovery slot so the demo image's MFA walkthrough works repeatedly
+/// (recovery codes are single-use; one shared value across all 10 slots
+/// gives ~10 demo logins per container reseed).
+///
+/// The TOTP secret itself is generated normally — authenticator codes
+/// derived from it also continue to work, so an operator can scan the
+/// QR (if surfaced separately) in addition to typing the fixed code.
+///
+/// Issue: #137. Production seeds must never call this.
+fn seed_demo_mfa(
+    store: &SqliteStore,
+    user_id: &str,
+    username: &str,
+    data_dir: &Path,
+    now: chrono::DateTime<Utc>,
+) -> Result<()> {
+    // Encrypting the TOTP seed requires the same JWT secret the server
+    // will load on its next boot. `ensure` creates `<data_dir>/jwt.secret`
+    // if missing; the server's identical fallback path then reads the
+    // value we just persisted instead of generating its own. (Servers
+    // that set Croniqfile `pull_api.auth` or `CRONIQ_JWT_SECRET` win
+    // over the file — those overrides must agree with our environment
+    // at init time, otherwise the demo TOTP unwrap fails at login. This
+    // is acceptable for a demo-only flag.)
+    let jwt_secret =
+        jwt_secret::ensure(data_dir).map_err(|e| miette!("Failed to obtain JWT secret: {e}"))?;
+
+    let enrolment =
+        enroll_user(username).map_err(|e| miette!("Failed to generate TOTP enrolment: {e}"))?;
+
+    let secret_enc = wrap_totp_secret(&jwt_secret, enrolment.secret_b32.as_bytes())
+        .map_err(|e| miette!("Failed to wrap TOTP secret: {e}"))?;
+
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user_id.to_string(),
+            secret_enc,
+            // Skip the `/totp/confirm` step — the demo flow always wants
+            // the login to step up to MFA, with no setup ceremony.
+            enabled: true,
+            confirmed_at: Some(now),
+            created_at: now,
+        })
+        .map_err(|e| miette!("Failed to persist TOTP secret: {e}"))?;
+
+    let fixed_hash = hash_recovery_code(DEMO_MFA_RECOVERY_CODE);
+    let codes: Vec<RecoveryCode> = (0..enrolment.recovery_codes.len())
+        .map(|_| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user_id.to_string(),
+            code_hash: fixed_hash.clone(),
+            used_at: None,
+            created_at: now,
+        })
+        .collect();
+
+    store
+        .recovery_codes_replace_all(user_id, &codes)
+        .map_err(|e| miette!("Failed to persist recovery codes: {e}"))?;
+
+    println!();
+    println!(
+        "Demo MFA seeded: login at '{}/admin' triggers the MFA step.",
+        username
+    );
+    println!(
+        "  Recovery code '{}' is accepted up to {} times (single-use slots).",
+        DEMO_MFA_RECOVERY_CODE,
+        codes.len()
+    );
+    println!("  Production seeds must never set CRONIQ_DEMO_MFA=1 / --demo-mfa.");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tempdir() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("croniq-init-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Locate the seeded admin's user_id by going through the password
+    /// credential row (the only auth row keyed by username; the User
+    /// table is keyed by UUID and has no direct username index in the
+    /// AuthStore trait).
+    fn admin_user_id(store: &SqliteStore, username: &str) -> String {
+        store
+            .get_credentials(username)
+            .unwrap()
+            .expect("admin credential row")
+            .user_id
+    }
+
+    #[test]
+    fn default_init_does_not_seed_mfa() {
+        let dir = tempdir();
+        init(&dir, "admin", Some("pw"), None, None, false).unwrap();
+        let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
+        let user_id = admin_user_id(&store, "admin");
+
+        assert!(
+            store.totp_get(&user_id).unwrap().is_none(),
+            "no TOTP row should exist when --demo-mfa is off"
+        );
+    }
+
+    #[test]
+    fn demo_mfa_seeds_enabled_totp_and_fixed_recovery_code() {
+        let dir = tempdir();
+        init(&dir, "admin", Some("pw"), None, None, true).unwrap();
+        let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
+        let user_id = admin_user_id(&store, "admin");
+
+        let totp = store
+            .totp_get(&user_id)
+            .unwrap()
+            .expect("demo-MFA must persist a TOTP row");
+        assert!(totp.enabled, "demo TOTP must skip the /totp/confirm step");
+        assert!(
+            totp.confirmed_at.is_some(),
+            "confirmed_at should be stamped"
+        );
+        assert!(
+            !totp.secret_enc.is_empty(),
+            "secret_enc must be a real wrap, not blank"
+        );
+
+        let hash = hash_recovery_code(DEMO_MFA_RECOVERY_CODE);
+        let matched = store
+            .recovery_codes_find_unused(&user_id, &hash)
+            .unwrap()
+            .expect("recovery code '123456' must be unused and findable");
+        assert_eq!(matched.user_id, user_id);
+        // All slots share the same hash → unused-count should match
+        // RECOVERY_CODE_COUNT (consumed only after first login).
+        let unused = store.recovery_codes_count_unused(&user_id).unwrap();
+        assert!(
+            unused >= 1,
+            "at least one recovery slot must be available for the demo"
+        );
+    }
 }

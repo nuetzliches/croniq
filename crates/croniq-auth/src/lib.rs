@@ -10,6 +10,7 @@ pub mod api_key;
 pub mod context;
 pub mod crypto;
 pub mod jwt;
+pub mod jwt_secret;
 pub mod password;
 pub mod totp;
 
