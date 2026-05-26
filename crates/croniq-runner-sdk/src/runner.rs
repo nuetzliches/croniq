@@ -436,8 +436,7 @@ impl CroniqRunner {
                                 // inflight slot (issue #176). The abort handle
                                 // is registered under the execution id so the
                                 // poll loop can reach it.
-                                let handler_task =
-                                    tokio::spawn(async move { handler(ctx).await });
+                                let handler_task = tokio::spawn(async move { handler(ctx).await });
                                 aborts
                                     .write()
                                     .await
