@@ -39,8 +39,8 @@ use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::JwtConfig;
 use croniq_runner::{
-    AppState, CompleteResponse, RunnerStatus, RunnerSummary, TriggerRequest, TriggerResponse,
-    WorkAssignment, WorkItem,
+    AppState, CompleteResponse, RegisterOutcome, RunnerStatus, RunnerSummary, TriggerRequest,
+    TriggerResponse, WorkAssignment, WorkItem,
     types::{CompleteRequest, HealthResponse, PollRequest, PollResponse},
 };
 use croniq_scheduler::trigger::Trigger;
@@ -425,30 +425,84 @@ async fn handle_poll(
             }),
         );
     }
-    // Update registry heartbeat
-    {
+    // Update registry heartbeat. The `_with_ttl` variant lets us pass the
+    // configured `lease_ttl_secs` so that a new instance reconnecting under
+    // the same `runner_id` after the previous session went silent gets to
+    // take over inline instead of being rejected with 409 until the next
+    // watchdog sweep (issue #190).
+    let outcome = {
         let mut reg = state.runner.registry.write().await;
-        let result = reg.register_or_update(
+        match reg.register_or_update_with_ttl(
             &req.runner_id,
             req.capabilities.clone(),
             req.max_inflight,
             req.inflight.clone(),
             req.instance_id.clone(),
             req.tags.clone(),
+            state.runner.lease_ttl_secs,
+        ) {
+            Ok(outcome) => outcome,
+            Err(conflict) => {
+                tracing::warn!(
+                    runner_id = %req.runner_id,
+                    conflicting_instance = %conflict,
+                    "runner instance conflict — another instance already registered"
+                );
+                return (
+                    StatusCode::CONFLICT,
+                    Json(PollResponse {
+                        work: vec![],
+                        cancel: vec![],
+                    }),
+                );
+            }
+        }
+    };
+
+    if let RegisterOutcome::TookOver {
+        previous_instance_id,
+    } = &outcome
+    {
+        tracing::warn!(
+            runner_id = %req.runner_id,
+            previous_instance = %previous_instance_id,
+            new_instance = ?req.instance_id,
+            "runner reconnected under same id after previous session went dead — taking over"
         );
-        if let Err(conflict) = result {
-            tracing::warn!(
-                runner_id = %req.runner_id,
-                conflicting_instance = %conflict,
-                "runner instance conflict — another instance already registered"
-            );
-            return (
-                StatusCode::CONFLICT,
-                Json(PollResponse {
-                    work: vec![],
-                    cancel: vec![],
-                }),
-            );
+        // Requeue any executions still claimed-in-store by this runner_id.
+        // Without this, the next watchdog sweep wouldn't see the dead
+        // session (we just evicted it) and the orphaned claimed rows would
+        // sit forever.
+        if let Some(ref store) = state.store {
+            let now = Utc::now();
+            let dsl_jobs_snapshot = match state.dsl_jobs {
+                Some(ref jobs) => jobs.read().await.clone(),
+                None => Vec::new(),
+            };
+            let store_clone = Arc::clone(store);
+            let requeued = crate::watchdog::requeue_abandoned_for_runner(
+                store,
+                &state.runner,
+                &req.runner_id,
+                now,
+                |job_key| {
+                    if let Some(c) = dsl_jobs_snapshot.iter().find(|j| j.key == job_key) {
+                        return Some(c.clone());
+                    }
+                    match store_clone.get_job_definition(job_key) {
+                        Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                        _ => None,
+                    }
+                },
+            )
+            .await;
+            if !requeued.is_empty() {
+                tracing::info!(
+                    runner_id = %req.runner_id,
+                    count = requeued.len(),
+                    "inline takeover: requeued abandoned executions"
+                );
+            }
         }
     }
 

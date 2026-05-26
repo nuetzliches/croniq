@@ -6,6 +6,25 @@ use chrono::{DateTime, Utc};
 
 use crate::types::{Runner, RunnerStatus};
 
+/// Default dead-threshold used by `register_or_update`. Matches the default
+/// `lease_ttl_secs` on `AppState` (see `api.rs`). Production code that knows
+/// the configured threshold should call `register_or_update_with_ttl`.
+const DEFAULT_DEAD_THRESHOLD_SECS: u64 = 120;
+
+/// Result of a successful `register_or_update` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterOutcome {
+    /// First-ever registration for this runner_id.
+    New,
+    /// Existing entry was refreshed (heartbeat/inflight/capabilities updated).
+    Updated,
+    /// The previous instance was past the dead-threshold and has been replaced
+    /// by this new instance. The caller should treat any executions still
+    /// claimed by this `runner_id` in the persistent store as abandoned and
+    /// requeue them — otherwise they remain orphaned (issue #190).
+    TookOver { previous_instance_id: String },
+}
+
 /// In-memory registry of all runners that have ever polled.
 ///
 /// All access is synchronous; callers should wrap this in `Arc<RwLock<_>>`
@@ -20,13 +39,10 @@ impl RunnerRegistry {
         Self::default()
     }
 
-    /// Register a new runner or update an existing one's heartbeat and state.
-    ///
-    /// Returns `true` if this was a new registration, `false` for an update.
-    /// Register or update a runner. Returns:
-    /// - `Ok(true)` if this is a new registration
-    /// - `Ok(false)` if this is an update to an existing runner
-    /// - `Err(conflict_instance_id)` if another instance already owns this runner_id
+    /// Register a runner or refresh its heartbeat. Uses a default 120 s
+    /// dead-threshold for stale-instance takeover (see issue #190).
+    /// Production paths that know the configured `lease_ttl_secs` should
+    /// call [`Self::register_or_update_with_ttl`] instead.
     pub fn register_or_update(
         &mut self,
         runner_id: impl Into<String>,
@@ -35,21 +51,64 @@ impl RunnerRegistry {
         inflight: Vec<String>,
         instance_id: Option<String>,
         tags: Vec<String>,
-    ) -> Result<bool, String> {
+    ) -> Result<RegisterOutcome, String> {
+        self.register_or_update_with_ttl(
+            runner_id,
+            capabilities,
+            max_inflight,
+            inflight,
+            instance_id,
+            tags,
+            DEFAULT_DEAD_THRESHOLD_SECS,
+        )
+    }
+
+    /// Like [`Self::register_or_update`] but lets the caller specify the
+    /// dead-threshold used for stale-instance takeover. When a new
+    /// `instance_id` arrives for an existing `runner_id` and the existing
+    /// entry's `last_poll_at` is older than `dead_threshold_secs`, the old
+    /// session is evicted inline and the new one accepted — without this,
+    /// the new instance is locked out until the watchdog sweep runs
+    /// (up to ~10 minutes; issue #190).
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_or_update_with_ttl(
+        &mut self,
+        runner_id: impl Into<String>,
+        capabilities: Vec<String>,
+        max_inflight: u32,
+        inflight: Vec<String>,
+        instance_id: Option<String>,
+        tags: Vec<String>,
+        dead_threshold_secs: u64,
+    ) -> Result<RegisterOutcome, String> {
         let id = runner_id.into();
         let now = Utc::now();
+        let mut took_over: Option<String> = None;
 
-        // Instance guard: check for conflicting instance_id
+        // Instance guard: a new instance_id arriving for an existing runner_id
+        // is either a real conflict (two processes racing for the same id) or
+        // a takeover (the old process died and a replacement is reconnecting).
+        // We disambiguate by checking liveness.
         if let Some(ref new_iid) = instance_id
             && let Some(existing) = self.runners.get(&id)
             && let Some(ref old_iid) = existing.instance_id
             && old_iid != new_iid
         {
-            // Different instance trying to use the same runner_id
-            return Err(old_iid.clone());
+            if existing.status_at_with_ttl(now, dead_threshold_secs) == RunnerStatus::Dead {
+                took_over = Some(old_iid.clone());
+                self.runners.remove(&id);
+            } else {
+                return Err(old_iid.clone());
+            }
         }
 
-        let is_new = !self.runners.contains_key(&id);
+        let outcome = match &took_over {
+            Some(prev) => RegisterOutcome::TookOver {
+                previous_instance_id: prev.clone(),
+            },
+            None if self.runners.contains_key(&id) => RegisterOutcome::Updated,
+            None => RegisterOutcome::New,
+        };
 
         let runner = self.runners.entry(id.clone()).or_insert_with(|| Runner {
             runner_id: id,
@@ -71,7 +130,7 @@ impl RunnerRegistry {
             runner.instance_id = instance_id;
         }
 
-        Ok(is_new)
+        Ok(outcome)
     }
 
     /// Remove a runner from the registry.
@@ -171,8 +230,8 @@ mod tests {
     #[test]
     fn register_new_runner() {
         let mut reg = RunnerRegistry::new();
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
-        assert!(is_new.unwrap());
+        let outcome = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
+        assert_eq!(outcome.unwrap(), RegisterOutcome::New);
         assert_eq!(reg.len(), 1);
     }
 
@@ -185,8 +244,8 @@ mod tests {
         // Simulate time passing by sleeping 1ms (not ideal but cheap)
         std::thread::sleep(std::time::Duration::from_millis(5));
 
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
-        assert!(!is_new.unwrap());
+        let outcome = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
+        assert_eq!(outcome.unwrap(), RegisterOutcome::Updated);
         let second_poll = reg.get("r1").unwrap().last_poll_at;
         assert!(second_poll > first_poll);
     }
@@ -284,6 +343,72 @@ mod tests {
         assert_eq!(online[0].runner_id, "online");
         assert_eq!(dead.len(), 1);
         assert_eq!(dead[0].runner_id, "dead");
+    }
+
+    #[test]
+    fn fresh_instance_conflict_is_rejected() {
+        // Two processes racing for the same runner_id, both alive — the
+        // second one must be told to back off.
+        let mut reg = RunnerRegistry::new();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
+            .unwrap();
+
+        let err = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap_err();
+
+        assert_eq!(err, "instance-A");
+        assert_eq!(
+            reg.get("r1").unwrap().instance_id.as_deref(),
+            Some("instance-A")
+        );
+    }
+
+    #[test]
+    fn stale_instance_is_evicted_on_takeover() {
+        // Issue #190: a new instance polling for an existing runner_id must
+        // not be locked out for the full watchdog sweep when the old session
+        // is past dead-threshold. The conflict path should evict the dead
+        // entry inline and accept the new instance.
+        let mut reg = RunnerRegistry::new();
+        reg.runners.insert(
+            "r1".into(),
+            Runner {
+                runner_id: "r1".into(),
+                capabilities: vec!["backup".into()],
+                max_inflight: 1,
+                last_poll_at: now() - Duration::seconds(600), // well past 120 s dead-threshold
+                inflight: vec!["exec-orphan".into()],
+                instance_id: Some("instance-old".into()),
+                tags: vec![],
+            },
+        );
+
+        let outcome = reg
+            .register_or_update_with_ttl(
+                "r1",
+                vec!["backup".into()],
+                1,
+                vec![],
+                Some("instance-new".into()),
+                vec![],
+                120,
+            )
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            RegisterOutcome::TookOver {
+                previous_instance_id: "instance-old".into()
+            }
+        );
+
+        let r = reg.get("r1").unwrap();
+        assert_eq!(r.instance_id.as_deref(), Some("instance-new"));
+        // The old inflight list is gone — the caller is responsible for
+        // requeuing those executions from the store.
+        assert!(r.inflight.is_empty());
     }
 
     #[test]

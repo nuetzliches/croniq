@@ -42,6 +42,89 @@ pub struct WatchdogResult {
     pub sla_missed: Vec<(String, uuid::Uuid)>,
 }
 
+/// Requeue all executions still claimed by `runner_id` in the persistent
+/// store and re-enqueue them onto the in-memory work queue. Shared between
+/// the watchdog sweep and the inline-takeover path in the poll handler
+/// (issue #190).
+///
+/// `resolve_job_config` is invoked once per requeued execution to rebuild the
+/// `WorkItem`'s require/prefer/timeout fields. Returns the list of execution
+/// IDs that were marked queued (possibly empty). Executions whose job config
+/// can't be resolved are skipped with a warn-level log — the store row is
+/// still flipped to `queued`, the watchdog will pick it up again later.
+pub async fn requeue_abandoned_for_runner<F>(
+    store: &DynStore,
+    runner: &Arc<AppState>,
+    runner_id: &str,
+    now: DateTime<Utc>,
+    mut resolve_job_config: F,
+) -> Vec<uuid::Uuid>
+where
+    F: FnMut(&str) -> Option<JobConfig>,
+{
+    let requeued_ids = match store.requeue_abandoned(runner_id, now) {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(
+                runner_id = %runner_id,
+                error = %e,
+                "requeue_abandoned: store error"
+            );
+            return vec![];
+        }
+    };
+
+    if requeued_ids.is_empty() {
+        return requeued_ids;
+    }
+
+    let mut enqueued = 0usize;
+    for exec_id in &requeued_ids {
+        let execution = match store.get_execution(*exec_id) {
+            Ok(Some(e)) => e,
+            Ok(None) => {
+                tracing::warn!(id = %exec_id, "requeue_abandoned: execution not found in store");
+                continue;
+            }
+            Err(e) => {
+                tracing::error!(id = %exec_id, error = %e, "requeue_abandoned: store read error");
+                continue;
+            }
+        };
+
+        let job = match resolve_job_config(&execution.job_key) {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    "requeue_abandoned: job not in DSL or store — leaving queued for next sweep"
+                );
+                continue;
+            }
+        };
+
+        let item = WorkItem {
+            execution_id: exec_id.to_string(),
+            job_key: execution.job_key.clone(),
+            fire_at: execution.fire_at,
+            attempt: execution.attempt,
+            require: job.runner.require.clone(),
+            prefer: job.runner.prefer.clone(),
+            metadata: serde_json::json!(execution.metadata),
+            timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+        };
+
+        runner.queue.write().await.enqueue(item);
+        enqueued += 1;
+    }
+
+    if enqueued > 0 {
+        runner.work_notify.notify_waiters();
+    }
+
+    requeued_ids
+}
+
 /// In-memory set of `(rule_name, execution_id)` pairs that have
 /// already received an SLA-miss alert. Prevents the watchdog from
 /// re-alerting every sweep for the same long-running execution.
@@ -155,18 +238,14 @@ impl WatchdogLoop {
         // SLA-miss sweep (step 5, issue #140 PR-4) always need to
         // run, so we DON'T early-return when dead_ids is empty.
         for runner_id in &dead_ids {
-            // 2a. Mark abandoned executions as queued again in the store
-            let requeued_ids = match self.store.requeue_abandoned(runner_id, now) {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::error!(
-                        runner_id = %runner_id,
-                        error = %e,
-                        "watchdog: failed to requeue abandoned executions"
-                    );
-                    continue;
-                }
-            };
+            let requeued_ids = requeue_abandoned_for_runner(
+                &self.store,
+                &self.runner,
+                runner_id,
+                now,
+                |job_key| self.resolve_job_config(job_key),
+            )
+            .await;
 
             if requeued_ids.is_empty() {
                 tracing::debug!(runner_id = %runner_id, "watchdog: dead runner had no inflight executions");
@@ -174,57 +253,13 @@ impl WatchdogLoop {
                 tracing::warn!(
                     runner_id = %runner_id,
                     count = requeued_ids.len(),
-                    "watchdog: requeuing abandoned executions from dead runner"
+                    "watchdog: requeued abandoned executions from dead runner"
                 );
             }
 
-            // 2b. Rebuild and enqueue WorkItems for each requeued execution
             for exec_id in &requeued_ids {
-                let execution = match self.store.get_execution(*exec_id) {
-                    Ok(Some(e)) => e,
-                    Ok(None) => {
-                        tracing::warn!(id = %exec_id, "watchdog: requeued execution not found in store");
-                        continue;
-                    }
-                    Err(e) => {
-                        tracing::error!(id = %exec_id, error = %e, "watchdog: store read error");
-                        continue;
-                    }
-                };
-
-                let job = match self.resolve_job_config(&execution.job_key) {
-                    Some(c) => c,
-                    None => {
-                        tracing::warn!(
-                            job_key = %execution.job_key,
-                            "watchdog: job not in DSL or store — cannot requeue abandoned execution"
-                        );
-                        continue;
-                    }
-                };
-
-                let item = WorkItem {
-                    execution_id: exec_id.to_string(),
-                    job_key: execution.job_key.clone(),
-                    fire_at: execution.fire_at,
-                    attempt: execution.attempt,
-                    require: job.runner.require.clone(),
-                    prefer: job.runner.prefer.clone(),
-                    metadata: serde_json::json!(execution.metadata),
-                    timeout: job.timeout.unwrap_or_else(|| "5m".into()),
-                };
-
-                self.runner.queue.write().await.enqueue(item);
                 result.requeued.push(*exec_id);
-
-                tracing::info!(
-                    execution_id = %exec_id,
-                    runner_id = %runner_id,
-                    attempt = execution.attempt,
-                    "watchdog: execution requeued"
-                );
             }
-
             result.dead_runners.push(runner_id.clone());
         }
 
