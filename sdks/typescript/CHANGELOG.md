@@ -5,7 +5,7 @@
 Initial release. Implements the Croniq runner protocol:
 
 - Poll / ack / renew / events / register endpoints (`/v1/work/*`, `/v1/jobs/register`).
-- ESM-first, Node 18+, native `fetch` and `AbortController`.
+- ESM-first, Node 20+, native `fetch` and `AbortController`.
 - Streaming `LogWriter` with batch-by-count, batch-by-time, drain-before-ack semantics.
 - Per-execution `AbortSignal` honouring `PollResponse.cancel`.
 - Self-registration of schedule-bearing handlers at startup.

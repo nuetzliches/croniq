@@ -54,9 +54,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ESM is Node's default since v18; we promise that floor in package.json
-        # `engines.node`. 18.x = LTS floor, 20.x = current LTS, 22.x = next LTS.
-        node: ['18', '20', '22']
+        # 20.x = LTS floor (Node 18 EOL'd 2025-04-30, transitive npm deps in
+        # the @nuetzliches/croniq-runner tree have started dropping support).
+        # 22.x = current LTS, 24.x = next LTS line.
+        node: ['20', '22', '24']
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
