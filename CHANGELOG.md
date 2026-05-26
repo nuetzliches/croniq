@@ -6,7 +6,133 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-26
+
 ### Added
+
+- **Failure alerts: rules + multi-channel dispatch supersede
+  `CRONIQ_ON_FAILURE_CMD`
+  ([#140](https://github.com/nuetzliches/croniq/issues/140)).** A new
+  top-level `alerts { … }` block in the Croniqfile lets operators
+  declare named channels and per-rule routing for permanent failures
+  *and* SLA misses. Six PRs landed end-to-end:
+  - **PR-1 foundation**
+    ([#146](https://github.com/nuetzliches/croniq/pull/146)) — DSL
+    parser, evaluator, shell channel, in-process `(rule, job_key)`
+    throttle map, `alert_deliveries` table (migration 017), audit
+    hook. The legacy `CRONIQ_ON_FAILURE_CMD` env-var is auto-
+    synthesised as a single rule pointing at a shell channel, so
+    existing operators upgrade with no Croniqfile changes.
+  - **PR-2 webhook channel**
+    ([#147](https://github.com/nuetzliches/croniq/pull/147)) —
+    `webhook { url … sign hmac {env.SECRET} timeout 5s }` with
+    HMAC-SHA256 signing (`X-Croniq-Signature` header) and one
+    exponential-backoff retry on 5xx / network failure. The signing
+    key is `#[serde(skip_serializing)]` so it never leaks via
+    `/v1/alerts/config`.
+  - **PR-3 email channel**
+    ([#150](https://github.com/nuetzliches/croniq/pull/150)) —
+    multi-recipient `email "ops@…" "oncall@…"` using the existing
+    `EmailSender` trait, so the same SMTP transport feeds invitations,
+    password resets, *and* alerts. `NoopSender` keeps working as the
+    log-only fallback when SMTP isn't configured.
+  - **PR-4 `job_sla_missed` trigger**
+    ([#155](https://github.com/nuetzliches/croniq/pull/155)) — the
+    watchdog sweeps in-flight executions every ~30 s; rules with
+    `when job_sla_missed` + `expected_within 15m` fire once per
+    `(rule, execution_id)` (dedup set prevents re-firing while the
+    execution stays in-flight). Shares `dispatch_rule` with the
+    failure path so `throttle 10m` applies across both trigger types
+    on the same `(rule, job_key)`.
+  - **PR-5 read-only API**
+    ([#161](https://github.com/nuetzliches/croniq/pull/161)) —
+    `GET /v1/alerts/config` (effective rules + channels, secrets
+    stripped), `GET /v1/alerts/deliveries?job_key=…&state=…` (with
+    `since`, `rule_name`, `limit ≤ 500`), and a single-row
+    `GET /v1/alerts/deliveries/{id}` for the UI detail pane. New
+    `alerts:read` scope.
+  - **PR-6 operator UI**
+    ([#163](https://github.com/nuetzliches/croniq/pull/163)) — new
+    top-level `/alerts` page (Configuration + Recent deliveries tabs,
+    15 s polling), sidebar entry, and a `job_key`-scoped slice of the
+    delivery log under Jobs → Alerts.
+
+  Migration: `017_alert_deliveries.sql`. See
+  [`docs/operations.md`](docs/operations.md) for the directive
+  reference and the legacy env-var fallback path.
+
+- **Operators can disable password login via
+  `auth.password.enabled`
+  ([#138](https://github.com/nuetzliches/croniq/issues/138),
+  [#144](https://github.com/nuetzliches/croniq/pull/144)).** New
+  top-level DSL block:
+  ```hcl
+  auth {
+    password { enabled false }
+  }
+  ```
+  Env override: `CRONIQ_PASSWORD_LOGIN_ENABLED=false`. The server
+  refuses to start when *both* password and OIDC are disabled, with a
+  clear error pointing at the DSL block. When the flag is off,
+  `POST /v1/auth/login`, `POST /v1/auth/login/totp`, and the
+  password-reset endpoints all return `403 {"error": "password login
+  disabled"}`. PAT minting (which only authenticated users can reach)
+  is unaffected. New combined probe `GET /v1/auth/config` surfaces
+  both auth-method gates (`oidc.enabled`, `password.enabled`) in a
+  single response so the UI login page renders the correct flow
+  without parsing JWT internals.
+
+- **Public `GET /version` endpoint
+  ([#135](https://github.com/nuetzliches/croniq/issues/135),
+  [#136](https://github.com/nuetzliches/croniq/pull/136)).**
+  Anonymous version probe — returns `{ version, git_sha, build_time,
+  env }` for monitoring / orchestrator health checks. No auth, no
+  user-controllable input, safe behind public load balancers.
+  Complements the existing authenticated `GET /v1/version`.
+
+- **Language-agnostic YAML conformance suite for runner SDKs.** New
+  [`sdks/conformance/`](sdks/conformance) tree with shared
+  `cases/*.yaml` test scenarios and a `schema/` JSON Schema that the
+  CI pipeline validates on every push. Each SDK ships a small binding
+  shim that loads the YAML and executes the cases against the
+  conformance protocol. Currently covers register / poll / claim /
+  ack / nack / streaming-log batching / graceful drain. Used by the
+  .NET, Go, Python, and TypeScript SDKs to guarantee
+  protocol-equivalence — see
+  [`sdks/conformance/README.md`](sdks/conformance/README.md).
+
+- **First-class .NET 8 + .NET 10 runner SDK
+  ([#129](https://github.com/nuetzliches/croniq/pull/129)).**
+  `Croniq.Runner.Sdk` (and the optional
+  `Croniq.Runner.Sdk.OpenTelemetry` extension) ship as NuGet packages
+  with `Microsoft.Extensions.Hosting` integration, bundled OTLP
+  exporter, streaming-log forwarding (`LogWriter` with bounded
+  backpressure + batch-by-32 / batch-by-200 ms), per-execution
+  `CancellationToken` honouring server-driven cancellation, drain-
+  before-ack on shutdown, and self-registration of schedule-bearing
+  handlers. `ApiKey` / `Bearer` credential precedence matches the
+  server contract. Source at [`sdks/dotnet/`](sdks/dotnet); first
+  release tag is `dotnet-sdk-v0.1.0`.
+
+- **Go runner SDK
+  ([#131](https://github.com/nuetzliches/croniq/issues/131),
+  [#149](https://github.com/nuetzliches/croniq/pull/149)).** Module
+  `github.com/nuetzliches/croniq/sdks/go` with idiomatic
+  `croniq.Run(ctx, opts, handler)` API, graceful drain on
+  SIGINT/SIGTERM, structured logging, and an optional
+  `sdks/go/otel` sub-module for OTLP trace + log export. Passes the
+  full conformance suite. First release tag: `sdks/go/v0.1.0`
+  (plus `sdks/go/otel/v0.1.0`).
+
+- **Python runner SDK
+  ([#130](https://github.com/nuetzliches/croniq/issues/130),
+  [#158](https://github.com/nuetzliches/croniq/pull/158)).** Package
+  `croniq-sdk` on PyPI, Python ≥ 3.11. Async-first
+  (`croniq.run_runner(...)`) with sync handler bridging via a
+  thread pool, streaming-log forwarding, graceful drain, and
+  pluggable OTel propagation. Source at
+  [`sdks/python/`](sdks/python); first release tag is
+  `python-sdk-v0.1.0`.
 
 - **Automated .NET SDK release pipeline.** New workflow
   `.github/workflows/dotnet-sdk-release.yml` triggers on
@@ -231,6 +357,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `croniq_auth::JWT_ISSUER` — future migrations follow the same `-vN`
   pattern.
   ([`crates/croniq-auth/src/jwt.rs`](crates/croniq-auth/src/jwt.rs))
+
+### Fixed
+
+- **`apiFetch` no longer treats `204 No Content` as a JSON parse
+  failure
+  ([#145](https://github.com/nuetzliches/croniq/pull/145)).** DELETE
+  responses with empty bodies used to surface "Unexpected end of JSON
+  input" toasts to operators; the helper now short-circuits on 204
+  and on empty `Content-Length: 0`. Bundled with the same PR: topbar
+  visual polish (badge alignment + collapsed-sidebar hit target,
+  sidebar collapse styles forced under 768 px viewport).
+
+### Docs
+
+- **Hookaido positioning clarified — inbound-only
+  ([#142](https://github.com/nuetzliches/croniq/pull/142)).** Hookaido
+  is a plugin / module that accepts incoming webhook payloads and
+  turns them into job triggers; it is **not** an outbound
+  alert-delivery transport. README + ROADMAP were updated to remove
+  the misleading "bridge" wording. Outbound alerts are delivered by
+  Croniq's own shell / webhook / email channels (see Failure alerts
+  entry above).
 
 ## [0.14.0] - 2026-05-21
 
