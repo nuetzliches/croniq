@@ -9,13 +9,14 @@
  * {@code sdks/dotnet/src/Croniq.Runner.Sdk/}:
  *
  * <ul>
- *   <li>{@link io.croniq.runner.config} — runner options and configuration records.
+ *   <li>{@link io.croniq.runner.config} — runner options.
  *   <li>{@link io.croniq.runner.protocol} — wire-protocol DTOs derived from {@code openapi.yaml}.
- *   <li>{@link io.croniq.runner.handler} — handler interface, registration, dispatcher.
- *   <li>{@link io.croniq.runner.logging} — streaming log writer plumbing.
+ *   <li>{@link io.croniq.runner.handler} — handler interface, execution context.
  *   <li>{@link io.croniq.runner.internal} — package-private transport, scheduling, identity.
- *   <li>{@link io.croniq.runner.shell} — DSL {@code runner shell {…}} / {@code runner exec {…}} decoder.
  * </ul>
+ *
+ * <p>Future packages ({@code logging}, {@code shell}) land in later PRs of
+ * issue #133.
  *
  * <p>Wire-protocol fidelity is asserted by the shared conformance suite at
  * {@code sdks/conformance/cases/}, run against this SDK by the

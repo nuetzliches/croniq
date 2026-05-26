@@ -1,0 +1,209 @@
+package io.croniq.runner.conformance;
+
+import static org.assertj.core.api.Assertions.fail;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.croniq.runner.CroniqRunner;
+import io.croniq.runner.config.CroniqRunnerOptions;
+import java.time.Duration;
+import java.util.List;
+import org.awaitility.Awaitility;
+
+/**
+ * Drives one conformance case end-to-end: stand up the mock server, build
+ * a {@link CroniqRunner} with the case's config, run it on a worker thread,
+ * poll for expectations, then assert the recorded request stream.
+ *
+ * <p>Lifetime: each instance is single-use. Call {@link #run(CaseSpec)} once
+ * per case.
+ */
+final class ConformanceRunner {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    void run(CaseSpec spec) throws Exception {
+        try (MockServerHarness server = new MockServerHarness(spec.serverScript())) {
+            server.start();
+            CroniqRunnerOptions options = buildOptions(spec.runnerConfig(), server.baseUrl());
+
+            CroniqRunner.Builder builder = CroniqRunner.builder().options(options);
+            HandlerSentinels.applyTo(builder, spec.handlers());
+
+            CroniqRunner runner = builder.build();
+            Thread loop = Thread.ofVirtual().name("conformance-runner-loop").start(() -> {
+                try {
+                    runner.run();
+                } catch (InterruptedException ignored) {
+                    // expected on close()
+                }
+            });
+            try {
+                // Optional mid-run shutdown directive (drain cases — PR-3).
+                if (spec.shutdownAfterMs() != null) {
+                    Thread.sleep(spec.shutdownAfterMs());
+                    runner.close();
+                }
+
+                // Wait for the expectations to be satisfiable or the case's
+                // duration cap, whichever comes first. The wait is the
+                // "settling" period — there's no early-exit ack from the
+                // SDK so we just let the loop run until the deadline.
+                int durationMaxMs = spec.expectations().durationMaxMs() == null
+                        ? 5_000
+                        : spec.expectations().durationMaxMs();
+                Awaitility.await()
+                        .atMost(Duration.ofMillis(durationMaxMs))
+                        .pollInterval(Duration.ofMillis(50))
+                        .until(() -> expectationsLikelyMet(spec, server.recorded()));
+            } finally {
+                runner.close();
+                loop.join(Duration.ofSeconds(5));
+            }
+
+            assertExpectations(spec, server.recorded());
+        }
+    }
+
+    private static CroniqRunnerOptions buildOptions(CaseSpec.RunnerConfig rc, String serverUrl) {
+        var b = CroniqRunnerOptions.builder().serverUrl(serverUrl);
+        if (rc == null) {
+            return b.build();
+        }
+        if (rc.runnerId() != null) {
+            b.runnerId(rc.runnerId());
+        }
+        if (rc.runnerIdPrefix() != null) {
+            b.runnerIdPrefix(rc.runnerIdPrefix());
+        }
+        if (rc.capabilities() != null) {
+            b.capabilities(rc.capabilities());
+        }
+        if (rc.tags() != null) {
+            b.tags(rc.tags());
+        }
+        if (rc.maxInflight() != null) {
+            b.maxInflight(rc.maxInflight());
+        }
+        if (rc.apiKey() != null) {
+            b.apiKey(rc.apiKey());
+        }
+        if (rc.bearerToken() != null) {
+            b.bearerToken(rc.bearerToken());
+        }
+        if (rc.pollTimeoutMs() != null) {
+            b.pollTimeout(Duration.ofMillis(rc.pollTimeoutMs()));
+        }
+        if (rc.renewIntervalMs() != null) {
+            b.renewInterval(Duration.ofMillis(rc.renewIntervalMs()));
+        }
+        if (rc.drainTimeoutMs() != null) {
+            b.drainTimeout(Duration.ofMillis(rc.drainTimeoutMs()));
+        }
+        if (rc.pollRetryDelayMs() != null) {
+            b.pollRetryDelay(Duration.ofMillis(rc.pollRetryDelayMs()));
+        }
+        if (rc.capacityBackoffMs() != null) {
+            b.capacityBackoff(Duration.ofMillis(rc.capacityBackoffMs()));
+        }
+        return b.build();
+    }
+
+    /**
+     * Returns true once every expectation's {@code min_count} / {@code exact_count}
+     * lower bound is satisfied. Doesn't short-circuit when only max bounds remain
+     * — those need the full case window to confirm.
+     */
+    private static boolean expectationsLikelyMet(CaseSpec spec, List<MockServerHarness.RecordedRequest> recorded) {
+        if (spec.expectations() == null || spec.expectations().http() == null) {
+            return true;
+        }
+        for (var e : spec.expectations().http()) {
+            long n = recorded.stream()
+                    .filter(r -> r.matches(e.method(), e.path()))
+                    .count();
+            if (e.exactCount() != null && n < e.exactCount()) {
+                return false;
+            }
+            if (e.minCount() != null && n < e.minCount()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void assertExpectations(CaseSpec spec, List<MockServerHarness.RecordedRequest> recorded) {
+        if (spec.expectations() == null || spec.expectations().http() == null) {
+            return;
+        }
+        for (var e : spec.expectations().http()) {
+            var matches = recorded.stream()
+                    .filter(r -> r.matches(e.method(), e.path()))
+                    .toList();
+            int n = matches.size();
+            if (e.exactCount() != null && n != e.exactCount()) {
+                fail("Expected %s %s exact_count=%d, got %d. Recorded: %s"
+                        .formatted(e.method(), e.path(), e.exactCount(), n, summary(recorded)));
+            }
+            if (e.minCount() != null && n < e.minCount()) {
+                fail("Expected %s %s min_count=%d, got %d".formatted(e.method(), e.path(), e.minCount(), n));
+            }
+            if (e.maxCount() != null && n > e.maxCount()) {
+                fail("Expected %s %s max_count=%d, got %d".formatted(e.method(), e.path(), e.maxCount(), n));
+            }
+            if (e.headers() != null && !e.headers().isEmpty()) {
+                if (matches.isEmpty()) {
+                    fail("Headers expected on %s %s but no requests recorded".formatted(e.method(), e.path()));
+                }
+                var first = matches.get(0);
+                for (var h : e.headers().entrySet()) {
+                    String actual = first.headers().get(h.getKey().toLowerCase());
+                    if (actual == null) {
+                        fail("Missing header '%s' on %s %s. Headers seen: %s"
+                                .formatted(
+                                        h.getKey(),
+                                        e.method(),
+                                        e.path(),
+                                        first.headers().keySet()));
+                    }
+                    if ("*".equals(h.getValue())) {
+                        if (actual.isEmpty()) {
+                            fail("Header '%s' expected non-empty (*) but was empty".formatted(h.getKey()));
+                        }
+                    } else if (!h.getValue().equals(actual)) {
+                        fail("Header '%s' expected '%s' but was '%s'".formatted(h.getKey(), h.getValue(), actual));
+                    }
+                }
+            }
+            if (e.bodyMatch() != null) {
+                if (matches.isEmpty()) {
+                    fail("body_match expected on %s %s but no requests recorded".formatted(e.method(), e.path()));
+                }
+                var first = matches.get(0);
+                JsonNode actualBody;
+                try {
+                    actualBody = first.body().isEmpty() ? JSON.nullNode() : JSON.readTree(first.body());
+                } catch (Exception ex) {
+                    fail("Could not parse JSON body for %s %s: %s".formatted(e.method(), e.path(), first.body()));
+                    return;
+                }
+                String err = BodyMatcher.match(e.bodyMatch(), actualBody);
+                if (err != null) {
+                    fail("body_match failed on %s %s: %s. Actual: %s"
+                            .formatted(e.method(), e.path(), err, first.body()));
+                }
+            }
+        }
+    }
+
+    private static String summary(List<MockServerHarness.RecordedRequest> recorded) {
+        StringBuilder sb = new StringBuilder().append('[');
+        for (var r : recorded) {
+            sb.append(r.method()).append(' ').append(r.path()).append(", ");
+        }
+        if (sb.length() > 1) {
+            sb.setLength(sb.length() - 2);
+        }
+        return sb.append(']').toString();
+    }
+}
