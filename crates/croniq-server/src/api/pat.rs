@@ -157,7 +157,18 @@ pub async fn handle_list(
     let items = store
         .pat_list(user_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(items.into_iter().map(PatView::from).collect()))
+    // Hide revoked tokens. The settings UI has no status column, so a
+    // revoked PAT left in the list looks identical to a live one and a
+    // "revoke" appears to do nothing. Auth already rejects revoked PATs
+    // (see auth_middleware) and the audit log keeps the revocation record,
+    // so dropping them here costs no real history.
+    Ok(Json(
+        items
+            .into_iter()
+            .filter(|p| p.revoked_at.is_none())
+            .map(PatView::from)
+            .collect(),
+    ))
 }
 
 /// `DELETE /v1/users/me/tokens/{token_id}`
@@ -202,3 +213,81 @@ fn require_user_caller(ctx: &CallerContext) -> Result<&str, StatusCode> {
 // `generate_token` here. (Suppress is gentler than a `let _ =`.)
 #[allow(dead_code)]
 const _: fn(&str) -> String = hash_token;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{DynStore, sqlite_store};
+    use croniq_auth::AuthMethod;
+    use croniq_runner::AppState;
+    use croniq_store::models::{Role, User};
+    use croniq_store::sqlite::SqliteStore;
+    use tokio::sync::mpsc;
+
+    /// PATs carry a FK to `users`, so the owning row must exist first.
+    fn seed_user(store: &DynStore, user_id: &str) {
+        store
+            .users_create(&User {
+                user_id: user_id.into(),
+                username: user_id.into(),
+                email: None,
+                display_name: None,
+                role: Role::Admin,
+                is_active: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                last_login_at: None,
+            })
+            .unwrap();
+    }
+
+    fn make_store() -> DynStore {
+        sqlite_store(SqliteStore::in_memory().unwrap())
+    }
+
+    fn user_ctx(user_id: &str) -> CallerContext {
+        CallerContext {
+            caller_type: CallerType::User,
+            caller_id: user_id.into(),
+            client_id: user_id.into(),
+            user_id: Some(user_id.into()),
+            role: None,
+            auth_method: AuthMethod::Password,
+            scopes: vec!["admin".into()],
+        }
+    }
+
+    fn pat(user_id: &str, token_id: &str, name: &str) -> PersonalAccessToken {
+        PersonalAccessToken {
+            token_id: token_id.into(),
+            user_id: user_id.into(),
+            name: name.into(),
+            token_hash: format!("hash-{token_id}"),
+            token_prefix: "croniq_pat_x".into(),
+            scopes: vec!["admin".into()],
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_omits_revoked_tokens() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        store.pat_create(&pat("user-1", "live", "active")).unwrap();
+        store.pat_create(&pat("user-1", "dead", "revoked")).unwrap();
+        store.pat_revoke("dead", Utc::now()).unwrap();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::with_auth(AppState::new(), tx, None, Some(Arc::clone(&store)));
+
+        let Json(list) = handle_list(State(state), Extension(user_ctx("user-1")))
+            .await
+            .expect("list should succeed");
+
+        assert_eq!(list.len(), 1, "the revoked token must be hidden");
+        assert_eq!(list[0].name, "active");
+    }
+}
