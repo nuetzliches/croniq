@@ -156,9 +156,13 @@ mod tests {
             job_with_tags("c:three", &["env=staging", "team=ops"]),
         ]);
 
-        let res = handle_list_tags(State(state), Extension(ctx_with_scopes(&["admin"])), query("jobs"))
-            .await
-            .unwrap();
+        let res = handle_list_tags(
+            State(state),
+            Extension(ctx_with_scopes(&["admin"])),
+            query("jobs"),
+        )
+        .await
+        .unwrap();
 
         // env=prod:2, team=ops:2 (tie → alphabetical), env=staging:1.
         let got: Vec<(&str, usize)> = res.0.iter().map(|t| (t.tag.as_str(), t.count)).collect();
@@ -171,9 +175,13 @@ mod tests {
     #[tokio::test]
     async fn unknown_entity_is_bad_request() {
         let state = state_with_jobs(vec![]);
-        let err = handle_list_tags(State(state), Extension(ctx_with_scopes(&["admin"])), query("widgets"))
-            .await
-            .unwrap_err();
+        let err = handle_list_tags(
+            State(state),
+            Extension(ctx_with_scopes(&["admin"])),
+            query("widgets"),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
