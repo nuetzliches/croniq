@@ -887,6 +887,26 @@ paths:
   /v1/work/poll:
     post:
       summary: Poll for work (long-poll supported)
+      description: |
+        Runner ↔ server work loop. Long-poll up to ~35 s for new work.
+
+        **Server-initiated cancellation status (as of v0.15.x):** the
+        `cancel` field in the response is reserved by the wire protocol
+        and SDKs handle it correctly, but the server does not yet route
+        admin-issued cancels through this endpoint. The array is always
+        empty today. Cancellations are observed indirectly through
+        execution timeout, runner restart, or scheduler intervention.
+
+        When server-side cancel routing lands, a `max_inflight=1`
+        runner at capacity won't be polling and therefore can't receive
+        a cancel for the in-flight execution that's keeping it busy.
+        This is tracked separately in issue #134 sub-item 2; the
+        agreed direction is for the SDK to keep polling at capacity
+        (control-slot semantics) once the server has a cancel queue
+        to drain.
+
+        Workaround in the meantime: configure `max_inflight >= 2` for
+        any runner that needs to receive in-flight cancellations.
       requestBody:
         content:
           application/json:
@@ -907,7 +927,12 @@ paths:
                 type: object
                 properties:
                   work: { type: array }
-                  cancel: { type: array }
+                  cancel:
+                    type: array
+                    description: |
+                      Execution IDs the runner should cancel. Reserved
+                      for future server-side cancel routing; always
+                      empty in v0.15.x. See endpoint description.
         "409": { description: Runner instance conflict }
 
   /v1/work/ack:

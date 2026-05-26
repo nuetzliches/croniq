@@ -35,6 +35,16 @@ if [ ! -f "$DB_FILE" ]; then
     PASS_GENERATED=1
   fi
 
+  # CRONIQ_DEMO_MFA is read directly by `croniq init` via clap's env
+  # mapping — no need to translate it into a CLI flag here. But warn
+  # loudly when it slips into a non-demo image, since the seed bakes a
+  # fixed recovery code (`123456`) into the database.
+  if [ "${CRONIQ_DEMO_MFA:-0}" = "1" ] && [ "${CRONIQ_DEMO_MODE:-0}" != "1" ]; then
+    echo "WARNING: CRONIQ_DEMO_MFA=1 set without CRONIQ_DEMO_MODE=1." >&2
+    echo "         The admin user will be seeded with the recovery code '123456'." >&2
+    echo "         Unset CRONIQ_DEMO_MFA before deploying anywhere reachable from the internet." >&2
+  fi
+
   # Build init args as positional params to preserve values with spaces/special chars.
   # Run in a subshell so set -- does not clobber the entrypoint's own "$@".
   # Capture the exit status explicitly so a failure (e.g. malformed

@@ -21,6 +21,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tracer provider is installed, the helper is a no-op — metadata is
   byte-identical to today.
 
+### Documentation
+
+- **`openapi.yaml`: `POST /v1/work/poll` documents `cancel` as
+  reserved-but-empty
+  ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 2,
+  follow-up tracked in
+  [#176](https://github.com/nuetzliches/croniq/issues/176)).** Every
+  SDK already honours a populated `cancel` array (proven by conformance
+  case 04 with a mocked server response), but the server never
+  populates it today — there's no admin endpoint, per-runner cancel
+  queue, or routing into the poll response. The wire field stays
+  reserved so SDK behaviour doesn't have to change when the server
+  side lands; the endpoint description now spells out the current
+  state and points operators at the `max_inflight >= 2` workaround
+  for any runner that needs in-flight cancellation.
+
 ## [0.15.0] - 2026-05-26
 
 ### Added
