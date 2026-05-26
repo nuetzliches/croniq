@@ -16,9 +16,12 @@ on:
       - 'openapi.yaml'
       - '.github/workflows/dotnet-sdk-ci.yml'
   pull_request:
-    # NB: No `paths-ignore` for the same reason as `ci.yml` — once a job
-    # here becomes a required status check, path-based skipping makes the
-    # requirement unsatisfiable (see ci.yml #98 incident note).
+    # No `paths-ignore` — `.NET SDK CI required` is a required status check
+    # so the workflow must always trigger on PRs. The heavy build /
+    # conformance / pack-smoke jobs short-circuit via the `changes` filter
+    # below when the PR doesn't touch any relevant path. The aggregator's
+    # `contains(needs.*.result, 'failure'|'cancelled')` check treats
+    # `skipped` as success, satisfying the required check at zero cost.
     branches: [main]
 
 concurrency:
@@ -27,6 +30,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   DOTNET_NOLOGO: 'true'
@@ -36,6 +40,26 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  changes:
+    # Detect whether anything in this SDK's relevant paths changed on the
+    # PR. Heavy jobs gate on `needs.changes.outputs.dotnet == 'true'` so a
+    # server / UI / other-SDK PR skips the .NET toolchain entirely.
+    name: Detect path changes
+    runs-on: ubuntu-latest
+    outputs:
+      dotnet: ${{ steps.filter.outputs.dotnet }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            dotnet:
+              - 'sdks/dotnet/**'
+              - 'sdks/conformance/**'
+              - 'openapi.yaml'
+              - '.github/workflows/dotnet-sdk-ci.yml'
+
   schema:
     name: Conformance YAML schema
     runs-on: ubuntu-latest
@@ -57,6 +81,8 @@ jobs:
 
   build:
     name: Build & test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -124,7 +150,8 @@ jobs:
     # in `build` covers cross-platform compile / unit-test concerns.
     name: Conformance suite
     runs-on: ubuntu-latest
-    needs: [schema]
+    needs: [schema, changes]
+    if: needs.changes.outputs.dotnet == 'true'
     defaults:
       run:
         working-directory: sdks/dotnet
@@ -166,7 +193,8 @@ jobs:
   pack-smoke:
     name: Pack smoke
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, changes]
+    if: needs.changes.outputs.dotnet == 'true'
     defaults:
       run:
         working-directory: sdks/dotnet
@@ -212,17 +240,18 @@ jobs:
     name: .NET SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [schema, build, conformance, pack-smoke]
+    needs: [changes, schema, build, conformance, pack-smoke]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
+          echo "  changes:     ${{ needs.changes.result }}"
           echo "  schema:      ${{ needs.schema.result }}"
           echo "  build:       ${{ needs.build.result }}"
           echo "  conformance: ${{ needs.conformance.result }}"
           echo "  pack-smoke:  ${{ needs.pack-smoke.result }}"
           exit 1
-      - name: All required jobs passed
+      - name: All required jobs passed (or skipped because nothing relevant changed)
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: echo "✓ schema, build, conformance, pack-smoke all succeeded"
+        run: echo "Aggregator: all dependent jobs succeeded or were skipped (path filter)"

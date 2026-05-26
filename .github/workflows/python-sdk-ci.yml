@@ -14,9 +14,10 @@ on:
       - 'openapi.yaml'
       - '.github/workflows/python-sdk-ci.yml'
   pull_request:
-    # NB: No `paths-ignore` for the same reason as ci.yml — once a job here
-    # becomes a required status check, path-based skipping makes the
-    # requirement unsatisfiable.
+    # No `paths-ignore` — `Python SDK CI required` is a required status
+    # check so the workflow must always trigger on PRs. Heavy build /
+    # pack-smoke jobs short-circuit via the `changes` filter below when
+    # nothing relevant changed.
     branches: [main]
 
 concurrency:
@@ -25,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
@@ -34,6 +36,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  changes:
+    name: Detect path changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'sdks/python/**'
+              - 'sdks/conformance/**'
+              - 'openapi.yaml'
+              - '.github/workflows/python-sdk-ci.yml'
+
   schema:
     name: Conformance YAML schema
     runs-on: ubuntu-latest
@@ -55,6 +74,8 @@ jobs:
 
   build:
     name: Lint, type-check, test (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -97,7 +118,8 @@ jobs:
   pack-smoke:
     name: Pack smoke
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, changes]
+    if: needs.changes.outputs.python == 'true'
     defaults:
       run:
         working-directory: sdks/python
@@ -131,16 +153,17 @@ jobs:
     name: Python SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [schema, build, pack-smoke]
+    needs: [changes, schema, build, pack-smoke]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
+          echo "  changes:    ${{ needs.changes.result }}"
           echo "  schema:     ${{ needs.schema.result }}"
           echo "  build:      ${{ needs.build.result }}"
           echo "  pack-smoke: ${{ needs.pack-smoke.result }}"
           exit 1
-      - name: All required jobs passed
+      - name: All required jobs passed (or skipped because nothing relevant changed)
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: echo "✓ schema, build, pack-smoke all succeeded"
+        run: echo "Aggregator: all dependent jobs succeeded or were skipped (path filter)"
