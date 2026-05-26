@@ -14,8 +14,15 @@ description: |
   Task.WhenAny-based flusher loop biases toward read-wins when events
   arrive in quick succession — verifying "≥2 POSTs reliably" would
   require runtime timing control (mockable PeriodicTimer / scheduler)
-  the test harness doesn't currently expose. What we DO assert: events
-  reach the server at all, and all 4 are flushed before ack.
+  the conformance harness doesn't currently expose. What we DO assert:
+  events reach the server at all, and all 4 are flushed before ack.
+
+  Deterministic version: the .NET SDK injects TimeProvider into
+  LogWriter as of #134 sub-item 3, and `LogWriterTests` in
+  Croniq.Runner.Sdk.Tests exercises the partial-batch and multi-tick
+  flush paths via FakeTimeProvider. Other SDKs (Rust/Python/Go/TS) can
+  adopt the same pattern; wiring FakeTimeProvider into this conformance
+  binding is a separate follow-up.
 
 runner_config:
   capabilities: ["log"]
