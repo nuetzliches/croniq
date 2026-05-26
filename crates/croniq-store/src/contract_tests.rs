@@ -424,7 +424,14 @@ fn job_execution_metrics_aggregates_per_job() {
     store.create_execution(&other).unwrap();
     store.claim_execution(other.id, "r1", now()).unwrap();
     store
-        .complete_execution(other.id, ExecutionState::Completed, Some(50), None, None, now())
+        .complete_execution(
+            other.id,
+            ExecutionState::Completed,
+            Some(50),
+            None,
+            None,
+            now(),
+        )
         .unwrap();
 
     let all = store.job_execution_metrics().unwrap();

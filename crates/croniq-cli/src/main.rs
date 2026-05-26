@@ -289,7 +289,9 @@ fn main() -> Result<()> {
             config,
             password,
             print_secrets,
-        } => commands::quickstart::quickstart(&data_dir, &config, password.as_deref(), print_secrets),
+        } => {
+            commands::quickstart::quickstart(&data_dir, &config, password.as_deref(), print_secrets)
+        }
         Commands::Migrate { crontab, output } => {
             commands::migrate::migrate(&crontab, output.as_deref())
         }

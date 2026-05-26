@@ -155,8 +155,7 @@ pub struct ExecutionFilter {
 /// exposed at `/metrics`. Shared by the store aggregation and the Prometheus
 /// renderer so the two never drift; the renderer appends the synthetic
 /// `+Inf` bucket (which equals [`JobExecutionMetrics::duration_count`]).
-pub const JOB_DURATION_BUCKETS_SECONDS: &[f64] =
-    &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0];
+pub const JOB_DURATION_BUCKETS_SECONDS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0];
 
 /// Per-job execution aggregates computed on demand from the executions table
 /// (one grouped scan per `/metrics` scrape — nothing is persisted separately).

@@ -237,9 +237,11 @@ mod tests {
         assert!(out.contains(
             "croniq_job_executions_total{job_key=\"billing:invoice\",state=\"completed\"} 7"
         ));
-        assert!(out.contains(
-            "croniq_job_executions_total{job_key=\"billing:invoice\",state=\"dead\"} 2"
-        ));
+        assert!(
+            out.contains(
+                "croniq_job_executions_total{job_key=\"billing:invoice\",state=\"dead\"} 2"
+            )
+        );
 
         assert!(out.contains("# TYPE croniq_job_duration_seconds histogram"));
         // The +Inf bucket equals the histogram _count.
@@ -249,9 +251,9 @@ mod tests {
         assert!(out.contains("croniq_job_duration_seconds_sum{job_key=\"billing:invoice\"} 124.7"));
         assert!(out.contains("croniq_job_duration_seconds_count{job_key=\"billing:invoice\"} 3"));
 
-        assert!(out.contains(
-            "croniq_job_last_run_timestamp{job_key=\"billing:invoice\"} 1700000000"
-        ));
+        assert!(
+            out.contains("croniq_job_last_run_timestamp{job_key=\"billing:invoice\"} 1700000000")
+        );
     }
 
     #[test]
@@ -292,7 +294,14 @@ mod tests {
         sqlite.create_execution(&exec).unwrap();
         sqlite.claim_execution(exec.id, "r1", Utc::now()).unwrap();
         sqlite
-            .complete_execution(exec.id, ExecutionState::Completed, Some(2500), None, None, Utc::now())
+            .complete_execution(
+                exec.id,
+                ExecutionState::Completed,
+                Some(2500),
+                None,
+                None,
+                Utc::now(),
+            )
             .unwrap();
 
         let store = crate::store::sqlite_store(sqlite);
@@ -321,9 +330,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(body.contains(
-            "croniq_job_executions_total{job_key=\"etl:sync\",state=\"completed\"} 1"
-        ));
+        assert!(
+            body.contains(
+                "croniq_job_executions_total{job_key=\"etl:sync\",state=\"completed\"} 1"
+            )
+        );
         assert!(body.contains("croniq_job_duration_seconds_count{job_key=\"etl:sync\"} 1"));
         assert!(body.contains("croniq_job_last_run_timestamp{job_key=\"etl:sync\"}"));
     }
