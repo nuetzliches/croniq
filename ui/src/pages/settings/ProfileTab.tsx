@@ -76,19 +76,19 @@ export function ProfileTab() {
         </div>
       </section>
 
-      <TotpSection />
+      <TotpSection enabled={me.totp_enabled ?? false} />
       <PatSection />
     </div>
   )
 }
 
-function TotpSection() {
+function TotpSection({ enabled }: { enabled: boolean }) {
   const setup = useTotpSetup()
   const confirm = useTotpConfirm()
   const disable = useTotpDisable()
   const [setupData, setSetupData] = useState<TotpSetupResponse | null>(null)
   const [code, setCode] = useState('')
-  const [disableCode, setDisableCode] = useState('')
+  const [disablePassword, setDisablePassword] = useState('')
   const [savedAck, setSavedAck] = useState(false)
   const [error, setError] = useState('')
 
@@ -100,7 +100,11 @@ function TotpSection() {
       setCode('')
       setSavedAck(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Setup failed')
+      const msg = e instanceof Error ? e.message : 'Setup failed'
+      // 409 = a confirmed secret already exists. The enabled-state view
+      // normally prevents reaching this; guard a stale cache by showing a
+      // clear message instead of the raw "409:".
+      setError(/^409\b/.test(msg) ? 'Two-factor is already enabled.' : msg)
     }
   }
 
@@ -116,12 +120,14 @@ function TotpSection() {
   }
 
   async function disableTotp() {
+    if (!disablePassword || disable.isPending) return
     setError('')
     try {
-      await disable.mutateAsync(disableCode.trim())
-      setDisableCode('')
+      await disable.mutateAsync(disablePassword)
+      setDisablePassword('')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Disable failed')
+      const msg = e instanceof Error ? e.message : 'Disable failed'
+      setError(/^401\b/.test(msg) ? 'Wrong password.' : msg)
     }
   }
 
@@ -129,6 +135,7 @@ function TotpSection() {
     <section className="card">
       <div className="card-head">
         <p className="card-title">Two-factor authentication</p>
+        {!setupData ? <StatusPill state={enabled ? 'enabled' : 'disabled'} /> : null}
       </div>
 
       {setupData ? (
@@ -208,6 +215,40 @@ function TotpSection() {
           </div>
           {error ? <p className="error" style={{ color: 'var(--error)', fontSize: 12, margin: 0 }}>{error}</p> : null}
         </div>
+      ) : enabled ? (
+        <div className="col" style={{ gap: 10 }}>
+          <p className="dim" style={{ margin: 0, fontSize: 12.5 }}>
+            A code from your authenticator app is required at every login. To turn
+            two-factor off, confirm with your account password.
+          </p>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              type="password"
+              placeholder="Account password"
+              value={disablePassword}
+              autoComplete="current-password"
+              onChange={(e) => setDisablePassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  disableTotp()
+                }
+              }}
+              style={{ maxWidth: 240 }}
+            />
+            <button
+              type="button"
+              className="btn danger"
+              disabled={!disablePassword || disable.isPending}
+              onClick={disableTotp}
+              title="Disable two-factor (requires your account password)"
+            >
+              {disable.isPending ? <BrandMark spinning size={13} /> : <ShieldOff size={13} />} Disable
+            </button>
+          </div>
+          {error ? <p style={{ color: 'var(--error)', fontSize: 12, margin: 0 }}>{error}</p> : null}
+        </div>
       ) : (
         <div className="col" style={{ gap: 10 }}>
           <p className="dim" style={{ margin: 0, fontSize: 12.5 }}>
@@ -217,26 +258,6 @@ function TotpSection() {
             <button type="button" className="btn primary" onClick={startSetup} disabled={setup.isPending}>
               {setup.isPending ? <BrandMark spinning size={13} /> : <ShieldCheck size={13} />} Begin setup
             </button>
-            <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
-              <input
-                className="input mono"
-                placeholder="Disable code"
-                value={disableCode}
-                onChange={(e) => setDisableCode(e.target.value)}
-                maxLength={6}
-                inputMode="numeric"
-                style={{ letterSpacing: '0.3em', textAlign: 'center', maxWidth: 140 }}
-              />
-              <button
-                type="button"
-                className="btn danger"
-                disabled={disableCode.length !== 6 || disable.isPending}
-                onClick={disableTotp}
-                title="Disable TOTP (requires current 6-digit code)"
-              >
-                {disable.isPending ? <BrandMark spinning size={13} /> : <ShieldOff size={13} />} Disable
-              </button>
-            </div>
           </div>
           {error ? <p style={{ color: 'var(--error)', fontSize: 12, margin: 0 }}>{error}</p> : null}
         </div>

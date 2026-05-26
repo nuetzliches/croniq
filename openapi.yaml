@@ -192,6 +192,11 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         last_login_at: { type: string, format: date-time, nullable: true }
+        totp_enabled:
+          type: boolean
+          description: >
+            Whether the user has a confirmed TOTP secret. Only present on
+            `GET /v1/users/me`; omitted from admin list/get responses.
 
     MfaRequiredResponse:
       type: object

@@ -132,6 +132,8 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at: string | null
+  /** Only populated by `GET /v1/users/me`; absent on admin list/get. */
+  totp_enabled?: boolean
 }
 
 export interface Invitation {

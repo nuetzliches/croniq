@@ -16,7 +16,6 @@ import { BrandMark, EnvBadge } from '@/components/primitives'
 import { useVersion } from '@/api/hooks'
 
 type Method = 'password' | 'sso'
-type Step = 'credentials' | 'mfa'
 
 const DOCS_URL = 'https://nuetzliches.github.io/croniq/'
 
@@ -137,10 +136,9 @@ const CLEAR_FADE_MS = 220
 
 export function LoginPage() {
   const [method, setMethod] = useState<Method>('password')
-  const [step, setStep] = useState<Step>('credentials')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [mfaToken, setMfaToken] = useState('')
+  const [totpRequired, setTotpRequired] = useState(false)
   const [mfaCode, setMfaCode] = useState('')
   const [useRecovery, setUseRecovery] = useState(false)
   const [error, setError] = useState('')
@@ -192,18 +190,52 @@ export function LoginPage() {
     else flashError('Login failed. Check your credentials.')
   }
 
-  async function handleCredentialsSubmit(e: React.FormEvent) {
+  // Single submit handler for the whole password flow. We always re-probe
+  // credentials first: that both tells us whether the account needs 2FA and
+  // hands back a fresh 5-minute mfa_token, so the code exchange below can't
+  // race an expired token. The 2FA field only appears once the probe says
+  // it's required — the server can't reveal per-account 2FA status before
+  // the password is verified without leaking who has it enabled.
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
       const res = await apiPost<LoginResponse>('/v1/auth/login', { username, password })
-      if (isMfaRequired(res)) {
-        setMfaToken(res.mfa_token)
-        setStep('mfa')
-      } else {
+      if (!isMfaRequired(res)) {
         login(res.access_token, res.refresh_token)
         navigate('/')
+        return
+      }
+      setTotpRequired(true)
+      const codeVal = mfaCode.trim()
+      if (!codeVal) {
+        // First submit for a 2FA account: reveal the field and stop so the
+        // user can enter the code. The field autofocuses on mount.
+        flashError(
+          useRecovery
+            ? 'Enter one of your recovery codes.'
+            : 'Enter the 6-digit code from your authenticator app.',
+        )
+        return
+      }
+      try {
+        const body: Record<string, string> = { mfa_token: res.mfa_token }
+        if (useRecovery) body.recovery_code = codeVal
+        else body.code = codeVal
+        const tok = await apiPost<TokenResponse>('/v1/auth/login/totp', body)
+        login(tok.access_token, tok.refresh_token)
+        navigate('/')
+      } catch (err) {
+        // The password already verified (the login call above succeeded), so
+        // a failure here is the second factor itself. 401 = wrong/expired
+        // code — keep the user on the code field with a precise message.
+        const msg = err instanceof Error ? err.message : ''
+        if (/^401[: ]/.test(msg)) {
+          flashError(useRecovery ? 'Invalid recovery code.' : 'Invalid or expired code. Try again.')
+        } else {
+          reportFailure(err)
+        }
       }
     } catch (err) {
       reportFailure(err)
@@ -212,21 +244,17 @@ export function LoginPage() {
     }
   }
 
-  async function handleMfaSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-    try {
-      const body: Record<string, string> = { mfa_token: mfaToken }
-      if (useRecovery) body.recovery_code = mfaCode.trim()
-      else body.code = mfaCode.trim()
-      const res = await apiPost<TokenResponse>('/v1/auth/login/totp', body)
-      login(res.access_token, res.refresh_token)
-      navigate('/')
-    } catch (err) {
-      reportFailure(err)
-    } finally {
-      setLoading(false)
+  // Editing username/password invalidates an already-revealed 2FA prompt;
+  // the next submit re-probes from scratch.
+  function onCredentialChange(setter: (v: string) => void) {
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      setter(e.target.value)
+      if (totpRequired) {
+        setTotpRequired(false)
+        setMfaCode('')
+        setUseRecovery(false)
+        setError('')
+      }
     }
   }
 
@@ -257,7 +285,6 @@ export function LoginPage() {
           <div className="login-mark" aria-hidden>
             <BrandMark size={22} />
           </div>
-          {step === 'credentials' ? (
             <>
               <h1 className="login-form-title">Welcome back</h1>
               <p className="login-form-sub">
@@ -302,12 +329,12 @@ export function LoginPage() {
               ) : null}
 
               {!bothDisabled && effectiveMethod === 'password' ? (
-                <form className="col gap-14" onSubmit={handleCredentialsSubmit}>
+                <form className="col gap-14" onSubmit={handleSubmit}>
                   <LoginField label="Username">
                     <input
                       className="input"
                       value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={onCredentialChange(setUsername)}
                       autoComplete="username"
                       autoFocus
                       required
@@ -318,15 +345,52 @@ export function LoginPage() {
                       className="input"
                       type="password"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={onCredentialChange(setPassword)}
                       autoComplete="current-password"
                       placeholder="•••••••••"
                       required
                     />
                   </LoginField>
+                  {totpRequired ? (
+                    <LoginField
+                      label={useRecovery ? 'Recovery code' : 'Two-factor code'}
+                      hint="Required because two-factor is enabled on this account."
+                    >
+                      <input
+                        className="input mono"
+                        inputMode={useRecovery ? 'text' : 'numeric'}
+                        pattern={useRecovery ? undefined : '[0-9]{6}'}
+                        maxLength={useRecovery ? 8 : 6}
+                        value={mfaCode}
+                        onChange={(e) => setMfaCode(e.target.value)}
+                        placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
+                        autoComplete="one-time-code"
+                        autoFocus
+                        required
+                        style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseRecovery((v) => !v)
+                          setMfaCode('')
+                          setError('')
+                        }}
+                        style={{ background: 'transparent', border: 0, color: 'var(--fg-3)', cursor: 'pointer', padding: 0, font: 'inherit', fontSize: 11.5, textAlign: 'left' }}
+                      >
+                        {useRecovery ? 'Use authenticator code' : 'Use a recovery code instead'}
+                      </button>
+                    </LoginField>
+                  ) : null}
                   {error ? <ErrorBanner msg={error} /> : null}
                   <SubmitButton loading={loading}>
-                    {loading ? 'Signing in…' : 'Sign in'}
+                    {loading
+                      ? totpRequired
+                        ? 'Verifying…'
+                        : 'Signing in…'
+                      : totpRequired
+                        ? 'Verify & sign in'
+                        : 'Sign in'}
                     {loading ? null : <ArrowRight size={14} />}
                   </SubmitButton>
                 </form>
@@ -382,28 +446,6 @@ export function LoginPage() {
                 </>
               ) : null}
             </>
-          ) : (
-            <MfaStep
-              code={mfaCode}
-              error={error}
-              loading={loading}
-              useRecovery={useRecovery}
-              onCode={setMfaCode}
-              onSubmit={handleMfaSubmit}
-              onToggleRecovery={() => {
-                setUseRecovery((v) => !v)
-                setMfaCode('')
-                setError('')
-              }}
-              onCancel={() => {
-                setStep('credentials')
-                setMfaToken('')
-                setMfaCode('')
-                setUseRecovery(false)
-                setError('')
-              }}
-            />
-          )}
         </div>
 
         <div className="login-formfoot">
@@ -849,73 +891,3 @@ function ErrorBanner({ msg }: { msg: string }) {
   )
 }
 
-interface MfaStepProps {
-  code: string
-  error: string
-  loading: boolean
-  useRecovery: boolean
-  onCode: (v: string) => void
-  onSubmit: (e: React.FormEvent) => void
-  onToggleRecovery: () => void
-  onCancel: () => void
-}
-
-function MfaStep({
-  code,
-  error,
-  loading,
-  useRecovery,
-  onCode,
-  onSubmit,
-  onToggleRecovery,
-  onCancel,
-}: MfaStepProps) {
-  return (
-    <>
-      <h1 className="login-form-title">Two-factor required</h1>
-      <p className="login-form-sub">
-        {useRecovery
-          ? 'Enter one of your 8-character recovery codes.'
-          : 'Enter the 6-digit code from your authenticator app.'}
-      </p>
-      <form className="col gap-14" onSubmit={onSubmit}>
-        <input
-          type="text"
-          inputMode={useRecovery ? 'text' : 'numeric'}
-          pattern={useRecovery ? undefined : '[0-9]{6}'}
-          maxLength={useRecovery ? 8 : 6}
-          value={code}
-          onChange={(e) => onCode(e.target.value)}
-          placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
-          required
-          autoFocus
-          className="input mono"
-          style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
-        />
-        {error ? <ErrorBanner msg={error} /> : null}
-        <SubmitButton loading={loading}>
-          {loading ? 'Verifying…' : 'Verify'}
-        </SubmitButton>
-        <div
-          className="row between"
-          style={{ fontSize: 11.5, color: 'var(--fg-3)' }}
-        >
-          <button
-            type="button"
-            onClick={onToggleRecovery}
-            style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, font: 'inherit' }}
-          >
-            {useRecovery ? 'Use authenticator code' : 'Use recovery code'}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, font: 'inherit' }}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </>
-  )
-}
