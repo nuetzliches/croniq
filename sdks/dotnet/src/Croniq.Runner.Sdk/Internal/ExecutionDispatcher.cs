@@ -24,7 +24,8 @@ internal sealed class ExecutionDispatcher(
     RunnerStateProbe stateProbe,
     CroniqRunnerOptions options,
     string runnerId,
-    IReadOnlyList<string> runnerTags)
+    IReadOnlyList<string> runnerTags,
+    TimeProvider timeProvider)
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<ExecutionDispatcher>();
 
@@ -60,7 +61,7 @@ internal sealed class ExecutionDispatcher(
         var enrichment = new LogEnrichment(jobKey, runnerId, runnerTags);
         var writerLogger = loggerFactory.CreateLogger<LogWriter>();
         var lazyWriter = new Lazy<ILogWriter>(
-            () => new LogWriter(client, executionId, enrichment, options.LogWriter, writerLogger),
+            () => new LogWriter(client, executionId, enrichment, options.LogWriter, writerLogger, timeProvider),
             LazyThreadSafetyMode.ExecutionAndPublication);
 
         Task pushEventInline(WorkEvent ev, CancellationToken ct) =>

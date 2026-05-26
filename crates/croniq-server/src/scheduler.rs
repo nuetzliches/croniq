@@ -317,8 +317,14 @@ impl SchedulerLoop {
                 continue;
             }
 
-            // 2. Enqueue work item for the runner (always attempt 1 for scheduler-fired jobs)
-            let item = job_to_work_item(job, &exec_id_str, fire_at, 1);
+            // 2. Enqueue work item for the runner (always attempt 1 for scheduler-fired jobs).
+            //    Stamp the active tick-span's W3C traceparent into the
+            //    work metadata so the runner SDK's execute-span links
+            //    back into this trace instead of starting an orphan
+            //    root span. No-op when the `otlp` feature is off or no
+            //    valid OTel context is in scope.
+            let mut item = job_to_work_item(job, &exec_id_str, fire_at, 1);
+            crate::trace_propagation::inject_into_metadata(&mut item.metadata);
             self.runner.queue.write().await.enqueue(item);
             self.runner.work_notify.notify_waiters();
 

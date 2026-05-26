@@ -32,6 +32,11 @@ services:
       CRONIQ_ADMIN_USER: admin
       CRONIQ_ADMIN_PASSWORD: admin
       CRONIQ_DEMO_MODE: "1"
+      # Pre-enable TOTP for the seeded admin so a marketing walkthrough
+      # hits the MFA step. Login: admin / admin → recovery code `123456`
+      # at the prompt (10 single-use slots per container reseed). Comment
+      # out to land on the dashboard directly after admin/admin.
+      CRONIQ_DEMO_MFA: "1"
       # Optional: seed a default admin API client on first run. Must start
       # with the `croniq_` prefix — the entrypoint fails fast if it doesn't.
       # In production: CRONIQ_INIT_API_KEY=croniq_$(openssl rand -hex 32)
