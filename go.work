@@ -1,4 +1,4 @@
-go 1.22
+go 1.25
 
 // Local workspace for cross-module development of the Go runner SDK
 // and its OpenTelemetry adapter. Without this file, the otel

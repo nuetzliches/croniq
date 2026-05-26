@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.25'
   # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
   # default switch, silencing the Node 20 deprecation warnings from
   # setup-go/checkout/upload-artifact/etc. Matches the env block in
