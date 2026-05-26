@@ -55,12 +55,17 @@ export function ConsolePage() {
   useEffect(() => {
     let stopped = false
     let ctrl = new AbortController()
+    let backfilled = false
     const BASE = import.meta.env.VITE_API_URL ?? ''
 
     async function connect() {
       const token = useAuthStore.getState().token
-      const levelsParam = Array.from(activeLevels).join(',')
-      const url = `${BASE}/v1/events/stream${levelsParam ? `?levels=${encodeURIComponent(levelsParam)}` : ''}`
+      // Level filtering happens client-side (see `filtered`) so toggling a
+      // level updates the view instantly instead of tearing down and
+      // re-opening the stream — hence we subscribe to every level. Backfill
+      // only on the first connect; reconnects pass snapshot=0 so a dropped
+      // stream doesn't replay events already in the buffer.
+      const url = `${BASE}/v1/events/stream${backfilled ? '?snapshot=0' : ''}`
       try {
         const res = await fetch(url, {
           signal: ctrl.signal,
@@ -81,6 +86,7 @@ export function ConsolePage() {
         }
         if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
 
+        backfilled = true
         setIsConnected(true)
         const reader = res.body.getReader()
         const dec = new TextDecoder()
@@ -133,7 +139,7 @@ export function ConsolePage() {
       stopped = true
       ctrl.abort()
     }
-  }, [activeLevels])
+  }, [])
 
   // When unpausing, flush buffered events.
   useEffect(() => {
@@ -163,9 +169,10 @@ export function ConsolePage() {
   }, [])
 
   const filtered = useMemo(() => {
-    if (!search) return events
-    const needle = search.toLowerCase()
+    const needle = search.trim().toLowerCase()
     return events.filter((e) => {
+      if (!activeLevels.has(e.level)) return false
+      if (!needle) return true
       if (e.message.toLowerCase().includes(needle)) return true
       if (e.target.toLowerCase().includes(needle)) return true
       for (const v of Object.values(e.fields)) {
@@ -173,7 +180,7 @@ export function ConsolePage() {
       }
       return false
     })
-  }, [events, search])
+  }, [events, search, activeLevels])
 
   function toggleLevel(level: string) {
     setActiveLevels((cur) => {
