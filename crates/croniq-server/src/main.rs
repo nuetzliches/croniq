@@ -262,10 +262,16 @@ async fn main() -> Result<()> {
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
     }
-    tracing::info!(
-        app_base_url = %server_state.app_base_url,
-        "resolved public base URL for invite / password-reset / OIDC links",
-    );
+    match &server_state.app_base_url {
+        Some(url) => tracing::info!(
+            app_base_url = %url,
+            "CRONIQ_APP_URL set — using it for invite / password-reset / OIDC links"
+        ),
+        None => tracing::info!(
+            "CRONIQ_APP_URL unset — deriving link base URL from request headers; \
+             set CRONIQ_APP_URL to pin invite / reset / OIDC links on directly-exposed servers"
+        ),
+    }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
     // ── Reload signalling: file watcher (optional) + SIGHUP ─────────────────
@@ -694,17 +700,18 @@ fn resolve_password_login_enabled(rt: &croniq_config::compile::RuntimeConfig) ->
     }
 }
 
-/// Resolve the public base URL used to build invitation links, password-reset
-/// links, and the OIDC redirect target (see `ServerState::app_base_url`).
+/// Resolve the operator-configured public base URL for invite / password-reset
+/// / OIDC login links (backs `ServerState::app_base_url`).
 ///
-/// Reads `CRONIQ_APP_URL`; falls back to `http://localhost:4000` when the var
-/// is unset or blank. Trailing slashes are left intact — every link builder
-/// trims them at the call site (`trim_end_matches('/')`), so an operator who
-/// sets `CRONIQ_APP_URL=https://croniq.example.com/` still gets clean links.
-fn resolve_app_base_url() -> String {
+/// Returns `Some` only when `CRONIQ_APP_URL` is set and non-blank; that value
+/// is authoritative. Returns `None` when unset — the link base is then derived
+/// per-request from the forwarded / `Host` headers (see
+/// `croniq_server::api::resolve_link_base`). Trailing slashes are tolerated;
+/// the link builders trim them.
+fn resolve_app_base_url() -> Option<String> {
     match std::env::var("CRONIQ_APP_URL") {
-        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => "http://localhost:4000".into(),
+        Ok(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        _ => None,
     }
 }
 
@@ -795,10 +802,10 @@ mod app_base_url_tests {
     }
 
     #[test]
-    fn defaults_to_localhost_when_unset() {
+    fn none_when_unset() {
         let _g = env_guard();
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(resolve_app_base_url(), "http://localhost:4000");
+        assert_eq!(resolve_app_base_url(), None);
     }
 
     #[test]
@@ -807,16 +814,16 @@ mod app_base_url_tests {
         unsafe { std::env::set_var("CRONIQ_APP_URL", "https://croniq.example.com") };
         let url = resolve_app_base_url();
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "https://croniq.example.com");
+        assert_eq!(url, Some("https://croniq.example.com".to_string()));
     }
 
     #[test]
-    fn blank_env_falls_back_to_default() {
+    fn blank_env_is_none() {
         let _g = env_guard();
         unsafe { std::env::set_var("CRONIQ_APP_URL", "   ") };
         let url = resolve_app_base_url();
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "http://localhost:4000");
+        assert_eq!(url, None);
     }
 
     #[test]
@@ -825,6 +832,6 @@ mod app_base_url_tests {
         unsafe { std::env::set_var("CRONIQ_APP_URL", "  https://app.example  ") };
         let url = resolve_app_base_url();
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "https://app.example");
+        assert_eq!(url, Some("https://app.example".to_string()));
     }
 }

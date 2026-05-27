@@ -573,7 +573,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_INIT_API_KEY` | Seed a default admin API client on first run. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). Fails fast on first run if the prefix is missing. | — |
 | `CRONIQ_ON_FAILURE_CMD` | **Deprecated** — single global shell command on permanent failure. At boot, croniq-server synthesises a catch-all rule from this var when no `alerts {}` block is present. Migrate to `alerts { channel "…" { shell "…" } rule "…" { when job_failed; channels "…" } }` and unset. | — |
 | `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
-| `CRONIQ_APP_URL` | Public base URL used to build invitation, password-reset, and OIDC redirect links. Set this on any non-localhost deployment — otherwise those links point at `http://localhost:4000`. | `http://localhost:4000` |
+| `CRONIQ_APP_URL` | Public base URL for invitation, password-reset, and OIDC login links. When unset, it is derived per-request from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so links work behind a reverse proxy with no config. Set it explicitly to pin the URL — recommended on directly-exposed servers, where the `Host` header is untrusted and is **not** used for the public password-reset link. | _auto-detected from request_ |
 
 ---
 

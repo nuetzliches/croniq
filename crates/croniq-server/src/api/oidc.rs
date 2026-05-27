@@ -15,7 +15,7 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
 use chrono::Utc;
@@ -206,15 +206,21 @@ pub async fn handle_callback(
 ///
 /// Kept for back-compat with anything probing the OIDC-only endpoint;
 /// the canonical probe is now [`handle_auth_config`] (`GET /v1/auth/config`).
-pub async fn handle_config(State(state): State<Arc<ServerState>>) -> Json<OidcConfigResponse> {
-    Json(oidc_config(&state))
+pub async fn handle_config(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Json<OidcConfigResponse> {
+    Json(oidc_config(&state, &headers))
 }
 
 /// `GET /v1/auth/config` — read-only summary of every UI sign-in method
 /// (issue #138). Combines [`handle_config`] with the password-login flag.
-pub async fn handle_auth_config(State(state): State<Arc<ServerState>>) -> Json<AuthConfigResponse> {
+pub async fn handle_auth_config(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Json<AuthConfigResponse> {
     Json(AuthConfigResponse {
-        oidc: oidc_config(&state),
+        oidc: oidc_config(&state, &headers),
         password: PasswordConfigResponse {
             enabled: state.password_login_enabled,
         },
@@ -224,15 +230,15 @@ pub async fn handle_auth_config(State(state): State<Arc<ServerState>>) -> Json<A
     })
 }
 
-fn oidc_config(state: &ServerState) -> OidcConfigResponse {
+fn oidc_config(state: &ServerState, headers: &HeaderMap) -> OidcConfigResponse {
     if let Some(provider) = &state.oidc {
+        // Same-origin: the UI fetched this from its own host, so deriving from
+        // the request Host (when CRONIQ_APP_URL is unset) points back at it.
+        let base = crate::api::resolve_link_base(&state.app_base_url, headers, true);
         OidcConfigResponse {
             enabled: true,
             provider_name: Some(provider.config.provider_name.clone()),
-            login_url: Some(format!(
-                "{}/v1/auth/oidc/login",
-                state.app_base_url.trim_end_matches('/')
-            )),
+            login_url: Some(format!("{base}/v1/auth/oidc/login")),
         }
     } else {
         OidcConfigResponse {
