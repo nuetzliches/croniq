@@ -32,6 +32,7 @@ pub mod alerts;
 pub mod api;
 pub mod completion;
 pub mod dashboard;
+pub mod diagnostics;
 pub mod email;
 pub mod live_console;
 pub mod loader;
