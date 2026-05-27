@@ -19,6 +19,7 @@ pub mod pat;
 pub mod runners_sse;
 pub mod schedules;
 pub mod stats;
+pub mod system;
 pub mod tags;
 pub mod totp;
 pub mod users;
@@ -450,6 +451,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Admin
         .route("/v1/admin/reload-config", post(admin::handle_reload_config))
+        // System diagnostics (config health) — admin-only
+        .route("/v1/system/diagnostics", get(system::handle_diagnostics))
         // Auth management
         .route(
             "/v1/api-clients",

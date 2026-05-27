@@ -67,6 +67,19 @@ struct Cli {
     /// If set, serves files at / and falls back to index.html for SPA routing.
     #[arg(long)]
     ui_dir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// Optional subcommands. With none, `croniq-server` runs the server — the
+/// default and overwhelmingly common case.
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Check the resolved configuration for missing / risky settings, print a
+    /// report, and exit (non-zero if any critical finding). Does not start the
+    /// server or bind any port.
+    Doctor,
 }
 
 #[tokio::main]
@@ -82,6 +95,12 @@ async fn main() -> Result<()> {
     let job_count = loaded.runtime.jobs.len();
     let active = loaded.triggers.len();
     tracing::info!(jobs = job_count, triggers = active, "configuration loaded");
+
+    // `croniq-server doctor`: report config health and exit without binding
+    // ports, opening the DB, or starting any task.
+    if matches!(cli.command, Some(Command::Doctor)) {
+        return run_doctor(&loaded.runtime);
+    }
 
     // Resolve UI sign-in method gates (issue #138). DSL beats env beats default.
     // The both-disabled check must run before we bind the HTTP listener so the
@@ -262,15 +281,31 @@ async fn main() -> Result<()> {
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
     }
-    match &server_state.app_base_url {
-        Some(url) => tracing::info!(
-            app_base_url = %url,
-            "app base URL configured (server.app_url / CRONIQ_APP_URL) — using it for invite / password-reset / OIDC links"
-        ),
-        None => tracing::info!(
-            "no app base URL configured (server.app_url / CRONIQ_APP_URL unset) — deriving from request headers; \
-             set one to pin invite / reset / OIDC links on directly-exposed servers"
-        ),
+    if let Some(url) = &server_state.app_base_url {
+        tracing::info!(app_base_url = %url, "public base URL pinned (server.app_url / CRONIQ_APP_URL)");
+    }
+    // Surface configuration health at boot (missing SMTP, unpinned URL, …).
+    // The same checks back `croniq-server doctor` and GET /v1/system/diagnostics.
+    {
+        use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
+        let input = DiagnosticsInput::from_runtime(
+            server_state.app_base_url.is_some(),
+            server_state.email_sender.delivers(),
+            require_totp,
+            server_state.store.as_ref(),
+        );
+        for d in run_diagnostics(&input) {
+            let remedy = d.remedy.as_deref().unwrap_or("");
+            match d.severity {
+                Severity::Critical => {
+                    tracing::error!(id = d.id, remedy, "{} — {}", d.title, d.detail)
+                }
+                Severity::Warning => {
+                    tracing::warn!(id = d.id, remedy, "{} — {}", d.title, d.detail)
+                }
+                Severity::Info => tracing::info!(id = d.id, "{} — {}", d.title, d.detail),
+            }
+        }
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
@@ -717,6 +752,61 @@ fn resolve_app_base_url(dsl_app_url: Option<&str>) -> Option<String> {
         Ok(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
         _ => None,
     }
+}
+
+/// `croniq-server doctor` — print a configuration health report and exit.
+///
+/// Offline preflight: runs the same checks surfaced at boot and via
+/// `GET /v1/system/diagnostics`, but from the loaded Croniqfile + env only
+/// (no server, DB, or ports). Exits non-zero on any `Critical` finding so it
+/// can gate a deploy.
+fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
+    use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
+
+    let smtp_feature = croniq_server::email::smtp_feature_compiled();
+    let smtp_env =
+        std::env::var("CRONIQ_SMTP_URL").is_ok() && std::env::var("CRONIQ_SMTP_FROM").is_ok();
+    let input = DiagnosticsInput::from_runtime(
+        resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
+        // Offline approximation of build_from_env(): a real transport needs the
+        // `smtp` feature compiled AND both env vars present.
+        smtp_feature && smtp_env,
+        resolve_require_totp(rt),
+        None, // no live store offline → the enforced-2FA enrollment check is skipped
+    );
+
+    let findings = run_diagnostics(&input);
+    if findings.is_empty() {
+        println!("[OK] croniq configuration looks healthy — no findings.");
+        return Ok(());
+    }
+
+    let mut criticals = 0usize;
+    for d in &findings {
+        let label = match d.severity {
+            Severity::Critical => {
+                criticals += 1;
+                "CRITICAL"
+            }
+            Severity::Warning => "WARNING",
+            Severity::Info => "INFO",
+        };
+        println!("[{label}] {}", d.title);
+        println!("    {}", d.detail);
+        if let Some(remedy) = &d.remedy {
+            println!("    fix: {remedy}");
+        }
+        println!();
+    }
+    println!(
+        "{} finding(s) ({} critical). Address the items above to resolve.",
+        findings.len(),
+        criticals
+    );
+    if criticals > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Resolve the effective `require_totp` flag (enforced 2FA).

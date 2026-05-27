@@ -198,3 +198,29 @@ of defence against accidental production use.
 
 Both flags are read by `croniq init` at first-boot only; they do
 nothing on subsequent restarts where the database already exists.
+
+## Configuration diagnostics
+
+croniq surfaces recommended-but-missing configuration in three places, all
+backed by the same checks:
+
+- **At boot** — each finding is logged (`WARN`/`ERROR`) when the server starts.
+- **`croniq-server doctor`** — an offline preflight that loads the Croniqfile +
+  env, prints the report, and exits non-zero on any critical finding. It does
+  not bind ports or open the database, so it is safe to run before a deploy:
+  ```sh
+  croniq-server --config Croniqfile doctor
+  ```
+- **`GET /v1/system/diagnostics`** — admin-only JSON, consumed by the
+  Settings → System panel in the dashboard.
+
+Current checks:
+
+| id | severity | meaning |
+|---|---|---|
+| `email.delivery` | warning | No SMTP configured — invitation / password-reset links are returned in the API/UI response only and must be delivered manually. |
+| `email.smtp_feature_missing` | critical | `CRONIQ_SMTP_*` is set but this build lacks the `smtp` feature, so mail is silently dropped. |
+| `links.app_url` | warning | No public base URL pinned (`server { app_url }` / `CRONIQ_APP_URL`); links are derived from request headers and the public password-reset link falls back to localhost on a directly-exposed server. |
+| `totp.enforced_without_enrollment` | warning | Enforced 2FA (`require_totp`) is on but one or more active users have no confirmed TOTP secret — they are refused at login until they enrol. (Live surfaces only; `doctor` can't evaluate it offline.) |
+
+Findings report posture only — never secrets.
