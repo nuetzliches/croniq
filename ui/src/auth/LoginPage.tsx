@@ -9,14 +9,12 @@ import {
   type AuthConfigResponse,
   type HealthResponse,
   type LoginResponse,
-  type TokenResponse,
   type VersionResponse,
 } from '@/api/types'
 import { BrandMark, EnvBadge } from '@/components/primitives'
 import { useVersion } from '@/api/hooks'
 
 type Method = 'password' | 'sso'
-type Step = 'credentials' | 'mfa'
 
 const DOCS_URL = 'https://nuetzliches.github.io/croniq/'
 
@@ -137,10 +135,9 @@ const CLEAR_FADE_MS = 220
 
 export function LoginPage() {
   const [method, setMethod] = useState<Method>('password')
-  const [step, setStep] = useState<Step>('credentials')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [mfaToken, setMfaToken] = useState('')
+  const [totpRequired, setTotpRequired] = useState(false)
   const [mfaCode, setMfaCode] = useState('')
   const [useRecovery, setUseRecovery] = useState(false)
   const [error, setError] = useState('')
@@ -162,6 +159,7 @@ export function LoginPage() {
         setAuthCfg({
           oidc: { enabled: false, provider_name: null, login_url: null },
           password: { enabled: true },
+          totp: { required: false },
         }),
       )
     apiFetch<HealthResponse>('/health').then(setHealth, () => setHealth(null))
@@ -176,6 +174,11 @@ export function LoginPage() {
   const showTabStrip = passwordEnabled && !!oidc?.enabled
   const bothDisabled =
     authCfg !== null && !passwordEnabled && !oidc?.enabled
+  // Server-enforced 2FA: show the code field from the start and submit it
+  // inline (single request). Otherwise the field is revealed only after the
+  // credential probe reports the account has 2FA.
+  const totpEnforced = authCfg?.totp.required ?? false
+  const showTotpField = totpEnforced || totpRequired
 
   function flashError(msg: string) {
     setError(msg)
@@ -192,41 +195,64 @@ export function LoginPage() {
     else flashError('Login failed. Check your credentials.')
   }
 
-  async function handleCredentialsSubmit(e: React.FormEvent) {
+  // One submit handler, one request. We POST username + password (+ the code
+  // if the field is filled) to /v1/auth/login. The server verifies the second
+  // factor inline and returns tokens directly. If the account has 2FA and we
+  // didn't send a code, the server answers `requires_totp` and we reveal the
+  // field for a follow-up submit. When 2FA is enforced server-wide the field
+  // is shown from the start, so enforced logins are a single round trip.
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      const res = await apiPost<LoginResponse>('/v1/auth/login', { username, password })
-      if (isMfaRequired(res)) {
-        setMfaToken(res.mfa_token)
-        setStep('mfa')
-      } else {
-        login(res.access_token, res.refresh_token)
-        navigate('/')
+      const body: Record<string, string> = { username, password }
+      const code = mfaCode.trim()
+      if (code) {
+        if (useRecovery) body.recovery_code = code
+        else body.code = code
       }
+      const res = await apiPost<LoginResponse>('/v1/auth/login', body)
+      if (isMfaRequired(res)) {
+        // Account has 2FA but no code was supplied — reveal the field.
+        setTotpRequired(true)
+        flashError(
+          useRecovery
+            ? 'Enter one of your recovery codes.'
+            : 'Enter the 6-digit code from your authenticator app.',
+        )
+        return
+      }
+      login(res.access_token, res.refresh_token)
+      navigate('/')
     } catch (err) {
-      reportFailure(err)
+      const msg = err instanceof Error ? err.message : ''
+      if (/totp_required_not_configured/.test(msg)) {
+        // Enforced 2FA, but this account never enrolled — only an admin can fix.
+        flashError('Two-factor is required but not set up for this account. Contact an administrator.')
+      } else if (mfaCode.trim() && /^401[: ]/.test(msg)) {
+        // A code was sent, so a 401 is the password or the code — we can't tell
+        // which from a bare 401, so name both.
+        flashError('Sign-in failed. Check your password and code.')
+      } else {
+        reportFailure(err)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  async function handleMfaSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-    try {
-      const body: Record<string, string> = { mfa_token: mfaToken }
-      if (useRecovery) body.recovery_code = mfaCode.trim()
-      else body.code = mfaCode.trim()
-      const res = await apiPost<TokenResponse>('/v1/auth/login/totp', body)
-      login(res.access_token, res.refresh_token)
-      navigate('/')
-    } catch (err) {
-      reportFailure(err)
-    } finally {
-      setLoading(false)
+  // Editing username/password clears a *revealed* 2FA prompt (enforced ones
+  // stay visible); the next submit re-probes from scratch.
+  function onCredentialChange(setter: (v: string) => void) {
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      setter(e.target.value)
+      if (totpRequired) {
+        setTotpRequired(false)
+        setMfaCode('')
+        setUseRecovery(false)
+        setError('')
+      }
     }
   }
 
@@ -257,7 +283,6 @@ export function LoginPage() {
           <div className="login-mark" aria-hidden>
             <BrandMark size={22} />
           </div>
-          {step === 'credentials' ? (
             <>
               <h1 className="login-form-title">Welcome back</h1>
               <p className="login-form-sub">
@@ -302,12 +327,12 @@ export function LoginPage() {
               ) : null}
 
               {!bothDisabled && effectiveMethod === 'password' ? (
-                <form className="col gap-14" onSubmit={handleCredentialsSubmit}>
+                <form className="col gap-14" onSubmit={handleSubmit}>
                   <LoginField label="Username">
                     <input
                       className="input"
                       value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={onCredentialChange(setUsername)}
                       autoComplete="username"
                       autoFocus
                       required
@@ -318,15 +343,56 @@ export function LoginPage() {
                       className="input"
                       type="password"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={onCredentialChange(setPassword)}
                       autoComplete="current-password"
                       placeholder="•••••••••"
                       required
                     />
                   </LoginField>
+                  {showTotpField ? (
+                    <LoginField
+                      label={useRecovery ? 'Recovery code' : 'Two-factor code'}
+                      hint={
+                        totpEnforced
+                          ? 'Two-factor is required to sign in.'
+                          : 'Required because two-factor is enabled on this account.'
+                      }
+                    >
+                      <input
+                        className="input mono"
+                        inputMode={useRecovery ? 'text' : 'numeric'}
+                        pattern={useRecovery ? undefined : '[0-9]{6}'}
+                        maxLength={useRecovery ? 8 : 6}
+                        value={mfaCode}
+                        onChange={(e) => setMfaCode(e.target.value)}
+                        placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
+                        autoComplete="one-time-code"
+                        autoFocus={totpRequired}
+                        required={showTotpField}
+                        style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseRecovery((v) => !v)
+                          setMfaCode('')
+                          setError('')
+                        }}
+                        style={{ background: 'transparent', border: 0, color: 'var(--fg-3)', cursor: 'pointer', padding: 0, font: 'inherit', fontSize: 11.5, textAlign: 'left' }}
+                      >
+                        {useRecovery ? 'Use authenticator code' : 'Use a recovery code instead'}
+                      </button>
+                    </LoginField>
+                  ) : null}
                   {error ? <ErrorBanner msg={error} /> : null}
                   <SubmitButton loading={loading}>
-                    {loading ? 'Signing in…' : 'Sign in'}
+                    {loading
+                      ? showTotpField
+                        ? 'Verifying…'
+                        : 'Signing in…'
+                      : showTotpField
+                        ? 'Verify & sign in'
+                        : 'Sign in'}
                     {loading ? null : <ArrowRight size={14} />}
                   </SubmitButton>
                 </form>
@@ -382,28 +448,6 @@ export function LoginPage() {
                 </>
               ) : null}
             </>
-          ) : (
-            <MfaStep
-              code={mfaCode}
-              error={error}
-              loading={loading}
-              useRecovery={useRecovery}
-              onCode={setMfaCode}
-              onSubmit={handleMfaSubmit}
-              onToggleRecovery={() => {
-                setUseRecovery((v) => !v)
-                setMfaCode('')
-                setError('')
-              }}
-              onCancel={() => {
-                setStep('credentials')
-                setMfaToken('')
-                setMfaCode('')
-                setUseRecovery(false)
-                setError('')
-              }}
-            />
-          )}
         </div>
 
         <div className="login-formfoot">
@@ -849,73 +893,3 @@ function ErrorBanner({ msg }: { msg: string }) {
   )
 }
 
-interface MfaStepProps {
-  code: string
-  error: string
-  loading: boolean
-  useRecovery: boolean
-  onCode: (v: string) => void
-  onSubmit: (e: React.FormEvent) => void
-  onToggleRecovery: () => void
-  onCancel: () => void
-}
-
-function MfaStep({
-  code,
-  error,
-  loading,
-  useRecovery,
-  onCode,
-  onSubmit,
-  onToggleRecovery,
-  onCancel,
-}: MfaStepProps) {
-  return (
-    <>
-      <h1 className="login-form-title">Two-factor required</h1>
-      <p className="login-form-sub">
-        {useRecovery
-          ? 'Enter one of your 8-character recovery codes.'
-          : 'Enter the 6-digit code from your authenticator app.'}
-      </p>
-      <form className="col gap-14" onSubmit={onSubmit}>
-        <input
-          type="text"
-          inputMode={useRecovery ? 'text' : 'numeric'}
-          pattern={useRecovery ? undefined : '[0-9]{6}'}
-          maxLength={useRecovery ? 8 : 6}
-          value={code}
-          onChange={(e) => onCode(e.target.value)}
-          placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
-          required
-          autoFocus
-          className="input mono"
-          style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
-        />
-        {error ? <ErrorBanner msg={error} /> : null}
-        <SubmitButton loading={loading}>
-          {loading ? 'Verifying…' : 'Verify'}
-        </SubmitButton>
-        <div
-          className="row between"
-          style={{ fontSize: 11.5, color: 'var(--fg-3)' }}
-        >
-          <button
-            type="button"
-            onClick={onToggleRecovery}
-            style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, font: 'inherit' }}
-          >
-            {useRecovery ? 'Use authenticator code' : 'Use recovery code'}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, font: 'inherit' }}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </>
-  )
-}

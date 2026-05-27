@@ -117,6 +117,13 @@ pub struct ServerState {
     /// the public password-login + password-reset endpoints return
     /// `403 password login disabled` and the UI hides the password form.
     pub password_login_enabled: bool,
+    /// Whether every password login must present a valid TOTP/recovery
+    /// code (enforced 2FA). Resolved at boot from DSL
+    /// `auth { totp { required bool } }` + env `CRONIQ_REQUIRE_TOTP`;
+    /// defaults to `false`. When `true`, accounts without a confirmed
+    /// TOTP secret are refused at login (they must enrol before
+    /// enforcement) and the login UI shows the code field up-front.
+    pub require_totp: bool,
     /// Effective failure-alert configuration after
     /// `alerts::merge_legacy_env_hook` (issue #140 PR-5). Backs the
     /// read-only `GET /v1/alerts/config` endpoint. The
@@ -153,6 +160,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         })
@@ -182,6 +190,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         })
@@ -210,6 +219,7 @@ impl ServerState {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         })
@@ -1157,6 +1167,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         });
@@ -1330,6 +1341,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         });
@@ -1401,6 +1413,7 @@ mod tests {
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
             password_login_enabled: true,
+            require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         });

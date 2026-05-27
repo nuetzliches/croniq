@@ -52,11 +52,21 @@ pub struct OidcConfigResponse {
 pub struct AuthConfigResponse {
     pub oidc: OidcConfigResponse,
     pub password: PasswordConfigResponse,
+    pub totp: TotpConfigResponse,
 }
 
 #[derive(Serialize)]
 pub struct PasswordConfigResponse {
     pub enabled: bool,
+}
+
+/// Whether the server enforces 2FA for every password login. The login UI
+/// reads this to decide if the code field should be shown up-front (and the
+/// whole login done in a single request) rather than revealed after the
+/// credential probe.
+#[derive(Serialize)]
+pub struct TotpConfigResponse {
+    pub required: bool,
 }
 
 /// `GET /v1/auth/oidc/login` — 302-redirect to the IdP's authorize URL.
@@ -207,6 +217,9 @@ pub async fn handle_auth_config(State(state): State<Arc<ServerState>>) -> Json<A
         oidc: oidc_config(&state),
         password: PasswordConfigResponse {
             enabled: state.password_login_enabled,
+        },
+        totp: TotpConfigResponse {
+            required: state.require_totp,
         },
     })
 }

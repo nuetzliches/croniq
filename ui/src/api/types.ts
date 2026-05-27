@@ -132,6 +132,8 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at: string | null
+  /** Only populated by `GET /v1/users/me`; absent on admin list/get. */
+  totp_enabled?: boolean
 }
 
 export interface Invitation {
@@ -196,11 +198,18 @@ export interface PasswordConfigResponse {
   enabled: boolean
 }
 
+export interface TotpConfigResponse {
+  /** Server enforces 2FA for every password login. When true the login UI
+   *  shows the code field up-front and completes login in a single request. */
+  required: boolean
+}
+
 /// Returned by `GET /v1/auth/config` — combined OIDC + password gate
 /// probe that the login UI hits before any auth happens.
 export interface AuthConfigResponse {
   oidc: OidcConfigResponse
   password: PasswordConfigResponse
+  totp: TotpConfigResponse
 }
 
 // ─── PR-B1 Stats & Audit ─────────────────────────────────────────

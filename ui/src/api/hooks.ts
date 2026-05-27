@@ -609,7 +609,10 @@ export function useTotpConfirm() {
 export function useTotpDisable() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (code: string) => apiPost('/v1/users/me/totp/disable', { code }),
+    // The server requires a fresh password proof to disable 2FA, not a
+    // current TOTP code — disabling a second factor is a security
+    // downgrade, so it re-verifies the primary credential.
+    mutationFn: (password: string) => apiPost('/v1/users/me/totp/disable', { password }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me'] }),
     meta: { action: 'Disable TOTP' },
   })

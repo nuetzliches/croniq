@@ -43,6 +43,12 @@ pub struct UserView {
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
     pub last_login_at: Option<chrono::DateTime<Utc>>,
+    /// Whether the user has a confirmed TOTP secret. Only populated by
+    /// `GET /v1/users/me` (where the self-caller is allowed to see it);
+    /// omitted from admin list/get responses to avoid an N+1 lookup and
+    /// to keep those payloads unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totp_enabled: Option<bool>,
 }
 
 impl From<User> for UserView {
@@ -57,6 +63,7 @@ impl From<User> for UserView {
             created_at: u.created_at,
             updated_at: u.updated_at,
             last_login_at: u.last_login_at,
+            totp_enabled: None,
         }
     }
 }
@@ -296,7 +303,14 @@ pub async fn handle_get_me(
         .users_get_by_id(user_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(UserView::from(user)))
+    let totp_enabled = store
+        .totp_get(user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(|t| t.enabled)
+        .unwrap_or(false);
+    let mut view = UserView::from(user);
+    view.totp_enabled = Some(totp_enabled);
+    Ok(Json(view))
 }
 
 /// `PATCH /v1/users/me` — display_name / email only. Role + is_active
@@ -416,4 +430,51 @@ fn would_leave_no_admins(store: &crate::store::DynStore, user: &User) -> Result<
         return Ok(false);
     }
     Ok(active_admins <= 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_user() -> User {
+        let now = Utc::now();
+        User {
+            user_id: "u1".into(),
+            username: "admin".into(),
+            email: None,
+            display_name: None,
+            role: Role::Admin,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        }
+    }
+
+    // Admin list/get responses go through `From<User>`, which leaves
+    // `totp_enabled` as `None`. The field must then be absent from the
+    // payload so those responses stay byte-for-byte unchanged.
+    #[test]
+    fn user_view_omits_totp_enabled_when_none() {
+        let view = UserView::from(sample_user());
+        let v = serde_json::to_value(&view).unwrap();
+        assert!(
+            v.get("totp_enabled").is_none(),
+            "totp_enabled must be omitted unless explicitly set (got {v})"
+        );
+    }
+
+    // `GET /v1/users/me` sets the flag explicitly; it must then serialize
+    // as a real boolean the UI can branch on.
+    #[test]
+    fn user_view_includes_totp_enabled_when_set() {
+        let mut view = UserView::from(sample_user());
+        view.totp_enabled = Some(true);
+        let v = serde_json::to_value(&view).unwrap();
+        assert_eq!(v["totp_enabled"], serde_json::json!(true));
+
+        view.totp_enabled = Some(false);
+        let v = serde_json::to_value(&view).unwrap();
+        assert_eq!(v["totp_enabled"], serde_json::json!(false));
+    }
 }
