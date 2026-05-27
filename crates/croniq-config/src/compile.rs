@@ -321,6 +321,10 @@ pub struct ServerConfig {
     pub listen: String,
     pub data_dir: String,
     pub db: String,
+    /// Public base URL for invite / password-reset / OIDC login links
+    /// (`server { app_url "https://…" }`). `None` ⇒ the server falls back
+    /// to the `CRONIQ_APP_URL` env var, then to per-request host derivation.
+    pub app_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -495,6 +499,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         listen: ":4000".into(),
         data_dir: "./.data".into(),
         db: "sqlite".into(),
+        app_url: None,
     };
     let mut pull_api = None;
     let mut observability = None;
@@ -536,6 +541,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         "db" => {
                             if let Some(v) = first_arg(d, &vars) {
                                 server.db = v;
+                            }
+                        }
+                        "app_url" => {
+                            if let Some(v) = first_arg(d, &vars) {
+                                server.app_url = Some(v);
                             }
                         }
                         _ => {}
@@ -1409,6 +1419,24 @@ mod tests {
         assert_eq!(cfg.jobs.len(), 1);
         assert_eq!(cfg.jobs[0].key, "etl:sync");
         assert_eq!(cfg.jobs[0].schedule_summary, "every 15 minutes");
+    }
+
+    #[test]
+    fn compile_server_app_url() {
+        // URLs must be quoted — an unquoted `//` would start a line comment.
+        let ast = Parser::parse(r#"server { listen :4000; app_url "https://cron.example.com" }"#)
+            .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.server.app_url.as_deref(),
+            Some("https://cron.example.com")
+        );
+    }
+
+    #[test]
+    fn compile_server_without_app_url_is_none() {
+        let ast = Parser::parse("server { listen :4000 }").unwrap();
+        assert_eq!(compile(&ast).server.app_url, None);
     }
 
     #[test]
