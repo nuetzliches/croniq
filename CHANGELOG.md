@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-05-27
+
 ### Added
 
 - **Per-job metrics on the `/metrics` endpoint.** Three new series are
@@ -17,6 +19,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ExecutionStore::job_execution_metrics` aggregate query (one grouped scan).
   The previously planned `croniq_job_log_bytes_total` series remains a
   follow-up.
+- **Enforced 2FA + single-request TOTP login
+  ([#202](https://github.com/nuetzliches/croniq/pull/202)).** Opt-in
+  `auth { totp { required true } }` / `CRONIQ_REQUIRE_TOTP` rejects logins from
+  accounts without a confirmed authenticator (surfaced on
+  `GET /v1/auth/config`). `POST /v1/auth/login` now accepts an inline `code` /
+  `recovery_code` for a single-request login, and `GET /v1/users/me` returns
+  `totp_enabled`.
 
 ### Fixed
 
@@ -26,6 +35,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completion. It now aborts the in-flight handler future for each cancelled
   execution and acks it as `failure` — matching the .NET / Go / Python /
   TypeScript SDKs and conformance cases 04 / 04a.
+- **Settings 2FA disable flow
+  ([#202](https://github.com/nuetzliches/croniq/pull/202)).** Disabling TOTP
+  from Settings sent a 6-digit code where the server expected the account
+  password, so it always failed with 401; the UI now sends the password and
+  reflects the enabled/disabled state via a new `totp_enabled` field.
+- **Invitation / password-reset / OIDC links now honour `CRONIQ_APP_URL`
+  ([#205](https://github.com/nuetzliches/croniq/pull/205)).** They previously
+  always pointed at `http://localhost:4000`.
+- **Revoked personal access tokens are hidden from the token list
+  ([#207](https://github.com/nuetzliches/croniq/pull/207)).** A revoked PAT
+  looked identical to a live one in Settings; auth already rejects revoked PATs
+  and the audit log keeps the revocation record.
+- **Live Console filtering + light-mode readability
+  ([#203](https://github.com/nuetzliches/croniq/pull/203)).** Level chips now
+  filter client-side (instant toggle, no stream teardown) and the event tail
+  stays a dark terminal in light mode.
 
 ### Security
 
