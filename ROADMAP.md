@@ -1,7 +1,7 @@
 # Croniq Roadmap
 
 Living punchlist of known improvements. Each item is sized for a single focused PR.
-Last reviewed: 2026-05-26.
+Last reviewed: 2026-05-27.
 
 ## Observability
 
@@ -74,16 +74,12 @@ are the deliberate gaps left for follow-up:
 
 ## Tags hardening
 
-- **Test coverage for tag plumbing** — the tag feature shipped without
-  dedicated tests. Add: a parser-level test that the DSL `tags
-  "env=prod" "team=ops"` directive populates `JobConfig.tags`; an
-  axum integration test for `GET /v1/tags?entity={jobs|runners}` that
-  asserts count aggregation + sort order; a UI test that filter chips
-  apply AND-semantics. None block the feature today (manual smoke
-  passed), but they're the kind of regression that's annoying to chase
-  later.
-  ([crates/croniq-config/src/compile.rs](crates/croniq-config/src/compile.rs),
-  [crates/croniq-server/src/api/tags.rs](crates/croniq-server/src/api/tags.rs))
+- **UI test for tag filter chips** — the Rust side now has coverage: a
+  parser test that DSL `tags "env=prod" "team=ops"` populates
+  `JobConfig.tags`, plus an axum-level test for `GET /v1/tags` asserting
+  count aggregation + sort order. Still open: a UI test that the Jobs /
+  Runners filter chips apply AND-semantics.
+  ([ui/src/pages/JobsPage.tsx](ui/src/pages/JobsPage.tsx))
 - **Tag validation rules** — tags are currently free-form strings with
   only "trim + dedupe + non-empty" enforced. Decide a policy:
   max length per tag, max tags per entity, forbidden characters
