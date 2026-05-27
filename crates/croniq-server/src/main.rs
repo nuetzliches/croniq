@@ -219,8 +219,9 @@ async fn main() -> Result<()> {
         Some(Arc::clone(&store)),
     );
     // Inject scheduler_tx, dsl_jobs, config_path, password-login
-    // flag, the EmailSender, and the merged alerts config into the
-    // shared state. The EmailSender is resolved once here so both
+    // flag, the public app base URL, the EmailSender, and the merged
+    // alerts config into the shared state. The EmailSender is resolved
+    // once here so both
     // the user-management endpoints (invitations / password-reset)
     // and the alerts evaluator share the same SMTP transport —
     // operators only configure it once. Must happen BEFORE the
@@ -237,6 +238,7 @@ async fn main() -> Result<()> {
         );
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
+        s.app_base_url = resolve_app_base_url();
         s.email_sender = croniq_server::email::build_from_env();
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
@@ -246,6 +248,10 @@ async fn main() -> Result<()> {
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
     }
+    tracing::info!(
+        app_base_url = %server_state.app_base_url,
+        "resolved public base URL for invite / password-reset / OIDC links",
+    );
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
     // ── Reload signalling: file watcher (optional) + SIGHUP ─────────────────
@@ -674,6 +680,20 @@ fn resolve_password_login_enabled(rt: &croniq_config::compile::RuntimeConfig) ->
     }
 }
 
+/// Resolve the public base URL used to build invitation links, password-reset
+/// links, and the OIDC redirect target (see `ServerState::app_base_url`).
+///
+/// Reads `CRONIQ_APP_URL`; falls back to `http://localhost:4000` when the var
+/// is unset or blank. Trailing slashes are left intact — every link builder
+/// trims them at the call site (`trim_end_matches('/')`), so an operator who
+/// sets `CRONIQ_APP_URL=https://croniq.example.com/` still gets clean links.
+fn resolve_app_base_url() -> String {
+    match std::env::var("CRONIQ_APP_URL") {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => "http://localhost:4000".into(),
+    }
+}
+
 /// Parse a duration string like `"60s"`, `"2m"`, `"1h"`, or a bare integer
 /// (interpreted as seconds) into seconds. Returns an error string on malformed
 /// input rather than silently falling back, so that bad config surfaces at boot
@@ -719,5 +739,56 @@ mod parse_duration_tests {
         assert!(parse_duration_secs("10x").is_err());
         assert!(parse_duration_secs("ms").is_err());
         assert!(parse_duration_secs("").is_err());
+    }
+}
+
+#[cfg(test)]
+mod app_base_url_tests {
+    use super::resolve_app_base_url;
+
+    /// Serialise env mutation: cargo runs tests in parallel and
+    /// `CRONIQ_APP_URL` is process-global, so concurrent set/remove would
+    /// race. Each test holds this guard for its whole body.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static M: OnceLock<Mutex<()>> = OnceLock::new();
+        match M.get_or_init(|| Mutex::new(())).lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    #[test]
+    fn defaults_to_localhost_when_unset() {
+        let _g = env_guard();
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(resolve_app_base_url(), "http://localhost:4000");
+    }
+
+    #[test]
+    fn reads_env_override() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_APP_URL", "https://croniq.example.com") };
+        let url = resolve_app_base_url();
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(url, "https://croniq.example.com");
+    }
+
+    #[test]
+    fn blank_env_falls_back_to_default() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_APP_URL", "   ") };
+        let url = resolve_app_base_url();
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(url, "http://localhost:4000");
+    }
+
+    #[test]
+    fn trims_surrounding_whitespace() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_APP_URL", "  https://app.example  ") };
+        let url = resolve_app_base_url();
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(url, "https://app.example");
     }
 }
