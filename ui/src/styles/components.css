@@ -578,3 +578,25 @@
   outline-offset: 1px;
   border-radius: var(--r-2);
 }
+
+/* ── live console ──────────────────────────────────────────────
+   The event tail is a terminal: it stays dark in both themes
+   (mirrors .login-console). In light mode the foreground + status
+   tokens are re-pinned to their dark-theme values so text and level
+   colours read on the dark surface instead of inheriting the light
+   palette (which left dark text on a dark background). */
+.console-tail {
+  background: #0b0f17;
+  color: var(--fg);
+}
+[data-theme="light"] .console-tail {
+  --fg:       oklch(0.965 0.004 265);
+  --fg-1:     oklch(0.86  0.008 265);
+  --fg-2:     oklch(0.70  0.012 265);
+  --fg-3:     oklch(0.54  0.012 265);
+  --fg-mute:  oklch(0.42  0.012 265);
+  --info:     oklch(0.74  0.13  230);
+  --success:  oklch(0.74  0.15  152);
+  --warn:     oklch(0.80  0.16   82);
+  --error:    oklch(0.68  0.20   25);
+}
