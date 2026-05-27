@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Lock, Shield, ArrowRight, ExternalLink, Bell } from 'lucide-react'
+import { Lock, Shield, ShieldCheck, ArrowRight, ExternalLink, Bell } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from './store'
 import { apiFetch, apiPost } from '@/api/client'
 import {
   isMfaRequired,
+  isEnrollmentRequired,
   type AuthConfigResponse,
   type HealthResponse,
   type LoginResponse,
+  type TokenResponse,
+  type TotpSetupResponse,
   type VersionResponse,
 } from '@/api/types'
-import { BrandMark, EnvBadge } from '@/components/primitives'
+import { BrandMark, EnvBadge, CopyBtn } from '@/components/primitives'
+import { OtpInput } from '@/components/OtpInput'
+import { TotpQr } from '@/components/TotpQr'
 import { useVersion } from '@/api/hooks'
 
 type Method = 'password' | 'sso'
@@ -145,6 +150,11 @@ export function LoginPage() {
   const [shake, setShake] = useState(false)
   const [authCfg, setAuthCfg] = useState<AuthConfigResponse | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  // Forced TOTP enrolment (enforced 2FA, account not yet enrolled).
+  const [enrollToken, setEnrollToken] = useState<string | null>(null)
+  const [enrollData, setEnrollData] = useState<TotpSetupResponse | null>(null)
+  const [enrollCode, setEnrollCode] = useState('')
+  const [enrollAck, setEnrollAck] = useState(false)
 
   const login = useAuthStore((s) => s.login)
   const navigate = useNavigate()
@@ -223,14 +233,17 @@ export function LoginPage() {
         )
         return
       }
+      if (isEnrollmentRequired(res)) {
+        // Enforced 2FA, account not yet enrolled → start inline TOTP setup
+        // instead of locking the user out.
+        await beginEnrollment(res.enroll_token)
+        return
+      }
       login(res.access_token, res.refresh_token)
       navigate('/')
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      if (/totp_required_not_configured/.test(msg)) {
-        // Enforced 2FA, but this account never enrolled — only an admin can fix.
-        flashError('Two-factor is required but not set up for this account. Contact an administrator.')
-      } else if (mfaCode.trim() && /^401[: ]/.test(msg)) {
+      if (mfaCode.trim() && /^401[: ]/.test(msg)) {
         // A code was sent, so a 401 is the password or the code — we can't tell
         // which from a bare 401, so name both.
         flashError('Sign-in failed. Check your password and code.')
@@ -240,6 +253,57 @@ export function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Fetch the enrolment material (QR + secret + recovery codes) for the
+  // short-lived enroll token, then switch the form to the enrol view.
+  async function beginEnrollment(token: string) {
+    setEnrollToken(token)
+    setEnrollCode('')
+    setEnrollAck(false)
+    setError('')
+    try {
+      const data = await apiPost<TotpSetupResponse>(
+        '/v1/auth/login/enroll/totp/begin',
+        { enroll_token: token },
+      )
+      setEnrollData(data)
+    } catch {
+      flashError('Could not start two-factor setup. Please sign in again.')
+      setEnrollToken(null)
+    }
+  }
+
+  async function confirmEnrollment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!enrollToken) return
+    setError('')
+    setLoading(true)
+    try {
+      const tokens = await apiPost<TokenResponse>(
+        '/v1/auth/login/enroll/totp/confirm',
+        { enroll_token: enrollToken, code: enrollCode.trim() },
+      )
+      login(tokens.access_token, tokens.refresh_token)
+      navigate('/')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      if (/^401[: ]/.test(msg)) {
+        flashError("That code didn't match. Enter the current 6-digit code.")
+      } else {
+        flashError('Could not finish two-factor setup. Please try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function cancelEnrollment() {
+    setEnrollToken(null)
+    setEnrollData(null)
+    setEnrollCode('')
+    setEnrollAck(false)
+    setError('')
   }
 
   // Editing username/password clears a *revealed* 2FA prompt (enforced ones
@@ -327,6 +391,19 @@ export function LoginPage() {
               ) : null}
 
               {!bothDisabled && effectiveMethod === 'password' ? (
+                enrollData ? (
+                  <LoginEnrollView
+                    data={enrollData}
+                    code={enrollCode}
+                    onCode={setEnrollCode}
+                    ack={enrollAck}
+                    onAck={setEnrollAck}
+                    loading={loading}
+                    error={error}
+                    onConfirm={confirmEnrollment}
+                    onCancel={cancelEnrollment}
+                  />
+                ) : (
                 <form className="col gap-14" onSubmit={handleSubmit}>
                   <LoginField label="Username">
                     <input
@@ -358,19 +435,26 @@ export function LoginPage() {
                           : 'Required because two-factor is enabled on this account.'
                       }
                     >
-                      <input
-                        className="input mono"
-                        inputMode={useRecovery ? 'text' : 'numeric'}
-                        pattern={useRecovery ? undefined : '[0-9]{6}'}
-                        maxLength={useRecovery ? 8 : 6}
-                        value={mfaCode}
-                        onChange={(e) => setMfaCode(e.target.value)}
-                        placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
-                        autoComplete="one-time-code"
-                        autoFocus={totpRequired}
-                        required={showTotpField}
-                        style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
-                      />
+                      {useRecovery ? (
+                        <input
+                          className="input mono"
+                          inputMode="text"
+                          maxLength={8}
+                          value={mfaCode}
+                          onChange={(e) => setMfaCode(e.target.value)}
+                          placeholder="xxxxxxxx"
+                          autoComplete="one-time-code"
+                          autoFocus
+                          style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
+                        />
+                      ) : (
+                        <OtpInput
+                          value={mfaCode}
+                          onChange={setMfaCode}
+                          length={6}
+                          autoFocus={totpRequired}
+                        />
+                      )}
                       <button
                         type="button"
                         onClick={() => {
@@ -396,6 +480,7 @@ export function LoginPage() {
                     {loading ? null : <ArrowRight size={14} />}
                   </SubmitButton>
                 </form>
+                )
               ) : null}
 
               {!bothDisabled && effectiveMethod === 'sso' ? (
@@ -890,6 +975,117 @@ function ErrorBanner({ msg }: { msg: string }) {
     <div className="banner error" role="alert" style={{ fontSize: 12.5 }}>
       <span className="grow">{msg}</span>
     </div>
+  )
+}
+
+/** Inline "set up 2FA to continue" view shown when enforced 2FA is on and the
+ *  account has no TOTP yet. Mirrors Settings → Two-factor setup, but completes
+ *  the login on confirm. */
+function LoginEnrollView({
+  data,
+  code,
+  onCode,
+  ack,
+  onAck,
+  loading,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  data: TotpSetupResponse
+  code: string
+  onCode: (v: string) => void
+  ack: boolean
+  onAck: (v: boolean) => void
+  loading: boolean
+  error: string
+  onConfirm: (e: React.FormEvent) => void
+  onCancel: () => void
+}) {
+  return (
+    <form className="col gap-14" onSubmit={onConfirm}>
+      <div className="banner warn" role="status" style={{ fontSize: 12.5 }}>
+        <span className="grow">
+          Two-factor is required here. Set it up now to finish signing in.
+        </span>
+      </div>
+
+      <div className="row" style={{ gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <TotpQr value={data.otpauth_url} size={150} />
+        <div className="col" style={{ gap: 8, flex: '1 1 200px', minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 12.5 }}>
+            Scan with your authenticator app, or enter this secret manually:
+          </p>
+          <div className="row" style={{ gap: 6 }}>
+            <code
+              className="mono"
+              style={{
+                fontSize: 11.5,
+                padding: '6px 8px',
+                background: 'var(--bg-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-2)',
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {data.secret}
+            </code>
+            <CopyBtn value={data.secret} />
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="banner warn"
+        role="status"
+        style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}
+      >
+        <span className="grow">
+          <strong>Save these recovery codes.</strong> They're shown once and let you sign in if you
+          lose your authenticator.
+        </span>
+        <ul className="mono" style={{ margin: 0, paddingLeft: 18, columns: 2, fontSize: 11.5 }}>
+          {data.recovery_codes.map((c, i) => (
+            <li key={i}>{c}</li>
+          ))}
+        </ul>
+        <div className="row" style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
+          <CopyBtn value={data.recovery_codes.join('\n')} label="Copy all" />
+          <label className="row" style={{ gap: 6, fontSize: 12 }}>
+            <input type="checkbox" checked={ack} onChange={(e) => onAck(e.target.checked)} />I saved
+            them
+          </label>
+        </div>
+      </div>
+
+      <LoginField label="Two-factor code" hint="Enter the 6-digit code to finish.">
+        <OtpInput value={code} onChange={onCode} length={6} autoFocus />
+      </LoginField>
+
+      {error ? <ErrorBanner msg={error} /> : null}
+
+      <SubmitButton loading={loading} disabled={!ack || code.length !== 6}>
+        {loading ? 'Enabling…' : 'Enable & sign in'}
+        {loading ? null : <ShieldCheck size={14} />}
+      </SubmitButton>
+      <button
+        type="button"
+        onClick={onCancel}
+        style={{
+          background: 'transparent',
+          border: 0,
+          color: 'var(--fg-3)',
+          cursor: 'pointer',
+          font: 'inherit',
+          fontSize: 11.5,
+        }}
+      >
+        Back to sign-in
+      </button>
+    </form>
   )
 }
 

@@ -112,10 +112,30 @@ export interface MfaRequiredResponse {
   mfa_token_expires_in: number
 }
 
-export type LoginResponse = TokenResponse | MfaRequiredResponse
+/**
+ * Response for `POST /v1/auth/login` when enforced 2FA is on but the account
+ * has no confirmed TOTP secret. Instead of a lockout, the client drives inline
+ * enrolment via `/v1/auth/login/enroll/totp/{begin,confirm}` with `enroll_token`.
+ */
+export interface EnrollmentRequiredResponse {
+  enrollment_required: true
+  enroll_token: string
+  enroll_token_expires_in: number
+}
+
+export type LoginResponse =
+  | TokenResponse
+  | MfaRequiredResponse
+  | EnrollmentRequiredResponse
 
 export function isMfaRequired(r: LoginResponse): r is MfaRequiredResponse {
   return (r as MfaRequiredResponse).requires_totp === true
+}
+
+export function isEnrollmentRequired(
+  r: LoginResponse,
+): r is EnrollmentRequiredResponse {
+  return (r as EnrollmentRequiredResponse).enrollment_required === true
 }
 
 // ─── PR-A1+ Users & Multi-User auth ──────────────────────────────

@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Plus, Trash2, ShieldCheck, ShieldOff, X } from 'lucide-react'
-import QRCode from 'qrcode'
 import {
   useCurrentUser,
   usePersonalAccessTokens,
@@ -12,43 +11,11 @@ import {
   useTotpDisable,
 } from '@/api/hooks'
 import { BrandMark, EmptyState, StatusPill, CopyBtn } from '@/components/primitives'
+import { OtpInput } from '@/components/OtpInput'
+import { TotpQr } from '@/components/TotpQr'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatRelative } from '@/lib/utils'
 import type { CreatePatResponse, TotpSetupResponse } from '@/api/types'
-
-/**
- * Render the otpauth:// URL as a QR code. Uses the qrcode lib to produce
- * an inline SVG string so there's no network roundtrip and the code
- * still scans cleanly on a dark background.
- */
-function TotpQr({ value }: { value: string }) {
-  const [svg, setSvg] = useState<string>('')
-  useEffect(() => {
-    let cancelled = false
-    QRCode.toString(value, {
-      type: 'svg',
-      errorCorrectionLevel: 'M',
-      margin: 1,
-      color: { dark: '#0b0b14', light: '#ffffff' },
-      width: 180,
-    }).then((s) => { if (!cancelled) setSvg(s) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [value])
-  return (
-    <div
-      style={{
-        background: '#ffffff',
-        padding: 10,
-        borderRadius: 'var(--r-2)',
-        border: '1px solid var(--border)',
-        lineHeight: 0,
-        flexShrink: 0,
-      }}
-      aria-label="TOTP QR code"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
-  )
-}
 
 export function ProfileTab() {
   const { data: me, isLoading } = useCurrentUser()
@@ -194,16 +161,8 @@ function TotpSection({ enabled }: { enabled: boolean }) {
             <strong>3.</strong> Enter the 6-digit code from your authenticator to finish enabling.
           </p>
 
-          <div className="row" style={{ gap: 6 }}>
-            <input
-              className="input mono"
-              placeholder="000000"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              maxLength={6}
-              inputMode="numeric"
-              style={{ letterSpacing: '0.3em', textAlign: 'center', maxWidth: 160 }}
-            />
+          <div className="col" style={{ gap: 10 }}>
+            <OtpInput value={code} onChange={setCode} length={6} />
             <button
               type="button"
               className="btn primary"
