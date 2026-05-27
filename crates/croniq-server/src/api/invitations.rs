@@ -15,7 +15,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Extension, Json, extract::State, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+};
 use chrono::Utc;
 use croniq_auth::api_key::{generate_token, hash_token};
 use croniq_auth::context::Scope;
@@ -94,6 +98,7 @@ pub struct AcceptInvitationRequest {
 pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
+    headers: HeaderMap,
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreateInvitationResponse>), StatusCode> {
     require_user_admin(&ctx)?;
@@ -126,11 +131,10 @@ pub async fn handle_create(
         .invitations_create(&invite)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let accept_url = format!(
-        "{}/invitations/accept?token={}",
-        state.app_base_url.trim_end_matches('/'),
-        raw_token
-    );
+    // Admin-authenticated request → the Host header is the admin's own and
+    // safe to derive from when CRONIQ_APP_URL is unset.
+    let base = crate::api::resolve_link_base(&state.app_base_url, &headers, true);
+    let accept_url = format!("{base}/invitations/accept?token={raw_token}");
 
     // Best-effort email delivery. NoopSender is a no-op + audit log.
     let _ = state.email_sender.send(

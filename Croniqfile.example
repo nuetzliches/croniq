@@ -4,6 +4,11 @@ server {
   listen :4000
   data_dir /var/lib/croniq
   db sqlite
+  # Public base URL for invite / password-reset / OIDC login links.
+  # Optional: if omitted, falls back to the CRONIQ_APP_URL env var, then to
+  # the request's forwarded/Host headers. Set it to pin links on a
+  # directly-exposed server. Quote the value — an unquoted // starts a comment.
+  # app_url "https://cron.example.com"
 }
 
 pull_api {

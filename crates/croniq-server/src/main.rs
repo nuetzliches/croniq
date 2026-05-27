@@ -251,7 +251,7 @@ async fn main() -> Result<()> {
         );
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
-        s.app_base_url = resolve_app_base_url();
+        s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.require_totp = require_totp;
         s.email_sender = croniq_server::email::build_from_env();
         // Issue #140 PR-5: surface the effective alerts config
@@ -262,10 +262,16 @@ async fn main() -> Result<()> {
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
     }
-    tracing::info!(
-        app_base_url = %server_state.app_base_url,
-        "resolved public base URL for invite / password-reset / OIDC links",
-    );
+    match &server_state.app_base_url {
+        Some(url) => tracing::info!(
+            app_base_url = %url,
+            "app base URL configured (server.app_url / CRONIQ_APP_URL) — using it for invite / password-reset / OIDC links"
+        ),
+        None => tracing::info!(
+            "no app base URL configured (server.app_url / CRONIQ_APP_URL unset) — deriving from request headers; \
+             set one to pin invite / reset / OIDC links on directly-exposed servers"
+        ),
+    }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
     // ── Reload signalling: file watcher (optional) + SIGHUP ─────────────────
@@ -694,17 +700,22 @@ fn resolve_password_login_enabled(rt: &croniq_config::compile::RuntimeConfig) ->
     }
 }
 
-/// Resolve the public base URL used to build invitation links, password-reset
-/// links, and the OIDC redirect target (see `ServerState::app_base_url`).
+/// Resolve the operator-configured public base URL for invite / password-reset
+/// / OIDC login links (backs `ServerState::app_base_url`).
 ///
-/// Reads `CRONIQ_APP_URL`; falls back to `http://localhost:4000` when the var
-/// is unset or blank. Trailing slashes are left intact — every link builder
-/// trims them at the call site (`trim_end_matches('/')`), so an operator who
-/// sets `CRONIQ_APP_URL=https://croniq.example.com/` still gets clean links.
-fn resolve_app_base_url() -> String {
+/// Precedence: DSL `server { app_url "…" }` (passed as `dsl_app_url`) → env
+/// `CRONIQ_APP_URL` → `None`. `None` means "not configured", and the link base
+/// is then derived per-request from the forwarded / `Host` headers (see
+/// `croniq_server::api::resolve_link_base`). Blank values are ignored and
+/// surrounding whitespace trimmed; trailing slashes are tolerated (the link
+/// builders trim them).
+fn resolve_app_base_url(dsl_app_url: Option<&str>) -> Option<String> {
+    if let Some(u) = dsl_app_url.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(u.to_string());
+    }
     match std::env::var("CRONIQ_APP_URL") {
-        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => "http://localhost:4000".into(),
+        Ok(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        _ => None,
     }
 }
 
@@ -795,36 +806,64 @@ mod app_base_url_tests {
     }
 
     #[test]
-    fn defaults_to_localhost_when_unset() {
+    fn none_when_unset() {
         let _g = env_guard();
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(resolve_app_base_url(), "http://localhost:4000");
+        assert_eq!(resolve_app_base_url(None), None);
     }
 
     #[test]
     fn reads_env_override() {
         let _g = env_guard();
         unsafe { std::env::set_var("CRONIQ_APP_URL", "https://croniq.example.com") };
-        let url = resolve_app_base_url();
+        let url = resolve_app_base_url(None);
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "https://croniq.example.com");
+        assert_eq!(url, Some("https://croniq.example.com".to_string()));
     }
 
     #[test]
-    fn blank_env_falls_back_to_default() {
+    fn blank_env_is_none() {
         let _g = env_guard();
         unsafe { std::env::set_var("CRONIQ_APP_URL", "   ") };
-        let url = resolve_app_base_url();
+        let url = resolve_app_base_url(None);
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "http://localhost:4000");
+        assert_eq!(url, None);
     }
 
     #[test]
     fn trims_surrounding_whitespace() {
         let _g = env_guard();
         unsafe { std::env::set_var("CRONIQ_APP_URL", "  https://app.example  ") };
-        let url = resolve_app_base_url();
+        let url = resolve_app_base_url(None);
         unsafe { std::env::remove_var("CRONIQ_APP_URL") };
-        assert_eq!(url, "https://app.example");
+        assert_eq!(url, Some("https://app.example".to_string()));
+    }
+
+    #[test]
+    fn dsl_app_url_beats_env() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_APP_URL", "https://env.example") };
+        let url = resolve_app_base_url(Some("https://dsl.example"));
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(url, Some("https://dsl.example".to_string()));
+    }
+
+    #[test]
+    fn blank_dsl_falls_through_to_env() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_APP_URL", "https://env.example") };
+        let url = resolve_app_base_url(Some("   "));
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(url, Some("https://env.example".to_string()));
+    }
+
+    #[test]
+    fn dsl_value_is_trimmed() {
+        let _g = env_guard();
+        unsafe { std::env::remove_var("CRONIQ_APP_URL") };
+        assert_eq!(
+            resolve_app_base_url(Some("  https://dsl.example  ")),
+            Some("https://dsl.example".to_string())
+        );
     }
 }

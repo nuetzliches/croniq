@@ -20,7 +20,7 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
@@ -50,6 +50,7 @@ pub struct ConfirmResetRequest {
 /// `POST /v1/auth/password-reset/request` — always 202, never leaks.
 pub async fn handle_request(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Json(req): Json<RequestResetRequest>,
 ) -> Response {
     if !state.password_login_enabled {
@@ -86,11 +87,12 @@ pub async fn handle_request(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
-    let confirm_url = format!(
-        "{}/password-reset/confirm?token={}",
-        state.app_base_url.trim_end_matches('/'),
-        raw_token
-    );
+    // Public, unauthenticated endpoint → the Host header is attacker-controlled,
+    // so trust_request_host = false. Without CRONIQ_APP_URL or a reverse-proxy
+    // X-Forwarded-Host this falls back to the localhost default rather than
+    // letting a spoofed Host poison the emailed reset link (token theft).
+    let base = crate::api::resolve_link_base(&state.app_base_url, &headers, false);
+    let confirm_url = format!("{base}/password-reset/confirm?token={raw_token}");
 
     // Email delivery — NoopSender logs only the recipient + subject
     // (body with the token is intentionally not part of the log line).

@@ -32,7 +32,7 @@ use crate::api::auth_middleware::require_scope;
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware,
     routing::{delete, get, post, put},
 };
@@ -103,10 +103,12 @@ pub struct ServerState {
     /// Defaults to `NoopSender` (logs but doesn't deliver); SMTP backend
     /// lands in PR-A6 behind the `smtp` cargo feature.
     pub email_sender: Arc<dyn EmailSender>,
-    /// Public base URL used to build invite + reset links. Read from
-    /// `CRONIQ_APP_URL` at startup; defaults to `http://localhost:4000`
-    /// for fresh installs. The admin can override per environment.
-    pub app_base_url: String,
+    /// Operator-configured public base URL for invite, password-reset, and
+    /// OIDC login links, from `CRONIQ_APP_URL`. `None` when unset — the base
+    /// URL is then derived per-request from `X-Forwarded-*` / `Host` headers
+    /// (see `resolve_link_base`). An explicit value is authoritative and
+    /// immune to `Host`-header spoofing, which is why it stays configurable.
+    pub app_base_url: Option<String>,
     /// OIDC provider for SSO login. `None` disables the OIDC routes.
     /// Discovered once at startup (see `oidc::OidcProvider::discover`).
     pub oidc: SharedOidcProvider,
@@ -157,7 +159,7 @@ impl ServerState {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -187,7 +189,7 @@ impl ServerState {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -216,13 +218,132 @@ impl ServerState {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
         })
+    }
+}
+
+/// Resolve the public origin (`scheme://host[:port]`, no trailing slash) used
+/// to build user-facing links (invite, password-reset, OIDC login).
+///
+/// Precedence:
+/// 1. `configured` — the operator's `CRONIQ_APP_URL`. Authoritative, returned
+///    verbatim. Immune to `Host`-header spoofing.
+/// 2. Reverse-proxy headers `X-Forwarded-Proto` + `X-Forwarded-Host`.
+/// 3. The raw `Host` header — only when `trust_request_host` is `true`.
+/// 4. `http://localhost:4000` as a last resort.
+///
+/// `trust_request_host` MUST be `false` for links generated on public,
+/// unauthenticated endpoints (password-reset): there the `Host` header is
+/// attacker-controlled, so trusting it would let an attacker poison the
+/// emailed reset link and capture the token (reset poisoning). Authenticated
+/// or same-origin callers (invite creation, OIDC config) pass `true`.
+pub(crate) fn resolve_link_base(
+    configured: &Option<String>,
+    headers: &HeaderMap,
+    trust_request_host: bool,
+) -> String {
+    if let Some(url) = configured {
+        return url.trim_end_matches('/').to_string();
+    }
+    // Headers may carry a comma-separated list when several proxies append;
+    // the first value is the outermost (client-facing) hop.
+    let header_first = |name: &str| -> Option<String> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|raw| raw.split(',').next().unwrap_or(raw).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let proto = header_first("x-forwarded-proto").unwrap_or_else(|| "http".to_string());
+    let host = header_first("x-forwarded-host").or_else(|| {
+        if trust_request_host {
+            header_first("host")
+        } else {
+            None
+        }
+    });
+    match host {
+        Some(h) => format!("{proto}://{h}"),
+        None => "http://localhost:4000".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod link_base_tests {
+    use super::resolve_link_base;
+    use axum::http::{HeaderMap, HeaderName, HeaderValue};
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn configured_value_wins_and_trims_slash() {
+        let base = resolve_link_base(
+            &Some("https://app.example.com/".to_string()),
+            &headers(&[("x-forwarded-host", "evil.example")]),
+            true,
+        );
+        assert_eq!(base, "https://app.example.com");
+    }
+
+    #[test]
+    fn derives_from_forwarded_headers() {
+        let base = resolve_link_base(
+            &None,
+            &headers(&[
+                ("x-forwarded-proto", "https"),
+                ("x-forwarded-host", "cron.nuts.internal"),
+            ]),
+            false,
+        );
+        assert_eq!(base, "https://cron.nuts.internal");
+    }
+
+    #[test]
+    fn uses_host_header_when_trusted() {
+        let base = resolve_link_base(&None, &headers(&[("host", "cron.nuts.internal")]), true);
+        assert_eq!(base, "http://cron.nuts.internal");
+    }
+
+    #[test]
+    fn ignores_raw_host_when_untrusted() {
+        // The password-reset case: a spoofed Host must NOT poison the link.
+        let base = resolve_link_base(&None, &headers(&[("host", "attacker.example")]), false);
+        assert_eq!(base, "http://localhost:4000");
+    }
+
+    #[test]
+    fn forwarded_host_trusted_even_when_raw_host_is_not() {
+        // Behind a reverse proxy the reset link still resolves correctly.
+        let base = resolve_link_base(
+            &None,
+            &headers(&[
+                ("x-forwarded-host", "cron.nuts.internal"),
+                ("host", "internal:4000"),
+            ]),
+            false,
+        );
+        assert_eq!(base, "http://cron.nuts.internal");
+    }
+
+    #[test]
+    fn falls_back_to_localhost_without_headers() {
+        let base = resolve_link_base(&None, &HeaderMap::new(), true);
+        assert_eq!(base, "http://localhost:4000");
     }
 }
 
@@ -1164,7 +1285,7 @@ mod tests {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -1338,7 +1459,7 @@ mod tests {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -1410,7 +1531,7 @@ mod tests {
             config_path: None,
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
-            app_base_url: "http://localhost:4000".into(),
+            app_base_url: None,
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
