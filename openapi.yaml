@@ -210,6 +210,19 @@ components:
         mfa_token: { type: string }
         mfa_token_expires_in: { type: integer }
 
+    EnrollmentRequiredResponse:
+      type: object
+      description: >
+        Returned by `POST /v1/auth/login` instead of TokenResponse when
+        enforced 2FA is on but the account has no confirmed TOTP secret.
+        Distinct shape via `enrollment_required: true`. The `enroll_token`
+        is a short-lived JWT (purpose="totp_enroll") only valid against
+        `/v1/auth/login/enroll/totp/begin` and `.../confirm`.
+      properties:
+        enrollment_required: { type: boolean, enum: [true] }
+        enroll_token: { type: string }
+        enroll_token_expires_in: { type: integer }
+
     Invitation:
       type: object
       properties:
@@ -381,7 +394,9 @@ paths:
         (`requires_totp: true`) instead — complete via `/v1/auth/login/totp`,
         or supply the code here inline to finish in a single request. When the
         server enforces 2FA (`auth { totp { required true } }`) and the account
-        has no confirmed secret, returns 403 `totp_required_not_configured`.
+        has no confirmed secret, returns `EnrollmentRequiredResponse`
+        (`enrollment_required: true`) with a short-lived `enroll_token`; the
+        client finishes inline enrolment via `/v1/auth/login/enroll/totp/*`.
       security: []
       requestBody:
         required: true
@@ -405,19 +420,19 @@ paths:
       responses:
         "200":
           description: >
-            JWT tokens, or an MFA step-up challenge (`MfaRequiredResponse`) when
-            the account has 2FA and no code was supplied.
+            JWT tokens, an MFA step-up challenge (`MfaRequiredResponse`) when
+            the account has 2FA and no code was supplied, or an enrolment
+            challenge (`EnrollmentRequiredResponse`) when enforced 2FA is on and
+            the account has no secret.
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/TokenResponse"
                   - $ref: "#/components/schemas/MfaRequiredResponse"
+                  - $ref: "#/components/schemas/EnrollmentRequiredResponse"
         "401": { description: Invalid credentials or TOTP/recovery code }
-        "403":
-          description: >
-            Password login is disabled, or enforced 2FA is on and the account
-            has no confirmed TOTP secret (`error: totp_required_not_configured`).
+        "403": { description: Password login is disabled }
 
   /v1/auth/refresh:
     post:
@@ -1322,6 +1337,69 @@ paths:
               schema: { $ref: "#/components/schemas/TokenResponse" }
         "400": { description: Neither code nor recovery_code provided }
         "401": { description: Invalid mfa_token, expired, or wrong code }
+        "403": { description: User deactivated }
+
+  /v1/auth/login/enroll/totp/begin:
+    post:
+      summary: Start inline TOTP enrolment during enforced-2FA login
+      description: >
+        For an account that hit enforced 2FA without a confirmed secret.
+        Validates the short-lived `enroll_token` from the login
+        `EnrollmentRequiredResponse` and returns the once-shown secret, QR
+        URL, and recovery codes. Public — the token (issued only after a
+        verified password) is the proof.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enroll_token]
+              properties:
+                enroll_token: { type: string }
+      responses:
+        "200":
+          description: Enrolment material (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauth_url: { type: string }
+                  recovery_codes: { type: array, items: { type: string } }
+        "401": { description: Invalid or expired enroll_token }
+        "403": { description: User deactivated }
+        "409": { description: Account already has TOTP enabled }
+
+  /v1/auth/login/enroll/totp/confirm:
+    post:
+      summary: Finish inline TOTP enrolment and complete login
+      description: >
+        Verify the first 6-digit code against the pending secret, enable
+        TOTP, and return a normal `TokenResponse`. Same `enroll_token` as
+        `/begin`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enroll_token, code]
+              properties:
+                enroll_token: { type: string }
+                code:
+                  type: string
+                  description: 6-digit TOTP from the authenticator app.
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { description: Invalid enroll_token or wrong code }
         "403": { description: User deactivated }
 
   /v1/auth/password-reset/request:

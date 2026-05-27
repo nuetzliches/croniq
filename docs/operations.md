@@ -120,10 +120,12 @@ code. The login UI reads this from `GET /v1/auth/config` and shows the code
 field up-front, so an enforced login is a **single request**:
 `POST /v1/auth/login` with `username` + `password` + `code`.
 
-**Accounts without a confirmed TOTP secret are refused** at login with
-`403 {"error":"totp_required_not_configured"}`. Enforcement only gates
-login — it does not auto-enrol anyone — so 2FA must be set up on every
-account *before* enforcement is switched on.
+**Accounts without a confirmed TOTP secret are sent into inline enrolment**
+at login: once the password is verified, `POST /v1/auth/login` returns
+`{ "enrollment_required": true, "enroll_token": … }`, and the UI walks the
+user through TOTP setup (`POST /v1/auth/login/enroll/totp/begin` then
+`…/confirm`) before completing the sign-in. No one is locked out merely for
+not having enrolled yet.
 
 #### Env override: `CRONIQ_REQUIRE_TOTP`
 
@@ -132,22 +134,14 @@ garbage, or unset) leaves enforcement off — mirroring
 `CRONIQ_PASSWORD_LOGIN_ENABLED`, a typo won't silently lock everyone out.
 The DSL block wins where set.
 
-#### Rollout & recovering from lockout
+#### Rollout
 
-Enrolment requires being logged in, so flipping `required true` before
-everyone has set up TOTP locks out the un-enrolled — potentially including
-the only admin. Recommended order:
-
-1. Leave enforcement **off**.
-2. Have every user enrol via **Settings → Two-factor authentication**.
-3. Only then set `auth { totp { required true } }` (or
-   `CRONIQ_REQUIRE_TOTP=true`) and reload/restart.
-
-If you do get locked out: temporarily relax the flag
-(`auth { totp { required false } }`, or `CRONIQ_REQUIRE_TOTP=false`),
-restart, sign in, finish enrolment, then re-harden. `croniq-server` logs a
-`WARN` at boot whenever enforcement is on, as a standing reminder of this
-footgun.
+You can switch `required true` on at any time: password users who haven't
+enrolled are guided through TOTP setup on their next sign-in (inline
+enrolment, above) rather than locked out. Users can also enrol ahead of time
+via **Settings → Two-factor authentication**. `croniq-server` logs a `WARN`
+at boot whenever enforcement is on. SSO/OIDC and API-key callers are
+unaffected — enforcement gates the password login flow only.
 
 ### Probing from the UI: `GET /v1/auth/config`
 

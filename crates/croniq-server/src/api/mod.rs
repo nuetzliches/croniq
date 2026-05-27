@@ -529,6 +529,14 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/auth/login/totp",
             post(auth_endpoints::handle_totp_login),
         )
+        .route(
+            "/v1/auth/login/enroll/totp/begin",
+            post(auth_endpoints::handle_enroll_totp_begin),
+        )
+        .route(
+            "/v1/auth/login/enroll/totp/confirm",
+            post(auth_endpoints::handle_enroll_totp_confirm),
+        )
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
         .route("/v1/auth/logout", post(auth_endpoints::handle_logout))
         .route(
