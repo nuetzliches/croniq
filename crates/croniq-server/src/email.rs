@@ -17,6 +17,13 @@ pub trait EmailSender: Send + Sync {
     /// Send an email. Body is plain text; subject is short (under
     /// ~80 chars). Returns Err with a human-readable reason on failure.
     fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), String>;
+
+    /// Whether this sender actually delivers mail. `false` for the
+    /// [`NoopSender`], which only logs — diagnostics use this to warn that
+    /// invitation / password-reset links must be delivered manually.
+    fn delivers(&self) -> bool {
+        true
+    }
 }
 
 /// No-op sender used when no SMTP transport is configured. Logs a
@@ -35,12 +42,23 @@ impl EmailSender for NoopSender {
         );
         Ok(())
     }
+
+    fn delivers(&self) -> bool {
+        false
+    }
 }
 
 /// Sentinel for "no SMTP transport". `Arc<dyn EmailSender>` is the
 /// runtime-injected type so the trait stays object-safe.
 pub fn default_sender() -> Arc<dyn EmailSender> {
     Arc::new(NoopSender)
+}
+
+/// Whether this build was compiled with the `smtp` cargo feature. When
+/// `false`, [`build_from_env`] can only ever return the [`NoopSender`], so
+/// setting `CRONIQ_SMTP_*` has no effect — diagnostics flag that case.
+pub fn smtp_feature_compiled() -> bool {
+    cfg!(feature = "smtp")
 }
 
 /// Build the production sender at startup. With the `smtp` feature
