@@ -22,8 +22,12 @@ pub async fn handle_diagnostics(
     Extension(ctx): Extension<CallerContext>,
 ) -> Result<Json<Vec<Diagnostic>>, StatusCode> {
     require_scope(&ctx, Scope::ADMIN)?;
-    let input =
-        DiagnosticsInput::from_runtime(state.app_base_url.is_some(), state.email_sender.delivers());
+    let input = DiagnosticsInput::from_runtime(
+        state.app_base_url.is_some(),
+        state.email_sender.delivers(),
+        state.require_totp,
+        state.store.as_ref(),
+    );
     Ok(Json(diagnostics::run_diagnostics(&input)))
 }
 

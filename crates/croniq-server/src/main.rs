@@ -291,6 +291,8 @@ async fn main() -> Result<()> {
         let input = DiagnosticsInput::from_runtime(
             server_state.app_base_url.is_some(),
             server_state.email_sender.delivers(),
+            require_totp,
+            server_state.store.as_ref(),
         );
         for d in run_diagnostics(&input) {
             let remedy = d.remedy.as_deref().unwrap_or("");
@@ -764,14 +766,14 @@ fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
     let smtp_feature = croniq_server::email::smtp_feature_compiled();
     let smtp_env =
         std::env::var("CRONIQ_SMTP_URL").is_ok() && std::env::var("CRONIQ_SMTP_FROM").is_ok();
-    let input = DiagnosticsInput {
-        app_base_url_configured: resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
+    let input = DiagnosticsInput::from_runtime(
+        resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
         // Offline approximation of build_from_env(): a real transport needs the
         // `smtp` feature compiled AND both env vars present.
-        email_delivery_active: smtp_feature && smtp_env,
-        smtp_env_present: smtp_env,
-        smtp_feature_compiled: smtp_feature,
-    };
+        smtp_feature && smtp_env,
+        resolve_require_totp(rt),
+        None, // no live store offline → the enforced-2FA enrollment check is skipped
+    );
 
     let findings = run_diagnostics(&input);
     if findings.is_empty() {
