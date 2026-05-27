@@ -408,6 +408,9 @@ fn mint_user_tokens(
 /// Recovery codes are marked consumed here, *before* any token is minted, so
 /// a parallel retry can't double-spend. Shared by the inline
 /// `/v1/auth/login` path and the two-step `/v1/auth/login/totp` exchange.
+// Carries a full `Response` as its error, like the login handlers it backs;
+// the large Err is intentional, so boxing it would only churn the call sites.
+#[allow(clippy::result_large_err)]
 fn verify_second_factor(
     jwt_config: &croniq_auth::jwt::JwtConfig,
     store: &crate::store::DynStore,

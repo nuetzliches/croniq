@@ -79,7 +79,13 @@ async fn post_json(app: axum::Router, uri: &str, body: serde_json::Value) -> (St
         .await
         .unwrap();
     let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, bytes)
 }
 
@@ -95,7 +101,13 @@ async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Vec<u8>) {
         .await
         .unwrap();
     let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, bytes)
 }
 
@@ -110,7 +122,10 @@ async fn enforced_totp_rejects_account_without_secret() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["error"], serde_json::json!("totp_required_not_configured"));
+    assert_eq!(
+        v["error"],
+        serde_json::json!("totp_required_not_configured")
+    );
     assert!(v["message"].is_string());
 }
 
