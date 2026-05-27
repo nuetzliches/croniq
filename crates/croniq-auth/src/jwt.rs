@@ -204,6 +204,50 @@ pub fn validate_mfa_token(config: &JwtConfig, token: &str) -> Result<String, Aut
     Ok(data.claims.sub)
 }
 
+/// Mint a short-lived TOTP-enrolment token for `user_id`. Issued after a
+/// password success when enforced 2FA is on but the account has no confirmed
+/// TOTP yet, so the user can enrol inline and finish login instead of being
+/// locked out. Purpose claim is `"totp_enroll"`, so it's useless for normal
+/// API calls and for the MFA step-up. TTL is 10 minutes — enrolment (scan the
+/// QR, save recovery codes, enter a code) takes longer than a plain code entry.
+pub fn issue_totp_enroll_token(
+    config: &JwtConfig,
+    user_id: &str,
+) -> Result<(String, i64), AuthError> {
+    let now = Utc::now();
+    let exp = now + Duration::seconds(600);
+    let claims = MfaClaims {
+        sub: user_id.to_string(),
+        purpose: "totp_enroll".into(),
+        iss: config.issuer.clone(),
+        exp: exp.timestamp(),
+        iat: now.timestamp(),
+    };
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.secret.as_bytes()),
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    Ok((token, 600))
+}
+
+/// Validate a TOTP-enrolment token. Returns the user_id it was issued for.
+pub fn validate_totp_enroll_token(config: &JwtConfig, token: &str) -> Result<String, AuthError> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[&config.issuer]);
+    let data = decode::<MfaClaims>(
+        token,
+        &DecodingKey::from_secret(config.secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    if data.claims.purpose != "totp_enroll" {
+        return Err(AuthError::TokenError("not a TOTP-enrolment token".into()));
+    }
+    Ok(data.claims.sub)
+}
+
 /// Validate a JWT and extract the caller context.
 ///
 /// Rejects tokens whose `iss` claim doesn't match the configured issuer.

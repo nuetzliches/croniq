@@ -81,35 +81,14 @@ pub async fn handle_setup(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let enrolment = enroll_user(&user.username).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let wrapped = wrap_totp_secret(jwt_secret, enrolment.secret_b32.as_bytes())
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let now = Utc::now();
-    store
-        .totp_upsert(&TotpSecret {
-            user_id: user_id.to_string(),
-            secret_enc: wrapped,
-            enabled: false,
-            confirmed_at: None,
-            created_at: now,
-        })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Recovery codes are persisted ahead of /confirm so that a partial
-    // setup (user closes browser between setup and confirm) still has
-    // codes available once /confirm completes. They're useless on their
-    // own — the matching TOTP secret must be enabled to consume them.
-    let codes = build_recovery_codes(user_id, &enrolment.recovery_codes, now);
-    store
-        .recovery_codes_replace_all(user_id, &codes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(SetupResponse {
-        secret: enrolment.secret_b32,
-        otpauth_url: enrolment.otpauth_url,
-        recovery_codes: enrolment.recovery_codes,
-    }))
+    // Generate + persist the pending secret and recovery codes. Shared with
+    // the login-time enrolment flow (enforced 2FA, not-yet-enrolled user).
+    Ok(Json(create_pending_enrollment(
+        store,
+        jwt_secret,
+        user_id,
+        &user.username,
+    )?))
 }
 
 /// `POST /v1/users/me/totp/confirm`
@@ -124,32 +103,13 @@ pub async fn handle_confirm(
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
-    let Some(secret_row) = store.totp_get(user_id).ok().flatten() else {
-        return StatusCode::NOT_FOUND;
-    };
-    if secret_row.enabled {
-        return StatusCode::CONFLICT;
+    match confirm_pending_enrollment(store, jwt_secret, user_id, &req.code) {
+        Ok(()) => {
+            audit::record(store, &ctx, "totp.enabled", "user", Some(user_id), None);
+            StatusCode::NO_CONTENT
+        }
+        Err(s) => s,
     }
-    let raw = match unwrap_totp_secret(jwt_secret, &secret_row.secret_enc) {
-        Ok(b) => b,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    let secret_b32 = match String::from_utf8(raw) {
-        Ok(s) => s,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    match verify_code(&secret_b32, &req.code) {
-        Ok(true) => {}
-        _ => return StatusCode::UNAUTHORIZED,
-    }
-    if store
-        .totp_set_enabled(user_id, true, Some(Utc::now()))
-        .is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    audit::record(store, &ctx, "totp.enabled", "user", Some(user_id), None);
-    StatusCode::NO_CONTENT
 }
 
 /// `POST /v1/users/me/totp/disable` — requires fresh password proof.
@@ -260,4 +220,72 @@ fn build_recovery_codes(
             created_at: now,
         })
         .collect()
+}
+
+/// Generate a fresh pending TOTP secret + recovery codes for `user_id` and
+/// persist them (secret `enabled=false`). Returns the once-shown enrolment
+/// material. Shared by `/v1/users/me/totp/setup` and the login-time enrolment
+/// flow (`/v1/auth/login/enroll/totp/begin`). Idempotent — re-calling before
+/// confirm overwrites the pending secret.
+pub(crate) fn create_pending_enrollment(
+    store: &crate::store::DynStore,
+    jwt_secret: &str,
+    user_id: &str,
+    username: &str,
+) -> Result<SetupResponse, StatusCode> {
+    let enrolment = enroll_user(username).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let wrapped = wrap_totp_secret(jwt_secret, enrolment.secret_b32.as_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let now = Utc::now();
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user_id.to_string(),
+            secret_enc: wrapped,
+            enabled: false,
+            confirmed_at: None,
+            created_at: now,
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Recovery codes are persisted ahead of confirm so a partial setup (user
+    // closes the browser mid-flow) still has codes once confirm completes.
+    // They're useless on their own — the matching secret must be enabled.
+    let codes = build_recovery_codes(user_id, &enrolment.recovery_codes, now);
+    store
+        .recovery_codes_replace_all(user_id, &codes)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(SetupResponse {
+        secret: enrolment.secret_b32,
+        otpauth_url: enrolment.otpauth_url,
+        recovery_codes: enrolment.recovery_codes,
+    })
+}
+
+/// Verify `code` against the user's pending secret and enable TOTP. Shared by
+/// `/v1/users/me/totp/confirm` and `/v1/auth/login/enroll/totp/confirm`.
+/// Errors map straight to HTTP status (`NOT_FOUND` no pending secret,
+/// `CONFLICT` already enabled, `UNAUTHORIZED` wrong code).
+pub(crate) fn confirm_pending_enrollment(
+    store: &crate::store::DynStore,
+    jwt_secret: &str,
+    user_id: &str,
+    code: &str,
+) -> Result<(), StatusCode> {
+    let secret_row = store
+        .totp_get(user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if secret_row.enabled {
+        return Err(StatusCode::CONFLICT);
+    }
+    let raw = unwrap_totp_secret(jwt_secret, &secret_row.secret_enc)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let secret_b32 = String::from_utf8(raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match verify_code(&secret_b32, code) {
+        Ok(true) => {}
+        _ => return Err(StatusCode::UNAUTHORIZED),
+    }
+    store
+        .totp_set_enabled(user_id, true, Some(Utc::now()))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(())
 }

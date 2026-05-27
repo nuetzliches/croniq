@@ -1,11 +1,11 @@
 //! Enforced-2FA login behaviour (`auth { totp { required true } }`).
 //!
-//! Covers the security-critical gate: when enforcement is on, an account
-//! with no confirmed TOTP secret must be refused at `/v1/auth/login` (it
-//! cannot satisfy the requirement and must enrol first), while the same
-//! account logs in normally when enforcement is off. Also asserts the flag
-//! is surfaced on `/v1/auth/config` so the login UI can show the code field
-//! up-front.
+//! Covers the security-critical gate: when enforcement is on, an account with
+//! no confirmed TOTP secret is sent into inline enrolment at `/v1/auth/login`
+//! (instead of being locked out), while the same account logs in normally when
+//! enforcement is off. Also exercises the enrolment endpoints and asserts the
+//! flag is surfaced on `/v1/auth/config` so the login UI can show the code
+//! field up-front.
 
 use std::sync::Arc;
 
@@ -111,8 +111,25 @@ async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Vec<u8>) {
     (status, bytes)
 }
 
+/// Log in (enforced 2FA, no secret) and return the issued `enroll_token`.
+async fn login_enroll_token(app: &axum::Router) -> String {
+    let (status, body) = post_json(
+        app.clone(),
+        "/v1/auth/login",
+        serde_json::json!({ "username": "admin", "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    v["enroll_token"]
+        .as_str()
+        .expect("enroll_token in EnrollmentRequired response")
+        .to_string()
+}
+
 #[tokio::test]
-async fn enforced_totp_rejects_account_without_secret() {
+async fn enforced_totp_without_secret_starts_enrolment() {
+    // Instead of a 403 lockout, the account is handed an enrolment token.
     let app = app_with_user(true);
     let (status, body) = post_json(
         app,
@@ -120,13 +137,52 @@ async fn enforced_totp_rejects_account_without_secret() {
         serde_json::json!({ "username": "admin", "password": PASSWORD }),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::OK);
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        v["error"],
-        serde_json::json!("totp_required_not_configured")
+    assert_eq!(v["enrollment_required"], serde_json::json!(true));
+    assert!(
+        v["enroll_token"].is_string(),
+        "expected an enroll_token, got {v}"
     );
-    assert!(v["message"].is_string());
+}
+
+#[tokio::test]
+async fn enroll_begin_returns_setup_material() {
+    let app = app_with_user(true);
+    let token = login_enroll_token(&app).await;
+    let (status, body) = post_json(
+        app,
+        "/v1/auth/login/enroll/totp/begin",
+        serde_json::json!({ "enroll_token": token }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["secret"].is_string());
+    assert!(v["otpauth_url"].is_string());
+    assert_eq!(v["recovery_codes"].as_array().unwrap().len(), 10);
+}
+
+#[tokio::test]
+async fn enroll_confirm_rejects_wrong_code() {
+    let app = app_with_user(true);
+    let token = login_enroll_token(&app).await;
+    // begin to persist a pending secret
+    let (s1, _) = post_json(
+        app.clone(),
+        "/v1/auth/login/enroll/totp/begin",
+        serde_json::json!({ "enroll_token": token.clone() }),
+    )
+    .await;
+    assert_eq!(s1, StatusCode::OK);
+    // a wrong code must not enable TOTP
+    let (s2, _) = post_json(
+        app,
+        "/v1/auth/login/enroll/totp/confirm",
+        serde_json::json!({ "enroll_token": token, "code": "000000" }),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

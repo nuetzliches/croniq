@@ -12,7 +12,10 @@ use chrono::Utc;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
 use croniq_auth::crypto::unwrap_totp_secret;
-use croniq_auth::jwt::{issue_mfa_token, issue_token_pair, validate_mfa_token};
+use croniq_auth::jwt::{
+    issue_mfa_token, issue_token_pair, issue_totp_enroll_token, validate_mfa_token,
+    validate_totp_enroll_token,
+};
 use croniq_auth::password::verify_password;
 use croniq_auth::totp::{hash_recovery_code, verify_code};
 use croniq_auth::{AuthMethod, CallerContext, CallerType, default_scopes_for_role};
@@ -61,14 +64,26 @@ pub struct MfaRequiredResponse {
     pub mfa_token_expires_in: i64,
 }
 
-/// `POST /v1/auth/login` response — one variant or the other. Tagged
-/// internally for client convenience: clients can pattern-match on
-/// the presence of `requires_totp`.
+/// Response for `POST /v1/auth/login` when enforced 2FA is on but the account
+/// has no confirmed TOTP secret. Rather than refusing, the server hands back a
+/// short-lived `enroll_token`; the client drives the inline enrolment flow via
+/// `/v1/auth/login/enroll/totp/{begin,confirm}` to set up TOTP and finish login.
+#[derive(Serialize)]
+pub struct EnrollmentRequiredResponse {
+    pub enrollment_required: bool, // always true; distinguishes the variant
+    pub enroll_token: String,
+    pub enroll_token_expires_in: i64,
+}
+
+/// `POST /v1/auth/login` response — one of three shapes. `#[serde(untagged)]`,
+/// so clients pattern-match on the presence of `access_token` (tokens),
+/// `requires_totp` (MFA step-up), or `enrollment_required` (forced enrolment).
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum LoginResponse {
     Tokens(TokenResponse),
     MfaRequired(MfaRequiredResponse),
+    EnrollmentRequired(EnrollmentRequiredResponse),
 }
 
 #[derive(Deserialize)]
@@ -130,22 +145,6 @@ pub(super) fn password_disabled_response() -> Response {
         Json(serde_json::json!({
             "error": "password_login_disabled",
             "message": "password login is disabled on this server",
-        })),
-    )
-        .into_response()
-}
-
-/// 403 envelope from `/v1/auth/login` when enforced 2FA is on but the account
-/// has no confirmed TOTP secret. Such accounts must enrol *before*
-/// enforcement is enabled; if everyone is locked out, relax the flag
-/// (`auth { totp { required false } }` / `CRONIQ_REQUIRE_TOTP=false`), enrol,
-/// then re-enable.
-pub(super) fn totp_required_not_configured_response() -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(serde_json::json!({
-            "error": "totp_required_not_configured",
-            "message": "two-factor authentication is required but not set up for this account; an administrator must enable it before you can sign in",
         })),
     )
         .into_response()
@@ -267,15 +266,26 @@ pub async fn handle_login(
             &req.recovery_code,
         )?;
     } else if state.require_totp {
+        // Enforced 2FA but this account has no confirmed secret. Instead of
+        // locking the user out, hand back a short-lived enrolment token so they
+        // can set up TOTP inline and finish login. Password is already verified.
+        let (enroll_token, expires_in) = issue_totp_enroll_token(jwt_config, &user.user_id)
+            .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
         audit::record_event(
             store,
             "user",
             Some(&user.user_id),
-            "auth.login_totp_required_not_configured",
+            "auth.login_totp_enroll_required",
             "user",
             Some(&user.user_id),
         );
-        return Err(totp_required_not_configured_response());
+        return Ok(Json(LoginResponse::EnrollmentRequired(
+            EnrollmentRequiredResponse {
+                enrollment_required: true,
+                enroll_token,
+                enroll_token_expires_in: expires_in,
+            },
+        )));
     }
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
@@ -359,6 +369,108 @@ pub async fn handle_totp_login(
         "user",
         Some(&user.user_id),
     );
+    Ok(Json(tokens))
+}
+
+// ─── Forced TOTP enrolment (login flow) ─────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct EnrollTotpBeginRequest {
+    pub enroll_token: String,
+}
+
+#[derive(Deserialize)]
+pub struct EnrollTotpConfirmRequest {
+    pub enroll_token: String,
+    pub code: String,
+}
+
+/// `POST /v1/auth/login/enroll/totp/begin` — start inline TOTP enrolment for a
+/// user who hit enforced 2FA without a secret. Validates the short-lived
+/// `enroll_token` (from the login `EnrollmentRequired` response) and returns
+/// the once-shown secret / QR / recovery codes. Public + unauthenticated — the
+/// token (issued only after a verified password) is the proof.
+pub async fn handle_enroll_totp_begin(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<EnrollTotpBeginRequest>,
+) -> Result<Json<super::totp::SetupResponse>, Response> {
+    if !state.password_login_enabled {
+        return Err(password_disabled_response());
+    }
+    let store = state
+        .store
+        .as_ref()
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
+
+    let user_id = validate_totp_enroll_token(jwt_config, &req.enroll_token)
+        .map_err(|_| status_err(StatusCode::UNAUTHORIZED))?;
+    let user = store
+        .users_get_by_id(&user_id)
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
+    if !user.is_active {
+        return Err(status_err(StatusCode::FORBIDDEN));
+    }
+    // Already enrolled? Then no enrol token should exist for this account — refuse.
+    if store
+        .totp_get(&user_id)
+        .ok()
+        .flatten()
+        .map(|t| t.enabled)
+        .unwrap_or(false)
+    {
+        return Err(status_err(StatusCode::CONFLICT));
+    }
+
+    let resp =
+        super::totp::create_pending_enrollment(store, &jwt_config.secret, &user_id, &user.username)
+            .map_err(status_err)?;
+    Ok(Json(resp))
+}
+
+/// `POST /v1/auth/login/enroll/totp/confirm` — verify the first TOTP code,
+/// enable 2FA, and complete login by minting tokens. Same `enroll_token`.
+pub async fn handle_enroll_totp_confirm(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<EnrollTotpConfirmRequest>,
+) -> Result<Json<TokenResponse>, Response> {
+    if !state.password_login_enabled {
+        return Err(password_disabled_response());
+    }
+    let store = state
+        .store
+        .as_ref()
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
+
+    let user_id = validate_totp_enroll_token(jwt_config, &req.enroll_token)
+        .map_err(|_| status_err(StatusCode::UNAUTHORIZED))?;
+    let user = store
+        .users_get_by_id(&user_id)
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
+    if !user.is_active {
+        return Err(status_err(StatusCode::FORBIDDEN));
+    }
+
+    super::totp::confirm_pending_enrollment(store, &jwt_config.secret, &user_id, &req.code)
+        .map_err(status_err)?;
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        "auth.login_totp_enrolled",
+        "user",
+        Some(&user.user_id),
+    );
+    let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     Ok(Json(tokens))
 }
 
