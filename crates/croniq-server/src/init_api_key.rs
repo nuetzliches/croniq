@@ -178,7 +178,9 @@ mod tests {
         )
         .unwrap();
         // Nothing changed.
-        let keys = store.list_api_keys(&store.list_clients().unwrap()[0].client_id).unwrap();
+        let keys = store
+            .list_api_keys(&store.list_clients().unwrap()[0].client_id)
+            .unwrap();
         assert_eq!(keys.len(), 1);
         assert!(keys[0].revoked_at.is_none());
     }
