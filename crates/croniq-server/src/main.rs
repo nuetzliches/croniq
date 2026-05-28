@@ -121,15 +121,17 @@ async fn main() -> Result<()> {
     }
 
     // Enforced 2FA (auth { totp { required true } } / CRONIQ_REQUIRE_TOTP).
-    // Accounts without a confirmed TOTP secret are refused at login once this
-    // is on, so it must only be flipped after every account has enrolled —
-    // surfaced loudly at boot so a fresh deploy doesn't lock itself out.
+    // Non-enrolled users are walked through inline enrolment on next sign-in
+    // rather than locked out; surfaced loudly at boot anyway so operators know
+    // the gate is active and remember the recovery path if the worst happens.
     let require_totp = resolve_require_totp(&loaded.runtime);
     if require_totp {
         tracing::warn!(
-            "enforced 2FA is ON — accounts without a confirmed TOTP secret cannot log in. \
-             If you are locked out, set auth {{ totp {{ required false }} }} (or \
-             CRONIQ_REQUIRE_TOTP=false), enrol, then re-enable."
+            "enforced 2FA is ON — every password login must present a TOTP or recovery \
+             code. Users without a confirmed secret are guided through inline enrolment \
+             on next sign-in (not locked out). If you've lost both the authenticator and \
+             all recovery codes, set auth {{ totp {{ required false }} }} (or \
+             CRONIQ_REQUIRE_TOTP=false), re-enrol, then re-enable."
         );
     }
 
