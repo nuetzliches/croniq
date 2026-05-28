@@ -425,10 +425,23 @@
   display: flex; align-items: center; gap: 6px;
   font-size: 13px;
   color: var(--fg-2);
+  min-width: 0;
+  overflow: hidden;
 }
-.crumbs .sep { color: var(--fg-mute); font-size: 12px; }
-.crumbs .current { color: var(--fg); font-weight: 500; }
-.crumbs a { color: inherit; text-decoration: none; }
+.crumbs .sep { color: var(--fg-mute); font-size: 12px; flex-shrink: 0; }
+/* A long job-key like `billing:monthly-invoice-pdf-generator:v2` would
+ * push the search box and live indicator off-screen otherwise. The
+ * current segment is the only one that can grow without bound, so cap
+ * it; earlier segments stay short ("Jobs", "Executions"). */
+.crumbs .current {
+  color: var(--fg);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crumbs a { color: inherit; text-decoration: none; flex-shrink: 0; }
 .crumbs a:hover { color: var(--fg); }
 
 .topbar-search {
@@ -529,6 +542,13 @@
   box-shadow: none;
   overflow: visible;
   min-width: 0;
+  /* Grid items default to min-height: auto, which lets the flex column
+   * grow to its content height instead of staying within the .split
+   * grid track. Pin it at 0 so `.master-list { flex: 1; overflow-y: auto }`
+   * actually constrains the row list. Without this the page itself
+   * scrolls when the list is longer than the viewport (visible only on
+   * /executions today; /jobs has few enough demo rows to hide it). */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--card-gap);

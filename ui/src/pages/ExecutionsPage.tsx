@@ -1,14 +1,21 @@
 import { useState } from 'react'
+import { useNavigate, useParams } from 'react-router'
+import clsx from 'clsx'
 import { useExecutions, useCancelExecution } from '@/api/hooks'
-import { EmptyState, StatusPill } from '@/components/primitives'
-import { Activity, Ban, X } from 'lucide-react'
+import type { Execution } from '@/api/types'
+import { StatusPill } from '@/components/primitives'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Activity, Ban, X, MousePointerClick } from 'lucide-react'
 import { shortId } from '@/lib/utils'
 import { RelativeTime } from '@/components/ui/relative-time'
+import { ExecutionDetail } from '@/components/ExecutionDetail'
 
 const STATES = ['', 'queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
 const PAGE_SIZE = 50
 
 export function ExecutionsPage() {
+  const navigate = useNavigate()
+  const { id: routeId } = useParams<{ id: string }>()
   const [stateFilter, setStateFilter] = useState('')
   const [jobFilter, setJobFilter] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
@@ -22,6 +29,10 @@ export function ExecutionsPage() {
   const rows = executions.data ?? []
   const hasFilters = !!(stateFilter || jobFilter)
   const reachedEnd = rows.length < limit
+  const selected = routeId ? rows.find((r) => r.id === routeId) ?? null : null
+
+  const selectExecution = (id: string | null) =>
+    navigate(id ? `/executions/${id}` : '/executions')
 
   function setStateAndReset(v: string) {
     setStateFilter(v)
@@ -33,31 +44,25 @@ export function ExecutionsPage() {
   }
 
   return (
-    <div className="page wide">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Executions</h1>
-          <p className="page-subtitle">Filter by state or job to inspect recent executions.</p>
-        </div>
-        <span className="dim mono" style={{ fontSize: 12 }}>
-          {rows.length} {rows.length === 1 ? 'row' : 'rows'}
-          {!reachedEnd && ' (recent)'}
-        </span>
-      </div>
-
-      <section className="card" style={{ padding: 0 }}>
+    <div className="split">
+      <aside className="master" aria-label="Executions list">
         <div
-          className="row"
-          style={{
-            padding: 12,
-            gap: 8,
-            flexWrap: 'wrap',
-            borderBottom: rows.length > 0 ? '1px solid var(--divider)' : undefined,
-          }}
+          className="master-filter"
+          style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}
         >
-          <label className="row" style={{ gap: 6, fontSize: 12 }}>
+          <div className="row between">
+            <span className="mono dim" style={{ fontSize: 12 }}>
+              {rows.length} {rows.length === 1 ? 'row' : 'rows'}
+              {!reachedEnd && ' (recent)'}
+            </span>
+          </div>
+          <label className="col" style={{ gap: 4, fontSize: 12 }}>
             <span className="dim">State</span>
-            <select className="input" value={stateFilter} onChange={(e) => setStateAndReset(e.target.value)} style={{ width: 160 }}>
+            <select
+              className="input"
+              value={stateFilter}
+              onChange={(e) => setStateAndReset(e.target.value)}
+            >
               {STATES.map((s) => (
                 <option key={s} value={s}>
                   {s || 'all'}
@@ -65,9 +70,9 @@ export function ExecutionsPage() {
               ))}
             </select>
           </label>
-          <label className="row" style={{ gap: 6, fontSize: 12, flex: 1, minWidth: 200 }}>
+          <label className="col" style={{ gap: 4, fontSize: 12 }}>
             <span className="dim">Job key</span>
-            <div style={{ position: 'relative', flex: 1 }}>
+            <div style={{ position: 'relative' }}>
               <input
                 className="input"
                 placeholder="substring match…"
@@ -81,9 +86,9 @@ export function ExecutionsPage() {
                   onClick={() => setJobAndReset('')}
                   aria-label="Clear filter"
                   className="btn icon sm ghost"
-                  style={{ position: 'absolute', right: 2, top: 2, width: 28, height: 28 }}
+                  style={{ position: 'absolute', right: 2, top: 2, width: 24, height: 24 }}
                 >
-                  <X size={12} />
+                  <X size={11} />
                 </button>
               ) : null}
             </div>
@@ -102,75 +107,134 @@ export function ExecutionsPage() {
           ) : null}
         </div>
 
-        {executions.isLoading ? (
-          <div className="dim center" style={{ padding: 40 }}>Loading…</div>
-        ) : rows.length === 0 ? (
+        <div className="master-list">
+          {executions.isLoading ? (
+            <div className="dim center" style={{ padding: 30 }}>Loading…</div>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              icon={<Activity className="h-10 w-10" />}
+              title="No executions"
+              description={hasFilters ? 'Nothing matches the current filters.' : 'Executions will appear here once jobs start firing.'}
+            />
+          ) : (
+            <>
+              {rows.map((e) => (
+                <ExecutionRow
+                  key={e.id}
+                  execution={e}
+                  active={e.id === routeId}
+                  onClick={() => selectExecution(e.id)}
+                  onCancel={() => cancelExecution.mutate(e.id)}
+                  cancelDisabled={cancelExecution.isPending}
+                />
+              ))}
+              {rows.length >= limit ? (
+                <div className="row center" style={{ padding: 12 }}>
+                  <button
+                    type="button"
+                    className="btn sm ghost"
+                    onClick={() => setLimit((n) => n + PAGE_SIZE)}
+                  >
+                    Load {PAGE_SIZE} more
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </aside>
+
+      <section className="detail" aria-label="Execution detail">
+        {selected ? (
+          <div className="card" style={{ padding: '16px 20px' }}>
+            <ExecutionDetail execution={selected} />
+          </div>
+        ) : routeId ? (
           <EmptyState
-            icon={Activity}
-            title="No executions"
-            desc={hasFilters ? 'Nothing matches the current filters.' : 'Executions will appear here once jobs start firing.'}
+            icon={<Activity className="h-10 w-10" />}
+            title="Execution not in current view"
+            description={`No row matches ${routeId.slice(0, 8)}… in the loaded list. Clear filters or load more to find it.`}
           />
         ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Job</th>
-                <th>State</th>
-                <th>Runner</th>
-                <th>Duration</th>
-                <th>Fire at</th>
-                <th style={{ width: 48 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((e) => {
-                const isCancellable = e.state === 'queued' || e.state === 'claimed'
-                return (
-                  <tr key={e.id}>
-                    <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
-                      {shortId(e.id)}
-                    </td>
-                    <td className="mono">{e.job_key}</td>
-                    <td>
-                      <StatusPill state={e.state} />
-                    </td>
-                    <td className="mono dim ellipsis" style={{ maxWidth: 180, fontSize: 11.5 }}>
-                      {e.runner_id ?? '—'}
-                    </td>
-                    <td className="num">{e.duration_ms ? `${e.duration_ms} ms` : '—'}</td>
-                    <td className="dim">
-                      <RelativeTime iso={e.fire_at} />
-                    </td>
-                    <td>
-                      {isCancellable ? (
-                        <button
-                          type="button"
-                          className="btn icon sm ghost"
-                          title={e.state === 'claimed' ? 'Cancel running execution' : 'Cancel queued execution'}
-                          aria-label="Cancel execution"
-                          disabled={cancelExecution.isPending}
-                          onClick={() => cancelExecution.mutate(e.id)}
-                        >
-                          <Ban size={12} />
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <EmptyState
+            icon={<MousePointerClick className="h-10 w-10" />}
+            title="Select an execution"
+            description="Pick a row on the left to see attempt details, the originating runner, error and logs."
+          />
         )}
       </section>
+    </div>
+  )
+}
 
-      {rows.length >= limit ? (
-        <div className="row center">
-          <button type="button" className="btn sm ghost" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
-            Load {PAGE_SIZE} more
+function ExecutionRow({
+  execution: e,
+  active,
+  onClick,
+  onCancel,
+  cancelDisabled,
+}: {
+  execution: Execution
+  active: boolean
+  onClick: () => void
+  onCancel: () => void
+  cancelDisabled: boolean
+}) {
+  const isCancellable = e.state === 'queued' || e.state === 'claimed'
+  // The cancel control needs to be a real <button> for a11y + valid HTML
+  // (nested <button> inside a parent <button> is invalid and trips screen
+  // readers). So the row itself is a div with button semantics; pressing
+  // Enter/Space activates it, just like a real button.
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={clsx('job-row', active && 'active')}
+      onClick={onClick}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault()
+          onClick()
+        }
+      }}
+      style={{ cursor: 'pointer' }}
+    >
+      <div className="row between" style={{ gap: 8, alignItems: 'center' }}>
+        <span className="key ellipsis mono" style={{ minWidth: 0, flex: 1, fontSize: 12 }} title={e.job_key}>
+          {e.job_key}
+        </span>
+        <StatusPill state={e.state} />
+        {isCancellable ? (
+          <button
+            type="button"
+            className="btn icon sm ghost"
+            title={e.state === 'claimed' ? 'Cancel running execution' : 'Cancel queued execution'}
+            aria-label="Cancel execution"
+            disabled={cancelDisabled}
+            onClick={(ev) => {
+              ev.stopPropagation()
+              onCancel()
+            }}
+            style={{ flexShrink: 0 }}
+          >
+            <Ban size={11} />
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
+      <div className="row between" style={{ fontSize: 10.5 }}>
+        <span className="mono dim" style={{ minWidth: 0, flex: 1 }} title={e.id}>
+          {shortId(e.id)}
+        </span>
+        <span className="dim">
+          <RelativeTime iso={e.fire_at} />
+        </span>
+      </div>
+      <div className="row between" style={{ fontSize: 10.5 }}>
+        <span className="mono dim ellipsis" style={{ minWidth: 0, flex: 1 }}>
+          {e.runner_id ?? '—'}
+        </span>
+        <span className="mono">{e.duration_ms ? `${e.duration_ms} ms` : '—'}</span>
+      </div>
     </div>
   )
 }

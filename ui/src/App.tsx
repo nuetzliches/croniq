@@ -70,9 +70,11 @@ export default function App() {
               <Route path="/jobs" element={<JobsPage />} />
               <Route path="/jobs/:jobKey" element={<JobsPage />} />
               <Route path="/runners" element={<RunnersPage />} />
+              <Route path="/runners/:runnerId" element={<RunnersPage />} />
               <Route path="/dead-letters" element={<DeadLettersPage />} />
               <Route path="/dead-letters/:id" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />
+              <Route path="/executions/:id" element={<ExecutionsPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/calendars" element={<CalendarsPage />} />
               <Route path="/console" element={<ConsolePage />} />

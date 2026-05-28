@@ -42,6 +42,17 @@ export function DashboardPage() {
   const totalErr24h = errSeries.reduce((a, b) => a + b, 0)
   const total = totalOk24h + totalErr24h
   const successRate = total === 0 ? null : (totalOk24h / total) * 100
+  // Same thresholds as the JobRow chip and the per-job KpiRow:
+  // 100% green, ≥ 90% neutral, < 90% red. Without this the dashboard
+  // tile reads identical at 100% and at 70%, which buries the signal.
+  const srColor =
+    successRate === null
+      ? 'var(--fg)'
+      : successRate === 100
+        ? 'var(--success)'
+        : successRate >= 90
+          ? 'var(--fg)'
+          : 'var(--error)'
 
   const queueDepth = jobs.data?.filter((j) => j.is_active).length ?? 0
   const runnersOnline = (runners.data ?? []).filter((r) => r.status === 'online').length
@@ -107,7 +118,11 @@ export function DashboardPage() {
         />
         <KPICard
           title="Success rate (24h)"
-          value={successRate === null ? '—' : `${successRate.toFixed(1)}%`}
+          value={
+            <span style={{ color: srColor }}>
+              {successRate === null ? '—' : `${successRate.toFixed(1)}%`}
+            </span>
+          }
           sub={
             total > 0 ? (
               <span>
