@@ -34,6 +34,7 @@ pub mod completion;
 pub mod dashboard;
 pub mod diagnostics;
 pub mod email;
+pub mod init_api_key;
 pub mod live_console;
 pub mod loader;
 pub mod mcp;

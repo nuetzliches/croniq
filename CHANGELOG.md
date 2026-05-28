@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Boot-time reconciliation of `CRONIQ_INIT_API_KEY`
+  ([#217](https://github.com/nuetzliches/croniq/issues/217)).** On every
+  start, the server now compares `CRONIQ_INIT_API_KEY` against the stored
+  key for client `default` and logs the outcome (match, differs, or no
+  default client). Previously the variable was silently ignored once the
+  data dir existed, which made orchestrator-driven key rotation fail with
+  an unexplained 401. To actually rotate the key from the env var (revoke
+  existing active keys, install the new one), additionally set
+  `CRONIQ_INIT_API_KEY_RECONCILE=1` — the default is log-only so an
+  accidental env change cannot silently revoke a working credential.
+
 ### Fixed
 
 - **DSL: `every` now accepts the compact duration form
