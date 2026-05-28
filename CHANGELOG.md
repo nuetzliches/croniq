@@ -6,6 +6,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-05-28
+
+### Added
+
+- **Restored CRUD surfaces lost in the operator-console redesign
+  ([#228](https://github.com/nuetzliches/croniq/pull/228)).** The #143
+  overhaul ported the visual layer but dropped several mutation paths
+  that the API still exposed. This release re-wires them against the
+  existing hooks; no backend changes.
+  - **Jobs page** — the `+` button now opens a *New Job* dialog instead of
+    being a no-op; Adopt / Unadopt buttons in the detail header take
+    ownership of DSL-managed jobs (mirrors the existing CalendarsPage
+    flow); the Schedule tab gains Add / Edit / Delete with a dialog that
+    round-trips cron expression, timezone, calendar, window, and the
+    enabled flag.
+  - **Runners page** — converted to the established `.split` master/detail
+    layout with `/runners/:runnerId` deep links. The detail pane shows
+    identity, capacity ring, capabilities, tags, the 50 most-recent
+    executions filtered by runner_id, and a Remove action — restoring
+    the per-runner activity view that disappeared in the redesign.
+  - **Executions page** — also converted to `.split` with `/executions/:id`
+    routing. The detail pane mounts the existing `ExecutionDetail` +
+    `LogsPanel` components, which were written but had no host route.
+    Per-execution logs are reachable from the UI again.
+
+### Changed
+
+- **JobRow percentage chip now reports success-rate consistently.** It
+  previously mixed failure-rate (red) with success-rate (green) on the
+  same column, so a job with one failed run in 14 read as `7%` which
+  scanned as a score in the low single digits. The chip now follows the
+  same thresholds as the per-job detail header and the dashboard tile
+  (100% green, ≥ 90% neutral, < 90% red).
+- **Dashboard "Success rate (24h)" tile** picked up the same threshold
+  coloring so the dashboard no longer reads identical at 99% and 70%.
+- **Topbar breadcrumb** learned `/executions/:id` and `/runners/:id`
+  segments (the chrome used to dump a 36-char hex blob in place of the
+  page title); long current segments now ellipsize instead of pushing
+  the search box off-screen.
+
+### Fixed
+
+- **Long master lists no longer expand the page.** `.split > .master`
+  defaulted to `min-height: auto` (the grid-item default), which let the
+  flex column grow past its track. Pinning it at `0` makes
+  `.master-list { flex: 1; overflow-y: auto }` actually constrain the
+  row list. Latent on `/jobs` and `/dead-letters` (short demo data),
+  observable on `/executions` as soon as the list exceeded the
+  viewport.
+- **Removed an unused right-side `Sheet` drawer primitive
+  (`ui/components/ui/sheet.tsx`).** The established design template for
+  list+detail is the `.split` layout; the Sheet was leftover scaffolding
+  that no page rendered.
+
 ## [0.17.3] - 2026-05-28
 
 ### Changed
