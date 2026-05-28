@@ -19,6 +19,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CRONIQ_INIT_API_KEY_RECONCILE=1` — the default is log-only so an
   accidental env change cannot silently revoke a working credential.
 
+### Fixed
+
+- **DSL: `every` now accepts the compact duration form
+  ([#216](https://github.com/nuetzliches/croniq/issues/216)).** `every 1m`,
+  `every 30s`, `every 2h` are now parsed identically to the verbose
+  `every N <unit>` form. Previously they were rejected with
+  `expected number, got '1m'`, even though the same compact form was already
+  accepted on `timeout` — the asymmetry made the error confusing.
+
 ## [0.17.0] - 2026-05-27
 
 ### Added
