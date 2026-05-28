@@ -779,7 +779,9 @@ impl Parser {
                 "hours" | "hour" => IntervalUnit::Hours,
                 other => {
                     return Err(ParseError::General {
-                        message: format!("expected 'seconds', 'minutes', or 'hours', got '{other}'"),
+                        message: format!(
+                            "expected 'seconds', 'minutes', or 'hours', got '{other}'"
+                        ),
                         span: unit_tok.span.into(),
                     });
                 }
