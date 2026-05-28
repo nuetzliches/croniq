@@ -6,6 +6,8 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-28
+
 ### Fixed
 
 - **`AddCroniqRunner(...)` is now idempotent
@@ -41,6 +43,7 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
   config / inline `AddCroniqRunner(o => o.MaxConsecutivePollConflicts = …)`).
 
 ### Added
+
 - **`LogWriter` accepts `TimeProvider` for deterministic flush testing
   ([#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 3).**
   The internal flusher's `PeriodicTimer` is now driven through the same
@@ -53,6 +56,10 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
   `min_count: 1` because of `Task.WhenAny`'s read-bias under real-time
   scheduling is now reliably covered in
   `Croniq.Runner.Sdk.Tests.LogWriterTests`.
+
+## [0.1.0] - 2026-05-26
+
+### Added
 
 - Initial `Croniq.Runner.Sdk` package with poll/ack/renew/events loop, Generic Host integration, options-pattern configuration, server-side cancellation wiring, and streaming `ILogWriter` backed by `System.Threading.Channels`.
 - Initial `Croniq.Runner.Sdk.OpenTelemetry` package with `ActivitySource`/`Meter` constants and `Add…Instrumentation()` extensions.

@@ -6,14 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-05-28
+
 ### Fixed
 
-- **Segmented 2FA input now accepts password-manager autofill.** Bitwarden /
-  1Password / browser autofill drop the full 6-digit code into the first box;
-  the input previously truncated it (`maxLength={1}`) and only kept the last
-  keystroke, so users saw a single digit in box 1. The first box now accepts
-  the full code and multi-digit input is distributed across the boxes — same
-  behaviour as paste.
+- **Segmented 2FA input now accepts password-manager autofill
+  ([#222](https://github.com/nuetzliches/croniq/pull/222)).** Bitwarden /
+  1Password / browser autofill drop the full 6-digit code into the first
+  box; the input previously truncated it (`maxLength={1}`) and only kept
+  the last keystroke, so users saw a single digit in box 1. The first
+  box now accepts the full code and multi-digit input is distributed
+  across the boxes — same behaviour as paste.
 
 ## [0.17.1] - 2026-05-28
 
