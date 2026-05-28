@@ -6,8 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-05-28
+
 ### Added
 
+- **Config diagnostics — boot warnings, `doctor`, and endpoint
+  ([#215](https://github.com/nuetzliches/croniq/pull/215)).** The server now
+  surfaces missing / risky configuration at startup as actionable warnings,
+  exposes the same report via `croniq-server doctor` (exits non-zero on
+  critical findings, never binds a port), and over an authenticated
+  endpoint for operators.
+- **Inline TOTP onboarding + segmented 2FA code input
+  ([#214](https://github.com/nuetzliches/croniq/pull/214)).** New users can
+  enrol TOTP from the login flow itself instead of needing a separate
+  Settings detour; the 6-digit input is now a segmented field with paste
+  splitting and auto-advance.
 - **Boot-time reconciliation of `CRONIQ_INIT_API_KEY`
   ([#217](https://github.com/nuetzliches/croniq/issues/217)).** On every
   start, the server now compares `CRONIQ_INIT_API_KEY` against the stored
@@ -27,6 +40,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `every N <unit>` form. Previously they were rejected with
   `expected number, got '1m'`, even though the same compact form was already
   accepted on `timeout` — the asymmetry made the error confusing.
+- **Request-derived link base URL + Croniqfile `app_url`
+  ([#212](https://github.com/nuetzliches/croniq/pull/212)).** Invitation,
+  password-reset, and OIDC login links now derive the base URL from the
+  request (`X-Forwarded-Proto`/`X-Forwarded-Host` / `Host`) when neither
+  `CRONIQ_APP_URL` nor `server { app_url "…" }` is set, so links work
+  behind a reverse proxy with no extra config. The new DSL setting takes
+  precedence over the env var.
 
 ## [0.17.0] - 2026-05-27
 
