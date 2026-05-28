@@ -141,6 +141,17 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to open database at {}", db_path.display()))?,
     );
 
+    // Reconcile CRONIQ_INIT_API_KEY against the stored 'default' client.
+    // On an existing data dir, init has already run, so the env var was
+    // previously silently ignored. We now always log whether it matches,
+    // and rotate when CRONIQ_INIT_API_KEY_RECONCILE=1 is set. See #217.
+    {
+        let init_api_key = std::env::var("CRONIQ_INIT_API_KEY").ok();
+        let inputs = croniq_server::init_api_key::ReconcileInputs::from_env_borrowed(&init_api_key);
+        croniq_server::init_api_key::reconcile(&*store, inputs)
+            .context("failed to reconcile CRONIQ_INIT_API_KEY against stored API client")?;
+    }
+
     // Restore persisted trigger states (once-jobs, next_fire_at) from the DB.
     // Must happen before the scheduler loop starts.
     restore_trigger_states(&mut loaded.triggers, &*store, chrono::Utc::now());
