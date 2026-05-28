@@ -6,6 +6,22 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Fixed
+
+- **`AddCroniqRunner(...)` is now idempotent
+  ([#221](https://github.com/nuetzliches/croniq/issues/221)).** Calling it
+  more than once on the same `IServiceCollection` — natural when several
+  feature modules each contribute jobs — previously duplicated the options
+  `Bind`, the `CroniqAuthHandler` in the HTTP pipeline, and the hosted
+  service: `Capabilities` ended up as `["worker", "worker"]`, every poll
+  request carried a comma-joined `Authorization` header, and the server
+  returned 401 with no useful diagnostics. The second and subsequent calls
+  now no-op for the shared setup and return a builder that still accepts
+  further `.AddCroniqJob<T>(...)` chaining. A defensive fix in
+  `CroniqAuthHandler` also strips any pre-existing `Authorization` header
+  before writing its own, so an upstream code path that already set the
+  header can no longer produce a comma-joined value.
+
 ### Changed
 
 - **Poll 409 Conflict is fatal after `MaxConsecutivePollConflicts`
