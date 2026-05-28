@@ -754,27 +754,41 @@ impl Parser {
 
     fn parse_schedule_interval(&mut self, start: Span) -> Result<ScheduleNode, ParseError> {
         let count_tok = self.peek().clone();
-        let count: u32 = count_tok.text().parse().map_err(|_| ParseError::General {
-            message: format!("expected number, got '{}'", count_tok.text()),
-            span: count_tok.span.into(),
-        })?;
-        self.advance();
+        let text = count_tok.text();
 
-        let unit_tok = self.peek().clone();
-        let unit = match unit_tok.text() {
-            "seconds" | "second" => IntervalUnit::Seconds,
-            "minutes" | "minute" => IntervalUnit::Minutes,
-            "hours" | "hour" => IntervalUnit::Hours,
-            other => {
-                return Err(ParseError::General {
-                    message: format!("expected 'seconds', 'minutes', or 'hours', got '{other}'"),
-                    span: unit_tok.span.into(),
-                });
-            }
+        // Accept both the verbose form (`every 15 minutes`) and the compact
+        // suffixed form (`every 15m`, `every 30s`, `every 2h`). The compact
+        // form is already accepted on `timeout`, so the asymmetry was
+        // surprising — see issue #216.
+        let (count, unit, end_span) = if let Some((c, u)) = parse_compact_interval(text) {
+            self.advance();
+            (c, u, count_tok.span)
+        } else {
+            let count: u32 = text.parse().map_err(|_| ParseError::General {
+                message: format!(
+                    "expected number or compact duration (e.g. '15', '15m', '30s', '2h'), got '{text}'"
+                ),
+                span: count_tok.span.into(),
+            })?;
+            self.advance();
+
+            let unit_tok = self.peek().clone();
+            let unit = match unit_tok.text() {
+                "seconds" | "second" => IntervalUnit::Seconds,
+                "minutes" | "minute" => IntervalUnit::Minutes,
+                "hours" | "hour" => IntervalUnit::Hours,
+                other => {
+                    return Err(ParseError::General {
+                        message: format!("expected 'seconds', 'minutes', or 'hours', got '{other}'"),
+                        span: unit_tok.span.into(),
+                    });
+                }
+            };
+            self.advance();
+            (count, unit, unit_tok.span)
         };
-        self.advance();
 
-        let (options, end) = self.parse_optional_schedule_block(unit_tok.span)?;
+        let (options, end) = self.parse_optional_schedule_block(end_span)?;
         Ok(ScheduleNode {
             kind: ScheduleKind::Interval { count, unit },
             mode: None,
@@ -1133,6 +1147,27 @@ impl Parser {
 /// The Croniqfile DSL does not document direction, so we accept any
 /// pair without erroring — wrap-around matches what users typing
 /// `Fri..Mon` for "long weekend" would expect.
+/// Parse the compact duration form used on `every` (and elsewhere):
+/// `15m`, `30s`, `2h`. Returns `None` if the input is not a compact form
+/// (so the parser can fall back to the verbose `15 minutes` path or
+/// surface a parse error from the trailing parts).
+fn parse_compact_interval(text: &str) -> Option<(u32, IntervalUnit)> {
+    let (num_part, unit) = if let Some(rest) = text.strip_suffix('s') {
+        (rest, IntervalUnit::Seconds)
+    } else if let Some(rest) = text.strip_suffix('m') {
+        (rest, IntervalUnit::Minutes)
+    } else if let Some(rest) = text.strip_suffix('h') {
+        (rest, IntervalUnit::Hours)
+    } else {
+        return None;
+    };
+    if num_part.is_empty() {
+        return None;
+    }
+    let count: u32 = num_part.parse().ok()?;
+    Some((count, unit))
+}
+
 fn weekday_range(start: Weekday, end: Weekday) -> Vec<Weekday> {
     const ORDER: [Weekday; 7] = [
         Weekday::Monday,
@@ -1199,6 +1234,29 @@ mod tests {
             ));
         } else {
             panic!("expected Job");
+        }
+    }
+
+    #[test]
+    fn parse_job_with_compact_interval() {
+        for (src, want_count, want_unit) in [
+            ("job a:b { every 1m }", 1u32, IntervalUnit::Minutes),
+            ("job a:b { every 30s }", 30, IntervalUnit::Seconds),
+            ("job a:b { every 2h }", 2, IntervalUnit::Hours),
+        ] {
+            let ast = Parser::parse(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+            if let Item::Job(ref j) = ast.items[0] {
+                let sched = j.schedule.as_ref().unwrap();
+                match sched.kind {
+                    ScheduleKind::Interval { count, unit } => {
+                        assert_eq!(count, want_count, "src={src}");
+                        assert_eq!(unit, want_unit, "src={src}");
+                    }
+                    _ => panic!("expected Interval for {src}"),
+                }
+            } else {
+                panic!("expected Job for {src}");
+            }
         }
     }
 
