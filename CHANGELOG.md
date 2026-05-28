@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-05-28
+
+### Changed
+
+- **Official Docker image now ships with the `smtp` cargo feature.** Until
+  v0.17.2 the published `ghcr.io/nuetzliches/croniq` image was built with
+  `--features croniq-server/otlp` only, so `CRONIQ_SMTP_URL` /
+  `CRONIQ_SMTP_FROM` were silently ignored and the NoopSender stayed active
+  even when configured — operators had to roll their own image to send
+  invitation / password-reset emails. The release Dockerfile now builds with
+  `--features croniq-server/otlp,croniq-server/smtp`, so the lettre-backed
+  sender is available out of the box. Runtime behaviour is unchanged when
+  `CRONIQ_SMTP_URL` is unset: the NoopSender stays active and the API keeps
+  returning the token URL in its JSON response, identical to the off-build.
+  No code, wire-protocol, or SDK API changes vs v0.17.2.
+
 ## [0.17.2] - 2026-05-28
 
 ### Fixed
