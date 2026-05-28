@@ -5,13 +5,17 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build release binaries. `--features croniq-server/otlp` compiles the
-# optional OTLP exporter (issue #121) into croniq-server so the official
-# image honours `OTEL_EXPORTER_OTLP_ENDPOINT` out of the box. The runtime
-# gate in src/telemetry.rs::decide keeps the layer dormant when the env
-# var is unset — same behaviour as the off-build, just discoverable.
+# Build release binaries. `--features croniq-server/otlp,croniq-server/smtp`
+# compiles two optional layers into the server:
+#   * otlp (issue #121) -- OTLP exporter, honours OTEL_EXPORTER_OTLP_ENDPOINT
+#     at runtime. The gate in src/telemetry.rs::decide keeps it dormant when
+#     the env var is unset, same behaviour as the off-build.
+#   * smtp (PR-A6) -- lettre-backed sender for invitation + password-reset
+#     emails. When CRONIQ_SMTP_URL is unset at runtime the NoopSender stays
+#     active and the API keeps returning the token URL in the JSON response,
+#     so the off-build behaviour is preserved.
 RUN cargo build --release \
-      --features croniq-server/otlp \
+      --features croniq-server/otlp,croniq-server/smtp \
       --bin croniq-server \
       --bin croniq \
       --bin croniq-mcp \
