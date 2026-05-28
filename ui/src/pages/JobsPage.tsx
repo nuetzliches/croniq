@@ -10,6 +10,8 @@ import {
   CalendarDays,
   Bell,
   Edit3,
+  Download,
+  Upload,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -23,6 +25,9 @@ import {
   useActivateJob,
   useDeactivateJob,
   useDeleteJob,
+  useAdoptJob,
+  useUnadoptJob,
+  useDeleteSchedule,
   useAuditEvents,
   useForecast,
   useAlertDeliveries,
@@ -43,6 +48,8 @@ import type { RunOutcome } from '@/components/primitives'
 import type { AuditEvent, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EditJobDialog } from '@/components/EditJobDialog'
+import { NewJobDialog } from '@/components/NewJobDialog'
+import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { formatRelative, formatDate } from '@/lib/utils'
 import { useCurrentUser } from '@/api/hooks'
 
@@ -80,6 +87,7 @@ export function JobsPage() {
   const [search, setSearch] = useState('')
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
   const [editing, setEditing] = useState<JobDefinition | null>(null)
+  const [creating, setCreating] = useState(false)
   const { confirm, dialog: confirmDialog } = useConfirm()
 
   const toggleTag = (t: string) =>
@@ -133,6 +141,7 @@ export function JobsPage() {
           if (!o) setEditing(null)
         }}
       />
+      <NewJobDialog open={creating} onOpenChange={setCreating} />
 
       <aside className="master" aria-label="Jobs list">
         <div
@@ -169,7 +178,7 @@ export function JobsPage() {
               type="button"
               className="btn icon"
               title="New job"
-              onClick={() => navigate('/jobs')}
+              onClick={() => setCreating(true)}
               aria-label="New job"
             >
               <Plus size={14} />
@@ -255,7 +264,20 @@ function JobRow({
   const recent = execs.slice(0, 14)
   const total = recent.length
   const fails = recent.filter((e) => e.state === 'failed' || e.state === 'dead').length
-  const failRate = total === 0 ? 0 : fails / total
+  // Success-rate semantics, matching the KpiRow in the detail header:
+  // 100% green, >= 90% neutral, < 90% red. The previous version mixed
+  // failure-rate (red) with success-rate (green) on the same chip, which
+  // made a job with one failure read as "7%" — confusing it for a
+  // success score in the low single digits.
+  const successRate = total === 0 ? null : (total - fails) / total
+  const srColor =
+    successRate === null
+      ? 'var(--fg-mute)'
+      : successRate === 1
+        ? 'var(--success)'
+        : successRate >= 0.9
+          ? 'var(--fg)'
+          : 'var(--error)'
 
   return (
     <button type="button" className={clsx('job-row', active && 'active')} onClick={onClick}>
@@ -286,12 +308,13 @@ function JobRow({
             className="mono"
             style={{
               fontSize: 10.5,
-              color: failRate > 0 ? 'var(--error)' : 'var(--success)',
+              color: srColor,
               minWidth: 32,
               textAlign: 'right',
             }}
+            title={total === 0 ? 'No recent runs' : `${total - fails}/${total} successful`}
           >
-            {total === 0 ? '—' : failRate > 0 ? `${(failRate * 100).toFixed(0)}%` : '100%'}
+            {successRate === null ? '—' : `${(successRate * 100).toFixed(0)}%`}
           </span>
         </div>
       </div>
@@ -317,6 +340,13 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   const activateJob = useActivateJob()
   const deactivateJob = useDeactivateJob()
   const deleteJob = useDeleteJob()
+  const adoptJob = useAdoptJob()
+  const unadoptJob = useUnadoptJob()
+  const deleteSchedule = useDeleteSchedule()
+  const { confirm, dialog: confirmDialog } = useConfirm()
+  const [scheduleEditing, setScheduleEditing] = useState<TriggerDefinition | null>(null)
+  const [scheduleCreating, setScheduleCreating] = useState(false)
+  const [adoptError, setAdoptError] = useState<string | null>(null)
 
   const execsData = executions.data
   // p95 sparkline: derive a duration series from the most recent 24
@@ -364,18 +394,88 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
     await onDelete(jobKey)
   }
 
+  async function handleAdopt() {
+    const ok = await confirm({
+      title: `Adopt job ${jobKey}?`,
+      description:
+        'A copy of this job and its schedule is created in the API store. The Croniqfile definition is ignored on the next reload until you unadopt. Requires `policy { dsl_adopt_on_mutate true }`.',
+      confirmLabel: 'Adopt to edit',
+    })
+    if (!ok) return
+    setAdoptError(null)
+    try {
+      await adoptJob.mutateAsync(jobKey)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const m = msg.match(/^409:\s*(.+)$/s)
+      if (m) {
+        try {
+          const parsed = JSON.parse(m[1])
+          setAdoptError(parsed.message ?? msg)
+        } catch {
+          setAdoptError(m[1])
+        }
+      } else {
+        setAdoptError(msg)
+      }
+    }
+  }
+
+  async function handleUnadopt() {
+    const ok = await confirm({
+      title: `Unadopt job ${jobKey}?`,
+      description:
+        'The API copy is dropped. The next config reload reinstates the Croniqfile definition; any UI-only edits to the job or its schedule are lost.',
+      confirmLabel: 'Unadopt',
+      destructive: true,
+    })
+    if (!ok) return
+    await unadoptJob.mutateAsync(jobKey)
+  }
+
+  async function handleDeleteSchedule(s: TriggerDefinition) {
+    const ok = await confirm({
+      title: 'Delete schedule?',
+      description: `The trigger ${s.cron_expression ?? s.trigger_id} will be removed. Past executions are preserved.`,
+      confirmLabel: 'Delete schedule',
+      destructive: true,
+    })
+    if (ok) await deleteSchedule.mutateAsync(s.trigger_id)
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--card-gap)' }}>
+      {confirmDialog}
+      <ScheduleDialog
+        jobKey={jobKey}
+        schedule={scheduleEditing}
+        open={scheduleEditing !== null || scheduleCreating}
+        onOpenChange={(o) => {
+          if (!o) {
+            setScheduleEditing(null)
+            setScheduleCreating(false)
+          }
+        }}
+      />
       <div className="card" style={{ padding: 0, overflow: 'visible' }}>
         <JobDetailHeader
           job={j}
           dslManaged={dslManaged}
           triggerPending={triggerJob.isPending}
+          adoptPending={adoptJob.isPending}
+          unadoptPending={unadoptJob.isPending}
           onToggle={setActive}
           onTrigger={trigger}
           onEdit={() => onEdit(j)}
           onRemove={remove}
+          onAdopt={handleAdopt}
+          onUnadopt={handleUnadopt}
         />
+        {adoptError ? (
+          <div className="row" style={{ padding: '0 20px 12px', color: 'var(--error)', fontSize: 12 }}>
+            {adoptError}
+          </div>
+        ) : null}
       </div>
 
       <KpiRow
@@ -410,7 +510,16 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
             />
           ) : null}
           {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
-          {tab === 'schedule' ? <ScheduleTab schedules={schedules.data ?? []} loading={schedules.isLoading} /> : null}
+          {tab === 'schedule' ? (
+            <ScheduleTab
+              schedules={schedules.data ?? []}
+              loading={schedules.isLoading}
+              dslManaged={dslManaged}
+              onAdd={() => setScheduleCreating(true)}
+              onEdit={(s) => setScheduleEditing(s)}
+              onDelete={handleDeleteSchedule}
+            />
+          ) : null}
           {tab === 'dsl' ? <DslTab job={j} schedules={schedules.data ?? []} /> : null}
           {tab === 'alerts' ? <AlertsTab jobKey={jobKey} /> : null}
           {tab === 'audit' ? <AuditTab events={jobAudit} loading={audit.isLoading} /> : null}
@@ -424,19 +533,31 @@ function JobDetailHeader({
   job,
   dslManaged,
   triggerPending,
+  adoptPending,
+  unadoptPending,
   onToggle,
   onTrigger,
   onEdit,
   onRemove,
+  onAdopt,
+  onUnadopt,
 }: {
   job: JobDefinition
   dslManaged: boolean
   triggerPending: boolean
+  adoptPending: boolean
+  unadoptPending: boolean
   onToggle: (next: boolean) => void
   onTrigger: () => void
   onEdit: () => void
   onRemove: () => void
+  onAdopt: () => void
+  onUnadopt: () => void
 }) {
+  // Adopt is offered for DSL-managed jobs. Unadopt is offered for the
+  // API-store copy of a previously-adopted job — detection-by-metadata
+  // is not exposed yet, so we surface the button for any non-DSL job
+  // and let the backend reject with 404 if there's no adoption record.
   return (
     <div
       style={{
@@ -501,7 +622,28 @@ function JobDetailHeader({
       </div>
       <div className="row gap-6" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <Toggle on={job.is_active} onChange={onToggle} disabled={dslManaged} label="Active" />
-        <button type="button" className="btn sm ghost" onClick={onEdit}>
+        {dslManaged ? (
+          <button
+            type="button"
+            className="btn sm ghost"
+            onClick={onAdopt}
+            disabled={adoptPending}
+            title="Copy this DSL job into the API store so it can be edited. Requires policy { dsl_adopt_on_mutate true } in the Croniqfile."
+          >
+            {adoptPending ? <BrandMark spinning size={13} /> : <Download size={13} />} Adopt
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn sm ghost"
+            onClick={onUnadopt}
+            disabled={unadoptPending}
+            title="Drop the API copy so the next config reload reinstates the Croniqfile definition. No-op if the job was never adopted."
+          >
+            {unadoptPending ? <BrandMark spinning size={13} /> : <Upload size={13} />} Unadopt
+          </button>
+        )}
+        <button type="button" className="btn sm ghost" onClick={onEdit} disabled={dslManaged}>
           <Pencil size={13} /> Edit
         </button>
         <button type="button" className="btn sm primary" onClick={onTrigger} disabled={triggerPending}>
@@ -801,57 +943,112 @@ function RunsTab({ executions, loading }: { executions: Execution[]; loading: bo
 function ScheduleTab({
   schedules,
   loading,
+  dslManaged,
+  onAdd,
+  onEdit,
+  onDelete,
 }: {
   schedules: TriggerDefinition[]
   loading: boolean
+  dslManaged: boolean
+  onAdd: () => void
+  onEdit: (s: TriggerDefinition) => void
+  onDelete: (s: TriggerDefinition) => void
 }) {
   if (loading) {
     return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
   }
-  if (schedules.length === 0) {
-    return (
-      <EmptyState
-        icon={CalendarDays}
-        title="No schedules"
-        desc="Open the advanced editor to attach a cron expression or DSL rule."
-      />
-    )
-  }
   return (
-    <section className="card" style={{ padding: 0 }}>
-      <table className="tbl">
-        <thead>
-          <tr>
-            <th>Cron / DSL</th>
-            <th>Timezone</th>
-            <th>Calendar</th>
-            <th>Window</th>
-            <th>Managed by</th>
-            <th>Enabled</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {schedules.map((s) => (
-            <tr key={s.trigger_id}>
-              <td className="mono">{s.cron_expression ?? '—'}</td>
-              <td>{s.timezone ?? '—'}</td>
-              <td>{s.calendar ?? '—'}</td>
-              <td>{s.window ?? '—'}</td>
-              <td>
-                <span className={clsx('pill', s.managed_by === 'dsl' ? 'outline' : 'accent')}>
-                  {s.managed_by}
-                </span>
-              </td>
-              <td>
-                <StatusPill state={s.enabled ? 'enabled' : 'disabled'} />
-              </td>
-              <td className="dim">{formatRelative(s.updated_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
+    <div className="col" style={{ gap: 12 }}>
+      <div className="row between">
+        <span className="dim" style={{ fontSize: 12 }}>
+          {dslManaged
+            ? 'Schedule is managed by the Croniqfile. Adopt the job to edit it from the UI.'
+            : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'} attached.`}
+        </span>
+        <button
+          type="button"
+          className="btn sm"
+          onClick={onAdd}
+          disabled={dslManaged}
+          title={dslManaged ? 'Adopt the job first to attach API schedules' : 'Attach a new schedule'}
+        >
+          <Plus size={13} /> Add schedule
+        </button>
+      </div>
+      {schedules.length === 0 ? (
+        <EmptyState
+          icon={CalendarDays}
+          title="No schedules"
+          desc={
+            dslManaged
+              ? 'This job is managed via Croniqfile. Adopt it to attach API schedules.'
+              : 'Attach a cron expression so the scheduler can fire this job.'
+          }
+        />
+      ) : (
+        <section className="card" style={{ padding: 0 }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Cron / DSL</th>
+                <th>Timezone</th>
+                <th>Calendar</th>
+                <th>Window</th>
+                <th>Managed by</th>
+                <th>Enabled</th>
+                <th>Updated</th>
+                <th style={{ width: 80 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedules.map((s) => {
+                const isDsl = s.managed_by === 'dsl'
+                return (
+                  <tr key={s.trigger_id}>
+                    <td className="mono">{s.cron_expression ?? '—'}</td>
+                    <td>{s.timezone ?? '—'}</td>
+                    <td>{s.calendar ?? '—'}</td>
+                    <td>{s.window ?? '—'}</td>
+                    <td>
+                      <span className={clsx('pill', isDsl ? 'outline' : 'accent')}>{s.managed_by}</span>
+                    </td>
+                    <td>
+                      <StatusPill state={s.enabled ? 'enabled' : 'disabled'} />
+                    </td>
+                    <td className="dim">{formatRelative(s.updated_at)}</td>
+                    <td>
+                      <div className="row gap-6">
+                        <button
+                          type="button"
+                          className="btn icon sm ghost"
+                          aria-label="Edit schedule"
+                          title={isDsl ? 'DSL-managed schedules are read-only' : 'Edit schedule'}
+                          onClick={() => onEdit(s)}
+                          disabled={isDsl}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn icon sm ghost danger-hover"
+                          aria-label="Delete schedule"
+                          title={isDsl ? 'DSL-managed schedules cannot be deleted via the UI' : 'Delete schedule'}
+                          onClick={() => onDelete(s)}
+                          disabled={isDsl}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
   )
 }
 

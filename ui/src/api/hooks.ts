@@ -38,8 +38,18 @@ export function useJob(jobKey: string) {
 export function useCreateJob() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { job_key: string; description?: string }) => apiPost('/v1/jobs', data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    mutationFn: (data: {
+      job_key: string
+      description?: string | null
+      timeout?: string | null
+      max_retries?: number | null
+      dead_letter_enabled?: boolean | null
+      tags?: string[]
+    }) => apiPost<T.JobDefinition>('/v1/jobs', data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+      qc.invalidateQueries({ queryKey: ['tags'] })
+    },
     meta: { action: 'Create job' },
   })
 }
@@ -142,7 +152,9 @@ export function useCreateSchedule() {
       cron_expression: string
       timezone?: string
       calendar?: string
-    }) => apiPost('/v1/schedules', data),
+      window?: string
+      enabled?: boolean
+    }) => apiPost<T.TriggerDefinition>('/v1/schedules', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
     meta: { action: 'Create schedule' },
   })
@@ -156,8 +168,9 @@ export function useUpdateSchedule() {
     }: {
       trigger_id: string
       cron_expression?: string
-      timezone?: string
+      timezone?: string | null
       calendar?: string | null
+      window?: string | null
       enabled?: boolean
     }) => apiPut<T.TriggerDefinition>(`/v1/schedules/${trigger_id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),

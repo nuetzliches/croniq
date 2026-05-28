@@ -39,6 +39,22 @@ function useCrumbs(): Crumb[] {
       { label: id, current: true, _dlId: id } as Crumb & { _dlId: string },
     ]
   }
+  if (pathname.startsWith('/executions/')) {
+    // Executions are UUIDs — show the leading 8 chars so the crumb stays
+    // scannable instead of dumping a 36-char hex blob into the topbar.
+    const id = pathname.slice('/executions/'.length)
+    return [
+      { label: 'Executions', to: '/executions' },
+      { label: `${id.slice(0, 8)}…`, current: true },
+    ]
+  }
+  if (pathname.startsWith('/runners/')) {
+    const id = decodeURIComponent(pathname.slice('/runners/'.length))
+    return [
+      { label: 'Runners', to: '/runners' },
+      { label: id, current: true },
+    ]
+  }
   return [{ label: ROUTE_TITLES[pathname] ?? pathname, current: true }]
 }
 
