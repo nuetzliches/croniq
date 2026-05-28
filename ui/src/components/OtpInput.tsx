@@ -14,9 +14,11 @@ interface OtpInputProps {
 /**
  * Segmented one-time-code input: `length` single-digit boxes bound to one
  * string `value`. Handles auto-advance on entry, backspace (clear + step
- * back), arrow-key navigation, and pasting a full code — pasted digits are
- * distributed across the boxes from the focused one. Non-digits are ignored,
- * so a user can paste "123 456" or "123-456" and still get "123456".
+ * back), arrow-key navigation, pasting a full code, and password-manager
+ * autofill (Bitwarden, 1Password, …) which drops the full code into the
+ * first box — multi-digit input is distributed across the boxes from the
+ * focused one. Non-digits are ignored, so a user can paste "123 456" or
+ * "123-456" and still get "123456".
  */
 export function OtpInput({
   value,
@@ -53,7 +55,17 @@ export function OtpInput({
     const d = raw.replace(/\D/g, '')
     if (!d) return
     const chars = padded()
-    chars[i] = d[d.length - 1] // honour only the latest keystroke
+    if (d.length > 1) {
+      // Password-manager autofill (Bitwarden, 1Password, …) drops the full
+      // code into the first box. Distribute across boxes like a paste.
+      for (let k = 0; k < d.length && i + k < length; k++) {
+        chars[i + k] = d[k]
+      }
+      commit(chars.join(''))
+      focusBox(Math.min(i + d.length, length - 1))
+      return
+    }
+    chars[i] = d[0]
     commit(chars.join(''))
     focusBox(i + 1)
   }
@@ -108,8 +120,9 @@ export function OtpInput({
           type="text"
           inputMode="numeric"
           autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          name={i === 0 ? 'otp' : undefined}
           pattern="[0-9]*"
-          maxLength={1}
+          maxLength={i === 0 ? length : 1}
           disabled={disabled}
           autoFocus={autoFocus && i === 0}
           value={digits[i] ?? ''}
