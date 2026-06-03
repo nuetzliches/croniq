@@ -1,13 +1,26 @@
 import { Fragment, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { TriangleAlert, RotateCcw, Trash2, MailX, CheckCircle2, MousePointerClick } from 'lucide-react'
-import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter } from '@/api/hooks'
+import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter, useJob } from '@/api/hooks'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatDate, truncate } from '@/lib/utils'
+
+// The job's `description` (and any `operator_hint` baked into dead_reason)
+// is the fastest path from "this failed" to "here's what to do". The job
+// may have been deleted since the letter landed, so a 404 is silent.
+function JobDescription({ jobKey }: { jobKey: string }) {
+  const { data } = useJob(jobKey)
+  if (!data?.description) return null
+  return (
+    <span className="dim" style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>
+      {data.description}
+    </span>
+  )
+}
 
 function DeadLetterDetail({
   id,
@@ -36,14 +49,16 @@ function DeadLetterDetail({
       <div className="card" style={{ padding: '16px 20px' }}>
         <div className="row between" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
           <div className="col" style={{ gap: 4, minWidth: 0, flex: '1 1 280px' }}>
-            <h1
+            <Link
+              to={`/jobs/${encodeURIComponent(data.job_key)}`}
               className="mono ellipsis"
-              style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--fg)' }}
-              title={data.job_key}
+              style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--fg)', textDecoration: 'none' }}
+              title={`Open job ${data.job_key}`}
             >
               {data.job_key}
-            </h1>
+            </Link>
             <span className="dim" style={{ fontSize: 12 }}>{data.dead_reason} · attempt {data.attempt}</span>
+            <JobDescription jobKey={data.job_key} />
           </div>
           <div className="row gap-6">
             <button
