@@ -110,6 +110,8 @@ components:
         attempt: { type: integer }
         state: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
         runner_id: { type: string, nullable: true }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
         duration_ms: { type: integer, nullable: true }
         error: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
@@ -120,11 +122,13 @@ components:
         id: { type: string, format: uuid }
         execution_id: { type: string, format: uuid }
         job_key: { type: string }
+        fire_at: { type: string, format: date-time }
         attempt: { type: integer }
         error: { type: string }
         dead_reason: { type: string }
         metadata: { type: object }
         created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, nullable: true }
 
     CalendarDefinition:
       type: object
