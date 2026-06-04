@@ -36,6 +36,11 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             format_directives(out, &s.directives, indent + 1);
             out.push_str("}\n");
         }
+        Item::Smtp(s) => {
+            out.push_str("smtp {\n");
+            format_directives(out, &s.directives, indent + 1);
+            out.push_str("}\n");
+        }
         Item::PullApi(p) => {
             out.push_str("pull_api {\n");
             format_directives(out, &p.directives, indent + 1);

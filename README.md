@@ -196,8 +196,9 @@ alerts {
   }
   channel "ops-mail" {
     # One address per arg, multiple addresses get one mail each.
-    # Needs CRONIQ_SMTP_URL + CRONIQ_SMTP_FROM (server built with
-    # --features smtp); otherwise NoopSender just logs the recipient.
+    # Needs an SMTP transport (smtp {} block below or CRONIQ_SMTP_*;
+    # server built with --features smtp); otherwise NoopSender just
+    # logs the recipient.
     email "ops@example.com" "oncall@example.com"
   }
 
@@ -221,6 +222,19 @@ alerts {
     throttle 1h
     channels "slack"
   }
+}
+
+# SMTP transport (issue #230) — feeds the alert `email` channel.
+# Non-secret connection settings live here; credentials stay in the
+# environment (CRONIQ_SMTP_USERNAME / CRONIQ_SMTP_PASSWORD, or their
+# _FILE variants). Any field omitted here falls back to the matching
+# CRONIQ_SMTP_* env var. Requires a server built with --features smtp;
+# without it, the email channel degrades to a log-only NoopSender.
+smtp {
+  host smtp.example.com
+  port 587
+  security starttls          # starttls | tls | none
+  from "Croniq <noreply@example.com>"
 }
 
 job billing:invoice {
@@ -575,6 +589,15 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_ON_FAILURE_CMD` | **Deprecated** — single global shell command on permanent failure. At boot, croniq-server synthesises a catch-all rule from this var when no `alerts {}` block is present. Migrate to `alerts { channel "…" { shell "…" } rule "…" { when job_failed; channels "…" } }` and unset. | — |
 | `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
 | `CRONIQ_APP_URL` | Public base URL for invitation, password-reset, and OIDC login links. When unset, it is derived per-request from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so links work behind a reverse proxy with no config. Set it explicitly to pin the URL — recommended on directly-exposed servers, where the `Host` header is untrusted and is **not** used for the public password-reset link. The Croniqfile `server { app_url "…" }` directive sets the same value and takes precedence over this env var. | _auto-detected from request_ |
+| `CRONIQ_SMTP_URL` | Legacy composite transport URL (`smtp://user:pass@host:587/?tls=required`). When set, it wins over the decomposed `CRONIQ_SMTP_HOST/PORT/SECURITY` vars and the `smtp {}` block. Requires `--features smtp`. | — |
+| `CRONIQ_SMTP_HOST` | SMTP relay host. Used when `CRONIQ_SMTP_URL` is unset. Overridden by `smtp { host … }`. | — |
+| `CRONIQ_SMTP_PORT` | SMTP relay port. Overridden by `smtp { port … }`. | `587` |
+| `CRONIQ_SMTP_SECURITY` | Transport security: `starttls`, `tls`, or `none`. Overridden by `smtp { security … }`. | `starttls` |
+| `CRONIQ_SMTP_FROM` | Envelope/From address, e.g. `Croniq <noreply@example.com>`. Required for any real send. Overridden by `smtp { from … }`. | — |
+| `CRONIQ_SMTP_USERNAME` | SMTP auth username. **Env-only** — never read from the Croniqfile (a read-only mount). | — |
+| `CRONIQ_SMTP_PASSWORD` | SMTP auth password. **Env-only**. | — |
+
+> **`<VAR>_FILE` convention** — `CRONIQ_SMTP_URL`, `CRONIQ_SMTP_HOST`, `CRONIQ_SMTP_USERNAME`, `CRONIQ_SMTP_PASSWORD`, `CRONIQ_INIT_API_KEY`, and `CRONIQ_ADMIN_PASSWORD` each also accept a `…_FILE` variant pointing at a file whose contents supply the value (trailing newline trimmed). Use it with Docker/Kubernetes mounted secrets so credentials never appear in the process environment. The direct env var wins when both are set.
 
 ---
 

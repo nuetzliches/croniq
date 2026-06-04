@@ -15,6 +15,27 @@ if [ "$(id -u)" = "0" ]; then
   exec gosu croniq:croniq "$0" "$@"
 fi
 
+# Resolve credential env vars from their `<VAR>_FILE` sibling when the
+# direct var is unset/empty (Docker/Compose/Swarm secrets, K8s mounted
+# Secret volumes, external secret managers). The value never enters the
+# environment via the image config, so `docker inspect` shows only a path.
+# `$(cat …)` strips the trailing newline secret tooling commonly appends.
+load_secret_file() {
+  _var="$1"
+  eval "_cur=\${$_var:-}"
+  eval "_file=\${${_var}_FILE:-}"
+  if [ -z "$_cur" ] && [ -n "$_file" ]; then
+    if [ ! -r "$_file" ]; then
+      echo "ERROR: ${_var}_FILE points to '$_file' which is not readable." >&2
+      exit 1
+    fi
+    export "$_var=$(cat "$_file")"
+  fi
+}
+
+load_secret_file CRONIQ_ADMIN_PASSWORD
+load_secret_file CRONIQ_INIT_API_KEY
+
 DB_FILE="$DATA_DIR/croniq.db"
 
 # Auto-initialize on first run if DB doesn't exist

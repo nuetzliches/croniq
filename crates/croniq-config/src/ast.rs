@@ -13,6 +13,7 @@ pub struct Croniqfile {
 pub enum Item {
     Import(Import),
     Server(ServerBlock),
+    Smtp(SmtpBlock),
     PullApi(PullApiBlock),
     Observability(ObservabilityBlock),
     Mcp(McpBlock),
@@ -47,6 +48,24 @@ pub struct Import {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerBlock {
+    pub directives: Vec<Directive>,
+    pub span: Span,
+}
+
+// ─── SMTP (outbound email transport) ───
+
+/// `smtp { host "…"; port 587; security starttls; from "Croniq <noreply@…>" }`
+///
+/// Operator-facing SMTP transport config, mirroring `oidc {}` in shape:
+/// every directive is optional in the AST and merged with the
+/// `CRONIQ_SMTP_*` env vars at server boot (DSL wins where both are set).
+///
+/// Credentials (`username` / `password`) are intentionally NOT DSL
+/// directives — the Croniqfile is typically a read-only mount and must
+/// not carry plaintext secrets. Those stay in `CRONIQ_SMTP_USERNAME` /
+/// `CRONIQ_SMTP_PASSWORD` (or their `_FILE` siblings).
+#[derive(Debug, Clone, Serialize)]
+pub struct SmtpBlock {
     pub directives: Vec<Directive>,
     pub span: Span,
 }

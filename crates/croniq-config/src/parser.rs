@@ -220,6 +220,7 @@ impl Parser {
             TokenKind::Ident(s) => match s.as_str() {
                 "import" => Ok(Item::Import(self.parse_import()?)),
                 "server" => Ok(Item::Server(self.parse_server()?)),
+                "smtp" => Ok(Item::Smtp(self.parse_smtp()?)),
                 "pull_api" => Ok(Item::PullApi(self.parse_pull_api()?)),
                 "observability" => Ok(Item::Observability(self.parse_observability()?)),
                 "mcp" => Ok(Item::Mcp(self.parse_mcp()?)),
@@ -238,7 +239,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, pull_api, observability, mcp, oidc, auth, policy, alerts, vars, defaults, calendar, or job"
+                    "import, server, smtp, pull_api, observability, mcp, oidc, auth, policy, alerts, vars, defaults, calendar, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -277,6 +278,17 @@ impl Parser {
         let directives = self.parse_directives_until_rbrace()?;
         let end = self.expect_rbrace()?;
         Ok(ServerBlock {
+            directives,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_smtp(&mut self) -> Result<SmtpBlock, ParseError> {
+        let start = self.expect_ident("smtp")?;
+        self.expect_lbrace()?;
+        let directives = self.parse_directives_until_rbrace()?;
+        let end = self.expect_rbrace()?;
+        Ok(SmtpBlock {
             directives,
             span: start.merge(end),
         })
@@ -1217,6 +1229,19 @@ mod tests {
             assert_eq!(s.directives.len(), 2);
             assert_eq!(s.directives[0].key.value, "listen");
             assert_eq!(s.directives[0].args[0].value, ":9090");
+        }
+    }
+
+    #[test]
+    fn parse_smtp_block() {
+        let ast = Parser::parse(r#"smtp { host "mail.example.com"; port 587; security starttls }"#)
+            .unwrap();
+        assert!(matches!(ast.items[0], Item::Smtp(_)));
+        if let Item::Smtp(ref s) = ast.items[0] {
+            assert_eq!(s.directives.len(), 3);
+            assert_eq!(s.directives[0].key.value, "host");
+            assert_eq!(s.directives[0].args[0].value, "mail.example.com");
+            assert_eq!(s.directives[1].key.value, "port");
         }
     }
 

@@ -44,6 +44,19 @@ mcp {
 #   dsl_adopt_on_mutate true
 # }
 
+# SMTP transport for alert `email` channels + invitation / password-reset
+# mails. Non-secret connection settings only — credentials stay in the
+# environment (CRONIQ_SMTP_USERNAME / CRONIQ_SMTP_PASSWORD, or their _FILE
+# variants). Any field omitted here falls back to the matching CRONIQ_SMTP_*
+# env var; CRONIQ_SMTP_URL, when set, overrides this block entirely. Needs a
+# server built with --features smtp, else mail degrades to a log-only sender.
+# smtp {
+#   host smtp.example.com
+#   port 587
+#   security starttls        # starttls | tls | none
+#   from "Croniq <noreply@example.com>"
+# }
+
 observability {
   log { level info; format json; output stderr }
   metrics { listen :9900; path /metrics }

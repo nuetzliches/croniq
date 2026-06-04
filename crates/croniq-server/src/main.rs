@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
     // previously silently ignored. We now always log whether it matches,
     // and rotate when CRONIQ_INIT_API_KEY_RECONCILE=1 is set. See #217.
     {
-        let init_api_key = std::env::var("CRONIQ_INIT_API_KEY").ok();
+        let init_api_key = croniq_server::env_secret::env_or_file("CRONIQ_INIT_API_KEY");
         let inputs = croniq_server::init_api_key::ReconcileInputs::from_env_borrowed(&init_api_key);
         croniq_server::init_api_key::reconcile(&*store, inputs)
             .context("failed to reconcile CRONIQ_INIT_API_KEY against stored API client")?;
@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.require_totp = require_totp;
-        s.email_sender = croniq_server::email::build_from_env();
+        s.email_sender = croniq_server::email::build_from_dsl_and_env(loaded.runtime.smtp.as_ref());
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
         // `GET /v1/alerts/config` endpoint can serve it.
@@ -777,13 +777,13 @@ fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
     use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
 
     let smtp_feature = croniq_server::email::smtp_feature_compiled();
-    let smtp_env =
-        std::env::var("CRONIQ_SMTP_URL").is_ok() && std::env::var("CRONIQ_SMTP_FROM").is_ok();
+    let smtp_configured = croniq_server::email::smtp_configured(rt.smtp.as_ref());
     let input = DiagnosticsInput::from_runtime(
         resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
-        // Offline approximation of build_from_env(): a real transport needs the
-        // `smtp` feature compiled AND both env vars present.
-        smtp_feature && smtp_env,
+        // Offline approximation of build_from_dsl_and_env(): a real transport
+        // needs the `smtp` feature compiled AND a usable config (URL or host
+        // + from) from the Croniqfile smtp{} block or CRONIQ_SMTP_* env.
+        smtp_feature && smtp_configured,
         resolve_require_totp(rt),
         None, // no live store offline → the enforced-2FA enrollment check is skipped
     );
