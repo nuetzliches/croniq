@@ -689,3 +689,84 @@ export function useAlertDelivery(id: string) {
     enabled: !!id,
   })
 }
+
+// ─── #231 Alert rule overrides (admin-only `alerts:write`) ────────
+// Each set-action overwrites the rule's override wholesale (snooze |
+// disable | throttle are distinct intents, not composable) and returns
+// the persisted row. All four invalidate the config query so the inline
+// override view refreshes.
+
+/// `POST /v1/alerts/rules/{name}/snooze` — suppress until `until`,
+/// which doubles as the auto-clear deadline. `note` is mandatory.
+export function useSnoozeRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, until, note }: { name: string; until: string; note: string }) =>
+      apiPost<T.AlertRuleOverride>(
+        `/v1/alerts/rules/${encodeURIComponent(name)}/snooze`,
+        { until, note },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'config'] }),
+    meta: { action: 'Snooze alert rule' },
+  })
+}
+
+/// `POST /v1/alerts/rules/{name}/disable` — disable the rule;
+/// `expires_at` optionally auto-re-enables (omit for open-ended).
+export function useDisableRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      note,
+      expires_at,
+    }: {
+      name: string
+      note: string
+      expires_at?: string | null
+    }) =>
+      apiPost<T.AlertRuleOverride>(
+        `/v1/alerts/rules/${encodeURIComponent(name)}/disable`,
+        { note, expires_at: expires_at ?? null },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'config'] }),
+    meta: { action: 'Disable alert rule' },
+  })
+}
+
+/// `POST /v1/alerts/rules/{name}/throttle` — replace the DSL throttle
+/// window with `throttle` (a duration string like `"30m"`).
+export function useThrottleRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      throttle,
+      note,
+      expires_at,
+    }: {
+      name: string
+      throttle: string
+      note: string
+      expires_at?: string | null
+    }) =>
+      apiPost<T.AlertRuleOverride>(
+        `/v1/alerts/rules/${encodeURIComponent(name)}/throttle`,
+        { throttle, note, expires_at: expires_at ?? null },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'config'] }),
+    meta: { action: 'Throttle alert rule' },
+  })
+}
+
+/// `DELETE /v1/alerts/rules/{name}/override` — clear the override,
+/// returning the rule to pure DSL behaviour.
+export function useClearOverride() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiDelete(`/v1/alerts/rules/${encodeURIComponent(name)}/override`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'config'] }),
+    meta: { action: 'Clear alert override' },
+  })
+}

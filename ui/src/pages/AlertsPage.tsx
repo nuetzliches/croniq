@@ -1,19 +1,34 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
+  Ban,
   Bell,
   CheckCircle2,
+  Clock,
   Filter,
+  Gauge,
   Hash,
   Mail,
   Terminal,
   TriangleAlert,
   Webhook,
 } from 'lucide-react'
-import { useAlertsConfig, useAlertDeliveries } from '@/api/hooks'
+import {
+  useAlertsConfig,
+  useAlertDeliveries,
+  useCurrentUser,
+  useSnoozeRule,
+  useDisableRule,
+  useThrottleRule,
+  useClearOverride,
+} from '@/api/hooks'
+import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { Spinner } from '@/components/ui/spinner'
+import { useToasts } from '@/lib/toast'
 import { truncate } from '@/lib/utils'
 import type {
   AlertChannelConfig,
@@ -21,6 +36,7 @@ import type {
   AlertDelivery,
   AlertDeliveryState,
   AlertRuleConfig,
+  AlertRuleOverride,
   AlertsConfig,
 } from '@/api/types'
 
@@ -94,6 +110,38 @@ function ConfigView({ config }: { config: AlertsConfig }) {
   const channels = useMemo(() => Object.values(config.channels), [config.channels])
   const rules = config.rules
 
+  const { data: me } = useCurrentUser()
+  const isAdmin = me?.role === 'admin'
+
+  // Latest override per rule (server returns newest-set first; one row
+  // per rule is the norm, but be defensive and keep the first seen).
+  const overrideByRule = useMemo(() => {
+    const m = new Map<string, AlertRuleOverride>()
+    for (const ov of config.overrides ?? []) {
+      if (!m.has(ov.rule_name)) m.set(ov.rule_name, ov)
+    }
+    return m
+  }, [config.overrides])
+
+  const { confirm, dialog: confirmDialog } = useConfirm()
+  const toast = useToasts((s) => s.push)
+  const clearOverride = useClearOverride()
+  const [overrideTarget, setOverrideTarget] = useState<AlertRuleConfig | null>(null)
+
+  async function handleClear(rule: AlertRuleConfig) {
+    const ok = await confirm({
+      title: `Clear override on ${rule.name}?`,
+      description:
+        'Removes the operational override and returns the rule to pure ' +
+        'Croniqfile behaviour.',
+      confirmLabel: 'Clear override',
+    })
+    if (!ok) return
+    clearOverride.mutate(rule.name, {
+      onSuccess: () => toast({ variant: 'success', message: `Override cleared on ${rule.name}` }),
+    })
+  }
+
   if (channels.length === 0 && rules.length === 0) {
     return (
       <EmptyState
@@ -136,7 +184,9 @@ function ConfigView({ config }: { config: AlertsConfig }) {
           <div className="row between">
             <h2 className="card-title">Rules ({rules.length})</h2>
             <span className="dim" style={{ fontSize: 11.5 }}>
-              Triggered by the evaluator; per-(rule, job_key) throttled.
+              {isAdmin
+                ? 'Triggered by the evaluator; override snooze/disable/throttle below.'
+                : 'Triggered by the evaluator; per-(rule, job_key) throttled.'}
             </span>
           </div>
         </header>
@@ -147,11 +197,23 @@ function ConfigView({ config }: { config: AlertsConfig }) {
         ) : (
           <ul className="reset-list" style={{ padding: 0, margin: 0 }}>
             {rules.map((r) => (
-              <RuleRow key={r.name} rule={r} />
+              <RuleRow
+                key={r.name}
+                rule={r}
+                override={overrideByRule.get(r.name)}
+                isAdmin={isAdmin}
+                onOverride={() => setOverrideTarget(r)}
+                onClear={() => handleClear(r)}
+              />
             ))}
           </ul>
         )}
       </section>
+
+      {overrideTarget && (
+        <OverrideDialog rule={overrideTarget} onClose={() => setOverrideTarget(null)} />
+      )}
+      {confirmDialog}
     </div>
   )
 }
@@ -224,7 +286,23 @@ function ChannelRow({ channel }: { channel: AlertChannelConfig }) {
   )
 }
 
-function RuleRow({ rule }: { rule: AlertRuleConfig }) {
+function RuleRow({
+  rule,
+  override,
+  isAdmin,
+  onOverride,
+  onClear,
+}: {
+  rule: AlertRuleConfig
+  override?: AlertRuleOverride
+  isAdmin: boolean
+  onOverride: () => void
+  onClear: () => void
+}) {
+  // An override whose deadline has passed is inert until the watchdog
+  // sweeps it — render it as "expiring", not active.
+  const active = override != null && isOverrideActive(override)
+
   return (
     <li
       className="col"
@@ -250,13 +328,28 @@ function RuleRow({ rule }: { rule: AlertRuleConfig }) {
           >
             {rule.trigger}
           </span>
+          {active && <OverridePill override={override} />}
         </div>
-        <div className="row mono dim" style={{ fontSize: 11.5, gap: 12 }}>
-          {rule.channels.map((c) => (
-            <span key={c} className="row" style={{ gap: 4, alignItems: 'center' }}>
-              <Hash size={11} /> {c}
-            </span>
-          ))}
+        <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+          <div className="row mono dim" style={{ fontSize: 11.5, gap: 12 }}>
+            {rule.channels.map((c) => (
+              <span key={c} className="row" style={{ gap: 4, alignItems: 'center' }}>
+                <Hash size={11} /> {c}
+              </span>
+            ))}
+          </div>
+          {isAdmin && (
+            <div className="row" style={{ gap: 6 }}>
+              <button type="button" className="btn xs ghost" onClick={onOverride}>
+                {active ? 'Change' : 'Override'}
+              </button>
+              {override && (
+                <button type="button" className="btn xs ghost" onClick={onClear}>
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className="row dim" style={{ fontSize: 11.5, gap: 14, flexWrap: 'wrap' }}>
@@ -268,7 +361,243 @@ function RuleRow({ rule }: { rule: AlertRuleConfig }) {
         {rule.throttle ? <span>throttle {rule.throttle}</span> : null}
         {rule.expected_within ? <span>expected_within {rule.expected_within}</span> : null}
       </div>
+      {active && override && (
+        <p className="dim" style={{ fontSize: 11.5, margin: 0 }}>
+          “{override.note}” — set by{' '}
+          <span className="mono">{override.set_by_user_id}</span>{' '}
+          <RelativeTime iso={override.set_at} />
+          {override.expires_at && (
+            <>
+              , clears <RelativeTime iso={override.expires_at} />
+            </>
+          )}
+        </p>
+      )}
     </li>
+  )
+}
+
+/// True while an override is in force. A row with a past `expires_at`
+/// (which equals `snooze_until` for snoozes) is inert — mirrors the
+/// server's `effective_*` logic.
+function isOverrideActive(ov: AlertRuleOverride): boolean {
+  if (ov.expires_at == null) return true
+  return new Date(ov.expires_at).getTime() > Date.now()
+}
+
+function formatThrottleSecs(secs: number): string {
+  if (secs % 3600 === 0) return `${secs / 3600}h`
+  if (secs % 60 === 0) return `${secs / 60}m`
+  return `${secs}s`
+}
+
+function OverridePill({ override: ov }: { override: AlertRuleOverride }) {
+  const { icon, label, color } = (() => {
+    if (ov.enabled === false)
+      return { icon: <Ban size={11} />, label: 'disabled', color: 'var(--error)' }
+    if (ov.snooze_until != null)
+      return { icon: <Clock size={11} />, label: 'snoozed', color: 'var(--warn)' }
+    if (ov.throttle_secs != null)
+      return {
+        icon: <Gauge size={11} />,
+        label: `throttle ${formatThrottleSecs(ov.throttle_secs)}`,
+        color: 'var(--warn)',
+      }
+    return { icon: <TriangleAlert size={11} />, label: 'override', color: 'var(--warn)' }
+  })()
+  return (
+    <span
+      className="pill row"
+      title="Operational override active"
+      style={{
+        gap: 4,
+        alignItems: 'center',
+        background: 'var(--panel)',
+        color,
+        border: `1px solid ${color}`,
+        padding: '1px 7px',
+        fontSize: 10.5,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {icon}
+      {label}
+    </span>
+  )
+}
+
+// ─── Override dialog (admin-only) ────────────────────────────────
+
+type OverrideMode = 'snooze' | 'disable' | 'throttle'
+
+/// Converts a `datetime-local` value (local wall-clock, no zone) to an
+/// RFC3339 UTC instant the server accepts. Empty → null.
+function localToIso(v: string): string | null {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+function OverrideDialog({ rule, onClose }: { rule: AlertRuleConfig; onClose: () => void }) {
+  const [mode, setMode] = useState<OverrideMode>('snooze')
+  const [note, setNote] = useState('')
+  const [until, setUntil] = useState('')
+  const [throttle, setThrottle] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  const toast = useToasts((s) => s.push)
+  const snooze = useSnoozeRule()
+  const disable = useDisableRule()
+  const throttleMut = useThrottleRule()
+  const pending = snooze.isPending || disable.isPending || throttleMut.isPending
+
+  function done(verb: string) {
+    toast({ variant: 'success', message: `${verb} ${rule.name}` })
+    onClose()
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setErr(null)
+    if (!note.trim()) {
+      setErr('A note is required — capture why this override exists.')
+      return
+    }
+    if (mode === 'snooze') {
+      const iso = localToIso(until)
+      if (!iso) {
+        setErr('Pick a snooze deadline.')
+        return
+      }
+      snooze.mutate(
+        { name: rule.name, until: iso, note: note.trim() },
+        { onSuccess: () => done('Snoozed') },
+      )
+    } else if (mode === 'disable') {
+      disable.mutate(
+        { name: rule.name, note: note.trim(), expires_at: localToIso(expiresAt) },
+        { onSuccess: () => done('Disabled') },
+      )
+    } else {
+      if (!throttle.trim()) {
+        setErr('Enter a throttle duration, e.g. 30m or 1h.')
+        return
+      }
+      throttleMut.mutate(
+        {
+          name: rule.name,
+          throttle: throttle.trim(),
+          note: note.trim(),
+          expires_at: localToIso(expiresAt),
+        },
+        { onSuccess: () => done('Throttled') },
+      )
+    }
+  }
+
+  const inputCls =
+    'w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm ' +
+    'focus:outline-none focus:ring-1 focus:ring-ring'
+
+  return (
+    <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
+          <Dialog.Title className="text-sm font-semibold">
+            Override rule <span className="font-mono">{rule.name}</span>
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+            Overwrites any existing override. Snooze, disable and throttle are
+            distinct intents — only one is active at a time.
+          </Dialog.Description>
+
+          <form onSubmit={submit} className="mt-4 flex flex-col gap-3">
+            <div className="flex gap-2">
+              {(['snooze', 'disable', 'throttle'] as OverrideMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={clsx('btn xs', mode === m ? 'primary' : 'ghost')}
+                  onClick={() => {
+                    setMode(m)
+                    setErr(null)
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'snooze' && (
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  Snooze until (also the auto-clear deadline)
+                </span>
+                <input
+                  type="datetime-local"
+                  className={inputCls}
+                  value={until}
+                  onChange={(e) => setUntil(e.target.value)}
+                />
+              </label>
+            )}
+
+            {mode === 'throttle' && (
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  Throttle window (replaces the Croniqfile window)
+                </span>
+                <input
+                  type="text"
+                  className={inputCls}
+                  placeholder="e.g. 30m, 1h, 90s"
+                  value={throttle}
+                  onChange={(e) => setThrottle(e.target.value)}
+                />
+              </label>
+            )}
+
+            {(mode === 'disable' || mode === 'throttle') && (
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  Auto-clear at (optional — leave empty for open-ended)
+                </span>
+                <input
+                  type="datetime-local"
+                  className={inputCls}
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                />
+              </label>
+            )}
+
+            <label className="flex flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">Note (required)</span>
+              <textarea
+                className={inputCls}
+                rows={2}
+                placeholder="Why is this override in place? e.g. INC-1234, noisy during migration"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            </label>
+
+            {err && <p className="text-xs text-destructive">{err}</p>}
+
+            <div className="mt-1 flex justify-end gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" size="sm" disabled={pending}>
+                {pending ? 'Applying…' : `Apply ${mode}`}
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
