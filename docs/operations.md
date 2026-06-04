@@ -56,6 +56,45 @@ The label is non-sensitive (no hostnames, no internal IPs) and is exposed
 publicly via `/version`. Don't put credentials, infrastructure tags, or
 anything you wouldn't print on a sticker into this variable.
 
+### SMTP (`CRONIQ_SMTP_*` + `smtp {}` block)
+
+The alert `email` channel, invitation mails, and password-reset mails all
+route through a single SMTP transport, assembled at boot from two layers:
+
+1. The Croniqfile `smtp {}` block — non-secret connection settings only
+   (`host`, `port`, `security`, `from`).
+2. The `CRONIQ_SMTP_*` environment — fills any field the block omits, and is
+   the **only** place credentials may live (the Croniqfile is a read-only
+   mount, so it must never carry a password).
+
+The binary must be built with `--features smtp`. Without that feature the
+transport degrades to a `NoopSender` that logs the recipient but sends
+nothing, and the API returns the raw invite/reset URL in its response so an
+admin can deliver it out-of-band. Boot diagnostics flag the mismatch as
+`email.smtp_feature_missing` (critical) when `CRONIQ_SMTP_*` is set but the
+feature is absent.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CRONIQ_SMTP_URL` | — | Legacy composite URL (`smtp://user:pass@host:587/?tls=required`). When set it **wins** over everything below. |
+| `CRONIQ_SMTP_HOST` | — | Relay host. Overridden by `smtp { host }`. Required (via either layer) for the decomposed path to activate. |
+| `CRONIQ_SMTP_PORT` | `587` | Overridden by `smtp { port }`. |
+| `CRONIQ_SMTP_SECURITY` | `starttls` | `starttls` \| `tls` \| `none`. Overridden by `smtp { security }`. |
+| `CRONIQ_SMTP_FROM` | — | From address. Required for any real send. Overridden by `smtp { from }`. |
+| `CRONIQ_SMTP_USERNAME` | — | Auth username. **Env-only.** |
+| `CRONIQ_SMTP_PASSWORD` | — | Auth password. **Env-only.** |
+
+**Precedence**, highest first: `CRONIQ_SMTP_URL` → per-field `smtp {}`
+directive → matching `CRONIQ_SMTP_<FIELD>` env var → built-in default.
+
+**`<VAR>_FILE` convention** — `CRONIQ_SMTP_URL`, `CRONIQ_SMTP_HOST`,
+`CRONIQ_SMTP_USERNAME`, `CRONIQ_SMTP_PASSWORD`, `CRONIQ_INIT_API_KEY`, and
+`CRONIQ_ADMIN_PASSWORD` each accept a `…_FILE` sibling that points at a file
+whose trimmed contents supply the value. This is the recommended way to feed
+Docker/Kubernetes mounted secrets without exposing them in the process
+environment. If both the direct var and its `_FILE` are set, the direct var
+wins.
+
 ## Authentication
 
 Croniq supports two UI sign-in methods: username + password (the default),

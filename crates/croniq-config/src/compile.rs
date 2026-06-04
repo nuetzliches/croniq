@@ -75,6 +75,11 @@ pub struct RuntimeConfig {
     /// Only `client_secret` stays out of the DSL — server boot pulls
     /// it from `CRONIQ_OIDC_CLIENT_SECRET` and merges with this struct.
     pub oidc: Option<OidcDslConfig>,
+    /// Outbound SMTP transport (`smtp {}` block). None unless the block
+    /// is present. Credentials never live here — server boot pulls
+    /// `CRONIQ_SMTP_USERNAME` / `CRONIQ_SMTP_PASSWORD` and merges with
+    /// this struct (DSL wins for host/port/security/from).
+    pub smtp: Option<SmtpDslConfig>,
     /// UI sign-in method gates (`auth { password { enabled false } }`).
     /// Absent block ⇒ defaults (every method enabled).
     pub auth: AuthDslConfig,
@@ -100,6 +105,19 @@ pub struct OidcDslConfig {
     pub default_role: Option<String>,
     pub provider_name: Option<String>,
     pub post_login_redirect: Option<String>,
+}
+
+/// SMTP transport settings parsed from the Croniqfile `smtp {}` block.
+/// All fields are optional in the DSL; the server merges them with the
+/// `CRONIQ_SMTP_*` env vars at startup (DSL wins where both are set).
+/// `username` / `password` are intentionally absent — they stay ENV-only.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmtpDslConfig {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    /// `starttls` | `tls` | `none`. Validated at boot, not here.
+    pub security: Option<String>,
+    pub from: Option<String>,
 }
 
 /// UI sign-in method gates, parsed from the Croniqfile `auth {}` block.
@@ -505,6 +523,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut observability = None;
     let mut mcp: Option<McpConfig> = None;
     let mut oidc: Option<OidcDslConfig> = None;
+    let mut smtp: Option<SmtpDslConfig> = None;
     let mut auth = AuthDslConfig::default();
     let mut policy = PolicyConfig::default();
     let mut alerts = AlertsConfig::default();
@@ -772,6 +791,21 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
                 oidc = Some(cfg);
             }
+            Item::Smtp(s) => {
+                let mut cfg = SmtpDslConfig::default();
+                for d in &s.directives {
+                    let Some(a) = d.args.first() else { continue };
+                    let v = resolve_str(a, &vars);
+                    match d.key.value.as_str() {
+                        "host" => cfg.host = Some(v),
+                        "port" => cfg.port = v.trim().parse::<u16>().ok(),
+                        "security" => cfg.security = Some(v.trim().to_ascii_lowercase()),
+                        "from" => cfg.from = Some(v),
+                        _ => {}
+                    }
+                }
+                smtp = Some(cfg);
+            }
             Item::Auth(a) => {
                 for nb in &a.sub_blocks {
                     if nb.name.value == "password" {
@@ -814,6 +848,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         observability,
         mcp,
         oidc,
+        smtp,
         auth,
         policy,
         alerts,
@@ -2284,5 +2319,64 @@ mod tests {
         assert!(cfg2.alerts.channels.contains_key("ops"));
         assert_eq!(cfg2.alerts.rules.len(), 1);
         assert_eq!(cfg2.alerts.rules[0].name, "fail");
+    }
+
+    // ─── #230 smtp block ─────────────────────────────────────────
+
+    #[test]
+    fn compile_smtp_absent_is_none() {
+        let cfg = compile(&Parser::parse("server { listen :4000 }").unwrap());
+        assert!(cfg.smtp.is_none());
+    }
+
+    #[test]
+    fn compile_smtp_block() {
+        let ast = Parser::parse(
+            r#"
+            smtp {
+                host "in-v3.mailjet.com"
+                port 587
+                security starttls
+                from "Croniq <noreply@example.com>"
+            }
+            "#,
+        )
+        .unwrap();
+        let smtp = compile(&ast).smtp.expect("smtp block compiled");
+        assert_eq!(smtp.host.as_deref(), Some("in-v3.mailjet.com"));
+        assert_eq!(smtp.port, Some(587));
+        assert_eq!(smtp.security.as_deref(), Some("starttls"));
+        assert_eq!(smtp.from.as_deref(), Some("Croniq <noreply@example.com>"));
+    }
+
+    #[test]
+    fn compile_smtp_security_lowercased_and_partial() {
+        // Only host + security set; port/from left for env fallback at boot.
+        let ast = Parser::parse(
+            r#"
+            smtp {
+                host "smtp.example.com"
+                security TLS
+            }
+            "#,
+        )
+        .unwrap();
+        let smtp = compile(&ast).smtp.expect("smtp block compiled");
+        assert_eq!(smtp.host.as_deref(), Some("smtp.example.com"));
+        assert_eq!(smtp.security.as_deref(), Some("tls"));
+        assert_eq!(smtp.port, None);
+        assert_eq!(smtp.from, None);
+    }
+
+    #[test]
+    fn compile_smtp_roundtrips_through_formatter() {
+        let src = "smtp {\n    host \"smtp.example.com\"\n    port 2525\n    security none\n}\n";
+        let ast = Parser::parse(src).unwrap();
+        let formatted = crate::format::format(&ast);
+        let smtp = compile(&Parser::parse(&formatted).unwrap())
+            .smtp
+            .expect("smtp survives format round-trip");
+        assert_eq!(smtp.port, Some(2525));
+        assert_eq!(smtp.security.as_deref(), Some("none"));
     }
 }
