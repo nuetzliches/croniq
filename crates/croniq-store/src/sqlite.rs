@@ -1989,6 +1989,138 @@ impl AlertStore for SqliteStore {
             .optional()
             .map_err(map_err)
     }
+
+    fn upsert_alert_rule_override(&self, ov: &AlertRuleOverride) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO alert_rule_overrides
+                (rule_name, enabled, snooze_until, throttle_secs,
+                 note, set_by_user_id, set_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(rule_name) DO UPDATE SET
+                enabled        = excluded.enabled,
+                snooze_until   = excluded.snooze_until,
+                throttle_secs  = excluded.throttle_secs,
+                note           = excluded.note,
+                set_by_user_id = excluded.set_by_user_id,
+                set_at         = excluded.set_at,
+                expires_at     = excluded.expires_at",
+            params![
+                ov.rule_name,
+                ov.enabled,
+                opt_dt_to_sql(&ov.snooze_until),
+                ov.throttle_secs.map(|s| s as i64),
+                ov.note,
+                ov.set_by_user_id,
+                dt_to_sql(&ov.set_at),
+                opt_dt_to_sql(&ov.expires_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_alert_rule_override(
+        &self,
+        rule_name: &str,
+    ) -> Result<Option<AlertRuleOverride>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_name, enabled, snooze_until, throttle_secs,
+                        note, set_by_user_id, set_at, expires_at
+                 FROM alert_rule_overrides WHERE rule_name = ?1",
+            )
+            .map_err(map_err)?;
+        stmt.query_row(params![rule_name], row_to_alert_rule_override)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn list_alert_rule_overrides(&self) -> Result<Vec<AlertRuleOverride>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_name, enabled, snooze_until, throttle_secs,
+                        note, set_by_user_id, set_at, expires_at
+                 FROM alert_rule_overrides ORDER BY set_at DESC",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map([], row_to_alert_rule_override)
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn delete_alert_rule_override(&self, rule_name: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "DELETE FROM alert_rule_overrides WHERE rule_name = ?1",
+                params![rule_name],
+            )
+            .map_err(map_err)?;
+        Ok(n > 0)
+    }
+
+    fn delete_expired_alert_rule_overrides(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let now_sql = dt_to_sql(&now);
+        let cleared = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT rule_name FROM alert_rule_overrides
+                     WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+                )
+                .map_err(map_err)?;
+            let rows = stmt
+                .query_map(params![now_sql], |row| row.get::<_, String>(0))
+                .map_err(map_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?
+        };
+        if !cleared.is_empty() {
+            conn.execute(
+                "DELETE FROM alert_rule_overrides
+                 WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+                params![now_sql],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(cleared)
+    }
+
+    fn prune_alert_rule_overrides(
+        &self,
+        valid_rule_names: &[String],
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let existing = {
+            let mut stmt = conn
+                .prepare("SELECT rule_name FROM alert_rule_overrides")
+                .map_err(map_err)?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(map_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?
+        };
+        let valid: std::collections::HashSet<&str> =
+            valid_rule_names.iter().map(String::as_str).collect();
+        let orphans: Vec<String> = existing
+            .into_iter()
+            .filter(|name| !valid.contains(name.as_str()))
+            .collect();
+        for name in &orphans {
+            conn.execute(
+                "DELETE FROM alert_rule_overrides WHERE rule_name = ?1",
+                params![name],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(orphans)
+    }
 }
 
 impl Store for SqliteStore {}
@@ -2061,6 +2193,21 @@ fn row_to_alert_delivery(row: &rusqlite::Row<'_>) -> Result<AlertDelivery, rusql
         error: row.get(6)?,
         fired_at: sql_to_dt(&row.get::<_, String>(7)?),
         delivered_at: sql_to_opt_dt(row.get(8)?),
+    })
+}
+
+fn row_to_alert_rule_override(
+    row: &rusqlite::Row<'_>,
+) -> Result<AlertRuleOverride, rusqlite::Error> {
+    Ok(AlertRuleOverride {
+        rule_name: row.get(0)?,
+        enabled: row.get(1)?,
+        snooze_until: sql_to_opt_dt(row.get(2)?),
+        throttle_secs: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
+        note: row.get(4)?,
+        set_by_user_id: row.get(5)?,
+        set_at: sql_to_dt(&row.get::<_, String>(6)?),
+        expires_at: sql_to_opt_dt(row.get(7)?),
     })
 }
 

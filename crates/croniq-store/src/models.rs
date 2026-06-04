@@ -574,6 +574,70 @@ pub struct AlertDeliveryFilter {
     pub limit: Option<u32>,
 }
 
+// ─── Alert rule overrides (issue #231, Phase 1) ───
+
+/// Operational override for a DSL-managed alert rule. Carries temporary
+/// *runtime state* (snooze / disable / re-throttle), not the rule's
+/// definition — the Croniqfile stays canonical. One row per rule, keyed
+/// by the DSL rule name.
+///
+/// An override with `expires_at <= now` is **inert**: evaluation ignores
+/// it and the watchdog sweep deletes the row on its next pass. Use the
+/// [`AlertRuleOverride::is_suppressing`] / [`effective_throttle_secs`]
+/// helpers rather than reading the fields directly, so the expiry rule is
+/// applied consistently.
+///
+/// [`effective_throttle_secs`]: AlertRuleOverride::effective_throttle_secs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertRuleOverride {
+    pub rule_name: String,
+    /// `None` = defer to the DSL definition. `Some(false)` force-disables
+    /// the rule, `Some(true)` force-enables it (reserved for a future
+    /// DSL-disabled state; today rules are always enabled in the DSL).
+    pub enabled: Option<bool>,
+    /// Rule is suppressed until this instant. `None` = not snoozed.
+    pub snooze_until: Option<DateTime<Utc>>,
+    /// Replaces the DSL throttle window when set. `None` = use the DSL value.
+    pub throttle_secs: Option<u64>,
+    /// Mandatory incident context — why the override exists.
+    pub note: String,
+    /// Caller user_id / api_client_id that set the override.
+    pub set_by_user_id: String,
+    pub set_at: DateTime<Utc>,
+    /// Optional auto-clear deadline. Once `now >= expires_at` the override
+    /// is inert and the watchdog deletes it.
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+impl AlertRuleOverride {
+    /// Whether the override has passed its auto-clear deadline at `now`.
+    /// An expired override applies no effect — it's a tombstone awaiting
+    /// the next watchdog sweep.
+    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at.is_some_and(|e| now >= e)
+    }
+
+    /// Whether this override should *prevent* the rule from firing at
+    /// `now` — true when it force-disables the rule or is actively
+    /// snoozing it, and it has not expired.
+    pub fn is_suppressing(&self, now: DateTime<Utc>) -> bool {
+        if self.is_expired(now) {
+            return false;
+        }
+        self.enabled == Some(false) || self.snooze_until.is_some_and(|s| now < s)
+    }
+
+    /// The throttle window the evaluator should use given this override,
+    /// or `None` to fall back to the DSL value. An expired override
+    /// contributes nothing.
+    pub fn effective_throttle_secs(&self, now: DateTime<Utc>) -> Option<u64> {
+        if self.is_expired(now) {
+            return None;
+        }
+        self.throttle_secs
+    }
+}
+
 // ─── Work Item Tracking ───
 
 /// A log entry pushed by a runner during execution.

@@ -294,6 +294,31 @@ async fn main() -> Result<()> {
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
     }
+    // Issue #231: prune orphan alert-rule overrides whose DSL rule no
+    // longer exists (FK-cascade-by-name). The alerts config is loaded at
+    // boot only, so boot is the cascade point.
+    {
+        let valid: Vec<String> = server_state
+            .alerts
+            .rules
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        match store.prune_alert_rule_overrides(&valid) {
+            Ok(pruned) if !pruned.is_empty() => tracing::info!(
+                target: "croniq::alerts",
+                count = pruned.len(),
+                rules = ?pruned,
+                "pruned orphan alert-rule overrides (DSL rule removed)"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                target: "croniq::alerts",
+                error = %e,
+                "could not prune orphan alert-rule overrides at boot"
+            ),
+        }
+    }
     if let Some(url) = &server_state.app_base_url {
         tracing::info!(app_base_url = %url, "public base URL pinned (server.app_url / CRONIQ_APP_URL)");
     }

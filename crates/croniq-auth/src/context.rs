@@ -133,9 +133,15 @@ impl Scope {
     pub const MCP_WRITE: &str = "mcp:write";
 
     // Failure alerts (issue #140). Read-only access to the current
-    // alerts config + delivery log. There is no `alerts:write` yet —
-    // rules and channels are DSL-managed today.
+    // alerts config + delivery log. Rules and channels themselves are
+    // DSL-managed; `alerts:write` (issue #231) does NOT edit them — it
+    // gates the operational-override surface (snooze / disable /
+    // re-throttle a rule), a temporary runtime-state layer next to Adopt.
     pub const ALERTS_READ: &str = "alerts:read";
+    /// Operational overrides for DSL-managed alert rules (issue #231).
+    /// Admin-only for v1 — not granted to Operator/Viewer role defaults.
+    /// Implied by the `admin` wildcard.
+    pub const ALERTS_WRITE: &str = "alerts:write";
 }
 
 /// Default scope set for a user role. The login handler embeds these in

@@ -40,6 +40,10 @@ pub struct WatchdogResult {
     /// this sweep (issue #140 PR-4). Useful for tests and a future
     /// metric; not exposed via any public API today.
     pub sla_missed: Vec<(String, uuid::Uuid)>,
+    /// Rule names whose operational override expired and was auto-cleared
+    /// this sweep (issue #231). Each emits an `alerts.override.cleared`
+    /// audit event.
+    pub cleared_overrides: Vec<String>,
 }
 
 /// Requeue all executions still claimed by `runner_id` in the persistent
@@ -293,7 +297,45 @@ impl WatchdogLoop {
             self.sweep_sla_missed(now, &mut result).await;
         }
 
+        // 6. Auto-clear expired operational overrides (issue #231). Same
+        //    cadence as the SLA sweep — a "snooze 4h" evaporates without
+        //    operator follow-up. Each cleared row gets an audit event.
+        self.sweep_expired_overrides(now, &mut result);
+
         result
+    }
+
+    /// Delete overrides whose `expires_at` has passed and emit one
+    /// `alerts.override.cleared` audit event per row (system actor).
+    /// Best-effort — a store error is logged and the next sweep retries.
+    fn sweep_expired_overrides(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        match self.store.delete_expired_alert_rule_overrides(now) {
+            Ok(cleared) => {
+                for rule_name in &cleared {
+                    crate::api::audit::record_event(
+                        &self.store,
+                        "system",
+                        None,
+                        "alerts.override.cleared",
+                        "alert_rule",
+                        Some(rule_name),
+                    );
+                    tracing::info!(
+                        target: "croniq::alerts",
+                        rule = %rule_name,
+                        "operational override expired — auto-cleared"
+                    );
+                }
+                result.cleared_overrides = cleared;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "croniq::alerts",
+                    error = %e,
+                    "watchdog: failed to sweep expired alert-rule overrides"
+                );
+            }
+        }
     }
 
     /// Find claimed executions whose `expected_within` window has

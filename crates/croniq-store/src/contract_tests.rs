@@ -1399,3 +1399,156 @@ fn pat_find_by_unknown_hash_returns_none() {
     let store = create_memory_store().unwrap();
     assert!(store.pat_find_by_hash("nope").unwrap().is_none());
 }
+
+// ─── AlertStore: operational overrides (issue #231) ───
+
+fn make_override(rule: &str) -> AlertRuleOverride {
+    AlertRuleOverride {
+        rule_name: rule.into(),
+        enabled: None,
+        snooze_until: None,
+        throttle_secs: None,
+        note: "incident #42".into(),
+        set_by_user_id: "user-1".into(),
+        set_at: now(),
+        expires_at: None,
+    }
+}
+
+#[test]
+fn alert_override_upsert_get_delete() {
+    let store = create_memory_store().unwrap();
+    assert!(
+        store
+            .get_alert_rule_override("billing-fail")
+            .unwrap()
+            .is_none()
+    );
+
+    let mut ov = make_override("billing-fail");
+    ov.snooze_until = Some(utc(2026, 3, 29, 16, 0));
+    ov.throttle_secs = Some(1800);
+    store.upsert_alert_rule_override(&ov).unwrap();
+
+    let loaded = store
+        .get_alert_rule_override("billing-fail")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.note, "incident #42");
+    assert_eq!(loaded.throttle_secs, Some(1800));
+    assert_eq!(loaded.snooze_until, Some(utc(2026, 3, 29, 16, 0)));
+
+    // Upsert replaces the prior row wholesale.
+    let mut ov2 = make_override("billing-fail");
+    ov2.enabled = Some(false);
+    ov2.note = "debugging false positives".into();
+    store.upsert_alert_rule_override(&ov2).unwrap();
+    let reloaded = store
+        .get_alert_rule_override("billing-fail")
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded.enabled, Some(false));
+    assert_eq!(reloaded.note, "debugging false positives");
+    assert_eq!(reloaded.throttle_secs, None);
+    assert_eq!(reloaded.snooze_until, None);
+
+    assert!(store.delete_alert_rule_override("billing-fail").unwrap());
+    assert!(!store.delete_alert_rule_override("billing-fail").unwrap());
+    assert!(
+        store
+            .get_alert_rule_override("billing-fail")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn alert_override_delete_expired_only_clears_past_deadlines() {
+    let store = create_memory_store().unwrap();
+
+    let mut past = make_override("rule-past");
+    past.expires_at = Some(utc(2026, 3, 29, 11, 0)); // before now()
+    store.upsert_alert_rule_override(&past).unwrap();
+
+    let mut future = make_override("rule-future");
+    future.expires_at = Some(utc(2026, 3, 29, 13, 0)); // after now()
+    store.upsert_alert_rule_override(&future).unwrap();
+
+    let mut forever = make_override("rule-forever"); // expires_at = None
+    forever.note = "no deadline".into();
+    store.upsert_alert_rule_override(&forever).unwrap();
+
+    let cleared = store.delete_expired_alert_rule_overrides(now()).unwrap();
+    assert_eq!(cleared, vec!["rule-past".to_string()]);
+
+    assert!(
+        store
+            .get_alert_rule_override("rule-past")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_alert_rule_override("rule-future")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .get_alert_rule_override("rule-forever")
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn alert_override_prune_drops_orphans_by_name() {
+    // FK-cascade-by-name: when a DSL rule is removed, its override is
+    // pruned at the next boot. Simulated by passing the surviving rule
+    // set to prune_alert_rule_overrides.
+    let store = create_memory_store().unwrap();
+    for rule in ["keep-a", "keep-b", "gone-c"] {
+        store
+            .upsert_alert_rule_override(&make_override(rule))
+            .unwrap();
+    }
+
+    let mut pruned = store
+        .prune_alert_rule_overrides(&["keep-a".into(), "keep-b".into()])
+        .unwrap();
+    pruned.sort();
+    assert_eq!(pruned, vec!["gone-c".to_string()]);
+
+    assert!(store.get_alert_rule_override("keep-a").unwrap().is_some());
+    assert!(store.get_alert_rule_override("keep-b").unwrap().is_some());
+    assert!(store.get_alert_rule_override("gone-c").unwrap().is_none());
+
+    // Pruning against the empty set clears everything left.
+    let mut all = store.prune_alert_rule_overrides(&[]).unwrap();
+    all.sort();
+    assert_eq!(all, vec!["keep-a".to_string(), "keep-b".to_string()]);
+    assert!(store.list_alert_rule_overrides().unwrap().is_empty());
+}
+
+#[test]
+fn alert_override_model_helpers_respect_expiry() {
+    let n = now();
+    let mut ov = make_override("r");
+    ov.enabled = Some(false);
+    ov.throttle_secs = Some(600);
+    assert!(ov.is_suppressing(n));
+    assert_eq!(ov.effective_throttle_secs(n), Some(600));
+
+    // Expired override is inert.
+    ov.expires_at = Some(utc(2026, 3, 29, 11, 0)); // before now()
+    assert!(ov.is_expired(n));
+    assert!(!ov.is_suppressing(n));
+    assert_eq!(ov.effective_throttle_secs(n), None);
+
+    // Snooze in the future suppresses; in the past does not.
+    let mut snz = make_override("s");
+    snz.snooze_until = Some(utc(2026, 3, 29, 13, 0));
+    assert!(snz.is_suppressing(n));
+    snz.snooze_until = Some(utc(2026, 3, 29, 11, 0));
+    assert!(!snz.is_suppressing(n));
+}

@@ -179,7 +179,30 @@ pub(crate) async fn dispatch_rule(
     let now = Utc::now();
     let mut recorded = Vec::new();
 
-    let throttle_window = rule.throttle.as_deref().and_then(parse_throttle_secs);
+    // Operational override (issue #231): a force-disabled or actively-
+    // snoozed rule does not fire at all. An expired override is inert —
+    // the watchdog sweep removes it. Best-effort: a store error here just
+    // means the rule fires as if no override existed.
+    let override_row = store.get_alert_rule_override(&rule.name).ok().flatten();
+    if let Some(ov) = &override_row
+        && ov.is_suppressing(now)
+    {
+        tracing::info!(
+            target: "croniq::alerts",
+            rule = %rule.name,
+            job_key = %ctx.job_key,
+            reason = if ov.enabled == Some(false) { "disabled" } else { "snoozed" },
+            "alerts.fired suppressed by operational override"
+        );
+        return recorded;
+    }
+
+    // Override throttle, when set, replaces the DSL window; otherwise the
+    // DSL value applies.
+    let throttle_window = override_row
+        .as_ref()
+        .and_then(|o| o.effective_throttle_secs(now))
+        .or_else(|| rule.throttle.as_deref().and_then(parse_throttle_secs));
     let throttle_state = check_throttle(throttle, &rule.name, &ctx.job_key, throttle_window, now);
     match throttle_state {
         ThrottleDecision::Suppress { last_at } => {
@@ -936,6 +959,156 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
         assert_eq!(recorded[0].channel_name, "ops");
+    }
+
+    fn single_shell_rule() -> AlertsConfig {
+        AlertsConfig {
+            channels: [(
+                "ops".to_string(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Shell {
+                        command: "true".into(),
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "any-failure".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                expected_within: None,
+                channels: vec!["ops".into()],
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn override_disable_suppresses_fire() {
+        let alerts = single_shell_rule();
+        let store = make_store();
+        store
+            .upsert_alert_rule_override(&croniq_store::models::AlertRuleOverride {
+                rule_name: "any-failure".into(),
+                enabled: Some(false),
+                snooze_until: None,
+                throttle_secs: None,
+                note: "debugging".into(),
+                set_by_user_id: "u".into(),
+                set_at: Utc::now(),
+                expires_at: None,
+            })
+            .unwrap();
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("billing:invoice"),
+            &empty_throttle_map(),
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
+        assert!(recorded.is_empty(), "disabled rule must not fire");
+    }
+
+    #[tokio::test]
+    async fn override_snooze_in_future_suppresses_but_past_does_not() {
+        let alerts = single_shell_rule();
+
+        // Snoozed into the future ⇒ suppressed.
+        let store = make_store();
+        store
+            .upsert_alert_rule_override(&croniq_store::models::AlertRuleOverride {
+                rule_name: "any-failure".into(),
+                enabled: None,
+                snooze_until: Some(Utc::now() + chrono::Duration::hours(1)),
+                throttle_secs: None,
+                note: "snooze".into(),
+                set_by_user_id: "u".into(),
+                set_at: Utc::now(),
+                expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+            })
+            .unwrap();
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("j"),
+            &empty_throttle_map(),
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
+        assert!(recorded.is_empty(), "active snooze must suppress");
+
+        // Snooze already elapsed (and expired) ⇒ inert, rule fires.
+        let store2 = make_store();
+        store2
+            .upsert_alert_rule_override(&croniq_store::models::AlertRuleOverride {
+                rule_name: "any-failure".into(),
+                enabled: None,
+                snooze_until: Some(Utc::now() - chrono::Duration::hours(2)),
+                throttle_secs: None,
+                note: "snooze".into(),
+                set_by_user_id: "u".into(),
+                set_at: Utc::now(),
+                expires_at: Some(Utc::now() - chrono::Duration::hours(1)),
+            })
+            .unwrap();
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("j"),
+            &empty_throttle_map(),
+            &store2,
+            &make_noop_sender(),
+        )
+        .await;
+        assert_eq!(recorded.len(), 1, "expired snooze must not suppress");
+    }
+
+    #[tokio::test]
+    async fn override_throttle_replaces_dsl_window() {
+        // DSL rule has no throttle (fires every time). An override
+        // throttle of 1h must suppress the second fire in the window.
+        let mut alerts = single_shell_rule();
+        alerts.rules[0].throttle = None;
+        let store = make_store();
+        store
+            .upsert_alert_rule_override(&croniq_store::models::AlertRuleOverride {
+                rule_name: "any-failure".into(),
+                enabled: None,
+                snooze_until: None,
+                throttle_secs: Some(3600),
+                note: "too noisy".into(),
+                set_by_user_id: "u".into(),
+                set_at: Utc::now(),
+                expires_at: None,
+            })
+            .unwrap();
+        let throttle = empty_throttle_map();
+        let first = evaluate_failure(
+            &alerts,
+            &make_ctx("j"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
+        assert_eq!(first[0].state, AlertDeliveryState::Delivered);
+        let second = evaluate_failure(
+            &alerts,
+            &make_ctx("j"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
+        assert_eq!(
+            second[0].state,
+            AlertDeliveryState::Throttled,
+            "override throttle must suppress the immediate re-fire"
+        );
     }
 
     #[tokio::test]

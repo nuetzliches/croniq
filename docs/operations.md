@@ -257,3 +257,50 @@ Current checks:
 | `totp.enforced_without_enrollment` | warning | Enforced 2FA (`require_totp`) is on but one or more active users have no confirmed TOTP secret — they are refused at login until they enrol. (Live surfaces only; `doctor` can't evaluate it offline.) |
 
 Findings report posture only — never secrets.
+
+## Alert rule overrides
+
+Alert rules and channels are defined in the Croniqfile (`alert {}` / channel
+blocks) and are read-only at runtime. **Operational overrides** let an admin
+temporarily change a rule's behaviour during an incident without editing the
+Croniqfile, redeploying, or losing the original definition. They are gated by
+the admin-only `alerts:write` scope and every set-action requires a `note`
+(captured at write time, surfaced in the audit log).
+
+Three intents, one per rule — they are not composable; setting one replaces any
+existing override for that rule:
+
+| action | endpoint | effect |
+|---|---|---|
+| snooze | `POST /v1/alerts/rules/{name}/snooze` | suppress the rule until `until`; auto-clears at that instant |
+| disable | `POST /v1/alerts/rules/{name}/disable` | suppress the rule open-ended (or until `expires_at`) |
+| throttle | `POST /v1/alerts/rules/{name}/throttle` | **replace** the DSL throttle window with a new duration |
+
+Inspect with `GET /v1/alerts/rules/{name}/override`, clear with
+`DELETE …/override`, and see all active overrides inline on
+`GET /v1/alerts/config`. Expired overrides are inert immediately and swept by
+the watchdog; overrides for rules that no longer exist in the Croniqfile are
+pruned at boot.
+
+### When to override vs. when to edit the Croniqfile
+
+```
+Is this a permanent change to how the rule should behave?
+├─ Yes → edit the Croniqfile (alert {} block) + redeploy. Overrides are
+│        for temporary, incident-scoped deviations only.
+└─ No (temporary / incident-scoped) →
+   ├─ Planned maintenance window with a known end time?
+   │     → snooze (until = end of the window). Auto-clears, no follow-up.
+   ├─ Rule is firing on a known false positive you're actively debugging?
+   │     → disable (set expires_at if you have a deadline; otherwise
+   │       open-ended, but clear it when done — open-ended disables are
+   │       the thing most likely to be forgotten).
+   └─ Rule is correct but too noisy right now (flapping dependency)?
+         → throttle with a LONGER window. Note this REPLACES the DSL
+           throttle rather than taking the min — the operator use-case is
+           "this is too aggressive, widen it", so the override wins
+           outright. To go back to the DSL window, clear the override.
+```
+
+Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
+the Croniqfile, not an override.

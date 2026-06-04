@@ -422,13 +422,32 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             post(dead_letters::handle_replay),
         )
         // Failure alerts (issue #140 PR-5): read-only view of the
-        // effective config + the per-fire delivery log. Channels and
-        // rules are DSL-managed today, so no POST/PUT/DELETE here.
+        // effective config + the per-fire delivery log. Rules + channels
+        // are DSL-managed; `/config` surfaces operational overrides inline.
         .route("/v1/alerts/config", get(alerts::handle_get_config))
         .route("/v1/alerts/deliveries", get(alerts::handle_list_deliveries))
         .route(
             "/v1/alerts/deliveries/{id}",
             get(alerts::handle_get_delivery),
+        )
+        // Operational overrides (issue #231): temporary, audit-logged
+        // runtime-state tweaks on DSL rules. `alerts:write` (admin) for
+        // mutations; the read view is `alerts:read`.
+        .route(
+            "/v1/alerts/rules/{name}/snooze",
+            post(alerts::handle_snooze_rule),
+        )
+        .route(
+            "/v1/alerts/rules/{name}/disable",
+            post(alerts::handle_disable_rule),
+        )
+        .route(
+            "/v1/alerts/rules/{name}/throttle",
+            post(alerts::handle_throttle_rule),
+        )
+        .route(
+            "/v1/alerts/rules/{name}/override",
+            get(alerts::handle_get_override).delete(alerts::handle_clear_override),
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
