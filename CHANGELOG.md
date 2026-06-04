@@ -6,6 +6,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-04
+
+### Added
+
+- **SMTP email alert channel
+  ([#230](https://github.com/nuetzliches/croniq/pull/239)).** Alerts can
+  now be delivered over email. A new `smtp { }` DSL block configures the
+  non-secret transport settings (host, port, from, TLS mode), while the
+  credentials stay ENV-only via decomposed `CRONIQ_SMTP_USERNAME` /
+  `CRONIQ_SMTP_PASSWORD` — they are never read from or written to the
+  Croniqfile.
+- **Operational alert rule overrides
+  ([#231](https://github.com/nuetzliches/croniq/pull/240)).** Operators
+  can snooze, disable, or throttle an individual alert rule at runtime
+  without editing the DSL. Overrides carry a required operator note and
+  an optional expiry; a snooze is just a time-boxed disable. The eval
+  path merges overrides over the DSL config (a throttle override
+  *replaces* the rule's DSL window rather than taking the min), the
+  watchdog auto-clears expired overrides, and stale entries are pruned on
+  boot. Writing overrides requires the admin-only `alerts:write` scope.
+  Surfaced via `POST /v1/alerts/rules/{name}/{snooze,disable,throttle}`
+  and `DELETE /v1/alerts/rules/{name}/override`; `GET /v1/alerts/config`
+  now returns active overrides alongside the resolved config.
+- **Alert rule overrides in the UI
+  ([#242](https://github.com/nuetzliches/croniq/pull/242)).** Admins can
+  drive the new override endpoints directly from the Alerts page: each
+  rule gains snooze / disable / throttle controls and an active override
+  renders inline as a pill with the operator's note. Non-admins see the
+  override state read-only.
+- **Deep-link from a job's Executions tab to the global Executions view
+  ([#242](https://github.com/nuetzliches/croniq/pull/242)).** The per-job
+  tab now links to `/executions` pre-filtered by `job_key`. Filters on
+  the Executions page are URL-driven (`?state=&job_key=`), so the view is
+  shareable and deep-linkable.
+
+### Changed
+
+- **Renamed "Run(s)" to "Execution(s)" across the UI
+  ([#242](https://github.com/nuetzliches/croniq/pull/242)).** The data
+  model has always called these *executions*; the UI now matches
+  everywhere, both in user-facing labels (tabs, empty states, copy) and
+  in internal identifiers (`RunBars` → `ExecutionBars`, `RunOutcome` →
+  `ExecutionOutcome`, `.run-bars` → `.execution-bars`). Consistency was
+  favored over shorter names.
+
+### Fixed
+
+- **OpenAPI timestamp drift + dead-letter job context
+  ([#237](https://github.com/nuetzliches/croniq/pull/237)).**
+
 ## [0.18.0] - 2026-05-28
 
 ### Added
