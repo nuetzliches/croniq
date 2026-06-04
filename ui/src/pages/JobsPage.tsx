@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import {
   Play,
   Pencil,
@@ -12,6 +12,7 @@ import {
   Edit3,
   Download,
   Upload,
+  ArrowRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -509,7 +510,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
               schedules={schedules.data ?? []}
             />
           ) : null}
-          {tab === 'executions' ? <ExecutionsTab executions={execs} loading={executions.isLoading} /> : null}
+          {tab === 'executions' ? <ExecutionsTab executions={execs} loading={executions.isLoading} jobKey={jobKey} /> : null}
           {tab === 'schedule' ? (
             <ScheduleTab
               schedules={schedules.data ?? []}
@@ -893,7 +894,15 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   )
 }
 
-function ExecutionsTab({ executions, loading }: { executions: Execution[]; loading: boolean }) {
+function ExecutionsTab({
+  executions,
+  loading,
+  jobKey,
+}: {
+  executions: Execution[]
+  loading: boolean
+  jobKey: string
+}) {
   if (loading) {
     return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
   }
@@ -902,6 +911,19 @@ function ExecutionsTab({ executions, loading }: { executions: Execution[]; loadi
   }
   return (
     <section className="card" style={{ padding: 0 }}>
+      <div className="row between" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <span className="dim" style={{ fontSize: 12 }}>
+          Showing the {executions.length} most recent
+        </span>
+        <Link
+          to={`/executions?job_key=${encodeURIComponent(jobKey)}`}
+          className="btn sm ghost"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        >
+          View all executions
+          <ArrowRight size={12} />
+        </Link>
+      </div>
       <table className="tbl">
         <thead>
           <tr>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import clsx from 'clsx'
 import { useExecutions, useCancelExecution } from '@/api/hooks'
 import type { Execution } from '@/api/types'
@@ -16,8 +16,12 @@ const PAGE_SIZE = 50
 export function ExecutionsPage() {
   const navigate = useNavigate()
   const { id: routeId } = useParams<{ id: string }>()
-  const [stateFilter, setStateFilter] = useState('')
-  const [jobFilter, setJobFilter] = useState('')
+  // Filters live in the URL (?state=…&job_key=…) so the view is
+  // shareable and deep-linkable — e.g. the per-job "View all executions"
+  // link points here pre-filtered to that job_key.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const stateFilter = searchParams.get('state') ?? ''
+  const jobFilter = searchParams.get('job_key') ?? ''
   const [limit, setLimit] = useState(PAGE_SIZE)
   const executions = useExecutions({
     state: stateFilter || undefined,
@@ -31,17 +35,24 @@ export function ExecutionsPage() {
   const reachedEnd = rows.length < limit
   const selected = routeId ? rows.find((r) => r.id === routeId) ?? null : null
 
+  // Preserve the active filters when navigating to / from the detail route.
   const selectExecution = (id: string | null) =>
-    navigate(id ? `/executions/${id}` : '/executions')
+    navigate({ pathname: id ? `/executions/${id}` : '/executions', search: searchParams.toString() })
 
-  function setStateAndReset(v: string) {
-    setStateFilter(v)
+  function setFilter(key: 'state' | 'job_key', v: string) {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        if (v) p.set(key, v)
+        else p.delete(key)
+        return p
+      },
+      { replace: true },
+    )
     setLimit(PAGE_SIZE)
   }
-  function setJobAndReset(v: string) {
-    setJobFilter(v)
-    setLimit(PAGE_SIZE)
-  }
+  const setStateAndReset = (v: string) => setFilter('state', v)
+  const setJobAndReset = (v: string) => setFilter('job_key', v)
 
   return (
     <div className="split">
