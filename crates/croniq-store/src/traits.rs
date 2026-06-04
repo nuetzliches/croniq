@@ -371,6 +371,44 @@ pub trait AlertStore {
         rule_name: &str,
         job_key: &str,
     ) -> Result<Option<DateTime<Utc>>, StoreError>;
+
+    // ─── Operational overrides (issue #231, Phase 1) ───
+
+    /// Insert or replace the override row for a rule (PRIMARY KEY on
+    /// `rule_name`). A set-action overwrites any prior override wholesale
+    /// — partial merges happen in the handler before this call.
+    fn upsert_alert_rule_override(&self, ov: &AlertRuleOverride) -> Result<(), StoreError>;
+
+    /// Look up the override for a single rule. `None` = pure DSL behaviour.
+    fn get_alert_rule_override(
+        &self,
+        rule_name: &str,
+    ) -> Result<Option<AlertRuleOverride>, StoreError>;
+
+    /// List all override rows. Used by `GET /v1/alerts/config` to surface
+    /// override state inline. Newest-set first.
+    fn list_alert_rule_overrides(&self) -> Result<Vec<AlertRuleOverride>, StoreError>;
+
+    /// Remove the override for a rule. Returns `Ok(true)` when a row was
+    /// removed, `Ok(false)` when none existed. Backs `DELETE …/override`.
+    fn delete_alert_rule_override(&self, rule_name: &str) -> Result<bool, StoreError>;
+
+    /// Delete every override whose `expires_at <= now`. Returns the names
+    /// of the rules whose overrides were cleared, so the watchdog can emit
+    /// one `alerts.override.cleared` audit event per row.
+    fn delete_expired_alert_rule_overrides(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<String>, StoreError>;
+
+    /// Delete override rows whose `rule_name` is not in `valid_rule_names`.
+    /// Implements the FK-cascade-by-name: when a DSL rule is removed, its
+    /// orphaned override is pruned (called at boot after loading the
+    /// alerts config). Returns the pruned rule names.
+    fn prune_alert_rule_overrides(
+        &self,
+        valid_rule_names: &[String],
+    ) -> Result<Vec<String>, StoreError>;
 }
 
 /// Execution log persistence.

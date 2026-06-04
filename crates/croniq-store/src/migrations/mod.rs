@@ -48,6 +48,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "017_alert_deliveries",
         include_str!("017_alert_deliveries.sql"),
     ),
+    (
+        "018_alert_rule_overrides",
+        include_str!("018_alert_rule_overrides.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -277,5 +281,36 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migration_018_creates_alert_rule_overrides_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Table exists and accepts a row keyed by rule_name.
+        conn.execute(
+            "INSERT INTO alert_rule_overrides
+                (rule_name, enabled, snooze_until, throttle_secs, note, set_by_user_id, set_at, expires_at)
+             VALUES ('billing-fail', 0, NULL, 1800, 'flapping', 'user-1', '2026-06-04T00:00:00Z', NULL)",
+            [],
+        )
+        .unwrap();
+
+        // PRIMARY KEY on rule_name rejects a duplicate plain INSERT.
+        let dup = conn.execute(
+            "INSERT INTO alert_rule_overrides
+                (rule_name, note, set_by_user_id, set_at)
+             VALUES ('billing-fail', 'again', 'user-1', '2026-06-04T01:00:00Z')",
+            [],
+        );
+        assert!(dup.is_err(), "rule_name must be a primary key");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM alert_rule_overrides", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

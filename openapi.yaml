@@ -361,6 +361,56 @@ components:
               hour: { type: integer }
               failures: { type: integer }
 
+    AlertRuleOverride:
+      type: object
+      description: |
+        An operational override layered on top of a DSL-defined alert rule
+        (issue #231). Exactly one intent is expressed per row — snooze,
+        disable, or throttle — they are not composable. A row whose
+        `expires_at` is in the past is inert (treated as if absent) until the
+        watchdog sweep removes it.
+      required: [rule_name, note, set_by_user_id, set_at]
+      properties:
+        rule_name: { type: string, description: Name of the DSL rule this overrides }
+        enabled:
+          type: boolean
+          nullable: true
+          description: "`false` disables the rule; `null` means the override does not touch enablement"
+        snooze_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Rule is suppressed until this instant; doubles as the auto-clear deadline
+        throttle_secs:
+          type: integer
+          nullable: true
+          description: Replaces the DSL throttle window (seconds) while active
+        note: { type: string, description: Mandatory incident context captured at write time }
+        set_by_user_id: { type: string }
+        set_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the override auto-clears; `null` for open-ended (disable/throttle only)
+
+    AlertsConfigView:
+      type: object
+      description: |
+        Effective alerts config (DSL-managed `channels` + `rules`) plus any
+        operational overrides surfaced inline. The original config shape is
+        preserved at the top level; `overrides` is additive.
+      properties:
+        channels:
+          type: array
+          items: { type: object }
+        rules:
+          type: array
+          items: { type: object }
+        overrides:
+          type: array
+          items: { $ref: "#/components/schemas/AlertRuleOverride" }
+
 paths:
   /health:
     get:
@@ -866,6 +916,129 @@ paths:
                 properties:
                   execution_id: { type: string }
                   attempt: { type: integer }
+
+  /v1/alerts/config:
+    get:
+      summary: Effective alerts config with operational overrides
+      description: |
+        Returns the DSL-managed alert `channels` + `rules` the evaluator and
+        watchdog are using, with active overrides surfaced inline. Webhook
+        signing keys are never serialized. Requires `alerts:read`.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertsConfigView" }
+
+  /v1/alerts/rules/{name}/snooze:
+    post:
+      summary: Snooze an alert rule until a deadline
+      description: |
+        Suppresses the named rule until `until`, which doubles as the
+        auto-clear deadline. `note` is mandatory. Requires `alerts:write`
+        (admin-only). Overwrites any existing override for the rule.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [until, note]
+              properties:
+                until: { type: string, format: date-time }
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRuleOverride" }
+        "400": { description: Missing/blank note or missing deadline }
+        "403": { description: Caller lacks alerts:write }
+        "404": { description: Unknown rule }
+
+  /v1/alerts/rules/{name}/disable:
+    post:
+      summary: Disable an alert rule
+      description: |
+        Disables the named rule. `expires_at` optionally auto-re-enables it;
+        omit for an open-ended disable. `note` is mandatory. Requires
+        `alerts:write`. Overwrites any existing override for the rule.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string }
+                expires_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRuleOverride" }
+        "400": { description: Missing/blank note }
+        "403": { description: Caller lacks alerts:write }
+        "404": { description: Unknown rule }
+
+  /v1/alerts/rules/{name}/throttle:
+    post:
+      summary: Override an alert rule's throttle window
+      description: |
+        Replaces the rule's DSL throttle window with `throttle` (a duration
+        string such as `"30m"` or `"1h"`) while the override is active. Note
+        this REPLACES rather than mins with the DSL window. `expires_at`
+        optionally auto-clears. `note` is mandatory. Requires `alerts:write`.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [throttle, note]
+              properties:
+                throttle: { type: string, description: "Duration string, e.g. \"30m\"" }
+                note: { type: string }
+                expires_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRuleOverride" }
+        "400": { description: Missing/blank note or unparseable duration }
+        "403": { description: Caller lacks alerts:write }
+        "404": { description: Unknown rule }
+
+  /v1/alerts/rules/{name}/override:
+    get:
+      summary: Inspect the current override for a rule
+      description: Returns the active override. Requires `alerts:read`.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRuleOverride" }
+        "404": { description: No override set (or unknown rule) }
+    delete:
+      summary: Clear a rule's override
+      description: |
+        Removes the override, returning the rule to pure DSL behaviour.
+        Requires `alerts:write`.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Cleared }
+        "403": { description: Caller lacks alerts:write }
+        "404": { description: Nothing to clear }
 
   /v1/calendars:
     get:
