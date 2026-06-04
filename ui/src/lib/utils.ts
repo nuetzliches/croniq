@@ -63,7 +63,7 @@ export function shortId(id: string): string {
 export function emptyLogsMessage(state: string): string {
   switch (state) {
     case "completed":
-      return "Silent run completed (no stdout)"
+      return "Silent execution completed (no stdout)"
     case "failed":
     case "dead":
       return "No logs captured"

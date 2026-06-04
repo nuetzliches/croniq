@@ -293,7 +293,7 @@ function ActivityCard({ executions, loading }: { executions: Execution[]; loadin
             Loading…
           </div>
         ) : executions.length === 0 ? (
-          <EmptyState icon={Activity} title="No executions yet" desc="Trigger a job to see runs here." />
+          <EmptyState icon={Activity} title="No executions yet" desc="Trigger a job to see executions here." />
         ) : (
           executions.slice(0, 8).map((e) => (
             <div
