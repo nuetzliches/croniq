@@ -256,13 +256,13 @@
   border: 1px solid var(--border);
 }
 
-/* ── run bars (sparse status bar row) ──────────────────────── */
-.run-bars { display: inline-flex; gap: 1.5px; height: 14px; align-items: flex-end; vertical-align: middle; }
-.run-bars .bar { width: 3px; border-radius: 1px; }
-.run-bars .bar.ok   { background: var(--success); }
-.run-bars .bar.err  { background: var(--error); }
-.run-bars .bar.warn { background: var(--warn); }
-.run-bars .bar.skip { background: var(--fg-mute); opacity: 0.4; }
+/* ── execution bars (sparse status bar row) ────────────────── */
+.execution-bars { display: inline-flex; gap: 1.5px; height: 14px; align-items: flex-end; vertical-align: middle; }
+.execution-bars .bar { width: 3px; border-radius: 1px; }
+.execution-bars .bar.ok   { background: var(--success); }
+.execution-bars .bar.err  { background: var(--error); }
+.execution-bars .bar.warn { background: var(--warn); }
+.execution-bars .bar.skip { background: var(--fg-mute); opacity: 0.4; }
 
 /* ── sparkline svg wrapper ─────────────────────────────────── */
 .spark    { display: block; width: 100%; height: 36px; }

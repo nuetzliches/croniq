@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import {
   Play,
   Pencil,
@@ -12,6 +12,7 @@ import {
   Edit3,
   Download,
   Upload,
+  ArrowRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -36,7 +37,7 @@ import { DeliveriesList } from '@/pages/AlertsPage'
 import {
   EmptyState,
   StatusPill,
-  RunBars,
+  ExecutionBars,
   Toggle,
   KPICard,
   Sparkline,
@@ -44,7 +45,7 @@ import {
   Avatar,
   BrandMark,
 } from '@/components/primitives'
-import type { RunOutcome } from '@/components/primitives'
+import type { ExecutionOutcome } from '@/components/primitives'
 import type { AuditEvent, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EditJobDialog } from '@/components/EditJobDialog'
@@ -53,18 +54,18 @@ import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { formatRelative, formatDate } from '@/lib/utils'
 import { useCurrentUser } from '@/api/hooks'
 
-type Tab = 'overview' | 'runs' | 'schedule' | 'dsl' | 'alerts' | 'audit'
+type Tab = 'overview' | 'executions' | 'schedule' | 'dsl' | 'alerts' | 'audit'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'runs', label: 'Runs' },
+  { id: 'executions', label: 'Executions' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'dsl', label: 'DSL' },
   { id: 'alerts', label: 'Alerts' },
   { id: 'audit', label: 'Audit' },
 ]
 
-const outcomeFor = (e: Execution): RunOutcome => {
+const outcomeFor = (e: Execution): ExecutionOutcome => {
   if (e.state === 'completed') return 'ok'
   if (e.state === 'failed' || e.state === 'dead') return 'err'
   if (e.state === 'timeout') return 'warn'
@@ -242,7 +243,7 @@ export function JobsPage() {
           <EmptyState
             icon={Search}
             title="Select a job"
-            desc="Pick a job from the list on the left to see its overview, runs, schedule, DSL and audit trail."
+            desc="Pick a job from the list on the left to see its overview, executions, schedule, DSL and audit trail."
           />
         )}
       </section>
@@ -299,7 +300,7 @@ function JobRow({
           ))}
         </div>
         <div className="row gap-6" style={{ flexShrink: 0 }}>
-          <RunBars
+          <ExecutionBars
             counts={recent.map(outcomeFor).reverse()}
             durations={recent.map((e) => e.duration_ms).reverse()}
             compact
@@ -312,7 +313,7 @@ function JobRow({
               minWidth: 32,
               textAlign: 'right',
             }}
-            title={total === 0 ? 'No recent runs' : `${total - fails}/${total} successful`}
+            title={total === 0 ? 'No recent executions' : `${total - fails}/${total} successful`}
           >
             {successRate === null ? '—' : `${(successRate * 100).toFixed(0)}%`}
           </span>
@@ -496,7 +497,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
               onClick={() => setTab(t.id)}
             >
               {t.label}
-              {t.id === 'runs' && stats.data ? <span className="count">{stats.data.total}</span> : null}
+              {t.id === 'executions' && stats.data ? <span className="count">{stats.data.total}</span> : null}
               {t.id === 'audit' && jobAudit.length > 0 ? <span className="count">{jobAudit.length}</span> : null}
             </button>
           ))}
@@ -509,7 +510,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
               schedules={schedules.data ?? []}
             />
           ) : null}
-          {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
+          {tab === 'executions' ? <ExecutionsTab executions={execs} loading={executions.isLoading} jobKey={jobKey} /> : null}
           {tab === 'schedule' ? (
             <ScheduleTab
               schedules={schedules.data ?? []}
@@ -707,7 +708,7 @@ function KpiRow({
         value={runsLast24.length}
         mono
         sub={
-          <RunBars
+          <ExecutionBars
             counts={runsLast24.map(outcomeFor).reverse()}
             durations={runsLast24.map((e) => e.duration_ms).reverse()}
             compact
@@ -776,13 +777,13 @@ function OverviewTab({
     <div className="job-overview-grid">
       <section className="card" style={{ padding: 0 }}>
         <div className="row between" style={{ padding: '14px 16px 8px' }}>
-          <p className="card-title">Recent runs</p>
+          <p className="card-title">Recent executions</p>
           <span className="dim" style={{ fontSize: 11.5 }}>
             last {Math.min(executions.length, 12)}
           </span>
         </div>
         {executions.length === 0 ? (
-          <EmptyState title="No runs yet" desc="Trigger the job to see executions here." />
+          <EmptyState title="No executions yet" desc="Trigger the job to see executions here." />
         ) : (
           <table className="tbl">
             <thead>
@@ -893,15 +894,36 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   )
 }
 
-function RunsTab({ executions, loading }: { executions: Execution[]; loading: boolean }) {
+function ExecutionsTab({
+  executions,
+  loading,
+  jobKey,
+}: {
+  executions: Execution[]
+  loading: boolean
+  jobKey: string
+}) {
   if (loading) {
     return <div className="dim center" style={{ padding: 30 }}>Loading…</div>
   }
   if (executions.length === 0) {
-    return <EmptyState title="No runs yet" desc="Trigger the job to see executions here." />
+    return <EmptyState title="No executions yet" desc="Trigger the job to see executions here." />
   }
   return (
     <section className="card" style={{ padding: 0 }}>
+      <div className="row between" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <span className="dim" style={{ fontSize: 12 }}>
+          Showing the {executions.length} most recent
+        </span>
+        <Link
+          to={`/executions?job_key=${encodeURIComponent(jobKey)}`}
+          className="btn sm ghost"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        >
+          View all executions
+          <ArrowRight size={12} />
+        </Link>
+      </div>
       <table className="tbl">
         <thead>
           <tr>

@@ -361,11 +361,33 @@ export interface AlertRuleConfig {
   channels: string[]
 }
 
+/// An operational override layered on top of a DSL-defined alert rule
+/// (issue #231). Exactly one intent per row — snooze, disable, or throttle;
+/// they are not composable. A row whose `expires_at` is in the past is inert
+/// (treated as absent) until the watchdog sweep removes it.
+export interface AlertRuleOverride {
+  rule_name: string
+  /** `false` disables the rule; `null` means the override doesn't touch enablement. */
+  enabled: boolean | null
+  /** Rule is suppressed until this instant; doubles as the auto-clear deadline. */
+  snooze_until: string | null
+  /** Replaces the DSL throttle window (seconds) while active. */
+  throttle_secs: number | null
+  note: string
+  set_by_user_id: string
+  set_at: string
+  /** When the override auto-clears; `null` for open-ended (disable/throttle only). */
+  expires_at: string | null
+}
+
 /// Shape returned by `GET /v1/alerts/config`. The `channels` field is
 /// an object keyed by channel name (server uses `HashMap<String, ...>`).
+/// `overrides` surfaces active operational overrides inline (issue #231);
+/// it is additive — older servers omit it, hence optional.
 export interface AlertsConfig {
   channels: Record<string, AlertChannelConfig>
   rules: AlertRuleConfig[]
+  overrides?: AlertRuleOverride[]
 }
 
 export type AlertDeliveryState = 'delivered' | 'failed' | 'throttled'
