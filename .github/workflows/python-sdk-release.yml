@@ -137,7 +137,7 @@ jobs:
       - name: Publish to PyPI
         # pypa-maintained action that handles the OIDC → PyPI token
         # exchange. Pinned by full SHA per repo policy.
-        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
           # `verbose: true` prints which files were uploaded — useful in
