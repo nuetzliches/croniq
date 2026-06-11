@@ -271,16 +271,20 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
 /// are available. Mutates the trigger map in-place.
 ///
 /// Rules applied per job:
-/// - `Exhausted` in DB  → trigger set to `TriggerState::Exhausted` and
-///   `next_fire_at` cleared. This prevents `once`-jobs (and any scheduler-
-///   exhausted trigger) from re-firing on restart.
+/// - `Exhausted` in DB  → terminal **only for non-recurring schedules**
+///   (`once` jobs and `disabled`): trigger set to `TriggerState::Exhausted`
+///   and `next_fire_at` cleared so a once-job doesn't re-fire on restart.
+///   A *recurring* schedule persisted as `Exhausted` is treated as a
+///   recoverable fault (e.g. the DST spring-forward gap in #249, where
+///   `next_fire_after` used to return `None`): it is re-armed by recomputing
+///   `next_fire_at` from `now`, unless its `not_after` bound has passed.
 /// - `Active` in DB     → `next_fire_at` restored from the stored value so
 ///   the next tick fires at the correct time instead of re-computing from now.
 /// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
 pub fn restore_trigger_states(
     triggers: &mut HashMap<String, Trigger>,
     store: &dyn JobStore,
-    _now: DateTime<Utc>,
+    now: DateTime<Utc>,
 ) {
     let states = match store.list_job_states() {
         Ok(s) => s,
@@ -297,13 +301,32 @@ pub fn restore_trigger_states(
 
         match job_state.status {
             JobStatus::Exhausted => {
-                // once-job already fired — never re-arm
-                trigger.state = TriggerState::Exhausted;
-                trigger.next_fire_at = None;
-                tracing::debug!(
-                    job_key = %job_state.job_key,
-                    "trigger restore: exhausted (once-job already ran)"
-                );
+                // A `once` job that already fired, or a `disabled` schedule,
+                // is legitimately terminal — never re-arm it. A recurring
+                // schedule, on the other hand, has no business being
+                // permanently exhausted: if it got there it was a fault
+                // (historically the DST spring-forward gap, #249), so recover
+                // by recomputing the next fire from now.
+                let recurring =
+                    !matches!(trigger.schedule, Schedule::Once { .. } | Schedule::Disabled);
+                let past_not_after = trigger.not_after.map(|na| now > na).unwrap_or(false);
+
+                if recurring && !past_not_after {
+                    trigger.fire_count = job_state.fire_count;
+                    trigger.resume(now); // recompute next_fire_at, re-arm
+                    tracing::warn!(
+                        job_key = %job_state.job_key,
+                        next_fire_at = ?trigger.next_fire_at,
+                        "trigger restore: re-armed recurring trigger persisted as exhausted (recovery, see #249)"
+                    );
+                } else {
+                    trigger.state = TriggerState::Exhausted;
+                    trigger.next_fire_at = None;
+                    tracing::debug!(
+                        job_key = %job_state.job_key,
+                        "trigger restore: exhausted (once-job already ran or past not_after)"
+                    );
+                }
             }
             JobStatus::Active => {
                 // Restore the stored next_fire_at so the trigger doesn't skip
@@ -801,6 +824,54 @@ mod tests {
         let store = make_store();
 
         // Simulate: this once-job already fired in a previous run
+        seed_job_state(
+            &store,
+            "migration:v2",
+            croniq_store::models::JobStatus::Exhausted,
+            None,
+            1,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+
+        let trigger = &cfg.triggers["migration:v2"];
+        assert_eq!(trigger.state, TriggerState::Exhausted);
+        assert!(trigger.next_fire_at.is_none());
+    }
+
+    #[test]
+    fn restore_exhausted_recurring_trigger_is_rearmed() {
+        // Regression for #249(b): a recurring (daily) trigger wrongly
+        // persisted as Exhausted must recover on restart, not stay
+        // permanently dead.
+        let src = r#"job billing:backup { every day at 02:00 }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        seed_job_state(
+            &store,
+            "billing:backup",
+            croniq_store::models::JobStatus::Exhausted,
+            None,
+            9,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+
+        let trigger = &cfg.triggers["billing:backup"];
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert!(trigger.next_fire_at.is_some());
+        // Historical fire_count is preserved.
+        assert_eq!(trigger.fire_count, 9);
+    }
+
+    #[test]
+    fn restore_exhausted_once_trigger_stays_terminal() {
+        // A genuine `once` job that already fired must NOT be re-armed.
+        let src = r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
         seed_job_state(
             &store,
             "migration:v2",

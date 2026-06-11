@@ -123,17 +123,15 @@ impl Schedule {
                 let today = local.date_naive();
 
                 // Try today
-                if let Some(candidate) = tz.from_local_datetime(&today.and_time(*time)).earliest()
-                    && candidate > local
+                if let Some(candidate) = resolve_local(tz, today.and_time(*time))
+                    && candidate > after
                 {
-                    return Some(candidate.with_timezone(&chrono::Utc));
+                    return Some(candidate);
                 }
 
                 // Tomorrow
                 let tomorrow = today + Duration::days(1);
-                tz.from_local_datetime(&tomorrow.and_time(*time))
-                    .earliest()
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                resolve_local(tz, tomorrow.and_time(*time))
             }
 
             Schedule::Weekdays { days, time } => {
@@ -146,11 +144,10 @@ impl Schedule {
                     let weekday = date.weekday();
 
                     if days.contains(&weekday)
-                        && let Some(candidate) =
-                            tz.from_local_datetime(&date.and_time(*time)).earliest()
-                        && candidate > local
+                        && let Some(candidate) = resolve_local(tz, date.and_time(*time))
+                        && candidate > after
                     {
-                        return Some(candidate.with_timezone(&chrono::Utc));
+                        return Some(candidate);
                     }
                 }
                 None
@@ -171,11 +168,10 @@ impl Schedule {
                         };
 
                         if let Some(date) = NaiveDate::from_ymd_opt(year, month, day)
-                            && let Some(candidate) =
-                                tz.from_local_datetime(&date.and_time(*time)).earliest()
-                            && candidate > local
+                            && let Some(candidate) = resolve_local(tz, date.and_time(*time))
+                            && candidate > after
                         {
-                            return Some(candidate.with_timezone(&chrono::Utc));
+                            return Some(candidate);
                         }
                     }
                 }
@@ -260,6 +256,37 @@ impl Schedule {
 }
 
 // ─── Helpers ───
+
+/// Resolve a local wall-clock datetime to a UTC instant, handling the two
+/// DST edge cases explicitly (issue #249):
+///
+/// - **Gap (spring-forward):** the wall-clock time does not exist (e.g. 02:30
+///   on a day the clock jumps 02:00→03:00). Roll forward to the first instant
+///   that does exist — effectively the moment the clock jumps to. Returning
+///   `None` here is what previously exhausted a daily clock-time trigger
+///   permanently the first time its fire time fell in the gap.
+/// - **Ambiguous (fall-back):** the wall-clock time occurs twice. Pick the
+///   earliest (pre-transition) occurrence deliberately.
+fn resolve_local(tz: &Tz, naive: chrono::NaiveDateTime) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::MappedLocalTime;
+    match tz.from_local_datetime(&naive) {
+        MappedLocalTime::Single(dt) => Some(dt.with_timezone(&chrono::Utc)),
+        MappedLocalTime::Ambiguous(earliest, _latest) => Some(earliest.with_timezone(&chrono::Utc)),
+        MappedLocalTime::None => {
+            // Spring-forward gap. Step forward minute by minute to the first
+            // existing wall-clock time; DST gaps are at most a couple of hours,
+            // and all croniq clock-time schedules are minute-resolution.
+            for add_min in 1..=180 {
+                if let MappedLocalTime::Single(dt) | MappedLocalTime::Ambiguous(dt, _) =
+                    tz.from_local_datetime(&(naive + Duration::minutes(add_min)))
+                {
+                    return Some(dt.with_timezone(&chrono::Utc));
+                }
+            }
+            None
+        }
+    }
+}
 
 fn ast_weekday_to_chrono(day: &AstWeekday) -> chrono::Weekday {
     match day {
@@ -401,6 +428,85 @@ mod tests {
             .next_fire_after(utc(2026, 3, 29, 3, 0), &tz_utc())
             .unwrap();
         assert_eq!(next, utc(2026, 3, 30, 2, 0));
+    }
+
+    // ─── DST spring-forward (issue #249) ───
+    //
+    // Europe/Berlin springs forward on 2026-03-29: the clock jumps
+    // 02:00 CET → 03:00 CEST, so wall-clock times in [02:00, 03:00) do
+    // not exist that day. A clock-time schedule landing in the gap must
+    // roll forward to the transition instant instead of returning None
+    // (which previously exhausted the trigger forever).
+
+    fn tz_berlin() -> Tz {
+        "Europe/Berlin".parse().unwrap()
+    }
+
+    #[test]
+    fn daily_dst_spring_forward_gap_rolls_forward() {
+        let sched = Schedule::Daily {
+            time: NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        };
+        let tz = tz_berlin();
+        // 00:00 UTC = 01:00 CET, just before the 02:00→03:00 jump.
+        let after = utc(2026, 3, 29, 0, 0);
+        let next = sched.next_fire_after(after, &tz);
+        // 02:30 local doesn't exist → rolls to 03:00 CEST = 01:00 UTC.
+        assert_eq!(next, Some(utc(2026, 3, 29, 1, 0)));
+    }
+
+    #[test]
+    fn daily_dst_gap_does_not_exhaust_across_fires() {
+        // The follow-up fire (next day) must be the normal 02:30 CEST,
+        // not a duplicate of the rolled-forward instant.
+        let sched = Schedule::Daily {
+            time: NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        };
+        let tz = tz_berlin();
+        let fires = sched.next_n_fires(utc(2026, 3, 29, 0, 0), &tz, 2);
+        assert_eq!(fires.len(), 2);
+        assert_eq!(fires[0], utc(2026, 3, 29, 1, 0)); // gap → 03:00 CEST
+        // 2026-03-30 02:30 CEST = 00:30 UTC
+        assert_eq!(fires[1], utc(2026, 3, 30, 0, 30));
+    }
+
+    #[test]
+    fn weekdays_dst_spring_forward_gap_rolls_forward() {
+        // 2026-03-29 is a Sunday.
+        let sched = Schedule::Weekdays {
+            days: vec![chrono::Weekday::Sun],
+            time: NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        };
+        let tz = tz_berlin();
+        let next = sched.next_fire_after(utc(2026, 3, 29, 0, 0), &tz);
+        assert_eq!(next, Some(utc(2026, 3, 29, 1, 0)));
+    }
+
+    #[test]
+    fn monthly_dst_spring_forward_gap_rolls_forward() {
+        // 29th of the month at 02:30 — lands in the Berlin gap on 2026-03-29.
+        let sched = Schedule::Monthly {
+            ordinals: vec![MonthDay::Day(29)],
+            time: NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        };
+        let tz = tz_berlin();
+        let next = sched.next_fire_after(utc(2026, 3, 28, 0, 0), &tz);
+        assert_eq!(next, Some(utc(2026, 3, 29, 1, 0)));
+    }
+
+    #[test]
+    fn daily_dst_fall_back_picks_earliest() {
+        // Autumn fall-back 2026-10-25: 03:00 CEST → 02:00 CET, so 02:30
+        // occurs twice. We deliberately pick the earliest (CEST) instance.
+        let sched = Schedule::Daily {
+            time: NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        };
+        let tz = tz_berlin();
+        // 00:00 UTC = 02:00 CEST, before the first 02:30 occurrence.
+        let after = utc(2026, 10, 25, 0, 0);
+        let next = sched.next_fire_after(after, &tz).unwrap();
+        // Earliest 02:30 is CEST (UTC+2) = 00:30 UTC.
+        assert_eq!(next, utc(2026, 10, 25, 0, 30));
     }
 
     #[test]
