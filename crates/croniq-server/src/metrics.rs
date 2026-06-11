@@ -59,6 +59,23 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          croniq_config_reload_total{{result=\"apply_error\"}} {reload_apply_err}\n"
     );
 
+    // Scheduler liveness (issue #248). The scheduler updates the heartbeat
+    // after every successful tick; a stale `last_tick_timestamp` means the
+    // scheduler task is wedged or dead even though this HTTP endpoint answered.
+    // Emitted only when a scheduler is wired in (always so in production).
+    if let Some(hb) = &state.scheduler_heartbeat {
+        body.push_str(&format!(
+            "# HELP croniq_scheduler_last_tick_timestamp Unix time (seconds) of the last successful scheduler tick.\n\
+             # TYPE croniq_scheduler_last_tick_timestamp gauge\n\
+             croniq_scheduler_last_tick_timestamp {}\n\
+             # HELP croniq_scheduler_ticks_total Successful scheduler ticks since process start.\n\
+             # TYPE croniq_scheduler_ticks_total counter\n\
+             croniq_scheduler_ticks_total {}\n",
+            hb.last_tick_unix(),
+            hb.ticks_total(),
+        ));
+    }
+
     // Per-job series are derived from the executions store at scrape time
     // (one grouped query; nothing is persisted separately). Skipped when the
     // server runs without a store, or logged-and-skipped on query error so a
@@ -211,6 +228,72 @@ mod tests {
 
         assert!(body.contains("croniq_runners_total"));
         assert!(body.contains("croniq_queue_depth"));
+    }
+
+    #[tokio::test]
+    async fn metrics_includes_scheduler_heartbeat_when_present() {
+        use crate::scheduler::SchedulerHeartbeat;
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::new(runner, tx);
+
+        let hb = Arc::new(SchedulerHeartbeat::default());
+        hb.record_tick(Utc.timestamp_opt(1_700_000_000, 0).unwrap());
+        Arc::get_mut(&mut state).unwrap().scheduler_heartbeat = Some(Arc::clone(&hb));
+
+        let app = metrics_router(Arc::clone(&state));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(body.contains("# TYPE croniq_scheduler_last_tick_timestamp gauge"));
+        assert!(body.contains("croniq_scheduler_last_tick_timestamp 1700000000"));
+        assert!(body.contains("croniq_scheduler_ticks_total 1"));
+    }
+
+    #[tokio::test]
+    async fn metrics_omits_scheduler_heartbeat_when_absent() {
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::new(runner, tx);
+        let app = metrics_router(Arc::clone(&state));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(!body.contains("croniq_scheduler_last_tick_timestamp"));
     }
 
     fn sample_job_metrics(job_key: &str) -> JobExecutionMetrics {

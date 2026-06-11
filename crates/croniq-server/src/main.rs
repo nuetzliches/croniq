@@ -257,6 +257,10 @@ async fn main() -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| cli.config.clone());
 
+    // Scheduler liveness signal (issue #248). Shared between the scheduler
+    // task (writer) and the `/metrics` endpoint (reader).
+    let scheduler_heartbeat = Arc::new(croniq_server::scheduler::SchedulerHeartbeat::default());
+
     let mut server_state = ServerState::with_auth(
         Arc::clone(&runner_state),
         completion_tx,
@@ -293,6 +297,8 @@ async fn main() -> Result<()> {
         // Issue #141: wire the in-memory tracing fan-out into ServerState
         // so the Live Console SSE endpoint can subscribe.
         s.console_hub = Some(Arc::clone(&console_hub));
+        // Issue #248: expose the scheduler liveness signal via /metrics.
+        s.scheduler_heartbeat = Some(Arc::clone(&scheduler_heartbeat));
     }
     // Issue #231: prune orphan alert-rule overrides whose DSL rule no
     // longer exists (FK-cascade-by-name). The alerts config is loaded at
@@ -467,15 +473,51 @@ async fn main() -> Result<()> {
     let scheduler_reload_policy = Arc::clone(&server_state.policy_dsl_adopt_on_mutate);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
 
-    let _scheduler_task = tokio::spawn(async move {
+    let scheduler_task_heartbeat = Arc::clone(&scheduler_heartbeat);
+    let scheduler_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // A single tick should finish in microseconds; a tick that runs this
+        // long means a hung store call or a wedged queue lock (issue #248).
+        // Bound it so one stuck tick is logged + skipped instead of wedging
+        // the whole loop forever — and leave the heartbeat stale so the
+        // liveness metric reflects the stall.
+        const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+        // ~5 minutes at the 1 s tick cadence. A positive "scheduler is alive"
+        // signal at INFO, independent of whether any job fired.
+        const HEARTBEAT_EVERY_TICKS: u64 = 300;
+        let mut ticks_since_heartbeat: u64 = 0;
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let result = scheduler_loop.tick(chrono::Utc::now()).await;
-                    if !result.fired.is_empty() {
-                        tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
+                    let now = chrono::Utc::now();
+                    match tokio::time::timeout(TICK_TIMEOUT, scheduler_loop.tick(now)).await {
+                        Ok(result) => {
+                            scheduler_task_heartbeat.record_tick(now);
+                            ticks_since_heartbeat += 1;
+                            if !result.fired.is_empty() {
+                                tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
+                            }
+                            if ticks_since_heartbeat >= HEARTBEAT_EVERY_TICKS {
+                                ticks_since_heartbeat = 0;
+                                tracing::info!(
+                                    ticks_total = scheduler_task_heartbeat.ticks_total(),
+                                    triggers = scheduler_loop.triggers.len(),
+                                    "scheduler heartbeat — alive"
+                                );
+                            }
+                        }
+                        Err(_elapsed) => {
+                            // Tick dropped at its timeout (lock guards release on
+                            // drop). Deliberately do NOT update the heartbeat, so
+                            // a wedged scheduler shows up as a stale
+                            // croniq_scheduler_last_tick_timestamp instead of
+                            // looking healthy.
+                            tracing::error!(
+                                timeout_secs = TICK_TIMEOUT.as_secs(),
+                                "scheduler tick exceeded timeout and was skipped — a hung store/lock keeps the liveness metric stale"
+                            );
+                        }
                     }
                 }
                 Some(path) = reload_rx.recv() => {
@@ -516,6 +558,35 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    });
+
+    // ── Scheduler supervisor (issue #248) ──────────────────────────────────────
+    //
+    // The scheduler loop above never returns under normal operation, so the
+    // JoinHandle completing at all means the task panicked (or was aborted).
+    // Previously the handle was dropped (`let _scheduler_task = ...`), so a
+    // panicking tick left a silently-dead scheduler while HTTP kept serving —
+    // jobs simply stopped firing with no log and no restart. Now we watch the
+    // handle and, on unexpected completion, log loudly and exit non-zero so
+    // the container's `restart:` policy (or systemd) brings the process — and
+    // a fresh scheduler — back.
+    tokio::spawn(async move {
+        match scheduler_handle.await {
+            Ok(()) => tracing::error!(
+                "scheduler task exited unexpectedly (loop returned) — aborting process so it restarts"
+            ),
+            Err(e) if e.is_panic() => tracing::error!(
+                error = %e,
+                "scheduler task panicked — aborting process so it restarts"
+            ),
+            Err(e) => tracing::error!(
+                error = %e,
+                "scheduler task was cancelled — aborting process so it restarts"
+            ),
+        }
+        // Hard-exit (EX_SOFTWARE) so the supervisor/orchestrator restarts us
+        // rather than running on with a dead scheduler.
+        std::process::exit(70);
     });
 
     // ── Completion processor task ─────────────────────────────────────────────
