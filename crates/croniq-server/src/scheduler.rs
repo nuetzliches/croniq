@@ -123,8 +123,10 @@ impl SchedulerLoop {
                     // somehow exhausted must not be frozen by a reload — keep
                     // the freshly-built trigger's Armed state + next_fire_at so
                     // it recovers (issue #249).
-                    let recurring =
-                        !matches!(new_trigger.schedule, Schedule::Once { .. } | Schedule::Disabled);
+                    let recurring = !matches!(
+                        new_trigger.schedule,
+                        Schedule::Once { .. } | Schedule::Disabled
+                    );
                     if !recurring {
                         new_trigger.state = TriggerState::Exhausted;
                         new_trigger.next_fire_at = None;
@@ -569,8 +571,7 @@ mod tests {
         let mut triggers = HashMap::new();
         triggers.insert("test:job".to_string(), old);
 
-        let mut scheduler =
-            SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
 
         let mut new_triggers = HashMap::new();
         new_triggers.insert("test:job".to_string(), make_trigger_future("test:job"));
