@@ -35,6 +35,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `disabled`) schedules: a recurring schedule is re-armed on restart and on
   hot-reload instead of staying dead.
 
+## [0.19.0] - 2026-06-04
+
 ### Added
 
 - **SMTP email alert channel
