@@ -52,7 +52,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Two triggers ship: `job_failed` (permanent failure: dead-letter or drop) and `job_sla_missed` (in-flight execution exceeded its `expected_within`). Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Three triggers ship: `job_failed` (permanent failure: dead-letter or drop), `job_sla_missed` (in-flight execution exceeded its `expected_within`), and `job_missed_fire` (a scheduled fire never happened — `next_fire_at` overdue past the `expected_within` grace, catching a silently-stalled scheduler that a green success-rate would otherwise hide). Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -221,6 +221,19 @@ alerts {
     expected_within 15m
     throttle 1h
     channels "slack"
+  }
+
+  # Missed-fire / liveness rule: fires when a scheduled fire never
+  # happened — the job's next_fire_at is overdue by more than the
+  # expected_within grace while still active. Catches a silently-
+  # stalled scheduler that a 100%-success dashboard would otherwise
+  # hide. Fires once per missed fire (deduped on the overdue time).
+  rule "backup-liveness" {
+    when job_missed_fire
+    job_key "billing:backup"
+    expected_within 10m   # grace past the scheduled time
+    throttle 1h
+    channels "ops-paging"
   }
 }
 

@@ -25,7 +25,7 @@ use crate::store::DynStore;
 use chrono::{DateTime, Utc};
 use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
-use croniq_store::models::{ExecutionFilter, ExecutionState};
+use croniq_store::models::{ExecutionFilter, ExecutionState, JobStatus};
 
 /// Result of a single watchdog sweep.
 #[derive(Debug, Clone, Default)]
@@ -40,6 +40,11 @@ pub struct WatchdogResult {
     /// this sweep (issue #140 PR-4). Useful for tests and a future
     /// metric; not exposed via any public API today.
     pub sla_missed: Vec<(String, uuid::Uuid)>,
+    /// `(rule_name, job_key)` pairs whose missed-fire alert fired in
+    /// this sweep (issue #250). A scheduled fire that never happened —
+    /// the job's persisted `next_fire_at` went overdue past the rule's
+    /// grace window while the trigger was still active.
+    pub missed_fires: Vec<(String, String)>,
     /// Rule names whose operational override expired and was auto-cleared
     /// this sweep (issue #231). Each emits an `alerts.override.cleared`
     /// audit event.
@@ -144,6 +149,16 @@ pub fn empty_sla_fired_set() -> SlaFiredSet {
     Arc::new(Mutex::new(HashSet::new()))
 }
 
+/// In-memory set of `(rule_name, job_key, next_fire_at)` triples that
+/// have already received a missed-fire alert (issue #250). Keyed on the
+/// specific overdue fire time so each distinct missed fire alerts once,
+/// even across many 30 s sweeps — and so the *next* missed fire (a
+/// different `next_fire_at`) still alerts.
+///
+/// Reset on process restart, like [`SlaFiredSet`]. A restart while a job
+/// is still overdue produces at most one duplicate alert.
+pub type MissedFiredSet = Arc<Mutex<HashSet<(String, String, DateTime<Utc>)>>>;
+
 /// Periodically scans for dead runners and requeues their abandoned executions.
 pub struct WatchdogLoop {
     jobs: HashMap<String, JobConfig>,
@@ -162,6 +177,11 @@ pub struct WatchdogLoop {
     /// SLA sweep doesn't re-alert every 30 s while the execution
     /// stays in-flight.
     sla_fired: SlaFiredSet,
+    /// Tracks `(rule_name, job_key, next_fire_at)` already alerted on so
+    /// the missed-fire sweep doesn't re-alert every 30 s while a job
+    /// stays overdue (issue #250). Initialised internally; not a
+    /// constructor parameter since nothing else shares it.
+    missed_fired: MissedFiredSet,
     /// Shared with the rest of the server so SLA-miss alerts that
     /// route to an `email` channel actually deliver instead of
     /// silently dropping. Defaults to `NoopSender` in tests.
@@ -202,6 +222,7 @@ impl WatchdogLoop {
             alerts,
             alert_throttle,
             sla_fired,
+            missed_fired: Arc::new(Mutex::new(HashSet::new())),
             email_sender,
         }
     }
@@ -297,12 +318,120 @@ impl WatchdogLoop {
             self.sweep_sla_missed(now, &mut result).await;
         }
 
-        // 6. Auto-clear expired operational overrides (issue #231). Same
+        // 6. Missed-fire / liveness sweep (issue #250). Fast-path: no
+        //    `job_missed_fire` rules ⇒ skip the job_states query.
+        if self
+            .alerts
+            .rules
+            .iter()
+            .any(|r| matches!(r.trigger, RuleTrigger::JobMissedFire))
+        {
+            self.sweep_missed_fires(now, &mut result).await;
+        }
+
+        // 7. Auto-clear expired operational overrides (issue #231). Same
         //    cadence as the SLA sweep — a "snooze 4h" evaporates without
         //    operator follow-up. Each cleared row gets an audit event.
         self.sweep_expired_overrides(now, &mut result);
 
         result
+    }
+
+    /// Fire `job_missed_fire` rules for jobs whose scheduled fire never
+    /// happened (issue #250).
+    ///
+    /// A healthy scheduler advances `job_states.next_fire_at` to the
+    /// future the instant it fires; so a `next_fire_at` that has slipped
+    /// into the past — past the rule's `expected_within` grace — while the
+    /// job is still `Active` means the scheduler never enqueued that fire.
+    /// This is the one signal that catches a silently-stalled scheduler
+    /// (#248), which otherwise shows 100% success and no failed/claimed
+    /// execution for the alert engine to evaluate.
+    ///
+    /// Dedup: each `(rule_name, job_key, next_fire_at)` fires at most once
+    /// (see [`MissedFiredSet`]). When the scheduler recovers and advances
+    /// `next_fire_at`, a later miss is a new triple and alerts again.
+    async fn sweep_missed_fires(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        let states = match self.store.list_job_states() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(
+                    target: "croniq::alerts",
+                    error = %e,
+                    "watchdog: missed-fire sweep failed to list job states"
+                );
+                return;
+            }
+        };
+
+        for state in &states {
+            // Only Active triggers have a meaningful "expected" fire; a
+            // paused/disabled/exhausted job is not supposed to fire.
+            if state.status != JobStatus::Active {
+                continue;
+            }
+            let Some(next_fire) = state.next_fire_at else {
+                continue;
+            };
+            let overdue = (now - next_fire).num_seconds();
+            if overdue <= 0 {
+                continue; // not yet due, or fires exactly now
+            }
+            let overdue = overdue as u64;
+
+            for rule in &self.alerts.rules {
+                if !matches!(rule.trigger, RuleTrigger::JobMissedFire) {
+                    continue;
+                }
+                let Some(grace_str) = rule.expected_within.as_deref() else {
+                    continue; // compile path drops these, defensive
+                };
+                let Some(grace_secs) = crate::alerts::parse_throttle_secs(grace_str) else {
+                    continue;
+                };
+                if overdue < grace_secs {
+                    continue;
+                }
+                if !crate::alerts::glob_match(&rule.job_key_glob, &state.job_key) {
+                    continue;
+                }
+
+                // Dedup per (rule, job_key, this fire time).
+                let key = (rule.name.clone(), state.job_key.clone(), next_fire);
+                {
+                    let mut guard = self.missed_fired.lock().unwrap();
+                    if !guard.insert(key.clone()) {
+                        continue;
+                    }
+                }
+
+                // Reuse the shared dispatch path so throttle + channels +
+                // audit behave identically to the other triggers. No
+                // execution exists (that's the whole point), so the id is
+                // empty and `reason` distinguishes this from a real failure.
+                let ctx = crate::alerts::FailureContext {
+                    job_key: state.job_key.clone(),
+                    execution_id: String::new(),
+                    error: format!(
+                        "missed scheduled fire: expected at {next_fire}, overdue {overdue}s (grace {grace_str}) — scheduler never enqueued the execution"
+                    ),
+                    attempt: 0,
+                    reason: "missed_fire".to_string(),
+                };
+                crate::alerts::dispatch_rule(
+                    rule,
+                    &self.alerts,
+                    &ctx,
+                    &self.alert_throttle,
+                    &self.store,
+                    &self.email_sender,
+                )
+                .await;
+                result
+                    .missed_fires
+                    .push((rule.name.clone(), state.job_key.clone()));
+            }
+        }
     }
 
     /// Delete overrides whose `expires_at` has passed and emit one
@@ -965,5 +1094,191 @@ mod tests {
             .list_alert_deliveries(&AlertDeliveryFilter::default())
             .unwrap();
         assert!(deliveries.is_empty());
+    }
+
+    // ─── #250 missed-fire sweep ────────────────────────────────────
+
+    use croniq_store::models::{JobState, JobStatus};
+    use croniq_store::traits::JobStore;
+
+    fn missed_fire_rule(name: &str, glob: &str, grace: &str, channel: &str) -> RuleConfig {
+        RuleConfig {
+            name: name.into(),
+            trigger: RuleTrigger::JobMissedFire,
+            job_key_glob: glob.into(),
+            min_attempts: 1,
+            dead_letter_only: false,
+            throttle: None,
+            expected_within: Some(grace.into()),
+            channels: vec![channel.into()],
+        }
+    }
+
+    fn seed_job_state(
+        store: &dyn JobStore,
+        job_key: &str,
+        next_fire_at: Option<DateTime<Utc>>,
+        status: JobStatus,
+    ) {
+        store
+            .upsert_job_state(&JobState {
+                job_key: job_key.into(),
+                next_fire_at,
+                last_fired_at: None,
+                fire_count: 3,
+                status,
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn missed_fire_fires_when_overdue_past_grace() {
+        let store = make_store();
+        let now = Utc::now();
+        // Daily backup that should have fired 15 min ago and didn't.
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule(
+            "backup-liveness",
+            "billing:*",
+            "10m",
+            "ops",
+        )]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(
+            result.missed_fires,
+            vec![("backup-liveness".to_string(), "billing:backup".to_string())]
+        );
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].rule_name, "backup-liveness");
+        assert_eq!(deliveries[0].job_key, "billing:backup");
+    }
+
+    #[tokio::test]
+    async fn missed_fire_skips_within_grace() {
+        let store = make_store();
+        let now = Utc::now();
+        // Only 5 min late — inside the 10 min grace, so not (yet) a miss.
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(5)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("backup-liveness", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missed_fire_skips_future_next_fire() {
+        let store = make_store();
+        let now = Utc::now();
+        // Healthy: next fire is in the future.
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now + ChronoDuration::hours(6)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("backup-liveness", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missed_fire_skips_non_active_status() {
+        let store = make_store();
+        let now = Utc::now();
+        // Paused jobs aren't supposed to fire — being "overdue" is fine.
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::hours(2)),
+            JobStatus::Paused,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("backup-liveness", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missed_fire_dedups_same_fire_across_sweeps() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("backup-liveness", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+
+        let r1 = watchdog.sweep(now).await;
+        assert_eq!(r1.missed_fires.len(), 1);
+
+        // Same overdue fire, 30 s later — must NOT re-alert.
+        let r2 = watchdog.sweep(now + ChronoDuration::seconds(30)).await;
+        assert!(
+            r2.missed_fires.is_empty(),
+            "dedup must suppress repeat alerts for the same missed fire"
+        );
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missed_fire_respects_job_key_glob() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "ops:cleanup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule(
+            "only-billing",
+            "billing:*",
+            "10m",
+            "ops",
+        )]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.missed_fires.len(), 1);
+        assert_eq!(result.missed_fires[0].1, "billing:backup");
     }
 }

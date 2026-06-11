@@ -15,7 +15,9 @@ use axum::{
 
 use crate::api::ServerState;
 use croniq_runner::RunnerStatus;
-use croniq_store::models::{JOB_DURATION_BUCKETS_SECONDS, JobExecutionMetrics};
+use croniq_store::models::{
+    JOB_DURATION_BUCKETS_SECONDS, JobExecutionMetrics, JobState, JobStatus,
+};
 
 /// Create a router for the metrics endpoint.
 pub fn metrics_router(state: Arc<ServerState>) -> Router {
@@ -84,6 +86,16 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         match store.job_execution_metrics() {
             Ok(jobs) => render_job_metrics(&mut body, &jobs),
             Err(e) => tracing::warn!(error = %e, "metrics: job_execution_metrics query failed"),
+        }
+        // Per-job scheduling liveness (issue #250): last/next fire and an
+        // "overdue" flag derived from persisted job_states. These let
+        // external monitoring alert on a job that silently stopped being
+        // scheduled — `time() - croniq_job_last_fire_timestamp > period` or a
+        // stuck `croniq_job_overdue == 1` — even when the in-process
+        // scheduler is wedged (issue #248) and no run failed.
+        match store.list_job_states() {
+            Ok(states) => render_job_state_metrics(&mut body, &states, now),
+            Err(e) => tracing::warn!(error = %e, "metrics: list_job_states query failed"),
         }
     }
 
@@ -165,6 +177,64 @@ fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
             out.push_str(&format!(
                 "croniq_job_last_run_timestamp{{job_key=\"{key}\"}} {}\n",
                 ts.timestamp()
+            ));
+        }
+    }
+}
+
+/// Append the per-job scheduling-liveness families from `job_states`
+/// (issue #250): last fire, next fire, and an overdue flag. Each family
+/// gets one `# HELP`/`# TYPE` header followed by its samples.
+fn render_job_state_metrics(
+    out: &mut String,
+    states: &[JobState],
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    if states.is_empty() {
+        return;
+    }
+
+    out.push_str(
+        "# HELP croniq_job_last_fire_timestamp Unix time (seconds) of the last scheduled fire per job.\n\
+         # TYPE croniq_job_last_fire_timestamp gauge\n",
+    );
+    for s in states {
+        if let Some(ts) = s.last_fired_at {
+            let key = escape_label(&s.job_key);
+            out.push_str(&format!(
+                "croniq_job_last_fire_timestamp{{job_key=\"{key}\"}} {}\n",
+                ts.timestamp()
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP croniq_job_next_fire_timestamp Unix time (seconds) of the next scheduled fire per job.\n\
+         # TYPE croniq_job_next_fire_timestamp gauge\n",
+    );
+    for s in states {
+        if let Some(ts) = s.next_fire_at {
+            let key = escape_label(&s.job_key);
+            out.push_str(&format!(
+                "croniq_job_next_fire_timestamp{{job_key=\"{key}\"}} {}\n",
+                ts.timestamp()
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP croniq_job_overdue Whether an active job's next scheduled fire is in the past (1) or not (0). A stuck 1 signals a stalled scheduler.\n\
+         # TYPE croniq_job_overdue gauge\n",
+    );
+    for s in states {
+        if s.status != JobStatus::Active {
+            continue;
+        }
+        if let Some(ts) = s.next_fire_at {
+            let key = escape_label(&s.job_key);
+            let overdue = if ts < now { 1 } else { 0 };
+            out.push_str(&format!(
+                "croniq_job_overdue{{job_key=\"{key}\"}} {overdue}\n"
             ));
         }
     }
@@ -350,6 +420,44 @@ mod tests {
         // The gauge family header may still appear, but there must be no
         // sample line (samples always carry a `{job_key=...}` label set).
         assert!(!out.contains("croniq_job_last_run_timestamp{"));
+    }
+
+    #[test]
+    fn render_job_state_metrics_emits_fire_timestamps_and_overdue() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let states = vec![
+            JobState {
+                job_key: "billing:backup".into(),
+                next_fire_at: Some(now - chrono::Duration::hours(1)), // overdue
+                last_fired_at: Some(now - chrono::Duration::days(1)),
+                fire_count: 5,
+                status: JobStatus::Active,
+                updated_at: now,
+            },
+            JobState {
+                job_key: "etl:sync".into(),
+                next_fire_at: Some(now + chrono::Duration::hours(1)), // healthy
+                last_fired_at: None,
+                fire_count: 0,
+                status: JobStatus::Active,
+                updated_at: now,
+            },
+        ];
+        let mut out = String::new();
+        render_job_state_metrics(&mut out, &states, now);
+
+        assert!(out.contains("# TYPE croniq_job_last_fire_timestamp gauge"));
+        assert!(
+            out.contains("croniq_job_last_fire_timestamp{job_key=\"billing:backup\"} 1699913600")
+        );
+        // etl:sync never fired → no last-fire sample.
+        assert!(!out.contains("croniq_job_last_fire_timestamp{job_key=\"etl:sync\"}"));
+
+        assert!(out.contains("croniq_job_next_fire_timestamp{job_key=\"billing:backup\"}"));
+
+        // Overdue: the backup's next fire is in the past, etl:sync's is not.
+        assert!(out.contains("croniq_job_overdue{job_key=\"billing:backup\"} 1"));
+        assert!(out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 0"));
     }
 
     #[tokio::test]

@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`job_missed_fire` liveness alert + per-job fire metrics
+  ([#253](https://github.com/nuetzliches/croniq/pull/253)).** A new alert
+  trigger fires when a scheduled fire never happens — a job's persisted
+  `next_fire_at` goes overdue past the rule's `expected_within` grace while
+  the trigger is still active — catching a silently-stalled scheduler that a
+  100%-success dashboard would otherwise hide. The watchdog sweep dedups per
+  `(rule, job_key, next_fire_at)`. `/metrics` also gains
+  `croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp`, and
+  `croniq_job_overdue{job_key}` so external monitoring can alert on staleness
+  even when the in-process scheduler is wedged and no run failed.
 - **Scheduler supervision + liveness signal
   ([#252](https://github.com/nuetzliches/croniq/pull/252)).** The scheduler
   task is now supervised: if it ever panics or exits, the process logs the
