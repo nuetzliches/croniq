@@ -15,6 +15,7 @@ use chrono_tz;
 use croniq_bridge::job_to_work_item;
 use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::AppState;
+use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
 use tokio::sync::oneshot;
@@ -117,8 +118,19 @@ impl SchedulerLoop {
                 new_trigger.fire_count = old_trigger.fire_count;
                 new_trigger.last_fired_at = old_trigger.last_fired_at;
                 if old_trigger.state == TriggerState::Exhausted {
-                    new_trigger.state = TriggerState::Exhausted;
-                    new_trigger.next_fire_at = None;
+                    // `Exhausted` is terminal only for non-recurring schedules
+                    // (`once` / `disabled`). A recurring schedule that was
+                    // somehow exhausted must not be frozen by a reload — keep
+                    // the freshly-built trigger's Armed state + next_fire_at so
+                    // it recovers (issue #249).
+                    let recurring = !matches!(
+                        new_trigger.schedule,
+                        Schedule::Once { .. } | Schedule::Disabled
+                    );
+                    if !recurring {
+                        new_trigger.state = TriggerState::Exhausted;
+                        new_trigger.next_fire_at = None;
+                    }
                 } else if old_trigger.next_fire_at.is_some() {
                     new_trigger.next_fire_at = old_trigger.next_fire_at;
                 }
@@ -543,6 +555,68 @@ mod tests {
 
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reload_rearms_exhausted_recurring_trigger() {
+        // Regression for #249(b): a hot-reload must not freeze a recurring
+        // trigger that was stuck Exhausted — it should pick up the freshly
+        // built Armed trigger instead.
+        let store = make_store();
+        let runner = make_runner();
+
+        let mut old = make_trigger_future("test:job"); // recurring (Interval)
+        old.state = TriggerState::Exhausted;
+        old.next_fire_at = None;
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), old);
+
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert("test:job".to_string(), make_trigger_future("test:job"));
+        scheduler.reload(new_triggers, vec![make_job("test:job")]);
+
+        let t = &scheduler.triggers["test:job"];
+        assert_eq!(t.state, TriggerState::Armed);
+        assert!(t.next_fire_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_keeps_exhausted_once_trigger_terminal() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let make_once = || {
+            Trigger::new(
+                "test:once".into(),
+                Schedule::Once {
+                    at: Utc::now() + ChronoDuration::hours(1),
+                },
+                chrono_tz::UTC,
+                None,
+                None,
+                MisfirePolicy::FireNow,
+                Utc::now(),
+            )
+        };
+
+        let mut old = make_once();
+        old.state = TriggerState::Exhausted;
+        old.next_fire_at = None;
+        let mut triggers = HashMap::new();
+        triggers.insert("test:once".to_string(), old);
+
+        let mut scheduler =
+            SchedulerLoop::new(triggers, vec![make_job("test:once")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert("test:once".to_string(), make_once());
+        scheduler.reload(new_triggers, vec![make_job("test:once")]);
+
+        let t = &scheduler.triggers["test:once"];
+        assert_eq!(t.state, TriggerState::Exhausted);
+        assert!(t.next_fire_at.is_none());
     }
 
     #[tokio::test]

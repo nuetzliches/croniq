@@ -6,7 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-06-04
+### Fixed
+
+- **Recurring clock-time schedules survive DST spring-forward
+  ([#251](https://github.com/nuetzliches/croniq/pull/251)).** A daily /
+  weekday / monthly job whose fire time fell in the spring-forward gap
+  (e.g. `every day at 02:30` in `Europe/Berlin` on the last Sunday of
+  March) used to exhaust its trigger permanently and silently —
+  `next_fire_after` returned `None` for the non-existent wall-clock time.
+  The scheduler now rolls a gap time forward to the transition instant and
+  picks the earliest occurrence for fall-back ambiguity. An `Exhausted`
+  trigger is also now treated as terminal only for non-recurring (`once` /
+  `disabled`) schedules: a recurring schedule is re-armed on restart and on
+  hot-reload instead of staying dead.
 
 ### Added
 
