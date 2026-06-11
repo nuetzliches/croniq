@@ -348,7 +348,7 @@ export interface AlertChannelConfig {
   kind: AlertChannelKind
 }
 
-export type AlertRuleTrigger = 'job_failed'
+export type AlertRuleTrigger = 'job_failed' | 'job_sla_missed' | 'job_missed_fire'
 
 export interface AlertRuleConfig {
   name: string

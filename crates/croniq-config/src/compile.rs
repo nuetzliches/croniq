@@ -291,10 +291,14 @@ pub struct RuleConfig {
     /// string (parsed by the server at boot, kept as a string in the
     /// DSL so the formatter can round-trip).
     pub throttle: Option<String>,
-    /// `job_sla_missed` only: max in-flight runtime before the rule
-    /// fires. Stored as a duration string (`"10m"`, `"30s"`, `"1h"`)
-    /// for DSL round-trip. Compile rejects (drops) a `job_sla_missed`
-    /// rule without this directive.
+    /// `job_sla_missed` and `job_missed_fire` only: a duration string
+    /// (`"10m"`, `"30s"`, `"1h"`) for DSL round-trip.
+    ///
+    /// - `job_sla_missed`: max in-flight runtime before the rule fires.
+    /// - `job_missed_fire`: grace period after a scheduled fire time
+    ///   before the rule fires (how long the scheduler may be late).
+    ///
+    /// Compile rejects (drops) either trigger when this directive is absent.
     pub expected_within: Option<String>,
     /// Channel names this rule dispatches to. Compile validates that
     /// every name resolves; unknown names become a compile error
@@ -313,6 +317,14 @@ pub enum RuleTrigger {
     /// [`crate::WatchdogLoop`] periodically scans claimed executions
     /// and fires for the first sweep that observes the breach.
     JobSlaMissed,
+    /// A scheduled fire never happened: the job's persisted
+    /// `next_fire_at` is overdue by more than `expected_within` (grace)
+    /// while the trigger is still active, i.e. the scheduler never
+    /// enqueued the execution (issue #250). The watchdog scans
+    /// `job_states` and fires once per missed fire window. This is the
+    /// liveness signal that a silently-stalled scheduler (#248) would
+    /// otherwise hide behind a 100%-success dashboard.
+    JobMissedFire,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1045,6 +1057,7 @@ fn compile_rule(
                     trigger = match v.as_str() {
                         "job_failed" => Some(RuleTrigger::JobFailed),
                         "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
+                        "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
                         // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
@@ -1095,10 +1108,15 @@ fn compile_rule(
     }
 
     let trigger = trigger?;
-    // SLA-miss without `expected_within` is meaningless — drop the
-    // rule so a typo doesn't silently turn into a "fire on every
-    // claimed execution" rule.
-    if trigger == RuleTrigger::JobSlaMissed && expected_within.is_none() {
+    // SLA-miss / missed-fire without `expected_within` is meaningless —
+    // drop the rule so a typo doesn't silently turn into a "fire on every
+    // claimed execution" (SLA) or "fire the moment a job is one tick late"
+    // (missed-fire) rule.
+    if matches!(
+        trigger,
+        RuleTrigger::JobSlaMissed | RuleTrigger::JobMissedFire
+    ) && expected_within.is_none()
+    {
         return None;
     }
     Some(RuleConfig {
@@ -2117,6 +2135,57 @@ mod tests {
         assert!(matches!(rule.trigger, RuleTrigger::JobSlaMissed));
         assert_eq!(rule.job_key_glob, "billing:*");
         assert_eq!(rule.expected_within.as_deref(), Some("15m"));
+        assert_eq!(rule.throttle.as_deref(), Some("1h"));
+    }
+
+    // ─── #250 missed-fire trigger ───────────────────────────────────
+
+    #[test]
+    fn compile_alerts_missed_fire_without_expected_within_drops() {
+        // `when job_missed_fire` without `expected_within` (grace) is
+        // meaningless — must drop, not fire the moment a job is late.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "x" { shell "/bin/true" }
+                rule "broken-liveness" {
+                    when job_missed_fire
+                    channels "x"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            cfg.alerts.rules.is_empty(),
+            "missed-fire rule without expected_within must drop"
+        );
+    }
+
+    #[test]
+    fn compile_alerts_missed_fire_with_grace() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "backup-liveness" {
+                    when job_missed_fire
+                    job_key "billing:*"
+                    expected_within 10m
+                    throttle 1h
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert!(matches!(rule.trigger, RuleTrigger::JobMissedFire));
+        assert_eq!(rule.job_key_glob, "billing:*");
+        assert_eq!(rule.expected_within.as_deref(), Some("10m"));
         assert_eq!(rule.throttle.as_deref(), Some("1h"));
     }
 
