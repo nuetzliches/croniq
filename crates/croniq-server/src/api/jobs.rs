@@ -17,7 +17,7 @@ use axum::{
 use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
-use croniq_store::models::{DslAdoption, JobDefinition, TriggerDefinition};
+use croniq_store::models::{DslAdoption, JobDefinition, JobStatus, TriggerDefinition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -109,6 +109,61 @@ pub async fn handle_list(
     }
 
     Ok(Json(jobs))
+}
+
+/// Per-job scheduling-liveness view (issue #250), derived from the
+/// persisted `job_states` the scheduler advances on every fire. Surfaces
+/// the `overdue` flag the dashboard renders distinctly from success-rate so
+/// a silently-stalled scheduler doesn't read as healthy.
+#[derive(Serialize)]
+pub struct JobScheduleState {
+    pub job_key: String,
+    /// Lowercase trigger status: `active` / `paused` / `disabled` / `exhausted`.
+    pub status: JobStatus,
+    pub next_fire_at: Option<chrono::DateTime<Utc>>,
+    pub last_fired_at: Option<chrono::DateTime<Utc>>,
+    pub fire_count: u64,
+    /// `true` when the trigger is active but its next scheduled fire is in
+    /// the past — the scheduler hasn't advanced it, i.e. a missed fire.
+    pub overdue: bool,
+}
+
+/// `GET /v1/jobs/states` — per-job scheduling liveness from `job_states`.
+///
+/// Sibling static route to `/v1/jobs/{job_key}` (like `/v1/jobs/register`);
+/// matchit routes the static segment first. The UI polls this to badge
+/// overdue jobs without re-deriving fire times from the forecast (which only
+/// carries *future* fires and so can never show an overdue job).
+pub async fn handle_list_states(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+) -> Result<Json<Vec<JobScheduleState>>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_READ)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let now = Utc::now();
+    let states = store
+        .list_job_states()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let out = states
+        .into_iter()
+        .map(|s| {
+            let overdue =
+                s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
+            JobScheduleState {
+                job_key: s.job_key,
+                status: s.status,
+                next_fire_at: s.next_fire_at,
+                last_fired_at: s.last_fired_at,
+                fire_count: s.fire_count,
+                overdue,
+            }
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 /// `GET /v1/jobs/{job_key}`

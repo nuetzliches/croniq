@@ -32,6 +32,21 @@ export interface TagCount {
   count: number
 }
 
+export type JobLifecycleStatus = 'active' | 'paused' | 'disabled' | 'exhausted'
+
+/// Per-job scheduling liveness from `GET /v1/jobs/states` (issue #250).
+/// `overdue` is `true` when an active trigger's next scheduled fire is in the
+/// past — the scheduler never advanced it (a missed fire). Lets the dashboard
+/// flag a stalled scheduler distinctly from a green success-rate.
+export interface JobScheduleState {
+  job_key: string
+  status: JobLifecycleStatus
+  next_fire_at: string | null
+  last_fired_at: string | null
+  fire_count: number
+  overdue: boolean
+}
+
 export interface TriggerDefinition {
   trigger_id: string
   job_key: string

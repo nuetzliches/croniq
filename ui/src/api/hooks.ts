@@ -35,6 +35,15 @@ export function useJobs() {
 export function useJob(jobKey: string) {
   return useQuery({ queryKey: ['jobs', jobKey], queryFn: () => apiFetch<T.JobDefinition>(`/v1/jobs/${jobKey}`) })
 }
+// Per-job scheduling liveness (issue #250). Polled so an "overdue" badge
+// appears (and clears) without a manual refresh.
+export function useJobStates() {
+  return useQuery({
+    queryKey: ['job-states'],
+    queryFn: () => apiFetch<T.JobScheduleState[]>('/v1/jobs/states'),
+    refetchInterval: 15000,
+  })
+}
 export function useCreateJob() {
   const qc = useQueryClient()
   return useMutation({
