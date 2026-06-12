@@ -665,3 +665,79 @@ async fn store_state_consistent_through_lifecycle() {
         0
     );
 }
+
+/// Build a store-backed server router for endpoint tests. The shared
+/// `TestServer` harness leaves `ServerState.store = None` (it drives the
+/// scheduler/processor directly), so HTTP endpoints that read the store need
+/// their own wiring.
+fn store_backed_router(store: DynStore) -> axum::Router {
+    let runner = AppState::new();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let state = ServerState::with_auth(runner, tx, None, Some(store));
+    server_router(state)
+}
+
+/// `GET /v1/jobs/states` flags an active job whose next fire slipped into
+/// the past as `overdue` (issue #250 dashboard surface). Also proves the
+/// static route wins over `/v1/jobs/{job_key}`.
+#[tokio::test]
+async fn job_states_endpoint_flags_overdue() {
+    use croniq_store::models::{JobState, JobStatus};
+
+    let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
+    let now = Utc::now();
+
+    // Active trigger whose next fire is an hour overdue → the scheduler
+    // never advanced it.
+    store
+        .upsert_job_state(&JobState {
+            job_key: "billing:backup".into(),
+            next_fire_at: Some(now - ChronoDuration::hours(1)),
+            last_fired_at: Some(now - ChronoDuration::days(1)),
+            fire_count: 4,
+            status: JobStatus::Active,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let body = get_json(store_backed_router(store), "/v1/jobs/states").await;
+    let arr = body.as_array().expect("array response");
+    let s = arr
+        .iter()
+        .find(|x| x["job_key"] == "billing:backup")
+        .expect("billing:backup present");
+
+    assert_eq!(s["overdue"], true);
+    assert_eq!(s["status"], "active");
+    assert!(s["next_fire_at"].is_string());
+    assert!(s["last_fired_at"].is_string());
+}
+
+/// A healthy job (next fire in the future) is not flagged overdue.
+#[tokio::test]
+async fn job_states_endpoint_healthy_not_overdue() {
+    use croniq_store::models::{JobState, JobStatus};
+
+    let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
+    let now = Utc::now();
+    store
+        .upsert_job_state(&JobState {
+            job_key: "etl:sync".into(),
+            next_fire_at: Some(now + ChronoDuration::hours(1)),
+            last_fired_at: Some(now - ChronoDuration::minutes(5)),
+            fire_count: 1,
+            status: JobStatus::Active,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let body = get_json(store_backed_router(store), "/v1/jobs/states").await;
+    let s = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["job_key"] == "etl:sync")
+        .unwrap()
+        .clone();
+    assert_eq!(s["overdue"], false);
+}

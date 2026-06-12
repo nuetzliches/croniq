@@ -17,7 +17,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `(rule, job_key, next_fire_at)`. `/metrics` also gains
   `croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp`, and
   `croniq_job_overdue{job_key}` so external monitoring can alert on staleness
-  even when the in-process scheduler is wedged and no run failed.
+  even when the in-process scheduler is wedged and no run failed. The
+  dashboard surfaces this too ([#254](https://github.com/nuetzliches/croniq/pull/254)):
+  a new `GET /v1/jobs/states` endpoint backs an **"overdue" badge** on the
+  Jobs list and a red "overdue" in the job's Next-fire KPI, so a stalled
+  scheduler no longer reads as healthy behind `NEXT FIRE: —`.
 - **Scheduler supervision + liveness signal
   ([#252](https://github.com/nuetzliches/croniq/pull/252)).** The scheduler
   task is now supervised: if it ever panics or exits, the process logs the

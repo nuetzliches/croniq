@@ -389,6 +389,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             post(jobs::handle_deactivate),
         )
         .route("/v1/jobs/register", post(jobs::handle_register))
+        // Per-job scheduling liveness (issue #250). Static sibling of
+        // `/v1/jobs/{job_key}`; matchit routes the static segment first.
+        .route("/v1/jobs/states", get(jobs::handle_list_states))
         // Schedules CRUD
         .route(
             "/v1/schedules",

@@ -16,6 +16,7 @@ const TONE_FOR_STATE: Record<string, PillTone> = {
   stale:     'warn',
   active:    'success',
   enabled:   'success',
+  overdue:   'error',
   paused:    'warn',
   disabled:  'outline',
   inactive:  'outline',
@@ -31,13 +32,15 @@ export interface StatusPillProps {
   dot?: boolean
   label?: string
   className?: string
+  /** Native tooltip shown on hover (e.g. to explain an "overdue" pill). */
+  title?: string
 }
 
-export function StatusPill({ state, tone, count, dot = true, label, className }: StatusPillProps) {
+export function StatusPill({ state, tone, count, dot = true, label, className, title }: StatusPillProps) {
   const effective: PillTone = tone ?? TONE_FOR_STATE[state.toLowerCase()] ?? 'outline'
   const text = label ?? state.toLowerCase()
   return (
-    <span className={clsx('pill', effective !== 'neutral' && effective, className)}>
+    <span className={clsx('pill', effective !== 'neutral' && effective, className)} title={title}>
       {dot ? <span className="dot" aria-hidden /> : null}
       {text}
       {count != null ? <span className="tnum">&nbsp;{count}</span> : null}

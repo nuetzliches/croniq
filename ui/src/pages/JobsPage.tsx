@@ -17,6 +17,7 @@ import {
 import clsx from 'clsx'
 import {
   useJobs,
+  useJobStates,
   useJobTags,
   useJob,
   useJobStats,
@@ -83,6 +84,7 @@ export function JobsPage() {
   const { jobKey } = useParams<{ jobKey: string }>()
   const navigate = useNavigate()
   const jobs = useJobs()
+  const jobStates = useJobStates()
   const tagCounts = useJobTags()
   const allExecs = useExecutions({ limit: 200 })
   const [search, setSearch] = useState('')
@@ -104,6 +106,12 @@ export function JobsPage() {
     for (const e of allExecs.data ?? []) (m[e.job_key] ??= []).push(e)
     return m
   }, [allExecs.data])
+
+  const overdueByJob = useMemo(() => {
+    const m: Record<string, boolean> = {}
+    for (const s of jobStates.data ?? []) m[s.job_key] = s.overdue
+    return m
+  }, [jobStates.data])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -225,6 +233,7 @@ export function JobsPage() {
                 job={j}
                 active={j.job_key === selected}
                 execs={execsByJob[j.job_key] ?? []}
+                overdue={overdueByJob[j.job_key] ?? false}
                 onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
               />
             ))
@@ -255,11 +264,13 @@ function JobRow({
   job,
   active,
   execs,
+  overdue,
   onClick,
 }: {
   job: JobDefinition
   active: boolean
   execs: Execution[]
+  overdue: boolean
   onClick: () => void
 }) {
   const recent = execs.slice(0, 14)
@@ -286,6 +297,12 @@ function JobRow({
         <span className="key ellipsis" style={{ minWidth: 0, flex: 1 }}>
           {job.job_key}
         </span>
+        {overdue ? (
+          <StatusPill
+            state="overdue"
+            title="Scheduled fire is overdue — the scheduler hasn't run it"
+          />
+        ) : null}
         {!job.is_active ? <StatusPill state="disabled" dot={false} /> : null}
       </div>
       <div className="dim ellipsis" style={{ fontSize: 11.5 }}>
@@ -337,6 +354,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   const executions = useExecutions({ job_key: jobKey, limit: 30 })
   const audit = useAuditEvents({ target_type: 'job', limit: 50 })
   const forecast = useForecast(180)
+  const jobStates = useJobStates()
   const triggerJob = useTriggerJob()
   const activateJob = useActivateJob()
   const deactivateJob = useDeactivateJob()
@@ -363,14 +381,23 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
     [execsData],
   )
 
-  // Find the next scheduled fire for this job from the global forecast.
+  // Authoritative scheduling state from job_states (issue #250): carries the
+  // real next_fire_at — including an overdue one — which the forecast can't.
+  const scheduleState = useMemo(
+    () => (jobStates.data ?? []).find((s) => s.job_key === jobKey) ?? null,
+    [jobStates.data, jobKey],
+  )
+  // Next fire: prefer the persisted value; fall back to the forecast for jobs
+  // that haven't fired yet (no job_states row).
   const forecastData = forecast.data
   const nextFire = useMemo(() => {
+    if (scheduleState?.next_fire_at) return scheduleState.next_fire_at
     const next = (forecastData?.buckets ?? [])
       .map((b) => b as unknown as { job_key?: string; start: string })
       .find((b) => b.job_key === jobKey)
     return next?.start ?? null
-  }, [forecastData, jobKey])
+  }, [scheduleState, forecastData, jobKey])
+  const overdue = scheduleState?.overdue ?? false
 
   if (job.isLoading || !job.data) {
     return <div className="dim center" style={{ padding: 40 }}>Loading…</div>
@@ -484,6 +511,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
         stats={stats.data ?? null}
         durSeries={durSeries}
         nextFire={nextFire}
+        overdue={overdue}
         schedule={schedules.data?.[0] ?? null}
       />
 
@@ -670,12 +698,14 @@ function KpiRow({
   stats,
   durSeries,
   nextFire,
+  overdue,
   schedule,
 }: {
   runsLast24: Execution[]
   stats: ReturnType<typeof useJobStats>['data'] | null
   durSeries: number[]
   nextFire: string | null
+  overdue: boolean
   schedule: TriggerDefinition | null
 }) {
   const sr = stats && stats.total > 0 ? stats.success_rate * 100 : null
@@ -742,10 +772,22 @@ function KpiRow({
       />
       <KPICard
         title="Next fire"
-        value={<span style={{ fontSize: 18 }}>{fireRel ?? '—'}</span>}
+        value={
+          overdue ? (
+            <span style={{ fontSize: 18, color: 'var(--error)' }} title="The scheduled fire is overdue — the scheduler hasn't run it">
+              overdue
+            </span>
+          ) : (
+            <span style={{ fontSize: 18 }}>{fireRel ?? '—'}</span>
+          )
+        }
         mono
         sub={
-          schedule ? (
+          overdue && nextFire ? (
+            <span className="mono" style={{ fontSize: 11, color: 'var(--error)' }}>
+              due {formatRelative(nextFire)}
+            </span>
+          ) : schedule ? (
             <span className="mono dim" style={{ fontSize: 11 }}>
               {schedule.cron_expression ?? '—'}
               {schedule.timezone ? ` · ${schedule.timezone}` : ''}
