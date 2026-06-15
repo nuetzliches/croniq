@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-06-15
+
+### Fixed
+
+- **Topbar & control contrast polish
+  ([#256](https://github.com/nuetzliches/croniq/pull/256)).** Three UI defects
+  spotted in the running app: the `/alerts` and `/console` breadcrumbs
+  rendered with a stray leading slash (unmapped routes echoed the raw
+  pathname); the ⌘K search-shortcut badge (and search icon) could be squished
+  on a narrow topbar; and secondary / ghost buttons plus status badges
+  (StatusPill, `<Badge>`, tab counters) had no resting border, washing into
+  light backgrounds until hovered. Unmapped routes now degrade to a clean
+  Title-Case crumb, the shortcut badge keeps its size, and every button/badge
+  keeps a defined edge at rest.
+
 ## [0.20.0] - 2026-06-12
 
 ### Added
