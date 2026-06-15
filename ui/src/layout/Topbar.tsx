@@ -12,8 +12,24 @@ const ROUTE_TITLES: Record<string, string> = {
   '/runners': 'Runners',
   '/executions': 'Executions',
   '/dead-letters': 'Dead Letters',
+  '/alerts': 'Alerts',
   '/calendars': 'Calendars',
+  '/console': 'Console',
   '/settings': 'Settings',
+}
+
+// Fallback label for any top-level route missing from ROUTE_TITLES. Without
+// it the raw pathname ("/alerts") was used verbatim — and since every crumb
+// renders after a "/" separator, that leading slash showed up as a doubled
+// "//". Strip the slash and Title-Case the first segment so a forgotten
+// ROUTE_TITLES entry degrades to "Alerts" instead of "/alerts".
+function titleFromPath(pathname: string): string {
+  const seg = pathname.replace(/^\/+/, '').split('/')[0] ?? ''
+  if (!seg) return 'Dashboard'
+  return seg
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
 }
 
 interface Crumb {
@@ -55,7 +71,7 @@ function useCrumbs(): Crumb[] {
       { label: id, current: true },
     ]
   }
-  return [{ label: ROUTE_TITLES[pathname] ?? pathname, current: true }]
+  return [{ label: ROUTE_TITLES[pathname] ?? titleFromPath(pathname), current: true }]
 }
 
 // Resolve dead-letter id to its job_key so the breadcrumb reads as a name
