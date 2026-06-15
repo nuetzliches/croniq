@@ -24,6 +24,11 @@
   color: var(--fg-2);
   line-height: 1;
   display: inline-block;
+  /* A shortcut badge must keep its natural size: as a flex item (e.g. in
+   * .search-trigger) it would otherwise share the row's shrink and get
+   * squished. Let the adjacent flexible text (.grow) absorb the shrink. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 ::selection { background: var(--accent-bg); color: var(--fg); }
@@ -42,7 +47,11 @@
   background: var(--neutral-bg);
   color: var(--fg-1);
   white-space: nowrap;
-  border: 1px solid transparent;
+  /* Tone-tinted resting border so a pill stays defined on any surface. The
+   * faint fill alone washed out on a white card — the pill only "popped"
+   * once a row hover darkened the backdrop. currentColor = the tone colour
+   * set by .pill.success/.error/… below, so each pill gets its own tint. */
+  border: 1px solid color-mix(in oklch, currentColor 28%, transparent);
 }
 .pill.success { background: var(--success-bg); color: var(--success); }
 .pill.warn    { background: var(--warn-bg);    color: var(--warn); }
@@ -441,9 +450,10 @@
 .tabs .tab .count {
   font-family: var(--font-mono-app);
   font-size: 11px;
-  color: var(--fg-mute);
+  color: var(--fg-3);
   padding: 1px 5px;
-  background: var(--bg-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
   border-radius: 999px;
   margin-left: 4px;
 }

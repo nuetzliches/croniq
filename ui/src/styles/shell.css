@@ -464,6 +464,8 @@
   font-family: inherit;
 }
 .search-trigger:hover { border-color: var(--border-2); }
+/* Leading search icon: fixed-size, never shrink — only .grow gives way. */
+.search-trigger > svg { flex-shrink: 0; }
 .search-trigger > .grow {
   flex: 1;
   min-width: 0;
