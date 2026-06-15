@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-12
+
+### Added
+
+- **`job_missed_fire` liveness alert + per-job fire metrics
+  ([#253](https://github.com/nuetzliches/croniq/pull/253)).** A new alert
+  trigger fires when a scheduled fire never happens — a job's persisted
+  `next_fire_at` goes overdue past the rule's `expected_within` grace while
+  the trigger is still active — catching a silently-stalled scheduler that a
+  100%-success dashboard would otherwise hide. The watchdog sweep dedups per
+  `(rule, job_key, next_fire_at)`. `/metrics` also gains
+  `croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp`, and
+  `croniq_job_overdue{job_key}` so external monitoring can alert on staleness
+  even when the in-process scheduler is wedged and no run failed. The
+  dashboard surfaces this too ([#254](https://github.com/nuetzliches/croniq/pull/254)):
+  a new `GET /v1/jobs/states` endpoint backs an **"overdue" badge** on the
+  Jobs list and a red "overdue" in the job's Next-fire KPI, so a stalled
+  scheduler no longer reads as healthy behind `NEXT FIRE: —`.
+- **Scheduler supervision + liveness signal
+  ([#252](https://github.com/nuetzliches/croniq/pull/252)).** The scheduler
+  task is now supervised: if it ever panics or exits, the process logs the
+  cause and exits non-zero so the container's `restart:` policy recovers a
+  fresh scheduler instead of running on with a silently-dead one. A new
+  heartbeat is exposed on `/metrics` as
+  `croniq_scheduler_last_tick_timestamp` (gauge) and
+  `croniq_scheduler_ticks_total` (counter) so external monitoring can alert
+  on a wedged scheduler even while HTTP keeps serving, plus a low-rate INFO
+  "scheduler heartbeat — alive" log. Each tick is bounded by a 60 s timeout
+  so a hung store/lock is logged and skipped (leaving the liveness metric
+  stale) rather than wedging the loop forever.
+
+### Fixed
+
+- **Recurring clock-time schedules survive DST spring-forward
+  ([#251](https://github.com/nuetzliches/croniq/pull/251)).** A daily /
+  weekday / monthly job whose fire time fell in the spring-forward gap
+  (e.g. `every day at 02:30` in `Europe/Berlin` on the last Sunday of
+  March) used to exhaust its trigger permanently and silently —
+  `next_fire_after` returned `None` for the non-existent wall-clock time.
+  The scheduler now rolls a gap time forward to the transition instant and
+  picks the earliest occurrence for fall-back ambiguity. An `Exhausted`
+  trigger is also now treated as terminal only for non-recurring (`once` /
+  `disabled`) schedules: a recurring schedule is re-armed on restart and on
+  hot-reload instead of staying dead.
+
 ## [0.19.0] - 2026-06-04
 
 ### Added

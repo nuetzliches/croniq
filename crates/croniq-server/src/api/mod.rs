@@ -139,6 +139,12 @@ pub struct ServerState {
     /// in that case. Populated by `main.rs` from the telemetry init's
     /// returned hub.
     pub console_hub: Option<Arc<crate::live_console::ConsoleHub>>,
+    /// Scheduler liveness signal (issue #248). The scheduler task records a
+    /// timestamp after each successful tick; the `/metrics` endpoint exposes
+    /// it as `croniq_scheduler_last_tick_timestamp` so external monitoring can
+    /// alert on a wedged scheduler even while HTTP keeps serving. `None` in
+    /// tests / when no scheduler runs.
+    pub scheduler_heartbeat: Option<Arc<crate::scheduler::SchedulerHeartbeat>>,
 }
 
 impl ServerState {
@@ -166,6 +172,7 @@ impl ServerState {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         })
     }
 
@@ -196,6 +203,7 @@ impl ServerState {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         })
     }
 
@@ -225,6 +233,7 @@ impl ServerState {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         })
     }
 }
@@ -380,6 +389,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             post(jobs::handle_deactivate),
         )
         .route("/v1/jobs/register", post(jobs::handle_register))
+        // Per-job scheduling liveness (issue #250). Static sibling of
+        // `/v1/jobs/{job_key}`; matchit routes the static segment first.
+        .route("/v1/jobs/states", get(jobs::handle_list_states))
         // Schedules CRUD
         .route(
             "/v1/schedules",
@@ -1321,6 +1333,7 @@ mod tests {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         });
         (state, rx)
     }
@@ -1495,6 +1508,7 @@ mod tests {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1567,6 +1581,7 @@ mod tests {
             require_totp: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
+            scheduler_heartbeat: None,
         });
         let app = server_router(Arc::clone(&state));
 

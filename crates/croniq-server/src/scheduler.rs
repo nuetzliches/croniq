@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
 #[allow(unused_imports)]
@@ -15,6 +16,7 @@ use chrono_tz;
 use croniq_bridge::job_to_work_item;
 use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::AppState;
+use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
 use tokio::sync::oneshot;
@@ -42,6 +44,40 @@ pub enum SchedulerCommand {
         jobs: Vec<JobConfig>,
         ack: oneshot::Sender<()>,
     },
+}
+
+/// Liveness signal for the scheduler task (issue #248).
+///
+/// The scheduler task records a timestamp after every *successful* tick. A
+/// tick that times out (a hung store call or a wedged lock) deliberately does
+/// **not** update it, so a stalled scheduler surfaces as a stale
+/// `croniq_scheduler_last_tick_timestamp` on `/metrics` — distinct from a
+/// healthy "nothing was due" tick — even though the HTTP server stays up.
+#[derive(Debug, Default)]
+pub struct SchedulerHeartbeat {
+    /// Unix seconds of the last successful tick. `0` = no tick completed yet.
+    pub last_tick_unix: AtomicI64,
+    /// Total successful ticks since process start.
+    pub ticks_total: AtomicU64,
+}
+
+impl SchedulerHeartbeat {
+    /// Record a completed tick at `now`.
+    pub fn record_tick(&self, now: DateTime<Utc>) {
+        self.last_tick_unix
+            .store(now.timestamp(), Ordering::Relaxed);
+        self.ticks_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Unix seconds of the last successful tick (`0` if none yet).
+    pub fn last_tick_unix(&self) -> i64 {
+        self.last_tick_unix.load(Ordering::Relaxed)
+    }
+
+    /// Total successful ticks since process start.
+    pub fn ticks_total(&self) -> u64 {
+        self.ticks_total.load(Ordering::Relaxed)
+    }
 }
 
 /// The result of a single scheduler tick.
@@ -117,8 +153,19 @@ impl SchedulerLoop {
                 new_trigger.fire_count = old_trigger.fire_count;
                 new_trigger.last_fired_at = old_trigger.last_fired_at;
                 if old_trigger.state == TriggerState::Exhausted {
-                    new_trigger.state = TriggerState::Exhausted;
-                    new_trigger.next_fire_at = None;
+                    // `Exhausted` is terminal only for non-recurring schedules
+                    // (`once` / `disabled`). A recurring schedule that was
+                    // somehow exhausted must not be frozen by a reload — keep
+                    // the freshly-built trigger's Armed state + next_fire_at so
+                    // it recovers (issue #249).
+                    let recurring = !matches!(
+                        new_trigger.schedule,
+                        Schedule::Once { .. } | Schedule::Disabled
+                    );
+                    if !recurring {
+                        new_trigger.state = TriggerState::Exhausted;
+                        new_trigger.next_fire_at = None;
+                    }
                 } else if old_trigger.next_fire_at.is_some() {
                     new_trigger.next_fire_at = old_trigger.next_fire_at;
                 }
@@ -543,6 +590,83 @@ mod tests {
 
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reload_rearms_exhausted_recurring_trigger() {
+        // Regression for #249(b): a hot-reload must not freeze a recurring
+        // trigger that was stuck Exhausted — it should pick up the freshly
+        // built Armed trigger instead.
+        let store = make_store();
+        let runner = make_runner();
+
+        let mut old = make_trigger_future("test:job"); // recurring (Interval)
+        old.state = TriggerState::Exhausted;
+        old.next_fire_at = None;
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), old);
+
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert("test:job".to_string(), make_trigger_future("test:job"));
+        scheduler.reload(new_triggers, vec![make_job("test:job")]);
+
+        let t = &scheduler.triggers["test:job"];
+        assert_eq!(t.state, TriggerState::Armed);
+        assert!(t.next_fire_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_keeps_exhausted_once_trigger_terminal() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let make_once = || {
+            Trigger::new(
+                "test:once".into(),
+                Schedule::Once {
+                    at: Utc::now() + ChronoDuration::hours(1),
+                },
+                chrono_tz::UTC,
+                None,
+                None,
+                MisfirePolicy::FireNow,
+                Utc::now(),
+            )
+        };
+
+        let mut old = make_once();
+        old.state = TriggerState::Exhausted;
+        old.next_fire_at = None;
+        let mut triggers = HashMap::new();
+        triggers.insert("test:once".to_string(), old);
+
+        let mut scheduler =
+            SchedulerLoop::new(triggers, vec![make_job("test:once")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert("test:once".to_string(), make_once());
+        scheduler.reload(new_triggers, vec![make_job("test:once")]);
+
+        let t = &scheduler.triggers["test:once"];
+        assert_eq!(t.state, TriggerState::Exhausted);
+        assert!(t.next_fire_at.is_none());
+    }
+
+    #[test]
+    fn heartbeat_records_tick() {
+        let hb = SchedulerHeartbeat::default();
+        assert_eq!(hb.last_tick_unix(), 0);
+        assert_eq!(hb.ticks_total(), 0);
+
+        let now = Utc::now();
+        hb.record_tick(now);
+        assert_eq!(hb.last_tick_unix(), now.timestamp());
+        assert_eq!(hb.ticks_total(), 1);
+
+        hb.record_tick(now + ChronoDuration::seconds(1));
+        assert_eq!(hb.ticks_total(), 2);
     }
 
     #[tokio::test]
