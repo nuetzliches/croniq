@@ -108,8 +108,9 @@ fn build_setup(n: usize, mode: ExecutionMode, all_due: bool) -> BenchSetup {
 
 fn build_scheduler(setup: BenchSetup) -> SchedulerLoop {
     let mut scheduler = SchedulerLoop::new(setup.triggers, setup.jobs, setup.store, setup.runner);
-    // Disable quota limits for benchmarking
-    scheduler.set_quota_defaults(100_000, 100_000);
+    // Raise the per-minute rate limit so it doesn't throttle the firing the
+    // benchmark is measuring.
+    scheduler.set_quota_defaults(100_000);
     scheduler
 }
 

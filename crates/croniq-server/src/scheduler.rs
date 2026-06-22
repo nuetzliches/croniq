@@ -132,16 +132,13 @@ impl SchedulerLoop {
         }
     }
 
-    /// Override per-job quota limits (useful for benchmarking large trigger counts).
-    pub fn set_quota_defaults(&mut self, max_parallel: u32, max_per_minute: u32) {
+    /// Override the per-job per-minute trigger rate (useful for benchmarking
+    /// large trigger counts, where the default 60/min would otherwise throttle
+    /// the very firing the benchmark is measuring).
+    pub fn set_quota_defaults(&mut self, max_per_minute: u32) {
         for key in self.jobs.keys() {
-            self.quota.set_quota(
-                key,
-                crate::quota::JobQuota {
-                    max_parallel,
-                    max_per_minute,
-                },
-            );
+            self.quota
+                .set_quota(key, crate::quota::JobQuota { max_per_minute });
         }
     }
 
@@ -255,11 +252,11 @@ impl SchedulerLoop {
 
             let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
-            // Backpressure guards (queue-depth + quota) apply only to
-            // persisted (`queued`) jobs. Ephemeral jobs are fire-and-forget
-            // and self-bound to a single queued item by the replace-latest
-            // enqueue below, so subjecting them to these *accumulating*
-            // counters would wedge them permanently the moment a runner
+            // Backpressure guards (queue-depth + per-minute rate limit) apply
+            // only to persisted (`queued`) jobs. Ephemeral jobs are
+            // fire-and-forget and self-bound to a single queued item by the
+            // replace-latest enqueue below, so subjecting them to the
+            // queue-depth cap would wedge them permanently the moment a runner
             // restart let non-persisted work pile up past the cap — the job
             // would then sit `overdue` forever even after the runner returns
             // (issue #263).
@@ -286,9 +283,11 @@ impl SchedulerLoop {
                     continue;
                 }
 
-                // Quota check: per-job rate limiting
+                // Quota check: per-job per-minute trigger rate. Self-heals via
+                // a sliding window, so unlike the old parallel cap it can't
+                // wedge a drained job (the quota-guard leak alongside #263).
                 if !self.quota.allow(&trigger.job_key) {
-                    tracing::debug!(job_key = %trigger.job_key, "skipping execution — quota exceeded");
+                    tracing::debug!(job_key = %trigger.job_key, "skipping execution — per-minute rate limit exceeded");
                     trigger.mark_fired(fire_at, now);
                     continue;
                 }
@@ -822,5 +821,45 @@ mod tests {
         }
         // Default max_queue_depth is 10 — the guard stops enqueuing beyond it.
         assert_eq!(runner.queue.read().await.count_for_job("etl:sync"), 10);
+    }
+
+    /// Regression for the quota-guard leak found alongside #263: a *queued*
+    /// (persisted) job whose executions are drained each tick — so the
+    /// `max_queue_depth` overflow guard never trips — must keep firing well
+    /// past the parallel cap. The old `QuotaGuard` incremented a monotonic
+    /// `active` counter on every fire but only ever decremented it via a
+    /// `release()` that was never called in production, so after
+    /// `max_parallel` (10) fires the quota wedged the job `overdue` forever.
+    #[tokio::test]
+    async fn queued_job_keeps_firing_when_drained_past_parallel_cap() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("etl:sync".into(), make_trigger_due_now("etl:sync"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_job("etl:sync")], // default = Queued
+            store,
+            Arc::clone(&runner),
+        );
+
+        // Fire far past the parallel cap of 10 (but under the 60/min rate
+        // limit), draining the queue every tick so the overflow guard — the
+        // *other* backpressure path — never masks the leak.
+        let mut now = Utc::now();
+        let mut total_fired = 0;
+        for _ in 0..25 {
+            total_fired += scheduler.tick(now).await.fired.len();
+            // Simulate a runner claiming all queued work, clearing the
+            // overflow guard's per-job queued count.
+            runner.queue.write().await.drain();
+            now += ChronoDuration::seconds(60);
+        }
+
+        assert_eq!(
+            total_fired, 25,
+            "queued job must keep firing once work is drained — quota must not leak"
+        );
     }
 }
