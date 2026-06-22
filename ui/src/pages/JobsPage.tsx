@@ -47,7 +47,7 @@ import {
   BrandMark,
 } from '@/components/primitives'
 import type { ExecutionOutcome } from '@/components/primitives'
-import type { AuditEvent, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
+import type { AuditEvent, ExecutionMode, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EditJobDialog } from '@/components/EditJobDialog'
 import { NewJobDialog } from '@/components/NewJobDialog'
@@ -110,6 +110,12 @@ export function JobsPage() {
   const overdueByJob = useMemo(() => {
     const m: Record<string, boolean> = {}
     for (const s of jobStates.data ?? []) m[s.job_key] = s.overdue
+    return m
+  }, [jobStates.data])
+
+  const ephemeralByJob = useMemo(() => {
+    const m: Record<string, boolean> = {}
+    for (const s of jobStates.data ?? []) m[s.job_key] = s.execution_mode === 'ephemeral'
     return m
   }, [jobStates.data])
 
@@ -234,6 +240,7 @@ export function JobsPage() {
                 active={j.job_key === selected}
                 execs={execsByJob[j.job_key] ?? []}
                 overdue={overdueByJob[j.job_key] ?? false}
+                ephemeral={ephemeralByJob[j.job_key] ?? false}
                 onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
               />
             ))
@@ -265,12 +272,14 @@ function JobRow({
   active,
   execs,
   overdue,
+  ephemeral,
   onClick,
 }: {
   job: JobDefinition
   active: boolean
   execs: Execution[]
   overdue: boolean
+  ephemeral: boolean
   onClick: () => void
 }) {
   const recent = execs.slice(0, 14)
@@ -301,6 +310,14 @@ function JobRow({
           <StatusPill
             state="overdue"
             title="Scheduled fire is overdue — the scheduler hasn't run it"
+          />
+        ) : null}
+        {ephemeral ? (
+          <StatusPill
+            state="ephemeral"
+            tone="info"
+            dot={false}
+            title="Ephemeral job — fire-and-forget, executions aren't persisted"
           />
         ) : null}
         {!job.is_active ? <StatusPill state="disabled" dot={false} /> : null}
@@ -536,6 +553,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
               job={j}
               executions={execs}
               schedules={schedules.data ?? []}
+              executionMode={scheduleState?.execution_mode}
             />
           ) : null}
           {tab === 'executions' ? <ExecutionsTab executions={execs} loading={executions.isLoading} jobKey={jobKey} /> : null}
@@ -805,11 +823,14 @@ function OverviewTab({
   job,
   executions,
   schedules,
+  executionMode,
 }: {
   job: JobDefinition
   executions: Execution[]
   schedules: TriggerDefinition[]
+  executionMode?: ExecutionMode
 }) {
+  const isEphemeral = executionMode === 'ephemeral'
   const { data: me } = useCurrentUser()
   const ownerName = me?.display_name || me?.username || 'system'
   const ownerEmail = me?.email ?? ''
@@ -825,7 +846,14 @@ function OverviewTab({
           </span>
         </div>
         {executions.length === 0 ? (
-          <EmptyState title="No executions yet" desc="Trigger the job to see executions here." />
+          isEphemeral ? (
+            <EmptyState
+              title="No execution history — by design"
+              desc="This is an ephemeral (fire-and-forget) job: it dispatches work but doesn't persist execution rows. An empty history here is expected, not a fault."
+            />
+          ) : (
+            <EmptyState title="No executions yet" desc="Trigger the job to see executions here." />
+          )
         ) : (
           <table className="tbl">
             <thead>
@@ -877,6 +905,23 @@ function OverviewTab({
               }
             />
             <DetailRow label="Timeout" value={<span className="mono">{job.timeout ?? '—'}</span>} />
+            {executionMode ? (
+              <DetailRow
+                label="Execution mode"
+                value={
+                  isEphemeral ? (
+                    <StatusPill
+                      state="ephemeral"
+                      tone="info"
+                      dot={false}
+                      title="Fire-and-forget — executions aren't persisted"
+                    />
+                  ) : (
+                    <span className="mono">queued</span>
+                  )
+                }
+              />
+            ) : null}
             <DetailRow label="Managed by" value={<span className="mono">{firstSched?.managed_by ?? '—'}</span>} />
           </div>
         </section>

@@ -54,6 +54,11 @@ pub enum ProcessedOutcome {
     DeadLettered { reason: String },
     /// Exhausted all retries; dead-letter disabled → silently dropped.
     Dropped { reason: String },
+    /// Completion for an ephemeral execution (issue #263): the job runs in
+    /// `ephemeral` mode so no execution row was ever persisted. The result
+    /// is acknowledged as a no-op — there is no retry/dead-letter lifecycle
+    /// to drive — rather than mis-reported as `NotFound`.
+    Ephemeral,
     /// Execution ID not found in store (race or already handled).
     NotFound,
 }
@@ -193,6 +198,19 @@ impl CompletionProcessor {
         let execution = match self.store.get_execution(exec_uuid) {
             Ok(Some(e)) => e,
             Ok(None) => {
+                // Ephemeral executions (issue #263) intentionally have no
+                // persisted row, so the store miss here is *expected* for
+                // them. If this id was dispatched as ephemeral, acknowledge
+                // it as a no-op instead of warning about a "missing"
+                // execution — there's no retry/dead-letter lifecycle to run.
+                if self.runner.take_ephemeral(&event.execution_id).await {
+                    tracing::debug!(
+                        id = %exec_uuid,
+                        status = ?event.status,
+                        "ephemeral execution completed (not persisted)"
+                    );
+                    return ProcessedOutcome::Ephemeral;
+                }
                 tracing::warn!(id = %exec_uuid, "execution not found for completion");
                 return ProcessedOutcome::NotFound;
             }
@@ -662,6 +680,50 @@ mod tests {
                 duration_ms: 100,
                 attempt: 1,
             })
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::NotFound);
+    }
+
+    #[tokio::test]
+    async fn ephemeral_completion_without_row_is_acknowledged() {
+        // Issue #263: an ephemeral job persists no execution row, so the
+        // store miss is expected. A completion whose id was recorded as a
+        // tracked ephemeral dispatch must be acknowledged (no warn, no
+        // NotFound) and the id consumed.
+        let store = make_store();
+        let runner = make_runner();
+        let id = Uuid::new_v4();
+        runner
+            .record_ephemeral(&id.to_string(), Utc::now(), chrono::Duration::hours(1))
+            .await;
+
+        let processor = CompletionProcessor::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        let outcome = processor
+            .process(event(id, CompletionStatus::Success, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::Ephemeral);
+        // Consumed: a duplicate completion would now read as NotFound.
+        assert!(
+            !runner
+                .ephemeral_inflight
+                .read()
+                .await
+                .contains_key(&id.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn untracked_missing_execution_still_not_found() {
+        // A store miss for an id that was *not* a tracked ephemeral dispatch
+        // remains NotFound — the #263 fix must not mask genuinely lost work.
+        let store = make_store();
+        let runner = make_runner();
+        let processor = CompletionProcessor::new(vec![], Arc::clone(&store), runner);
+
+        let outcome = processor
+            .process(event(Uuid::new_v4(), CompletionStatus::Success, 1))
             .await;
 
         assert_eq!(outcome, ProcessedOutcome::NotFound);

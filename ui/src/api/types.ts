@@ -34,6 +34,11 @@ export interface TagCount {
 
 export type JobLifecycleStatus = 'active' | 'paused' | 'disabled' | 'exhausted'
 
+/// How a job's executions are tracked. `ephemeral` jobs are fire-and-forget:
+/// no execution rows are persisted, so an empty execution history is expected
+/// rather than a fault (issue #263).
+export type ExecutionMode = 'queued' | 'ephemeral'
+
 /// Per-job scheduling liveness from `GET /v1/jobs/states` (issue #250).
 /// `overdue` is `true` when an active trigger's next scheduled fire is in the
 /// past — the scheduler never advanced it (a missed fire). Lets the dashboard
@@ -45,6 +50,9 @@ export interface JobScheduleState {
   last_fired_at: string | null
   fire_count: number
   overdue: boolean
+  /// `queued` (persisted executions) or `ephemeral` (no execution history by
+  /// design). Older servers omit this — treat `undefined` as `queued`.
+  execution_mode?: ExecutionMode
 }
 
 export interface TriggerDefinition {

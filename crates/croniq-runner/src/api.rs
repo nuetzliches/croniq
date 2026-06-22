@@ -4,6 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+
 use axum::{
     Json, Router,
     extract::State,
@@ -41,6 +43,14 @@ pub struct AppState {
     /// store-side state transition to `cancelled` is recorded synchronously
     /// when the cancel is issued, so a restart doesn't lose the *intent*.
     pub cancel_queues: RwLock<HashMap<String, Vec<String>>>,
+    /// Execution IDs dispatched for **ephemeral** jobs, which intentionally
+    /// have no persisted execution row (issue #263). The scheduler records
+    /// each id here on dispatch; the completion processor consults it so an
+    /// ephemeral completion is acknowledged as a no-op instead of logging
+    /// `execution not found for completion`. Maps id → dispatch time so a
+    /// stale entry (whose runner died before reporting) can be pruned and
+    /// never leaks the map.
+    pub ephemeral_inflight: RwLock<HashMap<String, DateTime<Utc>>>,
 }
 
 impl AppState {
@@ -51,6 +61,7 @@ impl AppState {
             work_notify: Notify::new(),
             lease_ttl_secs: 120,
             cancel_queues: RwLock::new(HashMap::new()),
+            ephemeral_inflight: RwLock::new(HashMap::new()),
         })
     }
 
@@ -61,6 +72,7 @@ impl AppState {
             work_notify: Notify::new(),
             lease_ttl_secs,
             cancel_queues: RwLock::new(HashMap::new()),
+            ephemeral_inflight: RwLock::new(HashMap::new()),
         })
     }
 
@@ -87,6 +99,46 @@ impl AppState {
         let mut queues = self.cancel_queues.write().await;
         queues.remove(runner_id).unwrap_or_default()
     }
+
+    /// Record an ephemeral execution as dispatched-but-not-persisted
+    /// (issue #263). Opportunistically prunes entries older than `max_age`
+    /// first, so a runner that dies mid-execution — and so never reports a
+    /// completion that would clear its id — can't leak the map.
+    pub async fn record_ephemeral(
+        &self,
+        execution_id: &str,
+        now: DateTime<Utc>,
+        max_age: ChronoDuration,
+    ) {
+        let mut m = self.ephemeral_inflight.write().await;
+        m.retain(|_, dispatched_at| now.signed_duration_since(*dispatched_at) < max_age);
+        m.insert(execution_id.to_string(), now);
+    }
+
+    /// Remove an ephemeral execution id and report whether it was tracked.
+    /// The completion processor calls this on a store miss: `true` means the
+    /// "missing" execution is an expected ephemeral one (acknowledge, don't
+    /// warn); `false` means a genuinely unknown execution.
+    pub async fn take_ephemeral(&self, execution_id: &str) -> bool {
+        self.ephemeral_inflight
+            .write()
+            .await
+            .remove(execution_id)
+            .is_some()
+    }
+
+    /// Forget ephemeral ids that will never produce a completion — e.g. a
+    /// queued ephemeral item replaced by a newer fire before any runner
+    /// claimed it (issue #263 "keep only the latest").
+    pub async fn forget_ephemeral(&self, execution_ids: &[String]) {
+        if execution_ids.is_empty() {
+            return;
+        }
+        let mut m = self.ephemeral_inflight.write().await;
+        for id in execution_ids {
+            m.remove(id);
+        }
+    }
 }
 
 impl Default for AppState {
@@ -97,6 +149,7 @@ impl Default for AppState {
             work_notify: Notify::new(),
             lease_ttl_secs: 120,
             cancel_queues: RwLock::new(HashMap::new()),
+            ephemeral_inflight: RwLock::new(HashMap::new()),
         }
     }
 }

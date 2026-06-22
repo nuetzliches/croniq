@@ -25,6 +25,13 @@ use uuid::Uuid;
 use crate::quota::QuotaGuard;
 use crate::store::DynStore;
 
+/// How long an unacknowledged ephemeral dispatch stays tracked before it is
+/// pruned (issue #263). Comfortably exceeds any realistic job timeout, so a
+/// runner that dies mid-execution — and therefore never reports the
+/// completion that would clear the id — simply ages out instead of leaking
+/// the in-memory tracking map.
+const EPHEMERAL_TRACKING_MAX_AGE_HOURS: i64 = 1;
+
 /// Commands that can be sent to the scheduler to modify its state at runtime.
 #[derive(Debug)]
 pub enum SchedulerCommand {
@@ -246,38 +253,49 @@ impl SchedulerLoop {
                 }
             };
 
-            // Queue overflow protection: skip if too many queued executions for this job.
-            // Per-job max_queue_depth overrides the default of 10. The
-            // `count_for_job` lookup is O(1) — replaces a previous scan that
-            // peeked the first 1000 items every tick per trigger.
-            let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
-            let queued_count = self
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job(&trigger.job_key);
-            if queued_count >= max_depth {
-                tracing::warn!(
-                    job_key = %trigger.job_key,
-                    queued = queued_count,
-                    max = max_depth,
-                    "skipping execution — queue overflow"
-                );
-                trigger.mark_fired(fire_at, now);
-                continue;
-            }
+            let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
-            // Quota check: per-job rate limiting
-            if !self.quota.allow(&trigger.job_key) {
-                tracing::debug!(job_key = %trigger.job_key, "skipping execution — quota exceeded");
-                trigger.mark_fired(fire_at, now);
-                continue;
+            // Backpressure guards (queue-depth + quota) apply only to
+            // persisted (`queued`) jobs. Ephemeral jobs are fire-and-forget
+            // and self-bound to a single queued item by the replace-latest
+            // enqueue below, so subjecting them to these *accumulating*
+            // counters would wedge them permanently the moment a runner
+            // restart let non-persisted work pile up past the cap — the job
+            // would then sit `overdue` forever even after the runner returns
+            // (issue #263).
+            if !is_ephemeral {
+                // Queue overflow protection: skip if too many queued executions for this job.
+                // Per-job max_queue_depth overrides the default of 10. The
+                // `count_for_job` lookup is O(1) — replaces a previous scan that
+                // peeked the first 1000 items every tick per trigger.
+                let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
+                let queued_count = self
+                    .runner
+                    .queue
+                    .read()
+                    .await
+                    .count_for_job(&trigger.job_key);
+                if queued_count >= max_depth {
+                    tracing::warn!(
+                        job_key = %trigger.job_key,
+                        queued = queued_count,
+                        max = max_depth,
+                        "skipping execution — queue overflow"
+                    );
+                    trigger.mark_fired(fire_at, now);
+                    continue;
+                }
+
+                // Quota check: per-job rate limiting
+                if !self.quota.allow(&trigger.job_key) {
+                    tracing::debug!(job_key = %trigger.job_key, "skipping execution — quota exceeded");
+                    trigger.mark_fired(fire_at, now);
+                    continue;
+                }
             }
 
             let execution_id = Uuid::new_v4();
             let exec_id_str = execution_id.to_string();
-            let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
             // Build the post-fire trigger state and the corresponding
             // JobState row before any mutation, so we can persist the
@@ -372,8 +390,34 @@ impl SchedulerLoop {
             //    valid OTel context is in scope.
             let mut item = job_to_work_item(job, &exec_id_str, fire_at, 1);
             crate::trace_propagation::inject_into_metadata(&mut item.metadata);
-            self.runner.queue.write().await.enqueue(item);
-            self.runner.work_notify.notify_waiters();
+            if is_ephemeral {
+                // Keep only the latest fire: drop any earlier, still-unclaimed
+                // ephemeral item for this job before enqueuing the new one, so
+                // a runner gap can't accumulate stale non-persisted work
+                // (issue #263). Both ops happen under one write lock so a poll
+                // can't observe a transient empty queue between them.
+                let replaced = {
+                    let mut q = self.runner.queue.write().await;
+                    let replaced = q.remove_job(&job.key);
+                    q.enqueue(item);
+                    replaced
+                };
+                self.runner.work_notify.notify_waiters();
+                // Replaced ids will never report a completion — stop tracking
+                // them — then track the new dispatch so the completion
+                // processor recognises it on the (expected) store miss.
+                self.runner.forget_ephemeral(&replaced).await;
+                self.runner
+                    .record_ephemeral(
+                        &exec_id_str,
+                        now,
+                        chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
+                    )
+                    .await;
+            } else {
+                self.runner.queue.write().await.enqueue(item);
+                self.runner.work_notify.notify_waiters();
+            }
 
             fired.push(FiredExecution {
                 execution_id,
@@ -678,5 +722,105 @@ mod tests {
 
         let result = scheduler.tick(Utc::now()).await;
         assert!(result.fired.is_empty());
+    }
+
+    // ─── Ephemeral jobs (issue #263) ────────────────────────────────
+
+    fn make_ephemeral_job(key: &str) -> JobConfig {
+        let mut j = make_job(key);
+        j.execution_mode = ExecutionMode::Ephemeral;
+        j
+    }
+
+    /// Regression for #263: an ephemeral job whose work is never drained
+    /// (runner absent) must keep firing instead of wedging once the
+    /// accumulated queue hits the depth/quota cap. Replace-latest keeps a
+    /// single queued item, and the backpressure guards are bypassed.
+    #[tokio::test]
+    async fn ephemeral_job_never_wedges_when_runner_absent() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("beat:tick".into(), make_trigger_due_now("beat:tick"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_ephemeral_job("beat:tick")],
+            store,
+            Arc::clone(&runner),
+        );
+
+        // Nothing ever dequeues. Fire well past the default cap of 10.
+        let mut now = Utc::now();
+        let mut total_fired = 0;
+        for _ in 0..25 {
+            total_fired += scheduler.tick(now).await.fired.len();
+            now += ChronoDuration::seconds(60); // guarantee the 10s interval is due
+        }
+
+        assert_eq!(total_fired, 25, "ephemeral job should fire on every tick");
+        // Replace-latest keeps exactly one queued item …
+        assert_eq!(runner.queue.read().await.count_for_job("beat:tick"), 1);
+        // … and exactly one tracked ephemeral dispatch (no map leak).
+        assert_eq!(runner.ephemeral_inflight.read().await.len(), 1);
+    }
+
+    /// A fresh ephemeral fire replaces the previous still-queued one and the
+    /// queued item carries the newest execution id.
+    #[tokio::test]
+    async fn ephemeral_fire_replaces_previous_queued_item() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("beat:tick".into(), make_trigger_due_now("beat:tick"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_ephemeral_job("beat:tick")],
+            store,
+            Arc::clone(&runner),
+        );
+
+        let now = Utc::now();
+        let first = scheduler.tick(now).await.fired[0].execution_id;
+        let second = scheduler
+            .tick(now + ChronoDuration::seconds(60))
+            .await
+            .fired[0]
+            .execution_id;
+        assert_ne!(first, second);
+
+        let q = runner.queue.read().await;
+        assert_eq!(q.count_for_job("beat:tick"), 1);
+        assert_eq!(
+            q.peek().unwrap().execution_id,
+            second.to_string(),
+            "only the latest fire stays queued"
+        );
+    }
+
+    /// Guard rail: the overflow guard must still bound *queued* jobs — the
+    /// #263 fix only exempts ephemeral mode.
+    #[tokio::test]
+    async fn queued_job_still_capped_by_overflow_guard() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("etl:sync".into(), make_trigger_due_now("etl:sync"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_job("etl:sync")], // default = Queued
+            store,
+            Arc::clone(&runner),
+        );
+
+        let mut now = Utc::now();
+        for _ in 0..15 {
+            scheduler.tick(now).await;
+            now += ChronoDuration::seconds(60);
+        }
+        // Default max_queue_depth is 10 — the guard stops enqueuing beyond it.
+        assert_eq!(runner.queue.read().await.count_for_job("etl:sync"), 10);
     }
 }
