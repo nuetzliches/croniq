@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-22
+
+### Added
+
+- **`execution_mode` on the job scheduling-state API + ephemeral UI cues
+  ([#266](https://github.com/nuetzliches/croniq/pull/266),
+  [#263](https://github.com/nuetzliches/croniq/issues/263)).**
+  `GET /v1/jobs/states` now reports each job's `execution_mode`
+  (`queued` / `ephemeral`). The Jobs dashboard shows an **"ephemeral"** badge
+  in the list and labels the execution mode in the job detail, and an
+  ephemeral job's empty execution history is now explained as expected —
+  rather than reading as a stalled or broken job.
+
+### Fixed
+
+- **Ephemeral jobs no longer wedge after a runner restart
+  ([#266](https://github.com/nuetzliches/croniq/pull/266), fixes
+  [#263](https://github.com/nuetzliches/croniq/issues/263)).** Ephemeral-mode
+  jobs stopped firing and sat `overdue` forever once a runner restarted, and
+  every ephemeral completion logged `execution not found for completion`. The
+  scheduler now tracks dispatched ephemeral execution ids in a self-pruning
+  set so a completion is acknowledged as a no-op instead of mis-reported as
+  `NotFound`; ephemeral jobs also bypass the queue-depth/quota backpressure
+  guards and use replace-latest enqueue (at most one queued item per job), so
+  non-persisted work can no longer pile up past the cap and freeze the
+  trigger.
+- **Quota guard no longer wedges drained queued jobs
+  ([#268](https://github.com/nuetzliches/croniq/pull/268)).** The per-job
+  quota guard incremented an in-flight counter on every fire but never
+  decremented it (no `release()` call path existed), so any persisted job
+  stopped firing after `max_parallel` (default 10) fires and sat `overdue`.
+  The unconfigurable parallel cap — redundant with the `max_queue_depth`
+  overflow guard, which bounds in-flight work from live queue state — was
+  removed; the self-healing per-minute trigger rate limit remains.
+
+### Security
+
+- **Dependency bumps resolving open Dependabot alerts
+  ([#258](https://github.com/nuetzliches/croniq/pull/258),
+  [#265](https://github.com/nuetzliches/croniq/pull/265)).** `vite`
+  8.0.14 → 8.0.16 (fixes the `server.fs.deny` Windows alternate-path bypass
+  and the launch-editor UNC-path NTLMv2 disclosure), `react-router` → 7.18.0
+  (CSRF via PUT/PATCH/DELETE document requests), `js-yaml` → 4.2.0, and
+  `@babel/core` → 7.29.7 across the UI and TypeScript SDKs.
+
 ## [0.20.1] - 2026-06-15
 
 ### Fixed
