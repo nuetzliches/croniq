@@ -105,6 +105,28 @@ impl WorkQueue {
         }
     }
 
+    /// Remove every queued item for `job_key`, returning the removed
+    /// execution IDs. Used by the scheduler to enforce "keep only the latest"
+    /// semantics for ephemeral jobs (issue #263): a fresh ephemeral fire
+    /// replaces any earlier, still-unclaimed one so non-persisted work can't
+    /// pile up against `max_queue_depth` while no runner is draining.
+    pub fn remove_job(&mut self, job_key: &str) -> Vec<String> {
+        let mut removed = Vec::new();
+        let mut i = 0;
+        while i < self.items.len() {
+            if self.items[i].job_key == job_key {
+                let item = self.items.remove(i).expect("index in bounds");
+                removed.push(item.execution_id);
+            } else {
+                i += 1;
+            }
+        }
+        if !removed.is_empty() {
+            self.per_job_count.remove(job_key);
+        }
+        removed
+    }
+
     /// Drain all items from the queue (e.g. for shutdown).
     pub fn drain(&mut self) -> Vec<WorkItem> {
         self.per_job_count.clear();
@@ -312,6 +334,30 @@ mod tests {
         // No-op remove leaves counter alone
         assert!(!q.remove("nonexistent"));
         assert_eq!(q.count_for_job("billing:invoice"), 0);
+    }
+
+    #[test]
+    fn remove_job_drops_all_items_for_key() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "beat:tick"));
+        q.enqueue(item_with_job("e2", "etl:sync"));
+        q.enqueue(item_with_job("e3", "beat:tick"));
+        assert_eq!(q.count_for_job("beat:tick"), 2);
+
+        let removed = q.remove_job("beat:tick");
+        assert_eq!(removed, vec!["e1".to_string(), "e3".to_string()]);
+        assert_eq!(q.count_for_job("beat:tick"), 0);
+        // Unrelated job untouched
+        assert_eq!(q.count_for_job("etl:sync"), 1);
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn remove_job_on_absent_key_is_noop() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "etl:sync"));
+        assert!(q.remove_job("beat:tick").is_empty());
+        assert_eq!(q.len(), 1);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use axum::{
 use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
+use croniq_config::compile::ExecutionMode;
 use croniq_store::models::{DslAdoption, JobDefinition, JobStatus, TriggerDefinition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -126,6 +127,12 @@ pub struct JobScheduleState {
     /// `true` when the trigger is active but its next scheduled fire is in
     /// the past — the scheduler hasn't advanced it, i.e. a missed fire.
     pub overdue: bool,
+    /// Execution mode of the job: `queued` (persisted executions) or
+    /// `ephemeral` (fire-and-forget, no execution rows). Surfaced so the
+    /// dashboard can explain why an `ephemeral` job legitimately shows no
+    /// execution history — otherwise indistinguishable from a broken job
+    /// (issue #263). Defaults to `queued` for store-managed jobs.
+    pub execution_mode: ExecutionMode,
 }
 
 /// `GET /v1/jobs/states` — per-job scheduling liveness from `job_states`.
@@ -148,11 +155,26 @@ pub async fn handle_list_states(
         .list_job_states()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Execution mode lives in the compiled DSL config, not in `job_states`.
+    // Build a key → mode lookup so each state row can carry it; store-managed
+    // jobs (no DSL entry) fall back to the default `queued`.
+    let exec_modes: std::collections::HashMap<String, ExecutionMode> =
+        if let Some(dsl) = state.dsl_jobs.as_ref() {
+            dsl.read()
+                .await
+                .iter()
+                .map(|cfg| (cfg.key.clone(), cfg.execution_mode))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
     let out = states
         .into_iter()
         .map(|s| {
             let overdue =
                 s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
+            let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
             JobScheduleState {
                 job_key: s.job_key,
                 status: s.status,
@@ -160,6 +182,7 @@ pub async fn handle_list_states(
                 last_fired_at: s.last_fired_at,
                 fire_count: s.fire_count,
                 overdue,
+                execution_mode,
             }
         })
         .collect();
