@@ -705,7 +705,13 @@ mod tests {
 
         assert_eq!(outcome, ProcessedOutcome::Ephemeral);
         // Consumed: a duplicate completion would now read as NotFound.
-        assert!(!runner.ephemeral_inflight.read().await.contains_key(&id.to_string()));
+        assert!(
+            !runner
+                .ephemeral_inflight
+                .read()
+                .await
+                .contains_key(&id.to_string())
+        );
     }
 
     #[tokio::test]
