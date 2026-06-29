@@ -487,6 +487,13 @@ async fn main() -> Result<()> {
         // signal at INFO, independent of whether any job fired.
         const HEARTBEAT_EVERY_TICKS: u64 = 300;
         let mut ticks_since_heartbeat: u64 = 0;
+        // Per-job ephemeral dispatch counts since the last heartbeat. Folded
+        // into the heartbeat line at `INFO` so ephemeral fires — which only
+        // log at `DEBUG` per-fire — leave an observable server-side trace
+        // without per-fire spam (issue #275). `BTreeMap` keeps the rendered
+        // order stable across heartbeats.
+        let mut ephemeral_since_heartbeat: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
         loop {
             tokio::select! {
                 _ = interval.tick() => {
@@ -498,13 +505,32 @@ async fn main() -> Result<()> {
                             if !result.fired.is_empty() {
                                 tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
                             }
+                            for fired in &result.fired {
+                                if fired.is_ephemeral {
+                                    *ephemeral_since_heartbeat
+                                        .entry(fired.job_key.clone())
+                                        .or_insert(0) += 1;
+                                }
+                            }
                             if ticks_since_heartbeat >= HEARTBEAT_EVERY_TICKS {
                                 ticks_since_heartbeat = 0;
+                                let ephemeral = if ephemeral_since_heartbeat.is_empty() {
+                                    "[]".to_string()
+                                } else {
+                                    let body = ephemeral_since_heartbeat
+                                        .iter()
+                                        .map(|(key, count)| format!("{key}:{count}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    format!("[{body}]")
+                                };
                                 tracing::info!(
                                     ticks_total = scheduler_task_heartbeat.ticks_total(),
                                     triggers = scheduler_loop.triggers.len(),
+                                    ephemeral = %ephemeral,
                                     "scheduler heartbeat — alive"
                                 );
+                                ephemeral_since_heartbeat.clear();
                             }
                         }
                         Err(_elapsed) => {
