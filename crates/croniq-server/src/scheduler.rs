@@ -101,6 +101,11 @@ pub struct FiredExecution {
     pub job_key: String,
     pub fire_at: DateTime<Utc>,
     pub attempt: u32,
+    /// Whether this fire was dispatched as an ephemeral (non-persisted)
+    /// execution. The scheduler task accumulates per-job ephemeral dispatch
+    /// counts and folds them into the periodic heartbeat at `INFO`, since the
+    /// per-fire dispatch itself only logs at `DEBUG` (issue #275).
+    pub is_ephemeral: bool,
 }
 
 /// The scheduler loop state.
@@ -423,6 +428,7 @@ impl SchedulerLoop {
                 job_key: job.key.clone(),
                 fire_at,
                 attempt: 1,
+                is_ephemeral,
             });
 
             if is_ephemeral {
@@ -537,6 +543,10 @@ mod tests {
         let result = scheduler.tick(Utc::now()).await;
         assert_eq!(result.fired.len(), 1);
         assert_eq!(result.fired[0].job_key, "test:job");
+        assert!(
+            !result.fired[0].is_ephemeral,
+            "a queued job must not be flagged ephemeral"
+        );
     }
 
     #[tokio::test]
@@ -762,6 +772,31 @@ mod tests {
         assert_eq!(runner.queue.read().await.count_for_job("beat:tick"), 1);
         // … and exactly one tracked ephemeral dispatch (no map leak).
         assert_eq!(runner.ephemeral_inflight.read().await.len(), 1);
+    }
+
+    /// Each ephemeral fire is flagged `is_ephemeral` on its `FiredExecution`
+    /// so the scheduler task can fold per-job dispatch counts into the
+    /// heartbeat at `INFO` (issue #275).
+    #[tokio::test]
+    async fn ephemeral_fire_is_flagged_ephemeral() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("beat:tick".into(), make_trigger_due_now("beat:tick"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_ephemeral_job("beat:tick")],
+            store,
+            runner,
+        );
+
+        let result = scheduler.tick(Utc::now()).await;
+        assert_eq!(result.fired.len(), 1);
+        assert!(
+            result.fired[0].is_ephemeral,
+            "an ephemeral job must be flagged ephemeral"
+        );
     }
 
     /// A fresh ephemeral fire replaces the previous still-queued one and the
