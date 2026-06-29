@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Ephemeral job dispatches now surface in the scheduler heartbeat
+  ([#276](https://github.com/nuetzliches/croniq/pull/276),
+  [#275](https://github.com/nuetzliches/croniq/issues/275)).** Ephemeral
+  jobs only logged their dispatch at `DEBUG`, so at the default `INFO`
+  level they left no server-side trace — an ephemeral job that stopped
+  firing looked identical to a healthy one. The periodic scheduler
+  heartbeat (`INFO`, ~5 min) now folds in per-job ephemeral dispatch counts
+  since the last heartbeat as `ephemeral=[<key>:N, …]`, giving an
+  observable liveness signal without per-fire log spam.
+
 ## [0.21.0] - 2026-06-22
 
 ### Added
