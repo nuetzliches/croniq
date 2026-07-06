@@ -23,6 +23,17 @@ export function ExecutionDetail({ execution }: { execution: Execution }) {
           ['Duration', execution.duration_ms ? `${execution.duration_ms}ms` : '—'],
           ['Fire at', formatDate(execution.fire_at)],
           ['Completed', execution.completed_at ? formatDate(execution.completed_at) : '—'],
+          // Only present on triggered executions whose caller sent a dedup
+          // key (#279) — hidden for the (vast) keyless majority.
+          ...(execution.idempotency_key
+            ? [[
+                'Idempotency key',
+                <span key="ik" className="flex items-center gap-1.5 font-mono">
+                  {execution.idempotency_key}
+                  <CopyButton value={execution.idempotency_key} label="Copy idempotency key" />
+                </span>,
+              ]]
+            : []),
         ].map(([label, value]) => (
           <div key={String(label)} className="contents">
             <span className="text-muted-foreground">{label}</span>
