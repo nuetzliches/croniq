@@ -53,6 +53,7 @@ import { EditJobDialog } from '@/components/EditJobDialog'
 import { NewJobDialog } from '@/components/NewJobDialog'
 import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { formatRelative, formatDate } from '@/lib/utils'
+import { useToasts } from '@/lib/toast'
 import { useCurrentUser } from '@/api/hooks'
 
 type Tab = 'overview' | 'executions' | 'schedule' | 'dsl' | 'alerts' | 'audit'
@@ -373,6 +374,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   const forecast = useForecast(180)
   const jobStates = useJobStates()
   const triggerJob = useTriggerJob()
+  const toast = useToasts((s) => s.push)
   const activateJob = useActivateJob()
   const deactivateJob = useDeactivateJob()
   const deleteJob = useDeleteJob()
@@ -431,7 +433,18 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   }
 
   function trigger() {
-    triggerJob.mutate(jobKey)
+    triggerJob.mutate(jobKey, {
+      onSuccess: (res) => {
+        toast(
+          res.deduplicated
+            ? {
+                variant: 'info',
+                message: `Trigger coalesced onto existing execution ${res.execution_id.slice(0, 8)} (idempotency key)`,
+              }
+            : { variant: 'success', message: `Triggered — execution ${res.execution_id.slice(0, 8)} queued` },
+        )
+      },
+    })
   }
 
   async function remove() {
@@ -831,6 +844,9 @@ function OverviewTab({
   executionMode?: ExecutionMode
 }) {
   const isEphemeral = executionMode === 'ephemeral'
+  // Stamped by the DSL compiler for `singleton` / `max_concurrent N` jobs
+  // (#278); DSL job definitions pass their compiled metadata through.
+  const maxConcurrent = job.metadata?.['__max_concurrent']
   const { data: me } = useCurrentUser()
   const ownerName = me?.display_name || me?.username || 'system'
   const ownerEmail = me?.email ?? ''
@@ -942,6 +958,28 @@ function OverviewTab({
               }
             />
             <DetailRow label="Max retries" value={<span className="mono">{job.max_retries ?? '—'}</span>} />
+            <DetailRow
+              label="Concurrency"
+              value={
+                maxConcurrent === '1' ? (
+                  <StatusPill
+                    state="singleton"
+                    tone="info"
+                    dot={false}
+                    title="At most one execution of this job in flight — enforced server-side at claim time"
+                  />
+                ) : maxConcurrent ? (
+                  <span
+                    className="mono"
+                    title="Concurrent executions of this job are capped — enforced server-side at claim time"
+                  >
+                    max {maxConcurrent} in flight
+                  </span>
+                ) : (
+                  <span className="dim">unbounded</span>
+                )
+              }
+            />
             <DetailRow
               label="Dead letter"
               value={
