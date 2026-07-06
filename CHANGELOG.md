@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-07-06
+
 ### Changed
 
 - **`POST /v1/trigger` ignores caller metadata in the reserved `__` namespace.**
