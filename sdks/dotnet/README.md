@@ -66,7 +66,49 @@ await builder.Build().RunAsync();
 - **Health checks** — `services.AddHealthChecks().AddCroniqRunnerHealthCheck()`.
 - **OpenTelemetry** — opt-in via `tracerBuilder.AddCroniqRunnerInstrumentation()` (separate package).
 - **Shell-exec decoder** — handles DSL `runner shell { … }` / `runner exec { … }` jobs by decoding `__runner_exec` metadata and spawning a subprocess; stdout/stderr is streamed via the log writer.
+- **Producer-side trigger client** — `AddCroniqClient(...)` + `ICroniqTriggerClient.TriggerAsync(...)` wrap `POST /v1/trigger` with separate credentials (`jobs:trigger` scope) and optional idempotency keys.
 - **AOT-compatible** — strongly-typed JSON via source-generated `JsonSerializerContext`.
+
+## Triggering jobs on demand (producer client)
+
+Besides the runner (consumer) side, the SDK ships a first-class **trigger client** wrapping `POST /v1/trigger`. It lets application code fire a registered job in response to an event — the same handler then serves both the Croniqfile schedule (reconcile floor) and near-real-time event-driven execution:
+
+```csharp
+builder.Services.AddCroniqClient(builder.Configuration.GetSection(CroniqClientOptions.SectionName));
+
+// anywhere via DI:
+public sealed class SignupService(ICroniqTriggerClient croniq)
+{
+    public async Task OnSignupAsync(string userId, CancellationToken ct)
+    {
+        var result = await croniq.TriggerAsync(
+            "crm:welcome-mail",
+            metadata: new Dictionary<string, string> { ["user_id"] = userId },
+            idempotencyKey: $"signup-{userId}",
+            cancellationToken: ct);
+        // result.ExecutionId, result.Queued, result.Deduplicated
+    }
+}
+```
+
+`appsettings.json`:
+
+```json
+{
+  "Croniq": {
+    "Client": {
+      "ServerUrl": "http://localhost:4000",
+      "ApiKey": "croniq_…"
+    }
+  }
+}
+```
+
+Notes:
+
+- `AddCroniqClient` is independent of `AddCroniqRunner` — register either or both. Like the runner registration, it is idempotent.
+- Triggering requires the `jobs:trigger` (or `admin`) scope, which runner poll keys typically do not carry — the client therefore uses **its own credentials** (`Croniq:Client` section) instead of the runner's.
+- `idempotencyKey` enables server-side dedup of at-least-once producers (repeat triggers with the same key coalesce onto the existing execution and return `Deduplicated = true`); servers without support ignore the field.
 
 ## Capabilities vs Tags
 

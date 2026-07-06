@@ -27,6 +27,8 @@ namespace Croniq.Runner.Sdk.Internal;
 [JsonSerializable(typeof(EventsResponse))]
 [JsonSerializable(typeof(RegisterJobResponse))]
 [JsonSerializable(typeof(RunnerExec))]
+[JsonSerializable(typeof(TriggerRequest))]
+[JsonSerializable(typeof(TriggerResponse))]
 internal sealed partial class CroniqJsonContext : JsonSerializerContext
 {
 }
