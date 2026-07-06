@@ -1098,6 +1098,23 @@ async fn handle_trigger(
     };
     if let serde_json::Value::Object(ref map) = req.metadata {
         for (k, v) in map {
+            // The `__`-prefixed namespace is reserved for keys the
+            // scheduler / DSL compiler stamp (`__runner_exec`, `__require`,
+            // `__prefer`, `__max_concurrent`, …) and that runners act on
+            // directly. Caller-supplied metadata must not reach into it —
+            // overriding `__require`/`__max_concurrent` would subvert
+            // routing and the concurrency guard, and `__runner_exec` is
+            // consumed verbatim by the shell runner. Drop such keys; the
+            // caller's own `require`/`prefer` request fields (applied
+            // below) are the supported way to influence those.
+            if k.starts_with("__") {
+                tracing::debug!(
+                    job_key = %req.job_key,
+                    key = %k,
+                    "trigger: ignoring caller metadata key in reserved `__` namespace"
+                );
+                continue;
+            }
             metadata.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
         }
     }
@@ -1801,6 +1818,96 @@ mod tests {
             "staging",
             "caller env must override DSL env"
         );
+    }
+
+    #[tokio::test]
+    async fn trigger_caller_metadata_cannot_touch_reserved_namespace() {
+        // Caller-supplied metadata must not reach into the `__`-prefixed
+        // namespace: __runner_exec is consumed verbatim by the shell runner,
+        // and __require / __max_concurrent drive routing and the concurrency
+        // guard. The DSL-stamped __runner_exec must win over any caller
+        // attempt to replace it, and a caller-invented __max_concurrent must
+        // not appear on the work item.
+        use crate::loader::load_str;
+        use croniq_config::compile::RUNNER_EXEC_METADATA_KEY;
+
+        let dsl = r#"
+            job test:reserved {
+                every 1 hour
+                runner shell { command "echo legit" }
+            }
+        "#;
+        let loaded = load_str(dsl).unwrap();
+        let jobs = loaded.runtime.jobs;
+        let dsl_runner_exec = jobs[0]
+            .metadata
+            .get(RUNNER_EXEC_METADATA_KEY)
+            .cloned()
+            .expect("DSL should stamp __runner_exec");
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let dsl_jobs = Arc::new(tokio::sync::RwLock::new(jobs));
+        let state = Arc::new(ServerState {
+            runner,
+            completion_tx: tx,
+            long_poll_timeout: Duration::from_millis(50),
+            jwt_config: None,
+            store: None,
+            scheduler_tx: None,
+            triggers: None,
+            dsl_jobs: Some(dsl_jobs),
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: None,
+            oidc: None,
+            password_login_enabled: true,
+            require_totp: false,
+            alerts: croniq_config::compile::AlertsConfig::default(),
+            console_hub: None,
+            scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+        });
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "test:reserved",
+                "metadata": {
+                    "__runner_exec": "{\"Exec\":{\"argv\":[\"/bin/sh\",\"-c\",\"rm -rf /\"]}}",
+                    "__max_concurrent": "999",
+                    "env": "staging"
+                },
+                "require": [],
+                "prefer": []
+            }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1);
+        // The DSL-stamped payload wins; the caller's injected one is dropped.
+        assert_eq!(
+            items[0]
+                .metadata
+                .get(RUNNER_EXEC_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some(dsl_runner_exec.as_str()),
+            "caller must not override the reserved __runner_exec key"
+        );
+        // A caller-invented reserved key never lands on the work item.
+        assert!(
+            items[0].metadata.get("__max_concurrent").is_none(),
+            "caller must not inject reserved __max_concurrent"
+        );
+        // Non-reserved caller metadata still flows through.
+        assert_eq!(items[0].metadata["env"].as_str().unwrap(), "staging");
     }
 
     // ─── Trigger endpoint: idempotency_key dedup (issue #279) ───────────────
