@@ -268,6 +268,11 @@ job etl:sync {
   # max_concurrent 3
   # (`singleton` is shorthand for `max_concurrent 1`; the two directives
   # are mutually exclusive.)
+  #
+  # The guard requires `queued` mode: it counts persisted in-flight
+  # executions. `ephemeral` jobs are not persisted, so `singleton` /
+  # `max_concurrent` there is rejected at validation time — use `queued`
+  # if a fire-and-forget poll must never overlap itself.
 }
 
 # High-frequency monitoring job — fire-and-forget, no DB overhead
