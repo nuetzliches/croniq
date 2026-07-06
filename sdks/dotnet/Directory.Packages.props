@@ -32,6 +32,8 @@
     <PackageVersion Include="WireMock.Net" Version="1.6.7" />
     <!-- Transitive pin: WireMock.Net 1.6.7 brings System.Linq.Dynamic.Core 1.3.12 which has GHSA-4cv2-4hjh-77rx. Force 1.7.2 (fixed). -->
     <PackageVersion Include="System.Linq.Dynamic.Core" Version="1.7.2" />
+    <!-- Transitive pin: WireMock.Net 1.6.7 brings Scriban.Signed 5.5.0 which has GHSA-24c8-4792-22hx. Force 7.2.5 (fixed). -->
+    <PackageVersion Include="Scriban.Signed" Version="7.2.5" />
     <PackageVersion Include="YamlDotNet" Version="16.0.0" />
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
   </ItemGroup>

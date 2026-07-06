@@ -6,6 +6,14 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Infrastructure
+
+- Transitive pin of `Scriban.Signed` to 7.2.5 in the test projects —
+  WireMock.Net 1.6.7 brings 5.5.0, which trips NuGet audit via
+  [GHSA-24c8-4792-22hx](https://github.com/advisories/GHSA-24c8-4792-22hx)
+  (build-breaking with `TreatWarningsAsErrors`). Test-only dependency; the
+  shipped packages are unaffected.
+
 ## [0.2.0] - 2026-05-28
 
 ### Fixed
