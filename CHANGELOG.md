@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-06
+
 ### Added
 
 - **Per-job concurrency guard: `singleton` / `max_concurrent N`
@@ -35,6 +37,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at-least-once producers, not a strict exactly-once guarantee. Migration
   019 adds the nullable `executions.idempotency_key` column plus a partial
   `(job_key, idempotency_key)` index.
+- **UI surfacing for both features
+  ([#292](https://github.com/nuetzliches/croniq/pull/292)).** The execution
+  detail shows the caller-supplied idempotency key (with copy button) when
+  present; the manual Trigger button now reports the queued execution id and
+  flags when the server coalesced onto an existing execution; the job
+  overview's Routing card gains a Concurrency row (`singleton` pill /
+  `max N in flight` / `unbounded`).
 - **Ephemeral job dispatches now surface in the scheduler heartbeat
   ([#276](https://github.com/nuetzliches/croniq/pull/276),
   [#275](https://github.com/nuetzliches/croniq/issues/275)).** Ephemeral
