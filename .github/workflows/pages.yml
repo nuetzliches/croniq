@@ -3,6 +3,12 @@ name: Deploy site
 on:
   push:
     branches: [main]
+  # Manual redeploy escape hatch: a transient "Deployment failed, try again
+  # later" from actions/deploy-pages cannot be fixed by re-running the failed
+  # job — the rerun's rebuilt artifact joins the first attempt's one and
+  # deploy-pages hard-errors on the duplicate "github-pages" name. A fresh
+  # dispatch gets a clean run (and a clean artifact slate) instead.
+  workflow_dispatch:
     paths:
       - 'site/**'
       # The deploy bundles a fresh build of croniq-config-wasm into
