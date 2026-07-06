@@ -1,0 +1,54 @@
+<Project>
+  <!--
+    These groups are conditioned on $(IsPackable), which each .csproj sets —
+    AFTER Directory.Build.props is evaluated. They must therefore live here:
+    Directory.Build.targets is imported after the project body, so the
+    condition sees the final value. In Directory.Build.props the same
+    condition silently never matched (properties evaluate in import order;
+    only ITEMS evaluate after all properties), which is why 0.1.0–0.3.0
+    shipped without license/readme/icon/tags metadata and without .snupkg
+    symbol packages despite this configuration existing since day one.
+  -->
+
+  <PropertyGroup Label="Pack" Condition="'$(IsPackable)' == 'true'">
+    <PackageTags>croniq;cron;scheduler;jobs;runner;worker;sdk</PackageTags>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>croniq-icon.png</PackageIcon>
+    <PackageProjectUrl>https://github.com/nuetzliches/croniq</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nuetzliches/croniq</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup Label="SourceLink" Condition="'$(IsPackable)' == 'true'">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!--
+    Deliberately NOT migrated from the dead Directory.Build.props block:
+
+      <IsAotCompatible>true</IsAotCompatible>
+      <IsTrimmable>true</IsTrimmable>
+
+    These flags never actually applied (same evaluation-order trap), so the
+    trim/AOT analyzers have never run. Enabling them surfaces 22 genuine
+    IL2026/IL3050/IL2091 findings in the DI/options layer (config binding,
+    ValidateDataAnnotations, open-generic handler registration) that need
+    real annotation work on the public API. Tracked in issue #295; turning
+    the flags on without that work would either break the build
+    (TreatWarningsAsErrors) or overclaim AOT support in the package.
+  -->
+
+  <PropertyGroup Label="MinVer" Condition="'$(IsPackable)' == 'true'">
+    <MinVerTagPrefix>dotnet-sdk-v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
+  </PropertyGroup>
+</Project>
