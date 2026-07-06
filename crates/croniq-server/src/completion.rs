@@ -749,6 +749,9 @@ mod tests {
 
     // ─── Alerts (issue #140) ────────────────────────────────────────
 
+    // Unix-only: asserts a `Delivered` state through a Shell channel,
+    // and shell alert delivery spawns `sh -c` (absent on stock Windows).
+    #[cfg(unix)]
     #[tokio::test]
     async fn dead_letter_dispatches_configured_alert_rule() {
         use croniq_config::compile::{
