@@ -111,6 +111,35 @@ async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Vec<u8>) {
     (status, bytes)
 }
 
+/// A 6-digit code guaranteed to be rejected for `secret_b32` — a hardcoded
+/// "000000" would collide with a genuinely valid code in ~3e-6 of runs (3
+/// accepted skew windows out of 10^6 codes) and flake. Recomputes the valid
+/// codes with the same parameters croniq-auth uses (SHA1, 6 digits, 30 s
+/// step, skew 1) for the windows around now — padded a few steps into the
+/// future so a stall between this call and the server's check can't promote
+/// the picked code to valid — and returns a code outside that set.
+fn guaranteed_wrong_code(secret_b32: &str) -> String {
+    let secret = totp_rs::Secret::Encoded(secret_b32.to_string())
+        .to_bytes()
+        .unwrap();
+    let totp = totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 1, 30, secret).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let valid: Vec<String> = (0..=5u64)
+        .map(|i| totp.generate(now - 30 + i * 30))
+        .collect();
+    let mut candidate: u64 = valid[1].parse().unwrap();
+    loop {
+        candidate = (candidate + 1) % 1_000_000;
+        let code = format!("{candidate:06}");
+        if !valid.contains(&code) {
+            return code;
+        }
+    }
+}
+
 /// Log in (enforced 2FA, no secret) and return the issued `enroll_token`.
 async fn login_enroll_token(app: &axum::Router) -> String {
     let (status, body) = post_json(
@@ -168,18 +197,20 @@ async fn enroll_confirm_rejects_wrong_code() {
     let app = app_with_user(true);
     let token = login_enroll_token(&app).await;
     // begin to persist a pending secret
-    let (s1, _) = post_json(
+    let (s1, body) = post_json(
         app.clone(),
         "/v1/auth/login/enroll/totp/begin",
         serde_json::json!({ "enroll_token": token.clone() }),
     )
     .await;
     assert_eq!(s1, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let wrong = guaranteed_wrong_code(v["secret"].as_str().unwrap());
     // a wrong code must not enable TOTP
     let (s2, _) = post_json(
         app,
         "/v1/auth/login/enroll/totp/confirm",
-        serde_json::json!({ "enroll_token": token, "code": "000000" }),
+        serde_json::json!({ "enroll_token": token, "code": wrong }),
     )
     .await;
     assert_eq!(s2, StatusCode::UNAUTHORIZED);
