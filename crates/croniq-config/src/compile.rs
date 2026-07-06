@@ -1722,7 +1722,8 @@ mod tests {
         // Issue #302: the concurrency guard can't be enforced for ephemeral
         // jobs (executions aren't persisted), so compile must not stamp an
         // inert `__max_concurrent`. `ephemeral` schedule prefix here.
-        let ast = Parser::parse(r#"job beat:tick { ephemeral every 1 minute; singleton }"#).unwrap();
+        let ast =
+            Parser::parse(r#"job beat:tick { ephemeral every 1 minute; singleton }"#).unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
         assert_eq!(cfg.jobs[0].max_concurrent, None);
