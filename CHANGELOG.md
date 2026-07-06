@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`POST /v1/trigger` ignores caller metadata in the reserved `__` namespace.**
+  Internal keys (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`,
+  …) are stamped by the scheduler / DSL compiler and consumed directly by
+  runners; the trigger endpoint now drops any `__`-prefixed keys from the
+  caller's `metadata` instead of merging them over the DSL-compiled values.
+  Use the request's `require` / `prefer` fields to influence routing. DSL
+  metadata and non-reserved caller keys are unaffected.
+
 ## [0.22.0] - 2026-07-06
 
 ### Added
