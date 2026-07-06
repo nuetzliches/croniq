@@ -1308,6 +1308,13 @@ fn compile_job(
         catch_up = CatchUpPolicy::None;
         queue_ttl = None;
         max_queue_depth = Some(1);
+        // `singleton` / `max_concurrent` can't be enforced for ephemeral jobs:
+        // executions aren't persisted, so the claim-time guard never sees an
+        // in-flight run (issue #302). Drop the limit so the compiled job never
+        // advertises a `__max_concurrent` guard that is silently inert.
+        // `validate.rs` rejects the combination so a well-formed deploy never
+        // reaches this fallback.
+        max_concurrent = None;
     }
 
     // Stamp the concurrency limit into the job metadata so it rides along
@@ -1707,6 +1714,77 @@ mod tests {
             !cfg.jobs[0]
                 .metadata
                 .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn compile_ephemeral_drops_singleton_guard() {
+        // Issue #302: the concurrency guard can't be enforced for ephemeral
+        // jobs (executions aren't persisted), so compile must not stamp an
+        // inert `__max_concurrent`. `ephemeral` schedule prefix here.
+        let ast =
+            Parser::parse(r#"job beat:tick { ephemeral every 1 minute; singleton }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY),
+            "ephemeral job must not carry an inert __max_concurrent"
+        );
+    }
+
+    #[test]
+    fn compile_ephemeral_directive_drops_max_concurrent_guard() {
+        // Same, but ephemeral comes from the `execution_mode` directive and
+        // the guard from `max_concurrent N`.
+        let ast = Parser::parse(
+            r#"job beat:tick { every 1 minute; execution_mode ephemeral; max_concurrent 3 }"#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn compile_ephemeral_default_drops_singleton_guard() {
+        // Ephemeral inherited from a `defaults` block still drops the guard.
+        let ast = Parser::parse(
+            r#"
+            defaults { execution_mode ephemeral }
+            job beat:tick { every 1 minute; singleton }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn compile_queued_keeps_singleton_guard() {
+        // A queued job (the default) keeps the guard — only ephemeral drops it.
+        let ast = Parser::parse(r#"job etl:sync { every 1 minute; singleton }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, Some(1));
+        assert_eq!(
+            cfg.jobs[0]
+                .metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .map(String::as_str),
+            Some("1")
         );
     }
 

@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`singleton` / `max_concurrent` on an `ephemeral` job is now rejected instead
+  of silently no-op'ing ([#302](https://github.com/nuetzliches/croniq/issues/302)).**
+  The concurrency guard ([#278](https://github.com/nuetzliches/croniq/issues/278))
+  counts persisted in-flight executions in the store, but `ephemeral` jobs
+  deliberately do not persist their executions — so `singleton` / `max_concurrent`
+  compiled clean yet provided zero overlap protection, a silent footgun for a
+  fire-and-forget poll with external side effects. Config validation now errors
+  on the combination (whether `ephemeral` comes from a schedule prefix, an
+  `execution_mode` directive, or a `defaults {}` block), and the compiler no
+  longer stamps the inert `__max_concurrent` metadata onto ephemeral jobs. Use
+  `queued` (which persists executions) when a fire-and-forget poll must never
+  overlap itself.
+
 ## [0.22.1] - 2026-07-06
 
 ### Changed

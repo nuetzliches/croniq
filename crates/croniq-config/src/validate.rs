@@ -38,9 +38,24 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
         }
     }
 
+    // Running `defaults { execution_mode … }` baseline. Tracked in item order
+    // so per-job ephemeral detection matches compile_job: a defaults block only
+    // affects jobs declared after it, and later blocks/directives win.
+    let mut default_ephemeral = false;
+
     // Second pass: validate everything
     for item in &ast.items {
         match item {
+            Item::Defaults(def) => {
+                for dob in &def.directives {
+                    if let DirectiveOrBlock::Directive(dir) = dob
+                        && dir.key.value == "execution_mode"
+                        && let Some(arg) = dir.args.first()
+                    {
+                        default_ephemeral = arg.value == "ephemeral";
+                    }
+                }
+            }
             Item::Job(job) => {
                 // Unique job keys
                 if !job_keys.insert(job.key.raw.clone()) {
@@ -88,8 +103,8 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
                 // Validate runner constraints
                 validate_runner_constraints(job, &mut diags);
 
-                // Validate singleton / max_concurrent (issue #278)
-                validate_concurrency(job, &mut diags);
+                // Validate singleton / max_concurrent (issue #278, #302)
+                validate_concurrency(job, default_ephemeral, &mut diags);
             }
             Item::Calendar(cal) => {
                 validate_calendar(cal, &mut diags);
@@ -277,9 +292,21 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
 /// Validate the per-job concurrency guard directives (issue #278):
 /// `singleton` (bare) and `max_concurrent N` are mutually exclusive, and
 /// `max_concurrent` requires a positive integer argument.
-fn validate_concurrency(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
+///
+/// Also rejects the guard on an `ephemeral` job (issue #302): ephemeral
+/// executions are never persisted, so the claim-time concurrency guard — which
+/// counts `Claimed` execution rows in the store — can never observe an
+/// in-flight ephemeral run. `singleton` / `max_concurrent` therefore compiles
+/// clean but is silently inert on an ephemeral job. `default_ephemeral` is the
+/// running `defaults { execution_mode … }` baseline; the effective mode is
+/// resolved exactly as `compile_job` does (default → schedule prefix →
+/// `execution_mode` directive).
+fn validate_concurrency(job: &JobBlock, default_ephemeral: bool, diags: &mut Vec<Diagnostic>) {
     let mut singleton_seen = false;
     let mut max_concurrent_seen = false;
+    // Keyword + span of the first concurrency directive seen, reused for the
+    // ephemeral-combo diagnostic so it points at the offending directive.
+    let mut guard: Option<(&str, SourceSpan)> = None;
 
     for dob in &job.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
@@ -298,6 +325,7 @@ fn validate_concurrency(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     });
                 }
                 singleton_seen = true;
+                guard.get_or_insert(("singleton", d.key.span.into()));
             }
             "max_concurrent" => {
                 if singleton_seen {
@@ -311,6 +339,7 @@ fn validate_concurrency(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     });
                 }
                 max_concurrent_seen = true;
+                guard.get_or_insert(("max_concurrent", d.key.span.into()));
 
                 match d.args.first() {
                     None => {
@@ -354,6 +383,45 @@ fn validate_concurrency(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
             _ => {}
         }
     }
+
+    // Issue #302: the guard is inert on ephemeral jobs — reject the combination
+    // so it can't ship silently. Anchored on the first guard directive.
+    if let Some((kw, span)) = guard
+        && job_is_ephemeral(job, default_ephemeral)
+    {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "`{kw}` has no effect on the `ephemeral` job '{}': ephemeral executions are not \
+                 persisted, so the concurrency guard can never observe an in-flight run. Use \
+                 `queued` for a real overlap guarantee, or drop `{kw}`.",
+                job.key.raw
+            ),
+            span,
+        });
+    }
+}
+
+/// Whether a job's effective execution mode is `ephemeral`, mirroring
+/// `compile_job`'s precedence: the `defaults` baseline (`default_ephemeral`),
+/// overridden by a schedule prefix (`ephemeral` / `queued`), overridden last
+/// by an `execution_mode` directive. Placeholder directive values can't be
+/// resolved statically and read as non-ephemeral, matching compile's
+/// `_ => Queued` fallback for anything that isn't the literal `ephemeral`.
+fn job_is_ephemeral(job: &JobBlock, default_ephemeral: bool) -> bool {
+    let mut ephemeral = default_ephemeral;
+    if let Some(mode) = job.schedule.as_ref().and_then(|s| s.mode) {
+        ephemeral = matches!(mode, ScheduleMode::Ephemeral);
+    }
+    for dob in &job.directives {
+        if let DirectiveOrBlock::Directive(d) = dob
+            && d.key.value == "execution_mode"
+            && let Some(arg) = d.args.first()
+        {
+            ephemeral = arg.value == "ephemeral";
+        }
+    }
+    ephemeral
 }
 
 fn validate_runner_exec_block(
@@ -812,6 +880,124 @@ mod tests {
             diags.iter().any(|d| d.severity == Severity::Error
                 && d.message.contains("requires a positive integer argument")),
             "expected missing-argument error, got: {diags:?}"
+        );
+    }
+
+    // ── ephemeral + concurrency guard (issue #302) ────────────────────────────
+
+    /// True when any diagnostic is the ephemeral/guard-combo rejection.
+    fn has_ephemeral_guard_error(diags: &[Diagnostic]) -> bool {
+        diags.iter().any(|d| {
+            d.severity == Severity::Error && d.message.contains("no effect on the `ephemeral` job")
+        })
+    }
+
+    #[test]
+    fn ephemeral_prefix_with_singleton_errors() {
+        let diags = validate_src(r#"job beat:tick { ephemeral every 1 minute; singleton }"#);
+        assert!(
+            has_ephemeral_guard_error(&diags),
+            "singleton on an ephemeral job must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_prefix_with_max_concurrent_errors() {
+        let diags = validate_src(r#"job beat:tick { ephemeral every 1 minute; max_concurrent 3 }"#);
+        assert!(
+            has_ephemeral_guard_error(&diags),
+            "max_concurrent on an ephemeral job must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_directive_with_singleton_errors() {
+        let diags = validate_src(
+            r#"job beat:tick { every 1 minute; execution_mode ephemeral; singleton }"#,
+        );
+        assert!(
+            has_ephemeral_guard_error(&diags),
+            "execution_mode ephemeral + singleton must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_default_with_singleton_errors() {
+        // Ephemeral inherited from a `defaults` block declared before the job.
+        let diags = validate_src(
+            r#"
+            defaults { execution_mode ephemeral }
+            job beat:tick { every 1 minute; singleton }
+        "#,
+        );
+        assert!(
+            has_ephemeral_guard_error(&diags),
+            "singleton on a defaults-ephemeral job must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_without_guard_is_valid() {
+        let diags = validate_src(r#"job beat:tick { ephemeral every 1 minute }"#);
+        assert!(
+            !has_ephemeral_guard_error(&diags),
+            "a plain ephemeral job must not be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn queued_with_singleton_has_no_ephemeral_error() {
+        // The default (queued) job keeps the guard — no ephemeral rejection.
+        let diags = validate_src(r#"job etl:sync { every 1 minute; singleton }"#);
+        assert!(
+            !has_ephemeral_guard_error(&diags),
+            "queued + singleton must not trigger the ephemeral rejection, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn queued_prefix_overrides_ephemeral_default_no_error() {
+        // A `queued` schedule prefix overrides an ephemeral default, so the
+        // guard is valid again — mirrors compile_job's precedence.
+        let diags = validate_src(
+            r#"
+            defaults { execution_mode ephemeral }
+            job etl:sync { queued every 1 minute; singleton }
+        "#,
+        );
+        assert!(
+            !has_ephemeral_guard_error(&diags),
+            "queued prefix must un-reject the guard, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn execution_mode_queued_directive_overrides_ephemeral_default_no_error() {
+        let diags = validate_src(
+            r#"
+            defaults { execution_mode ephemeral }
+            job etl:sync { every 1 minute; execution_mode queued; singleton }
+        "#,
+        );
+        assert!(
+            !has_ephemeral_guard_error(&diags),
+            "execution_mode queued must un-reject the guard, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn defaults_after_job_does_not_reject_earlier_job() {
+        // A defaults block declared *after* a job does not apply to it, matching
+        // compile_job's in-order handling — so no false-positive rejection.
+        let diags = validate_src(
+            r#"
+            job etl:sync { every 1 minute; singleton }
+            defaults { execution_mode ephemeral }
+        "#,
+        );
+        assert!(
+            !has_ephemeral_guard_error(&diags),
+            "a later defaults block must not retroactively reject an earlier job, got: {diags:?}"
         );
     }
 }
