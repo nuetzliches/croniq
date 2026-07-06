@@ -240,6 +240,10 @@ impl CompletionProcessor {
                 None,
                 now,
             );
+            // The claimed → cancelled transition frees a per-job concurrency
+            // slot (issue #278) — wake long-polling runners so a blocked
+            // guarded item is re-evaluated promptly.
+            self.runner.work_notify.notify_waiters();
             return ProcessedOutcome::Completed;
         }
 
@@ -255,7 +259,7 @@ impl CompletionProcessor {
 
         let outcome = policy.evaluate(&exec_result);
 
-        match outcome {
+        let processed = match outcome {
             ExecutionOutcome::Success => {
                 let _ = self.store.complete_execution(
                     exec_uuid,
@@ -410,7 +414,16 @@ impl CompletionProcessor {
                 );
                 ProcessedOutcome::Completed
             }
-        }
+        };
+
+        // Every processed completion moves an execution out of `claimed`,
+        // freeing a per-job concurrency slot (issue #278). Wake long-polling
+        // runners so a guarded item blocked on that slot is re-evaluated
+        // without waiting for the poll timeout. (The retry arm re-enqueues
+        // and already notified above; an extra wake is harmless.)
+        self.runner.work_notify.notify_waiters();
+
+        processed
     }
 }
 
@@ -458,6 +471,7 @@ mod tests {
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
             queue_ttl: None,
             max_queue_depth: None,
+            max_concurrent: None,
             tags: vec![],
         }
     }

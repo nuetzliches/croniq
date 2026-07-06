@@ -112,6 +112,18 @@ pub trait ExecutionStore {
     /// Count executions by state.
     fn count_by_state(&self) -> Result<std::collections::HashMap<ExecutionState, u64>, StoreError>;
 
+    /// Count executions of `job_key` currently in any of `states`.
+    ///
+    /// Backs the per-job concurrency guard (issue #278): the claim path
+    /// counts `Claimed` rows — the store's single in-flight state — to decide
+    /// whether a `singleton` / `max_concurrent` job has a free slot. An empty
+    /// `states` slice returns 0.
+    fn count_executions_in_states(
+        &self,
+        job_key: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError>;
+
     /// Per-job execution aggregates for the `/metrics` endpoint, computed on
     /// demand with one grouped scan (no separate counters are persisted).
     /// Returns one entry per `job_key` that has at least one execution.

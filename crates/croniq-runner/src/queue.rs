@@ -39,10 +39,25 @@ impl WorkQueue {
     ///
     /// Returns `None` if no eligible item exists.
     pub fn dequeue_for(&mut self, capabilities: &[String]) -> Option<WorkItem> {
-        let pos = self
-            .items
-            .iter()
-            .position(|item| item.require.iter().all(|req| capabilities.contains(req)));
+        self.dequeue_for_where(capabilities, |_| true)
+    }
+
+    /// Like [`Self::dequeue_for`], but additionally requires `eligible` to
+    /// return `true` for the item. Ineligible items are skipped in place —
+    /// the same semantics as a capability mismatch — so a blocked item keeps
+    /// its FIFO position without starving items queued behind it.
+    ///
+    /// Used by the per-job concurrency guard (issue #278): the server passes
+    /// a predicate that rejects items whose job already has `max_concurrent`
+    /// executions in flight, and the item simply stays queued.
+    pub fn dequeue_for_where(
+        &mut self,
+        capabilities: &[String],
+        mut eligible: impl FnMut(&WorkItem) -> bool,
+    ) -> Option<WorkItem> {
+        let pos = self.items.iter().position(|item| {
+            item.require.iter().all(|req| capabilities.contains(req)) && eligible(item)
+        });
 
         pos.map(|i| {
             let item = self.items.remove(i).expect("index just found");
@@ -358,6 +373,47 @@ mod tests {
         q.enqueue(item_with_job("e1", "etl:sync"));
         assert!(q.remove_job("beat:tick").is_empty());
         assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn dequeue_for_where_skips_ineligible_items_in_place() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "guarded:job"));
+        q.enqueue(item_with_job("e2", "other:job"));
+
+        // Predicate blocks the guarded job — the next eligible item behind
+        // it must still be dequeued (no starvation of other jobs).
+        let got = q
+            .dequeue_for_where(&[], |item| item.job_key != "guarded:job")
+            .unwrap();
+        assert_eq!(got.execution_id, "e2");
+
+        // The blocked item keeps its position (and its per-job count).
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.peek().unwrap().execution_id, "e1");
+        assert_eq!(q.count_for_job("guarded:job"), 1);
+    }
+
+    #[test]
+    fn dequeue_for_where_returns_none_when_all_blocked() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "guarded:job"));
+
+        assert!(q.dequeue_for_where(&[], |_| false).is_none());
+        // Item remains queued for a later attempt.
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.count_for_job("guarded:job"), 1);
+    }
+
+    #[test]
+    fn dequeue_for_where_still_respects_capabilities() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item("exec-billing", vec!["billing"]));
+
+        // Predicate says yes but the runner lacks the capability.
+        assert!(q.dequeue_for_where(&["etl".into()], |_| true).is_none());
+        let got = q.dequeue_for_where(&["billing".into()], |_| true);
+        assert!(got.is_some());
     }
 
     #[test]

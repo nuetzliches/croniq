@@ -508,6 +508,29 @@ impl ExecutionStore for PgStore {
         Ok(map)
     }
 
+    fn count_executions_in_states(
+        &self,
+        job_key: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError> {
+        if states.is_empty() {
+            return Ok(0);
+        }
+        let mut client = self.client.lock().unwrap();
+        let state_strs: Vec<String> = states
+            .iter()
+            .map(|s| state_to_str(*s).to_string())
+            .collect();
+        let row = client
+            .query_one(
+                "SELECT COUNT(*) FROM executions WHERE job_key = $1 AND state = ANY($2)",
+                &[&job_key, &state_strs],
+            )
+            .map_err(map_err)?;
+        let count: i64 = row.get(0);
+        Ok(count as u64)
+    }
+
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
         let mut client = self.client.lock().unwrap();
 

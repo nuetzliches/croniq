@@ -552,6 +552,9 @@ pub fn job_config_from_definition(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        // API-registered jobs carry a concurrency limit (if any) through
+        // their metadata (`__max_concurrent`) rather than this DSL field.
+        max_concurrent: None,
         tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
     }
 }
@@ -602,6 +605,9 @@ pub fn job_config_from_job_def(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        // API-registered jobs carry a concurrency limit (if any) through
+        // their metadata (`__max_concurrent`) rather than this DSL field.
+        max_concurrent: None,
         tags: job_def.tags.clone(),
     }
 }

@@ -424,6 +424,13 @@ pub struct JobConfig {
     /// Max queued executions per job before new fires are skipped.
     /// `None` falls back to the global default of 10.
     pub max_queue_depth: Option<u32>,
+    /// Max concurrently claimed (in-flight) executions of this job
+    /// (issue #278). `singleton` compiles to `Some(1)`; `max_concurrent N`
+    /// to `Some(N)`. `None` means unlimited. Also stamped into the job's
+    /// metadata as [`MAX_CONCURRENT_METADATA_KEY`] so it travels with every
+    /// execution / work item to the claim path.
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
     /// Free-form tags for filtering/grouping. NOT routing-relevant —
     /// runner capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
@@ -471,6 +478,13 @@ pub enum RunnerExec {
 /// Metadata key under which a compiled `RunnerExec` is stamped on the job's
 /// `metadata` map. The runner binary deserialises this back into `RunnerExec`.
 pub const RUNNER_EXEC_METADATA_KEY: &str = "__runner_exec";
+
+/// Metadata key carrying the per-job concurrency limit (issue #278).
+/// Stamped by the compiler from `singleton` / `max_concurrent N`, it flows
+/// into every execution row and work item like the other internal `__` keys
+/// (`__require`, `__prefer`, `__runner_exec`) and is consumed by the server's
+/// claim path to cap in-flight executions per job.
+pub const MAX_CONCURRENT_METADATA_KEY: &str = "__max_concurrent";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RetryConfig {
@@ -1202,6 +1216,7 @@ fn compile_job(
     let mut catch_up = defaults.catch_up;
     let mut queue_ttl = defaults.queue_ttl.clone();
     let mut max_queue_depth = defaults.max_queue_depth;
+    let mut max_concurrent: Option<u32> = None;
     let mut tags: Vec<String> = Vec::new();
 
     for dob in &job.directives {
@@ -1232,6 +1247,17 @@ fn compile_job(
                 }
                 "max_queue_depth" => {
                     max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
+                }
+                // Per-job concurrency guard (issue #278). `singleton` is a
+                // bare directive equivalent to `max_concurrent 1`. Invalid
+                // values (zero / non-numeric) compile to `None`; validate.rs
+                // surfaces them as errors, matching how other directives
+                // split lenient compilation from diagnostics.
+                "singleton" => max_concurrent = Some(1),
+                "max_concurrent" => {
+                    max_concurrent = first_arg(d, vars)
+                        .and_then(|v| v.parse().ok())
+                        .filter(|n: &u32| *n > 0);
                 }
                 "tags" => {
                     for a in &d.args {
@@ -1284,6 +1310,13 @@ fn compile_job(
         max_queue_depth = Some(1);
     }
 
+    // Stamp the concurrency limit into the job metadata so it rides along
+    // with every execution / work item (same mechanism as `__runner_exec`).
+    // The server's claim path reads this key to enforce the limit.
+    if let Some(n) = max_concurrent {
+        metadata.insert(MAX_CONCURRENT_METADATA_KEY.into(), n.to_string());
+    }
+
     JobConfig {
         key: job.key.raw.clone(),
         namespace: job.key.namespace.clone(),
@@ -1306,6 +1339,7 @@ fn compile_job(
         catch_up,
         queue_ttl,
         max_queue_depth,
+        max_concurrent,
         tags,
     }
 }
@@ -1604,6 +1638,76 @@ mod tests {
         let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
         let cfg = compile(&ast);
         assert!(cfg.jobs[0].tags.is_empty());
+    }
+
+    // ── singleton / max_concurrent (issue #278) ──────────────────────────────
+
+    #[test]
+    fn compile_singleton_sets_max_concurrent_one() {
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes; singleton }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, Some(1));
+        assert_eq!(
+            cfg.jobs[0]
+                .metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .map(String::as_str),
+            Some("1"),
+            "`singleton` must stamp __max_concurrent=1 into the job metadata"
+        );
+    }
+
+    #[test]
+    fn compile_max_concurrent_sets_limit() {
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes; max_concurrent 3 }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, Some(3));
+        assert_eq!(
+            cfg.jobs[0]
+                .metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .map(String::as_str),
+            Some("3")
+        );
+    }
+
+    #[test]
+    fn compile_max_concurrent_zero_is_ignored() {
+        // Lenient compile: zero is invalid (validate.rs errors on it) and
+        // must not compile into a limit that would block the job entirely.
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes; max_concurrent 0 }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn compile_max_concurrent_non_numeric_is_ignored() {
+        let ast =
+            Parser::parse(r#"job etl:sync { every 15 minutes; max_concurrent many }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn compile_without_concurrency_directive_is_unlimited() {
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].max_concurrent, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(MAX_CONCURRENT_METADATA_KEY)
+        );
     }
 
     #[test]
