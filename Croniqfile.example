@@ -148,6 +148,11 @@ job ops:db-dump {
   }
   timeout 10m
   retry exponential { max_attempts 3 }
+  # Never run two dumps at once: a fire that overlaps a still-running
+  # execution stays queued until it finishes. `singleton` is shorthand
+  # for `max_concurrent 1`; use `max_concurrent N` to allow up to N
+  # overlapping executions instead (the two are mutually exclusive).
+  singleton
 }
 
 job ops:logrotate {

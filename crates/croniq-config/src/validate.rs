@@ -87,6 +87,9 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
 
                 // Validate runner constraints
                 validate_runner_constraints(job, &mut diags);
+
+                // Validate singleton / max_concurrent (issue #278)
+                validate_concurrency(job, &mut diags);
             }
             Item::Calendar(cal) => {
                 validate_calendar(cal, &mut diags);
@@ -268,6 +271,88 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
             ),
             span: job.key.span.into(),
         });
+    }
+}
+
+/// Validate the per-job concurrency guard directives (issue #278):
+/// `singleton` (bare) and `max_concurrent N` are mutually exclusive, and
+/// `max_concurrent` requires a positive integer argument.
+fn validate_concurrency(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
+    let mut singleton_seen = false;
+    let mut max_concurrent_seen = false;
+
+    for dob in &job.directives {
+        let DirectiveOrBlock::Directive(d) = dob else {
+            continue;
+        };
+        match d.key.value.as_str() {
+            "singleton" => {
+                if max_concurrent_seen {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "`singleton` and `max_concurrent` are mutually exclusive (job '{}')",
+                            job.key.raw
+                        ),
+                        span: d.key.span.into(),
+                    });
+                }
+                singleton_seen = true;
+            }
+            "max_concurrent" => {
+                if singleton_seen {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "`singleton` and `max_concurrent` are mutually exclusive (job '{}')",
+                            job.key.raw
+                        ),
+                        span: d.key.span.into(),
+                    });
+                }
+                max_concurrent_seen = true;
+
+                match d.args.first() {
+                    None => {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "`max_concurrent` in job '{}' requires a positive integer argument",
+                                job.key.raw
+                            ),
+                            span: d.key.span.into(),
+                        });
+                    }
+                    // Placeholder values ({vars.X}, {env.X}) resolve at
+                    // compile time — nothing to check statically here.
+                    Some(arg) if arg.is_placeholder => {}
+                    Some(arg) => match arg.value.parse::<u32>() {
+                        Ok(0) => {
+                            diags.push(Diagnostic {
+                                severity: Severity::Error,
+                                message: format!(
+                                    "`max_concurrent` in job '{}' must be greater than zero",
+                                    job.key.raw
+                                ),
+                                span: arg.span.into(),
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            diags.push(Diagnostic {
+                                severity: Severity::Error,
+                                message: format!(
+                                    "`max_concurrent` in job '{}' requires a positive integer, got '{}'",
+                                    job.key.raw, arg.value
+                                ),
+                                span: arg.span.into(),
+                            });
+                        }
+                    },
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -654,6 +739,79 @@ mod tests {
                 .iter()
                 .any(|d| d.severity == Severity::Error && d.message.contains("more than one")),
             "expected duplicate-exec error, got: {diags:?}"
+        );
+    }
+
+    // ── singleton / max_concurrent (issue #278) ───────────────────────────────
+
+    #[test]
+    fn singleton_alone_is_valid() {
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; singleton }"#);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    }
+
+    #[test]
+    fn max_concurrent_alone_is_valid() {
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; max_concurrent 3 }"#);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    }
+
+    #[test]
+    fn singleton_and_max_concurrent_are_mutually_exclusive() {
+        let diags = validate_src(
+            r#"
+            job etl:sync {
+                every 5 minutes
+                singleton
+                max_concurrent 3
+            }
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("mutually exclusive")),
+            "expected mutual-exclusion error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn max_concurrent_zero_errors() {
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; max_concurrent 0 }"#);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("greater than zero")),
+            "expected zero-value error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn max_concurrent_non_numeric_errors() {
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; max_concurrent many }"#);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("positive integer")),
+            "expected non-numeric error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn max_concurrent_without_argument_errors() {
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; max_concurrent }"#);
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("requires a positive integer argument")),
+            "expected missing-argument error, got: {diags:?}"
         );
     }
 }

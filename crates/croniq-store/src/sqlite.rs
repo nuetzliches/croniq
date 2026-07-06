@@ -388,6 +388,36 @@ impl ExecutionStore for SqliteStore {
         Ok(map)
     }
 
+    fn count_executions_in_states(
+        &self,
+        job_key: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError> {
+        if states.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders: Vec<String> = (0..states.len()).map(|i| format!("?{}", i + 2)).collect();
+        let sql = format!(
+            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(job_key.to_string())];
+        for state in states {
+            param_values.push(Box::new(state_to_str(*state).to_string()));
+        }
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let count: i64 = stmt
+            .query_row(params_ref.as_slice(), |row| row.get(0))
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
+
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
         let conn = self.conn.lock().unwrap();
 

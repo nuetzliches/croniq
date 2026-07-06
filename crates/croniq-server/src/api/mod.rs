@@ -773,20 +773,10 @@ async fn handle_poll(
         // cannot miss an enqueue that races with our check.
         let notified = state.runner.work_notify.notified();
 
-        let work =
-            try_dequeue_for(&state.runner, &req.runner_id, &req.capabilities, capacity).await;
+        let work = try_dequeue_for(&state, &req.runner_id, &req.capabilities, capacity).await;
         let cancel = state.runner.drain_cancels(&req.runner_id).await;
 
         if !work.is_empty() || !cancel.is_empty() {
-            // Mark claimed executions in the persistent store so we track runner_id
-            if let Some(ref store) = state.store {
-                let now = Utc::now();
-                for w in &work {
-                    if let Ok(id) = uuid::Uuid::parse_str(&w.execution_id) {
-                        let _ = store.claim_execution(id, &req.runner_id, now);
-                    }
-                }
-            }
             return (StatusCode::OK, Json(PollResponse { work, cancel }));
         }
 
@@ -804,26 +794,131 @@ async fn handle_poll(
 }
 
 /// Attempt to dequeue items for a runner without blocking.
+///
+/// Enforces the per-job concurrency guard (issue #278): items whose job
+/// carries a `__max_concurrent` metadata limit are only dequeued while the
+/// number of currently claimed (in-flight) executions of that job — counted
+/// authoritatively from the store — is below the limit. Blocked items stay
+/// in the queue at their FIFO position (they are skipped in place, so they
+/// neither get dropped nor starve other jobs' items behind them) and are
+/// picked up by a later poll once a slot frees.
+///
+/// The guard check, the dequeue, and the store-side claim all happen under
+/// the queue write lock, so two concurrent polls cannot both observe a free
+/// slot and double-claim a singleton job. The registry lock is only taken
+/// after the queue lock is released, preserving the registry→queue lock
+/// order used elsewhere (e.g. `handle_health`).
 async fn try_dequeue_for(
-    runner: &Arc<AppState>,
+    state: &Arc<ServerState>,
     runner_id: &str,
     capabilities: &[String],
     capacity: usize,
 ) -> Vec<WorkAssignment> {
-    let mut q = runner.queue.write().await;
-    let items = q.dequeue_many_for(capabilities, capacity);
-    drop(q);
+    let mut q = state.runner.queue.write().await;
+
+    // In-flight counts fetched from the store during this call, so a queue
+    // full of items from one guarded job costs one count query, not one per
+    // item. Store state cannot change concurrently in a way that matters:
+    // claims serialize on the queue lock we hold.
+    let mut inflight_cache: HashMap<String, u64> = HashMap::new();
+    // Executions assigned in THIS batch per job_key — a capacity-2 poll must
+    // not hand out two executions of the same singleton job in one response.
+    let mut batch_claims: HashMap<String, u64> = HashMap::new();
+
+    let mut items: Vec<WorkItem> = Vec::new();
+    while items.len() < capacity {
+        let next = q.dequeue_for_where(capabilities, |item| {
+            has_free_concurrency_slot(state, item, &batch_claims, &mut inflight_cache)
+        });
+        let Some(item) = next else { break };
+        *batch_claims.entry(item.job_key.clone()).or_insert(0) += 1;
+        items.push(item);
+    }
 
     if items.is_empty() {
         return vec![];
     }
 
-    let mut reg = runner.registry.write().await;
+    // Mark claimed executions in the persistent store so we track runner_id.
+    // This happens before the queue lock is released so the next poll's
+    // guard check already sees these rows as claimed.
+    if let Some(ref store) = state.store {
+        let now = Utc::now();
+        for item in &items {
+            if let Ok(id) = uuid::Uuid::parse_str(&item.execution_id) {
+                let _ = store.claim_execution(id, runner_id, now);
+            }
+        }
+    }
+    drop(q);
+
+    let mut reg = state.runner.registry.write().await;
     items
         .into_iter()
         .filter(|item| reg.claim(runner_id, &item.execution_id))
         .map(WorkAssignment::from)
         .collect()
+}
+
+/// Read the `__max_concurrent` limit from a work item's metadata.
+/// `None` = unguarded job. Zero or malformed values are treated as
+/// unguarded — the DSL validator rejects them at config time.
+fn concurrency_limit(item: &WorkItem) -> Option<u64> {
+    item.metadata
+        .get(croniq_config::compile::MAX_CONCURRENT_METADATA_KEY)?
+        .as_str()?
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0)
+}
+
+/// Decide whether `item` may be dispatched given its job's concurrency
+/// limit. Counts `Claimed` executions of the job in the store (memoised in
+/// `inflight_cache` for this poll) plus what the current batch already
+/// assigned.
+///
+/// Fail-open by design: with no store configured (bare test/dev servers)
+/// in-flight executions are not tracked anywhere authoritative, and on a
+/// store error blocking all dispatch would be worse than a rare extra
+/// concurrent run — both cases dispatch and log at debug/warn.
+fn has_free_concurrency_slot(
+    state: &ServerState,
+    item: &WorkItem,
+    batch_claims: &HashMap<String, u64>,
+    inflight_cache: &mut HashMap<String, u64>,
+) -> bool {
+    let Some(limit) = concurrency_limit(item) else {
+        return true;
+    };
+    let batch = batch_claims.get(&item.job_key).copied().unwrap_or(0);
+    if batch >= limit {
+        return false;
+    }
+    let Some(ref store) = state.store else {
+        tracing::debug!(
+            job_key = %item.job_key,
+            "concurrency guard: no store configured — cannot count in-flight executions, dispatching"
+        );
+        return true;
+    };
+    let inflight = match inflight_cache.get(&item.job_key) {
+        Some(n) => *n,
+        None => match store.count_executions_in_states(&item.job_key, &[ExecutionState::Claimed]) {
+            Ok(n) => {
+                inflight_cache.insert(item.job_key.clone(), n);
+                n
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_key = %item.job_key,
+                    error = %e,
+                    "concurrency guard: store count failed — dispatching without guard"
+                );
+                return true;
+            }
+        },
+    };
+    inflight + batch < limit
 }
 
 /// `POST /v1/complete` — release inflight + forward to processor.
@@ -1941,6 +2036,344 @@ mod tests {
         assert_ne!(
             first["execution_id"], second["execution_id"],
             "empty keys must not dedup against each other"
+        );
+    }
+
+    // ─── Per-job concurrency guard (issue #278) ──────────────────────────────
+
+    /// State with a real (in-memory SQLite) store so the guard can count
+    /// claimed executions, and a short long-poll timeout for fast tests.
+    fn make_guard_state() -> (
+        Arc<ServerState>,
+        DynStore,
+        mpsc::UnboundedReceiver<CompletionEvent>,
+    ) {
+        use croniq_store::sqlite::SqliteStore;
+
+        let store: DynStore = crate::store::sqlite_store(SqliteStore::in_memory().unwrap());
+        let runner = AppState::new();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::with_auth(runner, tx, None, Some(Arc::clone(&store)));
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.long_poll_timeout = Duration::from_millis(50);
+        }
+        (state, store, rx)
+    }
+
+    /// Persist a queued execution and enqueue the matching work item,
+    /// stamped with a `__max_concurrent` limit. Returns the execution id.
+    async fn seed_guarded_execution(
+        state: &Arc<ServerState>,
+        store: &DynStore,
+        job_key: &str,
+        limit: u32,
+    ) -> uuid::Uuid {
+        use croniq_config::compile::MAX_CONCURRENT_METADATA_KEY;
+
+        let id = uuid::Uuid::new_v4();
+        let now = Utc::now();
+        let mut metadata = HashMap::new();
+        metadata.insert(MAX_CONCURRENT_METADATA_KEY.to_string(), limit.to_string());
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata,
+                created_at: now,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: id.to_string(),
+            job_key: job_key.into(),
+            fire_at: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({ MAX_CONCURRENT_METADATA_KEY: limit.to_string() }),
+            timeout: "5m".into(),
+        });
+        id
+    }
+
+    #[tokio::test]
+    async fn singleton_job_holds_second_execution_until_first_completes() {
+        let (state, store, _rx) = make_guard_state();
+
+        // Two queued executions of the same singleton job.
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            ids.push(seed_guarded_execution(&state, &store, "etl:sync", 1).await);
+        }
+
+        // Poll with capacity 2 — only ONE execution may be assigned, even
+        // within a single batch.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            1,
+            "singleton job must yield exactly one assignment, got: {resp}"
+        );
+        let first_id = work[0]["execution_id"].as_str().unwrap().to_string();
+
+        // The blocked execution stays queued: in-memory item kept, store row
+        // untouched.
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+        let second_id = *ids
+            .iter()
+            .find(|id| id.to_string() != first_id)
+            .expect("the other execution");
+        assert_eq!(
+            store.get_execution(second_id).unwrap().unwrap().state,
+            ExecutionState::Queued,
+            "blocked execution must remain queued in the store"
+        );
+
+        // Re-poll while the first is still running — the guard must hold.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2,
+                "inflight": [first_id]
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "no assignment while an execution of the singleton job is in flight"
+        );
+        assert_eq!(
+            state.runner.queue.read().await.len(),
+            1,
+            "blocked item must stay queued, not be dropped"
+        );
+
+        // Complete the first (claimed → completed frees the slot)…
+        store
+            .complete_execution(
+                uuid::Uuid::parse_str(&first_id).unwrap(),
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                Utc::now(),
+            )
+            .unwrap();
+
+        // …and the next poll hands out the second execution.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(work.len(), 1, "freed slot must release the blocked item");
+        assert_eq!(
+            work[0]["execution_id"].as_str().unwrap(),
+            second_id.to_string()
+        );
+        assert!(state.runner.queue.read().await.is_empty());
+        assert_eq!(
+            store.get_execution(second_id).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrency_guard_does_not_cross_jobs() {
+        let (state, store, _rx) = make_guard_state();
+
+        // Two DIFFERENT singleton jobs with one queued execution each — a
+        // capacity-2 poll must assign both (the guard is per job_key).
+        seed_guarded_execution(&state, &store, "etl:alpha", 1).await;
+        seed_guarded_execution(&state, &store, "etl:beta", 1).await;
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            2,
+            "different jobs must not block each other, got: {resp}"
+        );
+        assert!(state.runner.queue.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_two_allows_two_in_flight_blocks_third() {
+        let (state, store, _rx) = make_guard_state();
+
+        for _ in 0..3 {
+            seed_guarded_execution(&state, &store, "etl:bulk", 2).await;
+        }
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 5, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            2,
+            "max_concurrent 2 must cap the batch at two assignments, got: {resp}"
+        );
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn blocked_singleton_does_not_starve_other_jobs_behind_it() {
+        let (state, store, _rx) = make_guard_state();
+
+        // An in-flight execution of the guarded job…
+        let running = seed_guarded_execution(&state, &store, "etl:guarded", 1).await;
+        store
+            .claim_execution(running, "other-runner", Utc::now())
+            .unwrap();
+        state
+            .runner
+            .queue
+            .write()
+            .await
+            .remove(&running.to_string());
+
+        // …a blocked second execution of it at the FRONT of the queue…
+        seed_guarded_execution(&state, &store, "etl:guarded", 1).await;
+        // …and an unguarded job queued BEHIND it.
+        let unguarded_id = uuid::Uuid::new_v4();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: unguarded_id.to_string(),
+            job_key: "etl:free".into(),
+            fire_at: Utc::now(),
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "5m".into(),
+        });
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            1,
+            "unguarded job must be dispatched, got: {resp}"
+        );
+        assert_eq!(
+            work[0]["execution_id"].as_str().unwrap(),
+            unguarded_id.to_string(),
+            "the item behind the blocked singleton must be picked"
+        );
+        // The blocked singleton item is still queued at the front.
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+        assert_eq!(
+            state.runner.queue.read().await.peek().unwrap().job_key,
+            "etl:guarded"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_inherits_dsl_max_concurrent_metadata() {
+        // POST /v1/trigger inherits the DSL job's compiled metadata, so a
+        // triggered execution of a `singleton` job carries __max_concurrent
+        // and is subject to the same claim-time guard.
+        use crate::loader::load_str;
+        use croniq_config::compile::MAX_CONCURRENT_METADATA_KEY;
+
+        let dsl = r#"
+            job test:guarded {
+                every 1 hour
+                singleton
+            }
+        "#;
+        let loaded = load_str(dsl).unwrap();
+        let jobs = loaded.runtime.jobs;
+        assert_eq!(
+            jobs[0]
+                .metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .map(String::as_str),
+            Some("1"),
+            "compile should stamp __max_concurrent: {:?}",
+            jobs[0].metadata
+        );
+
+        let (mut state, _store, _rx) = make_guard_state();
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.dsl_jobs = Some(Arc::new(tokio::sync::RwLock::new(jobs)));
+        }
+        let app = server_router(Arc::clone(&state));
+
+        let resp = post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "test:guarded",
+                "metadata": {},
+                "require": [],
+                "prefer": []
+            }),
+        )
+        .await;
+        assert!(resp["execution_id"].is_string(), "trigger failed: {resp}");
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0]
+                .metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("1"),
+            "__max_concurrent must be present in the triggered WorkItem metadata"
         );
     }
 }

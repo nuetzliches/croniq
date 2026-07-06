@@ -258,6 +258,16 @@ job billing:invoice {
 
 job etl:sync {
   every 15 minutes
+
+  # Per-job concurrency guard: never run more than one execution of this
+  # job at a time. A scheduled fire (or POST /v1/trigger) that overlaps a
+  # still-running execution stays queued until the slot frees up.
+  singleton
+
+  # …or allow a bounded number of overlapping executions instead:
+  # max_concurrent 3
+  # (`singleton` is shorthand for `max_concurrent 1`; the two directives
+  # are mutually exclusive.)
 }
 
 # High-frequency monitoring job — fire-and-forget, no DB overhead

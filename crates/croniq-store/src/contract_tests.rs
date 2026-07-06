@@ -399,6 +399,81 @@ fn count_by_state() {
 }
 
 #[test]
+fn count_executions_in_states_counts_per_job_and_state() {
+    let store = create_memory_store().unwrap();
+
+    // guarded:job — two claimed, one queued, one completed.
+    for _ in 0..2 {
+        let exec = make_execution("guarded:job", utc(2026, 3, 29, 12, 0));
+        store.create_execution(&exec).unwrap();
+        store.claim_execution(exec.id, "r1", now()).unwrap();
+    }
+    let queued = make_execution("guarded:job", utc(2026, 3, 29, 12, 5));
+    store.create_execution(&queued).unwrap();
+    let done = make_execution("guarded:job", utc(2026, 3, 29, 11, 0));
+    store.create_execution(&done).unwrap();
+    store.claim_execution(done.id, "r1", now()).unwrap();
+    store
+        .complete_execution(
+            done.id,
+            ExecutionState::Completed,
+            Some(100),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    // other:job — one claimed, must not leak into guarded:job counts.
+    let other = make_execution("other:job", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&other).unwrap();
+    store.claim_execution(other.id, "r2", now()).unwrap();
+
+    assert_eq!(
+        store
+            .count_executions_in_states("guarded:job", &[ExecutionState::Claimed])
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store
+            .count_executions_in_states("guarded:job", &[ExecutionState::Queued])
+            .unwrap(),
+        1
+    );
+    // Multiple states accumulate.
+    assert_eq!(
+        store
+            .count_executions_in_states(
+                "guarded:job",
+                &[ExecutionState::Claimed, ExecutionState::Queued]
+            )
+            .unwrap(),
+        3
+    );
+    // Cross-job isolation.
+    assert_eq!(
+        store
+            .count_executions_in_states("other:job", &[ExecutionState::Claimed])
+            .unwrap(),
+        1
+    );
+    // Unknown job / empty states.
+    assert_eq!(
+        store
+            .count_executions_in_states("nonexistent:job", &[ExecutionState::Claimed])
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .count_executions_in_states("guarded:job", &[])
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn job_execution_metrics_aggregates_per_job() {
     let store = create_memory_store().unwrap();
 

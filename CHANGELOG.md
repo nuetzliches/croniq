@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Per-job concurrency guard: `singleton` / `max_concurrent N`
+  ([#278](https://github.com/nuetzliches/croniq/issues/278)).** A runner pool
+  could previously run two executions of the SAME job at once — a scheduled
+  fire overlapping a still-running previous fire, or an on-demand
+  `POST /v1/trigger`. Jobs can now declare `singleton` (shorthand for
+  `max_concurrent 1`) or `max_concurrent N` in the Croniqfile; the compiler
+  stamps the limit into the job's internal `__max_concurrent` metadata and the
+  server enforces it at claim time: an execution of a guarded job is only
+  handed to a runner while fewer than N executions of that job are claimed
+  (counted from the store, the authoritative in-flight record). Blocked items
+  stay queued at their FIFO position — skipped in place, so they neither get
+  dropped nor starve other jobs' items behind them — and dispatch as soon as a
+  slot frees. Declaring both directives, `max_concurrent 0`, or a non-numeric
+  value is a config-validation error.
 - **Idempotency keys on `POST /v1/trigger`
   ([#279](https://github.com/nuetzliches/croniq/issues/279)).** Event-driven
   producers operate under at-least-once semantics (event redelivery, client
