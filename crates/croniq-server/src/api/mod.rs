@@ -62,6 +62,15 @@ use croniq_store::models::{Execution, ExecutionFilter, ExecutionState};
 /// Default maximum time a poll request will block waiting for work.
 const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default dedup window for `POST /v1/trigger` idempotency keys (issue
+/// #279): 10 minutes. Overridable via the Croniqfile
+/// `pull_api { trigger_dedup_window … }` directive.
+pub const DEFAULT_TRIGGER_DEDUP_WINDOW_SECS: u64 = 600;
+
+/// Maximum accepted length (in characters) of a trigger `idempotency_key`.
+/// Longer keys are rejected with `400 Bad Request`.
+const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
+
 // ─── Server state ─────────────────────────────────────────────────────────────
 
 /// Full server state: runner sub-state + completion channel.
@@ -145,6 +154,13 @@ pub struct ServerState {
     /// alert on a wedged scheduler even while HTTP keeps serving. `None` in
     /// tests / when no scheduler runs.
     pub scheduler_heartbeat: Option<Arc<crate::scheduler::SchedulerHeartbeat>>,
+    /// Dedup window in seconds for `POST /v1/trigger` idempotency keys
+    /// (issue #279). A repeat trigger with the same `(job_key,
+    /// idempotency_key)` coalesces to the existing execution while that
+    /// execution is still in-flight OR was created within this window.
+    /// Resolved at boot from the Croniqfile `pull_api {
+    /// trigger_dedup_window … }` directive; default 10 minutes.
+    pub trigger_dedup_window_secs: u64,
 }
 
 impl ServerState {
@@ -173,6 +189,7 @@ impl ServerState {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         })
     }
 
@@ -204,6 +221,7 @@ impl ServerState {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         })
     }
 
@@ -234,6 +252,7 @@ impl ServerState {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         })
     }
 }
@@ -880,21 +899,92 @@ async fn handle_delete_runner(
 ///
 /// Persists the execution to the store first (just like the scheduler does)
 /// so that the CompletionProcessor can find it for retries and dead-lettering.
+///
+/// Supports optional caller-supplied idempotency keys (issue #279): a
+/// repeat trigger carrying the same `(job_key, idempotency_key)` coalesces
+/// to the existing execution — while that execution is still
+/// queued/claimed, or for `state.trigger_dedup_window_secs` after it was
+/// created — and responds with `deduplicated: true` instead of enqueuing a
+/// duplicate. The check-then-insert is best-effort (two truly concurrent
+/// identical triggers may both pass the lookup): the endpoint dedups
+/// at-least-once producers, it is NOT a strict exactly-once guarantee.
 async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<TriggerRequest>,
 ) -> (StatusCode, Json<TriggerResponse>) {
-    if let Err(s) = require_scope(&ctx, Scope::JOBS_TRIGGER) {
-        return (
-            s,
+    // Follows this handler's established error style: status code + an
+    // empty TriggerResponse body (same as the scope-rejection arm below).
+    let error_response = |status: StatusCode| {
+        (
+            status,
             Json(TriggerResponse {
                 execution_id: String::new(),
                 queued: 0,
+                deduplicated: false,
             }),
-        );
+        )
+    };
+
+    if let Err(s) = require_scope(&ctx, Scope::JOBS_TRIGGER) {
+        return error_response(s);
     }
+
+    // An empty idempotency_key is treated as absent; an oversized one is a
+    // caller bug and gets rejected rather than silently truncated.
+    let idempotency_key = req
+        .idempotency_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .map(str::to_string);
+    if let Some(ref key) = idempotency_key
+        && key.chars().count() > MAX_IDEMPOTENCY_KEY_CHARS
+    {
+        tracing::warn!(
+            job_key = %req.job_key,
+            key_chars = key.chars().count(),
+            "trigger rejected: idempotency_key exceeds {MAX_IDEMPOTENCY_KEY_CHARS} characters"
+        );
+        return error_response(StatusCode::BAD_REQUEST);
+    }
+
     let now = Utc::now();
+
+    // Dedup lookup. Requires the store: without one (possible in tests and
+    // store-less dev servers — `state.store` is an Option) there is nothing
+    // to look executions up in, so dedup silently degrades to a no-op and
+    // every trigger enqueues normally. Store errors also fail open: an
+    // occasional duplicate execution beats refusing the trigger outright.
+    if let (Some(key), Some(store)) = (idempotency_key.as_deref(), state.store.as_ref()) {
+        let window_start = now - chrono::Duration::seconds(state.trigger_dedup_window_secs as i64);
+        match store.find_execution_by_idempotency_key(&req.job_key, key, window_start) {
+            Ok(Some(existing)) => {
+                let queued = state.runner.queue.read().await.len();
+                tracing::info!(
+                    job_key = %req.job_key,
+                    execution_id = %existing.id,
+                    "trigger deduplicated via idempotency_key — returning existing execution"
+                );
+                return (
+                    StatusCode::OK,
+                    Json(TriggerResponse {
+                        execution_id: existing.id.to_string(),
+                        queued,
+                        deduplicated: true,
+                    }),
+                );
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(
+                    job_key = %req.job_key,
+                    error = %e,
+                    "idempotency_key dedup lookup failed — proceeding with a fresh trigger"
+                );
+            }
+        }
+    }
+
     let exec_uuid = uuid::Uuid::new_v4();
     let execution_id = exec_uuid.to_string();
 
@@ -945,6 +1035,7 @@ async fn handle_trigger(
             duration_ms: None,
             error: None,
             dead_reason: None,
+            idempotency_key: idempotency_key.clone(),
             metadata: metadata.clone(),
             created_at: now,
         };
@@ -976,6 +1067,7 @@ async fn handle_trigger(
         Json(TriggerResponse {
             execution_id,
             queued,
+            deduplicated: false,
         }),
     )
 }
@@ -1334,6 +1426,7 @@ mod tests {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         });
         (state, rx)
     }
@@ -1509,6 +1602,7 @@ mod tests {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1582,6 +1676,7 @@ mod tests {
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
+            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1610,6 +1705,242 @@ mod tests {
             items[0].metadata["env"].as_str().unwrap(),
             "staging",
             "caller env must override DSL env"
+        );
+    }
+
+    // ─── Trigger endpoint: idempotency_key dedup (issue #279) ───────────────
+
+    fn make_store_state() -> (Arc<ServerState>, crate::store::DynStore) {
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::with_auth(runner, tx, None, Some(store.clone()));
+        (state, store)
+    }
+
+    async fn post_json_status(
+        app: Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    /// Seed an execution row carrying an idempotency key directly in the
+    /// store, bypassing the endpoint — lets tests control `created_at` and
+    /// terminal state without sleeping through the dedup window.
+    fn seed_keyed_execution(
+        store: &crate::store::DynStore,
+        job_key: &str,
+        key: &str,
+        state: ExecutionState,
+        created_at: DateTime<Utc>,
+    ) -> uuid::Uuid {
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: created_at,
+                attempt: 1,
+                state,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: Some(key.into()),
+                metadata: HashMap::new(),
+                created_at,
+            })
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn trigger_with_idempotency_key_dedups_while_queued() {
+        let (state, store) = make_store_state();
+
+        let (status, first) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "evt-1" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(first["deduplicated"], false);
+        assert_eq!(first["queued"], 1);
+        let first_id = first["execution_id"].as_str().unwrap().to_string();
+
+        // The key was persisted on the execution row.
+        let row = store
+            .get_execution(uuid::Uuid::parse_str(&first_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.idempotency_key.as_deref(), Some("evt-1"));
+
+        // Second trigger with the same key while the first is still queued
+        // coalesces: same execution_id, deduplicated=true, nothing enqueued.
+        let (status, second) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "evt-1" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(second["deduplicated"], true);
+        assert_eq!(second["execution_id"].as_str().unwrap(), first_id);
+        assert_eq!(second["queued"], 1, "dedup must not enqueue a new item");
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(
+            q.len(),
+            1,
+            "queue length must be unchanged by the dedup hit"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_without_key_creates_distinct_executions() {
+        let (state, _store) = make_store_state();
+
+        let (_, first) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice" }),
+        )
+        .await;
+        let (_, second) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice" }),
+        )
+        .await;
+
+        assert_eq!(first["deduplicated"], false);
+        assert_eq!(second["deduplicated"], false);
+        assert_ne!(
+            first["execution_id"], second["execution_id"],
+            "keyless triggers must never dedup"
+        );
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn trigger_key_reuse_after_window_creates_new_execution() {
+        let (state, store) = make_store_state();
+
+        // A completed execution carrying the key, created well outside the
+        // default 10-minute dedup window.
+        let old_id = seed_keyed_execution(
+            &store,
+            "billing:invoice",
+            "evt-old",
+            ExecutionState::Completed,
+            Utc::now() - chrono::Duration::seconds(2 * DEFAULT_TRIGGER_DEDUP_WINDOW_SECS as i64),
+        );
+
+        let (status, resp) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "evt-old" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(resp["deduplicated"], false);
+        assert_ne!(
+            resp["execution_id"].as_str().unwrap(),
+            old_id.to_string(),
+            "a key whose execution completed outside the window must trigger fresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_key_dedups_against_completed_execution_within_window() {
+        let (state, store) = make_store_state();
+
+        // A completed execution carrying the key, created just now — inside
+        // the window, so the repeat trigger coalesces even though the
+        // execution already finished.
+        let done_id = seed_keyed_execution(
+            &store,
+            "billing:invoice",
+            "evt-done",
+            ExecutionState::Completed,
+            Utc::now(),
+        );
+
+        let (status, resp) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "evt-done" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(resp["deduplicated"], true);
+        assert_eq!(resp["execution_id"].as_str().unwrap(), done_id.to_string());
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.len(), 0, "dedup hit must not enqueue");
+    }
+
+    #[tokio::test]
+    async fn trigger_with_oversized_idempotency_key_returns_400() {
+        let (state, _store) = make_store_state();
+
+        let oversized = "k".repeat(MAX_IDEMPOTENCY_KEY_CHARS + 1);
+        let (status, _) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": oversized }),
+        )
+        .await;
+        assert_eq!(status, 400);
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.len(), 0, "rejected trigger must not enqueue");
+    }
+
+    #[tokio::test]
+    async fn trigger_with_empty_idempotency_key_is_treated_as_absent() {
+        let (state, _store) = make_store_state();
+
+        let (_, first) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "" }),
+        )
+        .await;
+        let (_, second) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice", "idempotency_key": "" }),
+        )
+        .await;
+
+        assert_eq!(second["deduplicated"], false);
+        assert_ne!(
+            first["execution_id"], second["execution_id"],
+            "empty keys must not dedup against each other"
         );
     }
 }

@@ -171,6 +171,20 @@ async fn main() -> Result<()> {
     };
     let runner_state = AppState::with_lease_ttl(lease_ttl_secs);
 
+    // Dedup window for POST /v1/trigger idempotency keys (issue #279),
+    // from `pull_api { trigger_dedup_window … }`. Same resolution pattern
+    // as lease_ttl above; falls back to the 10-minute default when no
+    // pull_api block is present.
+    let trigger_dedup_window_secs = match loaded.runtime.pull_api.as_ref() {
+        Some(p) => parse_duration_secs(&p.trigger_dedup_window).map_err(|e| {
+            anyhow::anyhow!(
+                "invalid pull_api.trigger_dedup_window in {}: {e}",
+                cli.config.display()
+            )
+        })?,
+        None => croniq_server::api::DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+    };
+
     // Restore queued executions from DB into the in-memory work queue.
     // This ensures executions survive server restarts.
     let restored = restore_queued_executions(&*store, &loaded.runtime.jobs, &runner_state).await;
@@ -299,6 +313,8 @@ async fn main() -> Result<()> {
         s.console_hub = Some(Arc::clone(&console_hub));
         // Issue #248: expose the scheduler liveness signal via /metrics.
         s.scheduler_heartbeat = Some(Arc::clone(&scheduler_heartbeat));
+        // Issue #279: dedup window for POST /v1/trigger idempotency keys.
+        s.trigger_dedup_window_secs = trigger_dedup_window_secs;
     }
     // Issue #231: prune orphan alert-rule overrides whose DSL rule no
     // longer exists (FK-cascade-by-name). The alerts config is loaded at

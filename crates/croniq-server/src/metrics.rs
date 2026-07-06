@@ -479,6 +479,7 @@ mod tests {
             duration_ms: None,
             error: None,
             dead_reason: None,
+            idempotency_key: None,
             metadata: std::collections::HashMap::new(),
             created_at: Utc::now(),
         };

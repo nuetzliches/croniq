@@ -493,6 +493,7 @@ async fn reload_does_not_touch_claimed_executions() {
             duration_ms: None,
             error: None,
             dead_reason: None,
+            idempotency_key: None,
             metadata: Default::default(),
             created_at: now,
         })

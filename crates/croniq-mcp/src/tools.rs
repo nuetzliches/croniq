@@ -763,6 +763,7 @@ impl CroniqMcp {
                 duration_ms: None,
                 error: None,
                 dead_reason: None,
+                idempotency_key: None,
                 metadata: HashMap::new(),
                 created_at: now,
             };
@@ -859,6 +860,7 @@ impl CroniqMcp {
                 duration_ms: None,
                 error: None,
                 dead_reason: None,
+                idempotency_key: None,
                 metadata: HashMap::new(),
                 created_at: now,
             };
@@ -985,6 +987,7 @@ impl CroniqMcp {
             duration_ms: None,
             error: None,
             dead_reason: None,
+            idempotency_key: None,
             metadata: dl.metadata.clone(),
             created_at: now,
         };

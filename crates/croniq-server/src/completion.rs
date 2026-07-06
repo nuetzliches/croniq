@@ -301,6 +301,10 @@ impl CompletionProcessor {
                     duration_ms: None,
                     error: None,
                     dead_reason: None,
+                    // Carry the trigger idempotency key forward (issue #279)
+                    // so a repeat trigger keeps coalescing while the retry
+                    // is in flight.
+                    idempotency_key: execution.idempotency_key.clone(),
                     metadata: execution.metadata.clone(),
                     created_at: now,
                 };
@@ -482,6 +486,7 @@ mod tests {
                 duration_ms: None,
                 error: None,
                 dead_reason: None,
+                idempotency_key: None,
                 metadata: HashMap::new(),
                 created_at: Utc::now(),
             })

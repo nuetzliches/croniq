@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Idempotency keys on `POST /v1/trigger`
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)).** Event-driven
+  producers operate under at-least-once semantics (event redelivery, client
+  retries, concurrent publishers) and could enqueue duplicate executions
+  for the same logical event. The trigger request now accepts an optional
+  `idempotency_key` (max 200 chars, scoped per `job_key`): a repeat trigger
+  carrying the same key coalesces to the existing execution — while that
+  execution is still queued/running, or for a configurable window after it
+  was created (`pull_api { trigger_dedup_window 10m }`, default 10 minutes)
+  — and the response gains a `deduplicated` flag. Dedup is best-effort for
+  at-least-once producers, not a strict exactly-once guarantee. Migration
+  019 adds the nullable `executions.idempotency_key` column plus a partial
+  `(job_key, idempotency_key)` index.
 - **Ephemeral job dispatches now surface in the scheduler heartbeat
   ([#276](https://github.com/nuetzliches/croniq/pull/276),
   [#275](https://github.com/nuetzliches/croniq/issues/275)).** Ephemeral

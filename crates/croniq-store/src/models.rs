@@ -57,6 +57,13 @@ pub struct Execution {
     pub error: Option<String>,
     pub dead_reason: Option<String>,
 
+    /// Caller-supplied dedup key from `POST /v1/trigger`, scoped per
+    /// `job_key` (issue #279). `None` for scheduler-fired executions and
+    /// for triggers that did not send a key. Retries carry the key forward
+    /// so a repeat trigger keeps coalescing while the retry is in flight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+
     #[serde(serialize_with = "serialize_public_metadata")]
     pub metadata: HashMap<String, String>,
     pub created_at: DateTime<Utc>,

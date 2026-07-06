@@ -127,6 +127,7 @@ pub async fn handle_replay(
         duration_ms: None,
         error: None,
         dead_reason: None,
+        idempotency_key: None,
         metadata: dl.metadata.clone(),
         created_at: now,
     };

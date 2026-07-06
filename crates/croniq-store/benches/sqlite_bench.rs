@@ -29,6 +29,7 @@ fn make_execution(job_key: &str, _i: usize) -> Execution {
         duration_ms: None,
         error: None,
         dead_reason: None,
+        idempotency_key: None,
         metadata: HashMap::new(),
         created_at: utc(2026, 4, 12, 10, 0),
     }
@@ -55,6 +56,7 @@ fn make_execution_with_caps(job_key: &str, caps: &[&str]) -> Execution {
         duration_ms: None,
         error: None,
         dead_reason: None,
+        idempotency_key: None,
         metadata: meta,
         created_at: utc(2026, 4, 12, 10, 0),
     }

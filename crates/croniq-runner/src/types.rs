@@ -237,6 +237,15 @@ pub struct TriggerRequest {
     /// Timeout hint for the runner (e.g. `"15m"`). Default: `"5m"`.
     #[serde(default = "default_trigger_timeout")]
     pub timeout: String,
+
+    /// Optional caller-supplied dedup key, scoped per `job_key` (issue
+    /// #279). A repeat trigger with the same `(job_key, idempotency_key)`
+    /// coalesces to the existing execution — while that execution is still
+    /// queued/claimed, or for a configurable window after it was created
+    /// (`pull_api { trigger_dedup_window … }`, default 10 m). Max 200
+    /// characters; an empty string is treated as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 fn default_trigger_timeout() -> String {
@@ -246,10 +255,16 @@ fn default_trigger_timeout() -> String {
 /// `POST /v1/trigger` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerResponse {
-    /// The execution ID assigned to the triggered job.
+    /// The execution ID assigned to the triggered job. On a dedup hit this
+    /// is the id of the EXISTING execution, not a new one.
     pub execution_id: String,
-    /// Current queue depth after enqueue.
+    /// Current queue depth after enqueue (or the current depth, unchanged,
+    /// on a dedup hit — nothing is enqueued then).
     pub queued: usize,
+    /// `true` when the trigger coalesced to an existing execution via
+    /// `idempotency_key` instead of enqueuing a new one (issue #279).
+    #[serde(default)]
+    pub deduplicated: bool,
 }
 
 #[cfg(test)]

@@ -14,6 +14,11 @@ server {
 pull_api {
   auth token {env.CRONIQ_JWT_SECRET}
   lease_ttl 60s
+  # Dedup window for POST /v1/trigger idempotency keys: a repeat trigger
+  # carrying the same idempotency_key coalesces to the existing execution
+  # while it is still queued/running, or for this long after it was
+  # created. Default: 10m.
+  # trigger_dedup_window 10m
 }
 
 # HTTP MCP transport (Model Context Protocol). Mounted at /mcp on the same
