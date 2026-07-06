@@ -26,37 +26,15 @@
     <NoWarn>$(NoWarn);CS1591;CA1068;CA1873;CA1844;CA2007;CA1062</NoWarn>
   </PropertyGroup>
 
-  <PropertyGroup Label="Pack" Condition="'$(IsPackable)' == 'true'">
-    <PackageTags>croniq;cron;scheduler;jobs;runner;worker;sdk</PackageTags>
-    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>croniq-icon.png</PackageIcon>
-    <PackageProjectUrl>https://github.com/nuetzliches/croniq</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/nuetzliches/croniq</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-  </PropertyGroup>
-
-  <PropertyGroup Label="SourceLink" Condition="'$(IsPackable)' == 'true'">
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <DebugType>portable</DebugType>
-    <DebugSymbols>true</DebugSymbols>
-    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
-  </PropertyGroup>
-
-  <PropertyGroup Label="AOT" Condition="'$(IsPackable)' == 'true'">
-    <IsAotCompatible>true</IsAotCompatible>
-    <IsTrimmable>true</IsTrimmable>
-  </PropertyGroup>
-
-  <PropertyGroup Label="MinVer" Condition="'$(IsPackable)' == 'true'">
-    <MinVerTagPrefix>dotnet-sdk-v</MinVerTagPrefix>
-    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
-  </PropertyGroup>
+  <!--
+    NOTE: property groups conditioned on $(IsPackable) live in
+    Directory.Build.targets, NOT here. This file is imported BEFORE the
+    project file, so $(IsPackable) — set in each .csproj — is still empty
+    when properties here are evaluated and such conditions silently never
+    match. (Item groups are fine: items evaluate after ALL properties.)
+    That evaluation-order trap shipped 0.1.0–0.3.0 without license/readme/
+    icon/tags metadata and without .snupkg symbol packages.
+  -->
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <PackageReference Include="MinVer" PrivateAssets="all" />

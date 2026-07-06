@@ -6,6 +6,25 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-06
+
+### Fixed
+
+- **Package metadata and symbol packages actually ship now.** The
+  `$(IsPackable)`-conditioned PropertyGroups (license expression, readme,
+  icon, tags, project URL, SourceLink, `IncludeSymbols`/`snupkg`, MinVer tag
+  prefix) lived in `Directory.Build.props`, which is evaluated *before* the
+  .csproj sets `IsPackable` — the conditions silently never matched, so
+  0.1.0–0.3.0 were published without that metadata and without `.snupkg`
+  symbol packages (this is also what failed the `dotnet-sdk-v0.2.0` and
+  `dotnet-sdk-v0.3.0` release workflows at the symbol-push step). The groups
+  now live in `Directory.Build.targets`, where `IsPackable` is final.
+  Functionally identical binaries to 0.3.0.
+- The never-applied `IsAotCompatible`/`IsTrimmable` flags are intentionally
+  left off: enabling them surfaces 22 genuine trim/AOT findings in the
+  DI/options layer. Proper annotation work is tracked in
+  [#295](https://github.com/nuetzliches/croniq/issues/295).
+
 ## [0.3.0] - 2026-07-06
 
 ### Added
