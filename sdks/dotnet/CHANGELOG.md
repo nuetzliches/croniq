@@ -6,6 +6,21 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Added
+
+- **First-class trigger (producer) client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)).**
+  `services.AddCroniqClient(...)` registers `ICroniqTriggerClient`, whose
+  `TriggerAsync(jobKey, metadata?, require?, prefer?, timeout?, idempotencyKey?, ct)`
+  wraps `POST /v1/trigger` and returns `TriggerResult { ExecutionId, Queued,
+  Deduplicated }`. The client is independent of `AddCroniqRunner` and carries
+  its own credentials (`Croniq:Client` section) because triggering requires
+  the `jobs:trigger` (or `admin`) scope, distinct from runner poll keys.
+  Registration is idempotent, mirroring `AddCroniqRunner`. The optional
+  `idempotencyKey` is forwarded as `idempotency_key` for server-side trigger
+  dedup ([#279](https://github.com/nuetzliches/croniq/issues/279)); servers
+  without support ignore it and `Deduplicated` stays `false`.
+
 ### Infrastructure
 
 - Transitive pin of `Scriban.Signed` to 7.2.5 in the test projects —
