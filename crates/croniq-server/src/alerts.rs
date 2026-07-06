@@ -879,6 +879,8 @@ pub fn merge_legacy_env_hook(base: AlertsConfig) -> AlertsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the unix-gated delivery tests query the delivery log.
+    #[cfg(unix)]
     use croniq_store::models::AlertDeliveryFilter;
 
     fn make_ctx(job_key: &str) -> FailureContext {
@@ -921,6 +923,13 @@ mod tests {
         assert_eq!(parse_throttle_secs("garbage"), None);
     }
 
+    // Tests that assert a `Delivered` state through a Shell channel are
+    // unix-only: shell alert delivery spawns `sh -c`, which stock Windows
+    // does not have. Shell-channel tests that only assert rule evaluation
+    // (fire / suppress / filter) still run everywhere — a failed spawn
+    // doesn't change those outcomes.
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn evaluator_fires_matching_shell_rule() {
         let alerts = AlertsConfig {
@@ -1067,6 +1076,7 @@ mod tests {
         assert_eq!(recorded.len(), 1, "expired snooze must not suppress");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn override_throttle_replaces_dsl_window() {
         // DSL rule has no throttle (fires every time). An override
@@ -1149,6 +1159,7 @@ mod tests {
         assert!(recorded.is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn evaluator_respects_min_attempts() {
         let alerts = AlertsConfig {
@@ -1229,6 +1240,7 @@ mod tests {
         assert_eq!(recorded.len(), 1);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn throttle_suppresses_repeats_within_window() {
         let alerts = AlertsConfig {

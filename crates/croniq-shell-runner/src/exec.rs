@@ -322,6 +322,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    // The `RunnerExec::Shell` arm hardcodes `sh -c` (the runner ships in a
+    // Linux container), and stock Windows has no `sh` on PATH — so every
+    // test that spawns through the Shell arm is unix-only. The Exec arm is
+    // genuinely cross-platform and stays tested everywhere, as do the
+    // pure-logic tests (decode, argv validation, snippet assembly).
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn shell_command_runs_and_returns_stdout_tail() {
         let exec = RunnerExec::Shell {
@@ -346,6 +353,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn shell_command_failure_propagates() {
         let exec = RunnerExec::Shell {
@@ -361,9 +369,21 @@ mod tests {
 
     #[tokio::test]
     async fn exec_runs_argv_directly() {
-        // /bin/echo is part of POSIX coreutils and reliably available in CI.
+        // Pick an echo that reliably exists on the host: /bin/echo is part
+        // of POSIX coreutils (and always present in CI); Windows has no
+        // /bin/echo, but `cmd /C echo` ships with every install.
+        #[cfg(unix)]
+        let argv = vec!["/bin/echo".to_string(), "hello".into(), "exec".into()];
+        #[cfg(windows)]
+        let argv = vec![
+            "cmd".to_string(),
+            "/C".into(),
+            "echo".into(),
+            "hello".into(),
+            "exec".into(),
+        ];
         let exec = RunnerExec::Exec {
-            argv: vec!["/bin/echo".into(), "hello".into(), "exec".into()],
+            argv,
             workdir: None,
             user: None,
             env: HashMap::new(),
@@ -377,6 +397,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn user_supplied_env_reaches_subprocess() {
         let mut env = HashMap::new();
@@ -433,6 +454,7 @@ mod tests {
 
     // ─── Tail buffer + failure snippet (issue #118) ─────────────────────────
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn tail_buffer_caps_at_configured_limit() {
         // Emit far more than TAIL_BUFFER_LINES so we can verify the cap
@@ -493,6 +515,7 @@ mod tests {
         assert_eq!(build_failure_snippet(&VecDeque::new()), "");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn outcome_to_handler_result_failure_includes_stderr_snippet() {
         let exec = RunnerExec::Shell {
@@ -508,6 +531,7 @@ mod tests {
         assert!(msg.contains("boom"), "stderr snippet missing: {msg}");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn outcome_to_handler_result_success_returns_ok() {
         let exec = RunnerExec::Shell {
