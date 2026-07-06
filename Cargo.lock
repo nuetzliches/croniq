@@ -831,6 +831,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
+ "totp-rs",
  "tower",
  "tower-http",
  "tracing",

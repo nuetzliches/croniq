@@ -92,6 +92,10 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3"
+# Tests compute currently-valid TOTP codes so "wrong code" assertions are
+# deterministic instead of failing ~3e-6 of runs on a random collision.
+# Same major as croniq-auth so both resolve to one copy.
+totp-rs = { version = "5", default-features = false }
 
 [[bench]]
 name = "scheduler_bench"
