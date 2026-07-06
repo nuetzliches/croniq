@@ -52,6 +52,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "018_alert_rule_overrides",
         include_str!("018_alert_rule_overrides.sql"),
     ),
+    (
+        "019_trigger_idempotency",
+        include_str!("019_trigger_idempotency.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -281,6 +285,66 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migration_019_adds_idempotency_key_column_and_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Apply everything up to (and including) the previous migration so
+        // the executions table exists in its pre-019 shape.
+        apply_through(&conn, "018_alert_rule_overrides").unwrap();
+
+        // Seed a pre-migration execution row (no idempotency_key column yet).
+        conn.execute(
+            "INSERT INTO executions (id, job_key, fire_at, attempt, state, metadata, created_at)
+             VALUES (?1, 'billing:invoice', '2026-07-01T00:00:00Z', 1, 'completed', '{}', '2026-07-01T00:00:00Z')",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+
+        // Apply 019 in isolation.
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "019_trigger_idempotency")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // The pre-existing row reads back with a NULL idempotency_key.
+        let key: Option<String> = conn
+            .query_row(
+                "SELECT idempotency_key FROM executions WHERE id = ?1",
+                ["00000000-0000-0000-0000-000000000001"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(key.is_none(), "pre-migration rows must default to NULL");
+
+        // New rows can persist and read back a key.
+        conn.execute(
+            "INSERT INTO executions (id, job_key, fire_at, attempt, state, metadata, created_at, idempotency_key)
+             VALUES (?1, 'billing:invoice', '2026-07-01T01:00:00Z', 1, 'queued', '{}', '2026-07-01T01:00:00Z', 'evt-42')",
+            ["00000000-0000-0000-0000-000000000002"],
+        )
+        .unwrap();
+        let key: Option<String> = conn
+            .query_row(
+                "SELECT idempotency_key FROM executions WHERE id = ?1",
+                ["00000000-0000-0000-0000-000000000002"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("evt-42"));
+
+        // The partial dedup index exists.
+        let idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_executions_job_key_idempotency_key'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx, 1, "dedup index must be created");
     }
 
     #[test]

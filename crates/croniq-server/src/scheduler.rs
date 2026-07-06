@@ -353,6 +353,7 @@ impl SchedulerLoop {
                     duration_ms: None,
                     error: None,
                     dead_reason: None,
+                    idempotency_key: None,
                     metadata: {
                         let mut m = job.metadata.clone();
                         if !job.runner.require.is_empty() {

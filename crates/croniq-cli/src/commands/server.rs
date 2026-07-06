@@ -82,6 +82,7 @@ pub fn trigger(
         prefer,
         metadata: serde_json::Value::Null,
         timeout: timeout.to_string(),
+        idempotency_key: None,
     };
 
     let resp: TriggerResponse = reqwest::blocking::Client::new()

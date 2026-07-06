@@ -154,6 +154,7 @@ mod tests {
                 duration_ms: None,
                 error: None,
                 dead_reason: None,
+                idempotency_key: None,
                 metadata: HashMap::new(),
                 created_at: now,
             })

@@ -152,7 +152,7 @@ impl ExecutionStore for SqliteStore {
     fn get_execution(&self, id: Uuid) -> Result<Option<Execution>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE id = ?1")
+            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = ?1")
             .map_err(map_err)?;
 
         stmt.query_row(params![id.to_string()], row_to_execution)
@@ -224,7 +224,7 @@ impl ExecutionStore for SqliteStore {
             limit * 4
         };
         let mut stmt = conn
-            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
+            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
             .map_err(map_err)?;
 
         let rows = stmt
@@ -255,7 +255,7 @@ impl ExecutionStore for SqliteStore {
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE 1=1",
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -295,6 +295,35 @@ impl ExecutionStore for SqliteStore {
             .map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn find_execution_by_idempotency_key(
+        &self,
+        job_key: &str,
+        idempotency_key: &str,
+        window_start: DateTime<Utc>,
+    ) -> Result<Option<Execution>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // created_at is stored as RFC 3339 text, which compares
+        // lexicographically in chronological order (same trick as the
+        // since/until filters in list_executions).
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key
+                 FROM executions
+                 WHERE job_key = ?1 AND idempotency_key = ?2
+                   AND (state IN ('queued', 'claimed') OR created_at >= ?3)
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+            )
+            .map_err(map_err)?;
+
+        stmt.query_row(
+            params![job_key, idempotency_key, dt_to_sql(&window_start)],
+            row_to_execution,
+        )
+        .optional()
+        .map_err(map_err)
     }
 
     fn requeue_abandoned(
@@ -2143,6 +2172,7 @@ fn row_to_execution(row: &rusqlite::Row<'_>) -> Result<Execution, rusqlite::Erro
         duration_ms: row.get(9)?,
         error: row.get(10)?,
         dead_reason: row.get(11)?,
+        idempotency_key: row.get(14)?,
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
         created_at: sql_to_dt(&row.get::<_, String>(13)?),
     })
@@ -2237,8 +2267,8 @@ fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusq
 fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Result<(), StoreError> {
     let metadata = serde_json::to_string(&exec.metadata).unwrap_or_default();
     conn.execute(
-        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             exec.id.to_string(),
             exec.job_key,
@@ -2254,6 +2284,7 @@ fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Resul
             exec.dead_reason,
             metadata,
             dt_to_sql(&exec.created_at),
+            exec.idempotency_key,
         ],
     )
     .map_err(map_err)?;

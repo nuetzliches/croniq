@@ -70,6 +70,19 @@ impl PgStore {
                 .map_err(map_err)?;
         }
 
+        if !applied.contains(&"019_trigger_idempotency".to_string()) {
+            // Mirrors the SQLite migration: nullable idempotency_key column
+            // on executions + partial dedup index for POST /v1/trigger
+            // (issue #279). See the SQLite migration for the rationale.
+            client.batch_execute(PG_MIGRATION_019).map_err(map_err)?;
+            client
+                .execute(
+                    "INSERT INTO _migrations (name) VALUES ($1)",
+                    &[&"019_trigger_idempotency"],
+                )
+                .map_err(map_err)?;
+        }
+
         Ok(())
     }
 }
@@ -139,6 +152,13 @@ CREATE INDEX IF NOT EXISTS idx_executions_state_fire_at
     ON executions(state, fire_at);
 CREATE INDEX IF NOT EXISTS idx_executions_created_at
     ON executions(created_at);
+"#;
+
+const PG_MIGRATION_019: &str = r#"
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_executions_job_key_idempotency_key
+    ON executions(job_key, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 "#;
 
 fn map_err(e: postgres::Error) -> StoreError {
@@ -270,7 +290,7 @@ impl ExecutionStore for PgStore {
         let mut client = self.client.lock().unwrap();
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE id = $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = $1",
                 &[&id],
             )
             .map_err(map_err)?;
@@ -300,7 +320,7 @@ impl ExecutionStore for PgStore {
 
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE id = $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = $1",
                 &[&id],
             )
             .map_err(map_err)?;
@@ -342,7 +362,7 @@ impl ExecutionStore for PgStore {
         };
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
                 &[&(fetch_limit as i64)],
             )
             .map_err(map_err)?;
@@ -370,7 +390,7 @@ impl ExecutionStore for PgStore {
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let mut client = self.client.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE true",
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE true",
         );
         let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
@@ -411,6 +431,28 @@ impl ExecutionStore for PgStore {
         let rows = client.query(&sql, &params_ref).map_err(map_err)?;
 
         Ok(rows.iter().map(row_to_execution).collect())
+    }
+
+    fn find_execution_by_idempotency_key(
+        &self,
+        job_key: &str,
+        idempotency_key: &str,
+        window_start: DateTime<Utc>,
+    ) -> Result<Option<Execution>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query(
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key
+                 FROM executions
+                 WHERE job_key = $1 AND idempotency_key = $2
+                   AND (state IN ('queued', 'claimed') OR created_at >= $3)
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+                &[&job_key, &idempotency_key, &window_start],
+            )
+            .map_err(map_err)?;
+
+        Ok(rows.first().map(row_to_execution))
     }
 
     fn requeue_abandoned(
@@ -744,6 +786,7 @@ fn row_to_execution(row: &postgres::Row) -> Execution {
         duration_ms: row.get(9),
         error: row.get(10),
         dead_reason: row.get(11),
+        idempotency_key: row.get(14),
         metadata: json_to_metadata(metadata_json),
         created_at: row.get(13),
     }
@@ -866,6 +909,7 @@ fn pg_insert_execution(client: &mut postgres::Client, exec: &Execution) -> Resul
                 &exec.dead_reason,
                 &metadata,
                 &exec.created_at,
+                &exec.idempotency_key,
             ],
         )
         .map_err(map_err)?;
@@ -894,6 +938,7 @@ fn pg_insert_execution_tx(
             &exec.dead_reason,
             &metadata,
             &exec.created_at,
+            &exec.idempotency_key,
         ],
     )
     .map_err(map_err)?;
@@ -920,8 +965,8 @@ fn pg_upsert_job_state_tx(
     Ok(())
 }
 
-const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)";
 
 const PG_INSERT_DEAD_LETTER_SQL: &str = "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";

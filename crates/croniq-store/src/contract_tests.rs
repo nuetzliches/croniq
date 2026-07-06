@@ -30,6 +30,7 @@ fn make_execution(job_key: &str, fire_at: chrono::DateTime<Utc>) -> Execution {
         duration_ms: None,
         error: None,
         dead_reason: None,
+        idempotency_key: None,
         metadata: HashMap::new(),
         created_at: now(),
     }
@@ -1551,4 +1552,172 @@ fn alert_override_model_helpers_respect_expiry() {
     assert!(snz.is_suppressing(n));
     snz.snooze_until = Some(utc(2026, 3, 29, 11, 0));
     assert!(!snz.is_suppressing(n));
+}
+
+// ─── Trigger idempotency (issue #279) ───
+
+/// Dedup lookup window used by the tests below: everything created at or
+/// after 11:50 (10 minutes before `now()` = 12:00) is inside the window.
+fn window_start() -> chrono::DateTime<Utc> {
+    utc(2026, 3, 29, 11, 50)
+}
+
+#[test]
+fn idempotency_key_finds_inflight_execution() {
+    let store = create_memory_store().unwrap();
+
+    let mut exec = make_execution("billing:invoice", now());
+    exec.idempotency_key = Some("evt-1".into());
+    store.create_execution(&exec).unwrap();
+
+    // Queued (in-flight) matches regardless of the window: even with a
+    // window_start in the future the queued row must be found.
+    let hit = store
+        .find_execution_by_idempotency_key("billing:invoice", "evt-1", utc(2026, 3, 29, 13, 0))
+        .unwrap()
+        .expect("queued execution must match");
+    assert_eq!(hit.id, exec.id);
+    assert_eq!(hit.idempotency_key.as_deref(), Some("evt-1"));
+
+    // Claimed is still in-flight and must also match.
+    store.claim_execution(exec.id, "r1", now()).unwrap();
+    let hit = store
+        .find_execution_by_idempotency_key("billing:invoice", "evt-1", utc(2026, 3, 29, 13, 0))
+        .unwrap()
+        .expect("claimed execution must match");
+    assert_eq!(hit.id, exec.id);
+}
+
+#[test]
+fn idempotency_key_finds_completed_execution_within_window() {
+    let store = create_memory_store().unwrap();
+
+    let mut exec = make_execution("billing:invoice", now());
+    exec.idempotency_key = Some("evt-2".into());
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "r1", now()).unwrap();
+    store
+        .complete_execution(
+            exec.id,
+            ExecutionState::Completed,
+            Some(100),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    // created_at = 12:00 >= window_start 11:50 → hit even though terminal.
+    let hit = store
+        .find_execution_by_idempotency_key("billing:invoice", "evt-2", window_start())
+        .unwrap()
+        .expect("completed execution inside the window must match");
+    assert_eq!(hit.id, exec.id);
+    assert_eq!(hit.state, ExecutionState::Completed);
+}
+
+#[test]
+fn idempotency_key_ignores_completed_execution_outside_window() {
+    let store = create_memory_store().unwrap();
+
+    let mut exec = make_execution("billing:invoice", now());
+    exec.idempotency_key = Some("evt-3".into());
+    exec.created_at = utc(2026, 3, 29, 11, 0); // 60 min ago — outside window
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "r1", now()).unwrap();
+    store
+        .complete_execution(
+            exec.id,
+            ExecutionState::Completed,
+            Some(100),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    assert!(
+        store
+            .find_execution_by_idempotency_key("billing:invoice", "evt-3", window_start())
+            .unwrap()
+            .is_none(),
+        "terminal execution outside the window must not match"
+    );
+}
+
+#[test]
+fn idempotency_key_is_scoped_per_job_key() {
+    let store = create_memory_store().unwrap();
+
+    let mut exec = make_execution("billing:invoice", now());
+    exec.idempotency_key = Some("evt-4".into());
+    store.create_execution(&exec).unwrap();
+
+    assert!(
+        store
+            .find_execution_by_idempotency_key("etl:sync", "evt-4", window_start())
+            .unwrap()
+            .is_none(),
+        "the same key under a different job_key must not match"
+    );
+}
+
+#[test]
+fn idempotency_key_never_matches_keyless_executions() {
+    let store = create_memory_store().unwrap();
+
+    // Scheduler-style execution without a key.
+    let exec = make_execution("billing:invoice", now());
+    store.create_execution(&exec).unwrap();
+
+    assert!(
+        store
+            .find_execution_by_idempotency_key("billing:invoice", "evt-5", window_start())
+            .unwrap()
+            .is_none(),
+        "NULL idempotency_key rows must never match"
+    );
+}
+
+#[test]
+fn idempotency_key_returns_most_recent_match() {
+    let store = create_memory_store().unwrap();
+
+    let mut older = make_execution("billing:invoice", now());
+    older.idempotency_key = Some("evt-6".into());
+    older.created_at = utc(2026, 3, 29, 11, 55);
+    store.create_execution(&older).unwrap();
+
+    let mut newer = make_execution("billing:invoice", now());
+    newer.idempotency_key = Some("evt-6".into());
+    newer.created_at = utc(2026, 3, 29, 11, 58);
+    store.create_execution(&newer).unwrap();
+
+    let hit = store
+        .find_execution_by_idempotency_key("billing:invoice", "evt-6", window_start())
+        .unwrap()
+        .expect("must match");
+    assert_eq!(hit.id, newer.id, "most recent matching execution wins");
+}
+
+#[test]
+fn idempotency_key_round_trips_through_store() {
+    let store = create_memory_store().unwrap();
+
+    let mut exec = make_execution("billing:invoice", now());
+    exec.idempotency_key = Some("evt-7".into());
+    store.create_execution(&exec).unwrap();
+
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(loaded.idempotency_key.as_deref(), Some("evt-7"));
+
+    // list_executions carries the key too.
+    let listed = store
+        .list_executions(&ExecutionFilter {
+            job_key: Some("billing:invoice".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].idempotency_key.as_deref(), Some("evt-7"));
 }

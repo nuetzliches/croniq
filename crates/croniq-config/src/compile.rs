@@ -362,6 +362,11 @@ pub struct PullApiConfig {
     pub listen: String,
     pub auth: Option<String>,
     pub lease_ttl: String,
+    /// Dedup window for `POST /v1/trigger` idempotency keys (issue #279).
+    /// A repeat trigger carrying the same `(job_key, idempotency_key)`
+    /// within this window coalesces to the existing execution. Duration
+    /// string (`10m`, `600s`, `1h`); default `10m`.
+    pub trigger_dedup_window: String,
 }
 
 /// How a job's executions are tracked and persisted.
@@ -588,6 +593,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     listen: ":9443".into(),
                     auth: None,
                     lease_ttl: "60s".into(),
+                    trigger_dedup_window: "10m".into(),
                 };
                 for d in &p.directives {
                     match d.key.value.as_str() {
@@ -608,6 +614,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         "lease_ttl" => {
                             if let Some(v) = first_arg(d, &vars) {
                                 cfg.lease_ttl = v;
+                            }
+                        }
+                        "trigger_dedup_window" => {
+                            if let Some(v) = first_arg(d, &vars) {
+                                cfg.trigger_dedup_window = v;
                             }
                         }
                         _ => {}
@@ -1490,6 +1501,33 @@ mod tests {
     fn compile_server_without_app_url_is_none() {
         let ast = Parser::parse("server { listen :4000 }").unwrap();
         assert_eq!(compile(&ast).server.app_url, None);
+    }
+
+    #[test]
+    fn compile_pull_api_trigger_dedup_window() {
+        let ast = Parser::parse(
+            r#"
+            pull_api {
+                lease_ttl 60s
+                trigger_dedup_window 30m
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let pull_api = cfg.pull_api.expect("pull_api block must compile");
+        assert_eq!(pull_api.lease_ttl, "60s");
+        assert_eq!(pull_api.trigger_dedup_window, "30m");
+    }
+
+    #[test]
+    fn compile_pull_api_trigger_dedup_window_defaults_to_10m() {
+        let ast = Parser::parse("pull_api { lease_ttl 60s }").unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.pull_api.expect("pull_api block").trigger_dedup_window,
+            "10m"
+        );
     }
 
     #[test]

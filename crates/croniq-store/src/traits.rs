@@ -87,6 +87,18 @@ pub trait ExecutionStore {
     /// List executions with optional filters.
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError>;
 
+    /// Find the most recent execution carrying the given trigger
+    /// idempotency key for a job (issue #279). Matches when the execution
+    /// is still in-flight (`queued` / `claimed`) OR was created at or after
+    /// `window_start` (even if it already finished). Returns `None` when no
+    /// execution matches — the caller then proceeds with a fresh trigger.
+    fn find_execution_by_idempotency_key(
+        &self,
+        job_key: &str,
+        idempotency_key: &str,
+        window_start: DateTime<Utc>,
+    ) -> Result<Option<Execution>, StoreError>;
+
     /// Mark abandoned executions (runner dead) back to queued.
     fn requeue_abandoned(
         &self,

@@ -89,6 +89,8 @@ export interface Execution {
   completed_at: string | null
   duration_ms: number | null
   error: string | null
+  /** Trigger dedup key (#279). Only present on trigger-created executions that sent one. */
+  idempotency_key?: string
   created_at: string
 }
 
@@ -347,6 +349,8 @@ export interface CreateApiKeyResponse {
 export interface TriggerResponse {
   execution_id: string
   queued: boolean
+  /** true when the trigger coalesced to an existing execution via idempotency_key (#279). */
+  deduplicated: boolean
 }
 
 export interface ReplayResponse {

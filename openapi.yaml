@@ -1414,6 +1414,17 @@ paths:
   /v1/trigger:
     post:
       summary: Trigger a job immediately
+      description: >
+        Enqueues an execution for the job. Supply an `idempotency_key` to
+        dedup at-least-once producers (event redelivery, client retries,
+        concurrent publishers): a repeat trigger with the same
+        `(job_key, idempotency_key)` returns the existing `execution_id`
+        with `deduplicated: true` instead of enqueuing a new execution —
+        while that execution is still queued/running, or for a configurable
+        window after it was created (`pull_api { trigger_dedup_window … }`,
+        default 10m), even if it already finished. Dedup is best-effort:
+        two truly concurrent identical triggers may both pass the lookup
+        and enqueue twice. It is NOT a strict exactly-once guarantee.
       requestBody:
         content:
           application/json:
@@ -1426,6 +1437,13 @@ paths:
                 prefer: { type: array, items: { type: string } }
                 metadata: { type: object }
                 timeout: { type: string, default: "5m" }
+                idempotency_key:
+                  type: string
+                  maxLength: 200
+                  description: >
+                    Optional dedup key, scoped per job_key. Empty string is
+                    treated as absent; keys longer than 200 characters are
+                    rejected with 400.
       responses:
         "200":
           content:
@@ -1433,8 +1451,22 @@ paths:
               schema:
                 type: object
                 properties:
-                  execution_id: { type: string }
-                  queued: { type: integer }
+                  execution_id:
+                    type: string
+                    description: >
+                      On a dedup hit this is the EXISTING execution's id,
+                      not a new one.
+                  queued:
+                    type: integer
+                    description: >
+                      Queue depth after enqueue (unchanged on a dedup hit —
+                      nothing is enqueued then).
+                  deduplicated:
+                    type: boolean
+                    description: >
+                      true when the trigger coalesced to an existing
+                      execution via idempotency_key.
+        "400": { description: Invalid request (e.g. idempotency_key longer than 200 characters) }
 
   /v1/admin/reload-config:
     post:
