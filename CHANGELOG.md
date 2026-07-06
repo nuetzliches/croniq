@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-07-06
+
 ### Fixed
 
 - **`singleton` / `max_concurrent` on an `ephemeral` job is now rejected instead
