@@ -25,3 +25,23 @@ the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   per case, runs against `pytest-httpserver`.
 - Optional OpenTelemetry tracing via the `croniq-runner[otel]` extra; spans
   emitted around each execution when `opentelemetry-api` is importable.
+- **First-class trigger (producer) client
+  ([#283](https://github.com/nuetzliches/croniq/issues/283)),** at parity with
+  the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)). `TriggerClient`
+  (configured with `TriggerClientOptions`) wraps `POST /v1/trigger`:
+  `await client.trigger(job_key, metadata=…, require=…, prefer=…, timeout=…,
+  idempotency_key=…)` returns `TriggerResult(execution_id, queued,
+  deduplicated)`. It is independent of `Runner` and carries its **own**
+  credentials, because triggering needs the `jobs:trigger` (or `admin`) scope,
+  distinct from runner poll keys. Unset optionals are omitted from the request
+  body (never sent as `null`); `metadata` is forwarded as arbitrary nested JSON.
+  The optional `idempotency_key` enables server-side trigger dedup
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)) — `deduplicated` is
+  surfaced from the response and defaults to `False` on servers that omit it.
+  Non-2xx responses raise `httpx.HTTPStatusError`, including the per-job
+  queue-overflow `429` from
+  [#299](https://github.com/nuetzliches/croniq/issues/299). Validated against the
+  shared trigger conformance suite
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)), now wired into the
+  Python binding under `tests/conformance/`.
