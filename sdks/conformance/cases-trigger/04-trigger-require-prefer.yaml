@@ -1,0 +1,47 @@
+name: "Trigger routing hints — require and prefer as string arrays"
+description: |
+  require = capabilities a runner MUST have; prefer = capabilities that are
+  nice-to-have. Both are string arrays and both must reach the wire under
+  their snake_case keys with element order preserved. A caller may supply one
+  without the other — here `prefer` is omitted, so it MUST NOT appear in the
+  body while `require` does.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "ml:train"
+      require:
+        - "gpu"
+        - "cuda-12"
+    expect:
+      response:
+        execution_id: "exec-400"
+        queued: 2
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-400"
+        queued: 2
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "ml:train"
+        require:
+          - "gpu"
+          - "cuda-12"
+      body_absent:
+        - prefer
+        - metadata
+        - timeout
+        - idempotency_key

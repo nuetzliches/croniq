@@ -33,19 +33,24 @@
   </PropertyGroup>
 
   <!--
-    Deliberately NOT migrated from the dead Directory.Build.props block:
+    Trim/AOT compatibility. Lives here (not Directory.Build.props) for the same
+    evaluation-order reason as the groups above: the condition reads
+    $(IsPackable), which each .csproj sets AFTER Directory.Build.props is
+    imported. Enabling IsAotCompatible turns on the trim, AOT, and single-file
+    analyzers (and implies IsTrimmable) so the whole public API is checked at
+    build time — with TreatWarningsAsErrors, any regression is a hard error.
 
-      <IsAotCompatible>true</IsAotCompatible>
-      <IsTrimmable>true</IsTrimmable>
-
-    These flags never actually applied (same evaluation-order trap), so the
-    trim/AOT analyzers have never run. Enabling them surfaces 22 genuine
-    IL2026/IL3050/IL2091 findings in the DI/options layer (config binding,
-    ValidateDataAnnotations, open-generic handler registration) that need
-    real annotation work on the public API. Tracked in issue #295; turning
-    the flags on without that work would either break the build
-    (TreatWarningsAsErrors) or overclaim AOT support in the package.
+    The DI/options layer was annotated for this in issue #295:
+      - handler type parameters carry [DynamicallyAccessedMembers(PublicConstructors)];
+      - IConfiguration binding goes through the source-generated binder
+        (EnableConfigurationBindingGenerator);
+      - [OptionsValidator]-generated validators replace ValidateDataAnnotations().
+    The JSON wire layer was already source-generated (CroniqJsonContext).
   -->
+  <PropertyGroup Label="Trim/AOT" Condition="'$(IsPackable)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
 
   <PropertyGroup Label="MinVer" Condition="'$(IsPackable)' == 'true'">
     <MinVerTagPrefix>dotnet-sdk-v</MinVerTagPrefix>

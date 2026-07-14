@@ -80,6 +80,58 @@ jobs:
         # test-only code (we hit ~25 of them on first sweep).
         run: cargo clippy --workspace --all-targets --features croniq-server/otlp -- -D warnings
 
+  postgres:
+    # The Postgres store backend lives behind the off-by-default
+    # `croniq-store/postgres` feature, which the `rust` job above never
+    # enables. That blind spot let it rot silently: `PgStore` fell 7 store
+    # traits behind SQLite and stopped compiling entirely, undetected
+    # (#298). This job closes the gap. A compile + clippy gate alone would
+    # catch missing methods, but the SQL strings are opaque to the compiler
+    # — reserved-word collisions (`window`), type mismatches, wrong bindings
+    # only surface at runtime — so we also run the integration test against a
+    # real Postgres service container.
+    name: Store (Postgres backend)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: croniq
+          POSTGRES_PASSWORD: croniq
+          POSTGRES_DB: croniq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U croniq"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Own cache scope so the postgres-feature artefacts don't churn the
+          # main `rust` job's cache.
+          shared-key: postgres
+      - name: Build (--features postgres)
+        # `--all-targets` also compiles the integration test binary.
+        run: cargo build -p croniq-store --features postgres --all-targets
+      - name: Clippy (--features postgres)
+        # The main clippy pass runs with `croniq-server/otlp`, which never
+        # turns on the store's postgres feature, so postgres-gated lints go
+        # unchecked there. Guard them here.
+        run: cargo clippy -p croniq-store --features postgres --all-targets -- -D warnings
+      - name: Test (--features postgres against service Postgres)
+        # `CRONIQ_TEST_PG_URL` switches the integration test from skip to
+        # run — it drives every method of the 7 traits so runtime SQL bugs
+        # fail CI.
+        env:
+          CRONIQ_TEST_PG_URL: postgres://croniq:croniq@localhost:5432/croniq
+        run: cargo test -p croniq-store --features postgres
+
   ui:
     name: UI (build + typecheck)
     runs-on: ubuntu-latest

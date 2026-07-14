@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nuetzliches/croniq/sdks/conformance/schema/trigger-case-schema.json",
+  "title": "Croniq trigger (producer) conformance case",
+  "description": "Schema for a single language-agnostic conformance case that exercises a trigger (producer) client — `POST /v1/trigger`. Distinct from case-schema.json (the runner/consumer loop): a producer case makes explicit `trigger(...)` calls instead of running a poll loop, so it declares `trigger_config` + `trigger_calls` where a runner case declares `runner_config` + `handlers`. Kept in cases-trigger/ (not cases/) so runner bindings that enumerate cases/ keep passing untouched until they wire a trigger runner.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "trigger_config", "trigger_calls", "server_script", "expectations"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+
+    "trigger_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Maps to the trigger client's options object. `server_url` is NOT listed here — the binding injects the mock server's base URL, exactly as runner cases omit it from runner_config. The trigger client authenticates with ITS OWN credentials (jobs:trigger scope), independent of any runner.",
+      "properties": {
+        "api_key": { "type": "string" },
+        "bearer_token": { "type": "string" }
+      }
+    },
+
+    "trigger_calls": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of trigger(...) invocations the binding must make against the configured client, in order. Each call's server response comes from server_script (sequenced via match_count when a case fires the same endpoint more than once).",
+      "items": { "$ref": "#/$defs/triggerCall" }
+    },
+
+    "server_script": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scriptEntry" }
+    },
+
+    "expectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http"],
+      "properties": {
+        "duration_max_ms": { "type": "integer", "minimum": 1 },
+        "http": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/httpExpectation" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "triggerCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "expect"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["job_key"],
+          "description": "Arguments passed to the trigger client. Fields absent here MUST NOT appear in the outbound JSON body — assert their omission with expectations.http[].body_absent.",
+          "properties": {
+            "job_key": { "type": "string", "minLength": 1 },
+            "require": { "type": "array", "items": { "type": "string" } },
+            "prefer": { "type": "array", "items": { "type": "string" } },
+            "metadata": { "type": "object" },
+            "timeout": { "type": "string" },
+            "idempotency_key": { "type": "string" }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "description": "The outcome the client must surface to the caller. Exactly one of `response` (call succeeds) or `error: true` (call raises/returns an error) by convention.",
+          "properties": {
+            "response": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Subset match on the parsed TriggerResponse the client returns. Only listed fields are asserted. execution_id accepts '*' for any non-empty value.",
+              "properties": {
+                "execution_id": { "type": "string" },
+                "queued": { "type": "integer", "minimum": 0 },
+                "deduplicated": { "type": "boolean" }
+              }
+            },
+            "error": {
+              "type": "boolean",
+              "description": "true → the client MUST surface the call as an error (thrown exception / rejected future / err return), not a value."
+            }
+          }
+        }
+      }
+    },
+
+    "scriptEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on", "respond"],
+      "properties": {
+        "on": {
+          "type": "string",
+          "pattern": "^(GET|POST|PUT|DELETE|PATCH) /[^\\s]*$",
+          "description": "HTTP method and path pattern. Path may include {param} placeholders."
+        },
+        "match_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "If set, this rule only applies to the Nth-occurring match (1-based). Otherwise the rule is the fallthrough for all matches."
+        },
+        "respond": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "body": {},
+            "delay_ms": { "type": "integer", "minimum": 0, "description": "Artificial server delay before responding." },
+            "headers": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "httpExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path"],
+      "properties": {
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"] },
+        "path": { "type": "string", "pattern": "^/" },
+        "exact_count": { "type": "integer", "minimum": 0 },
+        "min_count": { "type": "integer", "minimum": 0 },
+        "max_count": { "type": "integer", "minimum": 0 },
+        "headers": {
+          "type": "object",
+          "description": "Subset match on request headers (case-insensitive name, exact value or '*').",
+          "additionalProperties": { "type": "string" }
+        },
+        "body_match": {
+          "description": "Subset match on the request JSON body. '*' wildcards any non-empty value."
+        },
+        "body_absent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Top-level request-body keys that MUST NOT be present. Pins omission of unset optionals (a producer must not emit metadata/require/prefer/timeout/idempotency_key it was not given). Asserted against the first matching request."
+        }
+      }
+    }
+  }
+}
