@@ -23,6 +23,10 @@ postgres = { version = "0.19", features = ["with-chrono-0_4", "with-uuid-1", "wi
 pretty_assertions = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 uuid = { version = "1", features = ["v4"] }
+# Used by the Postgres integration test (tests/pg_integration.rs) to build
+# model instances; chrono is already a normal dep but integration-test crates
+# only see dev-dependencies directly.
+chrono = { version = "0.4", features = ["serde"] }
 
 [[bench]]
 name = "sqlite_bench"

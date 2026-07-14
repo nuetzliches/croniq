@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Postgres store backend now compiles and is verified in CI
+  ([#298](https://github.com/nuetzliches/croniq/issues/298)).** `PgStore`
+  implemented only 5 of the 12 store traits, so
+  `cargo build -p croniq-store --features postgres` failed to compile — and
+  because no CI job built with `--features postgres`, the regression went
+  unnoticed (the backend is advertised in `AGENTS.md` but couldn't be built or
+  used). The seven missing traits (`AuthStore`, `JobDefinitionStore`,
+  `TriggerDefinitionStore`, `CalendarDefinitionStore`, `DslAdoptionStore`,
+  `ExecutionLogStore`, `AlertStore`) are now implemented — mirroring the SQLite
+  backend's semantics — together with the matching Postgres schema migrations.
+  A new CI job builds the feature, runs clippy on it, and executes an
+  integration test against a Postgres service container so the backend can't
+  rot again.
 ### Added
 
 - **Go SDK: first-class trigger (producer) client
