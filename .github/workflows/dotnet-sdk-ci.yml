@@ -78,6 +78,13 @@ jobs:
           check-jsonschema --verbose \
             --schemafile sdks/conformance/schema/case-schema.json \
             sdks/conformance/cases/*.yaml
+      - name: Validate every trigger case against trigger-case-schema.json
+        # Producer (POST /v1/trigger) cases have a distinct shape and their
+        # own schema — see sdks/conformance/cases-trigger/ (#287).
+        run: |
+          check-jsonschema --verbose \
+            --schemafile sdks/conformance/schema/trigger-case-schema.json \
+            sdks/conformance/cases-trigger/*.yaml
 
   build:
     name: Build & test (${{ matrix.os }})

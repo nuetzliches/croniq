@@ -21,8 +21,18 @@ export type {
   RegisterJobRequest,
   RegisterJobResponse,
   RenewRequest,
+  TriggerRequest,
+  TriggerResponse,
   WorkAssignment,
   WorkEvent,
   WorkEventLevel,
 } from './protocol.js';
 export { HttpError } from './client.js';
+
+// Producer-side trigger (on-demand) client — parity with the .NET SDK (#277).
+export { CroniqTriggerClient, createTriggerClient, QueueOverflowError } from './trigger.js';
+export type {
+  CroniqTriggerClientOptions,
+  TriggerParams,
+  TriggerResult,
+} from './trigger.js';

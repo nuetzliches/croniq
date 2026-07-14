@@ -67,6 +67,7 @@ See [`examples/quickstart`](examples/quickstart/main.go) for the full template.
 - **Middleware** — `croniq.WithMiddleware(...)` for tracing, recovery, metrics, etc.
 - **Persistent runner identity** — `ResolveRunnerID(prefix)` reads `RUNNER_ID` / `${CRONIQ_RUNNER_DATA_DIR}/runner-id` / generates and persists, matching the Rust shell-runner's volume behaviour.
 - **Drain-on-shutdown** — cancelling `Run`'s context stops polling but lets in-flight handlers finish naturally up to `WithDrainTimeout`; past the budget remaining handlers are cancelled.
+- **On-demand triggering (producer)** — `croniq.NewTriggerClient(...)` wraps `POST /v1/trigger` with its own credentials (the `jobs:trigger` scope), independent of the runner. See [Triggering jobs](#triggering-jobs-producer).
 
 ## Capabilities vs Tags
 
@@ -77,6 +78,45 @@ A common pitfall: **don't put implementation details into capabilities**. Capabi
 | `billing`, `reporting`, `gpu`, `sandboxed` | `go`, `linux-amd64`, `kubernetes` |
 
 If your runner is Go-based, put that into **tags** (`lang=go`, `platform=linux-amd64`) so a future Rust- or .NET-runner with the same business capabilities can take over without rewriting Croniqfile entries.
+
+## Triggering jobs (producer)
+
+Runners are the *consumer* side of Croniq. The *producer* side — firing a job on demand, e.g. in response to an application event — is a separate, first-class client that wraps `POST /v1/trigger`:
+
+```go
+tc := croniq.NewTriggerClient("http://localhost:4000").
+    WithAPIKey(os.Getenv("CRONIQ_TRIGGER_KEY"))
+
+resp, err := tc.Trigger(ctx, &croniq.TriggerRequest{
+    JobKey:         "billing:invoice",
+    Metadata:       map[string]any{"invoice_id": "inv_42"},
+    Require:        []string{"billing"},
+    Timeout:        "10m",
+    IdempotencyKey: "evt-2026-07-14-001", // optional dedup key
+})
+if err != nil {
+    // A *croniq.ServerError carries the HTTP status — e.g. 429 when the
+    // job is at its per-job queue-overflow cap (max_queue_depth).
+    var se *croniq.ServerError
+    if errors.As(err, &se) && se.Status == http.StatusTooManyRequests {
+        // observe backpressure: back off / retry later
+    }
+    return err
+}
+slog.Info("triggered",
+    "execution_id", resp.ExecutionID,
+    "queued", resp.Queued,
+    "deduplicated", resp.Deduplicated,
+)
+```
+
+- **Separate credentials.** Triggering requires the `jobs:trigger` (or `admin`) scope, which runner poll keys typically don't carry — so `TriggerClient` takes its own API key / bearer token (`WithAPIKey` / `WithBearer`) and is fully independent of `NewRunner`.
+- **Unset optionals are omitted.** `Metadata`, `Require`, `Prefer`, `Timeout`, and `IdempotencyKey` are left out of the request body entirely when unset — the server applies its own defaults; the producer never fabricates them on the wire.
+- **Metadata is arbitrary JSON.** `map[string]any` is forwarded to the handler verbatim, nested objects and non-string values preserved (not flattened or stringified).
+- **Idempotency.** Supply `IdempotencyKey` to dedup at-least-once producers (event redelivery, client retries, concurrent publishers). A repeat trigger with the same `(JobKey, IdempotencyKey)` returns the existing `ExecutionID` with `Deduplicated: true` instead of enqueuing again. Servers without idempotency support omit the flag; it then reads as `false`.
+- **Backpressure.** A non-2xx response is returned as `*croniq.ServerError`; inspect `.Status` (e.g. `429`) to observe the per-job queue-overflow cap rather than piling work up unbounded.
+
+See [`examples/trigger`](examples/trigger/main.go) for a runnable producer.
 
 ## Streaming logs
 
@@ -125,7 +165,7 @@ The SDK is validated against the shared, language-agnostic conformance suite at 
 cd sdks/go && go test ./conformance/...
 ```
 
-When the wire protocol gains a new behaviour the YAML case is added to `sdks/conformance/cases/` first — every SDK author then sees the same definition-of-done.
+When the wire protocol gains a new behaviour the YAML case is added to `sdks/conformance/cases/` first — every SDK author then sees the same definition-of-done. Producer (trigger) cases live alongside in `sdks/conformance/cases-trigger/` and drive the `TriggerClient` instead of a runner loop.
 
 ## Compatibility matrix
 
