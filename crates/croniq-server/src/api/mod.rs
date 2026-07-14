@@ -1098,12 +1098,7 @@ async fn handle_trigger(
     } else {
         10
     } as usize;
-    let queued_for_job = state
-        .runner
-        .queue
-        .read()
-        .await
-        .count_for_job(&req.job_key);
+    let queued_for_job = state.runner.queue.read().await.count_for_job(&req.job_key);
     if queued_for_job >= max_queue_depth {
         tracing::warn!(
             job_key = %req.job_key,
