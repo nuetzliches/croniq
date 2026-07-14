@@ -51,6 +51,7 @@ await runner.run(controller.signal);
 - **Server-side cancellation** — `PollResponse.cancel` aborts the handler's `ctx.signal`.
 - **Streaming `LogWriter`** — bounded queue with backpressure, batch by count (32) / by time (200 ms) / max 100 events per POST, **drain-before-ack**.
 - **Self-registration** — `runner.handle('key', fn, { schedule: '5m' })` calls `POST /v1/jobs/register` once at startup (DSL precedence applies server-side).
+- **Producer trigger client** — `createTriggerClient(...)` fires jobs on demand via `POST /v1/trigger` with its own `jobs:trigger` credentials, `idempotency_key` dedup, and `429` backpressure surfaced as `QueueOverflowError`. See [Trigger a job on demand](#trigger-a-job-on-demand-producer).
 - **Auth precedence** — `Authorization: ApiKey {key}` if set, else `Bearer {token}`.
 - **Persistent runner-id** — env var → state file → generated `{prefix}-{hex8}`, persisted under `$XDG_STATE_HOME/croniq-runner` (Linux/macOS) or `%LOCALAPPDATA%\croniq-runner` (Windows).
 - **OpenTelemetry-ready** — bring your own `@opentelemetry/sdk-node` setup; the SDK plays nicely with the standard `@opentelemetry/api` no-op fallback.
@@ -117,6 +118,41 @@ runner.handle(
 
 On startup the SDK calls `POST /v1/jobs/register`. If a Croniqfile (DSL) entry with the same `job_key` exists, the server returns `status=skipped_dsl_precedence` and the SDK logs an info message — your runner still polls and executes the job normally, just driven by the DSL schedule rather than the runner-registered one.
 
+## Trigger a job on demand (producer)
+
+The runner above is the **consumer** side. The **producer** side — firing a job _immediately_, e.g. in response to an application event — is a separate, first-class client wrapping `POST /v1/trigger`. It is independent of the runner: triggering needs the `jobs:trigger` (or `admin`) scope, which runner poll keys typically don't carry, so the trigger client takes **its own** credentials rather than reusing a runner's. (Parity with the .NET SDK's `ICroniqTriggerClient`.)
+
+```ts
+import { createTriggerClient } from '@nuetzliches/croniq-runner';
+
+const client = createTriggerClient({
+  serverUrl: 'http://localhost:4000',
+  apiKey: process.env.CRONIQ_TRIGGER_KEY, // jobs:trigger scope — NOT a runner poll key
+});
+
+const { executionId, queued, deduplicated } = await client.trigger('billing:invoice-generate', {
+  metadata: { invoice_id: 'inv_42' },
+  require: ['billing'],
+  prefer: ['eu-central'],
+  timeout: '10m',
+  idempotencyKey: 'evt-2026-07-14-001', // optional server-side dedup
+});
+```
+
+The same registered handler serves both its Croniqfile schedule (safety-net / reconcile floor) and near-real-time, event-driven fires — one execution and observability path, no second code path.
+
+- **Unset optionals are omitted** from the JSON body — a producer never sends `metadata` / `require` / `prefer` / `timeout` / `idempotency_key` the caller didn't supply.
+- **Idempotency.** Pass `idempotencyKey` so at-least-once producers (event redelivery, retries, concurrent publishers) coalesce onto one execution. The result's `deduplicated` is `true` when the server returned an existing execution; servers without idempotency support omit the flag and it defaults to `false`.
+- **Backpressure.** A `429` (per-job queue-overflow cap) throws `QueueOverflowError` — a subclass of `HttpError` carrying `retryAfterMs` when the server sends `Retry-After` — so a batching / retrying producer can back off instead of dropping work. Any other non-2xx throws `HttpError`.
+
+| Option             | Default        | Description                                          |
+| ------------------ | -------------- | ---------------------------------------------------- |
+| `serverUrl`        | _(required)_   | Croniq server base URL.                              |
+| `apiKey`           | —              | `Authorization: ApiKey {…}`. Precedence over bearer. |
+| `bearerToken`      | —              | `Authorization: Bearer {…}`.                         |
+| `requestTimeoutMs` | `30_000`       | Per-request timeout.                                 |
+| `fetchImpl`        | global `fetch` | Custom `fetch` (testing / proxies).                  |
+
 ## Configuration
 
 | Option                | Default                                              | Description                                                              |
@@ -141,7 +177,7 @@ LogWriter sub-options: `channelCapacity` (256), `batchSizeThreshold` (32), `batc
 
 ## Wire-protocol conformance
 
-Validated against the shared, language-neutral suite at [`sdks/conformance/`](../conformance/) — the same 12 YAML cases the .NET SDK passes. The TypeScript binding lives at [`sdks/conformance/bindings/typescript/`](../conformance/bindings/typescript).
+Validated against the shared, language-neutral suite at [`sdks/conformance/`](../conformance/) — the runner (consumer) cases in [`cases/`](../conformance/cases), plus the producer (trigger) cases in [`cases-trigger/`](../conformance/cases-trigger) ([#287](https://github.com/nuetzliches/croniq/issues/287)) which the binding's trigger runner picks up automatically once present. The TypeScript binding lives at [`sdks/conformance/bindings/typescript/`](../conformance/bindings/typescript).
 
 ```sh
 cd sdks/conformance/bindings/typescript

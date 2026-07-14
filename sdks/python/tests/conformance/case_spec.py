@@ -84,6 +84,9 @@ class HttpExpectation:
     max_count: int | None = None
     headers: dict[str, str] = field(default_factory=dict)
     body_match: Any = None
+    # Top-level request-body keys that MUST NOT appear. Only the trigger
+    # (producer) cases use this — runner cases leave it empty.
+    body_absent: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -201,4 +204,5 @@ def _to_http_expectation(d: dict[str, Any]) -> HttpExpectation:
         max_count=d.get("max_count"),
         headers={k.lower(): v for k, v in (d.get("headers") or {}).items()},
         body_match=d.get("body_match"),
+        body_absent=list(d.get("body_absent") or []),
     )

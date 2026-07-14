@@ -6,13 +6,16 @@ SDKs in other languages.
 Public surface — every other symbol is an implementation detail and may move
 without a major-version bump:
 
-    Runner          — the poll/dispatch/ack loop
-    RunnerOptions   — runner configuration
-    ExecutionContext— handed to each handler
-    LogLevel        — string enum mirroring the server's log-level set
-    LogWriter       — streaming log channel (use via `ExecutionContext.log_writer`)
-    WorkEvent       — structured log event for `LogWriter.write`
-    HandlerError    — handler raises this to control the failure message
+    Runner              — the poll/dispatch/ack loop
+    RunnerOptions       — runner configuration
+    ExecutionContext    — handed to each handler
+    LogLevel            — string enum mirroring the server's log-level set
+    LogWriter           — streaming log channel (use via `ExecutionContext.log_writer`)
+    WorkEvent           — structured log event for `LogWriter.write`
+    HandlerError        — handler raises this to control the failure message
+    TriggerClient       — producer client for firing jobs via POST /v1/trigger
+    TriggerClientOptions— trigger-client configuration (its own credentials)
+    TriggerResult       — result of a trigger call
 
 Quick start::
 
@@ -33,6 +36,7 @@ from croniq_runner._log_writer import LogLevel, LogWriter
 from croniq_runner._options import LogWriterOptions, RunnerOptions
 from croniq_runner._protocol import WorkEvent
 from croniq_runner._runner import Runner
+from croniq_runner._trigger import TriggerClient, TriggerClientOptions, TriggerResult
 
 __all__ = [
     "ExecutionContext",
@@ -42,6 +46,9 @@ __all__ = [
     "LogWriterOptions",
     "Runner",
     "RunnerOptions",
+    "TriggerClient",
+    "TriggerClientOptions",
+    "TriggerResult",
     "WorkEvent",
 ]
 

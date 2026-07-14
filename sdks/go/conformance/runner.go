@@ -133,7 +133,16 @@ func expectationsMet(exp Expectations, recorded []RecordedRequest) bool {
 
 func assertExpectations(t *testing.T, spec *Spec, recorded []RecordedRequest, _ time.Duration) {
 	t.Helper()
-	for _, e := range spec.Expectations.HTTP {
+	assertHTTP(t, spec.Expectations.HTTP, recorded)
+}
+
+// assertHTTP checks a set of HTTP expectations against the recorded request
+// stream: count bounds (exact/min/max), then — for the first matching
+// request — header and body-subset assertions. Shared by the runner
+// (consumer) and trigger (producer) conformance harnesses.
+func assertHTTP(t *testing.T, exps []HTTPExpectation, recorded []RecordedRequest) {
+	t.Helper()
+	for _, e := range exps {
 		matches := filterMatching(e, recorded)
 		count := len(matches)
 		if e.ExactCount != nil && count != *e.ExactCount {

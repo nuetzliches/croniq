@@ -6,6 +6,35 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — trigger (producer) client, [#285](https://github.com/nuetzliches/croniq/issues/285)
+
+- `io.croniq.runner.CroniqTriggerClient` — producer-side client wrapping
+  `POST /v1/trigger`, at parity with the .NET SDK's `ICroniqTriggerClient`
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)). Independent of
+  `CroniqRunner`: a pure producer needs no runner.
+  - `trigger(String jobKey)` and `trigger(TriggerRequest)` return
+    `TriggerResult { executionId, queued, deduplicated }`.
+  - `TriggerRequest` (builder) carries `jobKey` plus optional `metadata`
+    (arbitrary JSON, not just strings), `require` / `prefer` routing hints,
+    `timeout`, and `idempotencyKey`. Unset optionals are omitted from the JSON
+    body (never sent as `null`).
+  - `deduplicated` defaults to `false` when the server omits it (older builds),
+    so the idempotency-key dedup flag ([#279](https://github.com/nuetzliches/croniq/issues/279))
+    parses forward-compatibly.
+- `io.croniq.runner.config.CroniqClientOptions` — trigger-client config with its
+  own credentials (`apiKey` / `bearerToken`, `serverUrl`, `requestTimeout`). The
+  endpoint needs the `jobs:trigger` (or `admin`) scope, distinct from the runner's
+  poll scopes, so the trigger client never reuses the runner's key.
+- `io.croniq.runner.CroniqTriggerException` — thrown on a non-2xx response,
+  transport failure, or serialisation error. `statusCode()` exposes the HTTP
+  status; `isQueueOverflow()` flags the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)) so a batching
+  producer can back off rather than drop work.
+- Conformance: the binding now runs the shared trigger (producer) cases
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)) via
+  `TriggerConformanceSuiteTest`. The suite no-ops gracefully until
+  `sdks/conformance/cases-trigger/` is present in the checkout.
+
 ### Added — PR-7 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - `io.croniq.runner.handler.CroniqRunnerObserver` public interface — lifecycle

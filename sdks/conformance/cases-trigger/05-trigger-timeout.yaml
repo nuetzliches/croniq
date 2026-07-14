@@ -1,0 +1,42 @@
+name: "Trigger timeout — explicit value sent verbatim"
+description: |
+  When the caller supplies a timeout it is sent verbatim as a duration string
+  under the `timeout` key. The complementary half — a client must OMIT timeout
+  (not fabricate the server default "5m") when the caller gives none — is
+  pinned by 01-trigger-minimal via body_absent.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "cache:warm"
+      timeout: "30s"
+    expect:
+      response:
+        execution_id: "exec-500"
+        queued: 1
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-500"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "cache:warm"
+        timeout: "30s"
+      body_absent:
+        - metadata
+        - require
+        - prefer
+        - idempotency_key

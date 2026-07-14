@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 using Croniq.Runner.Sdk.Internal;
 using Croniq.Runner.Sdk.ShellExec;
 
@@ -40,7 +42,7 @@ public static class CroniqJobRegistrationExtensions
     }
 
     /// <summary>Register an <see cref="ICroniqJobHandler"/> implementation for a job key.</summary>
-    public static ICroniqRunnerBuilder AddCroniqJob<THandler>(
+    public static ICroniqRunnerBuilder AddCroniqJob<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(
         this ICroniqRunnerBuilder builder,
         string jobKey)
         where THandler : class, ICroniqJobHandler
@@ -52,7 +54,7 @@ public static class CroniqJobRegistrationExtensions
     }
 
     /// <summary>Register an <see cref="ICroniqJobHandler"/> with a schedule (self-register on startup).</summary>
-    public static ICroniqRunnerBuilder AddCroniqJob<THandler>(
+    public static ICroniqRunnerBuilder AddCroniqJob<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(
         this ICroniqRunnerBuilder builder,
         string jobKey,
         string schedule)
@@ -76,7 +78,7 @@ public static class CroniqJobRegistrationExtensions
     }
 
     /// <summary>Register an <see cref="ICroniqJobHandler"/> as the catch-all.</summary>
-    public static ICroniqRunnerBuilder AddCroniqDefaultHandler<THandler>(
+    public static ICroniqRunnerBuilder AddCroniqDefaultHandler<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(
         this ICroniqRunnerBuilder builder)
         where THandler : class, ICroniqJobHandler
     {

@@ -8,6 +8,7 @@ import type {
   WorkEvent,
 } from './protocol.js';
 import { AbortError } from './deferred.js';
+import { composeSignals, isAbortLikeError } from './http.js';
 import type { Logger } from './logger.js';
 import { trimTrailingSlashes } from './url.js';
 
@@ -135,47 +136,4 @@ export class CroniqClient {
       return undefined;
     }
   }
-}
-
-interface ComposedSignal {
-  signal: AbortSignal;
-  /** Removes the listener we attached to `outer`. Must be called in a finally. */
-  dispose: () => void;
-}
-
-function composeSignals(outer: AbortSignal, timeoutMs?: number): ComposedSignal {
-  if (timeoutMs == null) {
-    return { signal: outer, dispose: () => {} };
-  }
-  // Node 18 doesn't have AbortSignal.any; build one by hand. The caller MUST
-  // invoke dispose() in a finally — otherwise long-lived outer signals
-  // (e.g. the runner's loop signal) accumulate one listener per poll.
-  const ac = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  const onOuterAbort = (): void => {
-    if (timer) clearTimeout(timer);
-    ac.abort(outer.reason);
-  };
-  const dispose = (): void => {
-    if (timer) clearTimeout(timer);
-    outer.removeEventListener('abort', onOuterAbort);
-  };
-  if (outer.aborted) {
-    ac.abort(outer.reason);
-    return { signal: ac.signal, dispose };
-  }
-  timer = setTimeout(() => {
-    outer.removeEventListener('abort', onOuterAbort);
-    ac.abort(new AbortError('timeout'));
-  }, timeoutMs);
-  outer.addEventListener('abort', onOuterAbort, { once: true });
-  return { signal: ac.signal, dispose };
-}
-
-function isAbortLikeError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  if (err.name === 'AbortError') return true;
-  // undici exposes the original cause for fetch aborts in some Node versions.
-  const cause = (err as { cause?: unknown }).cause;
-  return cause instanceof Error && cause.name === 'AbortError';
 }
