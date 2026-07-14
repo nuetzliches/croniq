@@ -4,11 +4,19 @@
 //! generators (PR-B and PR-C):
 //!
 //! - `parse_schedule(dsl)` — validate a schedule line, return a typed AST
-//! - `format_schedule(structured)` — emit DSL from the form-builder shape
+//! - `format_schedule(structured)` — emit the canonical schedule *line*
+//! - `format_schedule_block(structured, key)` — emit a full, paste-ready
+//!   `job <key> { … }` block
 //! - `parse_calendar_rules(dsl)` — validate a calendar rules block
-//! - `format_calendar_rules(structured)` — emit DSL from the rule editor
+//! - `format_calendar_rules(structured)` — emit the canonical rule *lines*
+//! - `format_calendar_block(structured, name)` — emit a full, paste-ready
+//!   `calendar <name> { … }` block
 //! - `next_fires(dsl, now_iso, count)` — preview upcoming firing times
 //! - `evaluate_calendar_day(dsl, day_iso)` — is this day active?
+//!
+//! The `format_*` emitters build a loose, unambiguous fragment from the
+//! form shape, parse it, and re-emit through `croniq_config::format` so
+//! the output can never drift from the canonical `croniq fmt`.
 //!
 //! All inputs and outputs go through `serde-wasm-bindgen` so the
 //! TypeScript caller sees plain objects, not opaque handles. Errors
@@ -19,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use croniq_config::ast::{IntervalUnit, MonthOrdinal, ScheduleKind, ScheduleNode, Weekday};
-use croniq_config::format::format_weekday_list;
+use croniq_config::format::{format_calendar_rule_line, format_schedule_line};
 use croniq_config::parser::Parser;
 
 /// Install a panic hook that forwards Rust panics to `console.error`.
@@ -188,7 +196,11 @@ fn ordinal_str(o: &MonthOrdinal) -> String {
 
 // ── Format direction: structured → DSL string ──
 
-/// Render a schedule payload back to the canonical DSL string.
+/// Render a schedule payload as the canonical schedule *line*
+/// (`every 5 minutes`, `once at 2026-…`, `disabled`, …).
+///
+/// Used for the live next-fires preview. For a paste-ready block use
+/// [`format_schedule_block`].
 #[wasm_bindgen(js_name = formatSchedule)]
 pub fn format_schedule(value: JsValue) -> Result<String, JsValue> {
     let payload: SchedulePayload =
@@ -196,54 +208,73 @@ pub fn format_schedule(value: JsValue) -> Result<String, JsValue> {
     Ok(format_schedule_inner(&payload))
 }
 
-fn format_schedule_inner(p: &SchedulePayload) -> String {
+/// Render a schedule payload as a full, copy-paste-ready job block:
+/// `job <key> {\n  <schedule>\n}`. Rejects an invalid `key` (the parse
+/// error is surfaced to the caller as a thrown JsValue).
+#[wasm_bindgen(js_name = formatScheduleBlock)]
+pub fn format_schedule_block(value: JsValue, key: &str) -> Result<String, JsValue> {
+    let payload: SchedulePayload =
+        serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    format_schedule_block_inner(&payload, key).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Build the loose (but always-valid-if-inputs-are) schedule line from
+/// the form shape. This is deliberately *verbose* — canonicalisation
+/// (weekday collapsing, unit spelling, quoting) is left to the shared
+/// formatter so there's a single source of truth.
+fn schedule_payload_to_loose_line(p: &SchedulePayload) -> String {
     match p {
         SchedulePayload::Interval { count, unit } => {
-            let unit = if *count == 1 {
-                // The parser accepts plural; the formatter emits plural
-                // for symmetry. Singular is a *display* concern that the
-                // UI can handle separately (M5 from PR #50 already does
-                // this in the schedule-summary text, not in the DSL).
-                match unit.as_str() {
-                    "seconds" => "seconds",
-                    "minutes" => "minutes",
-                    "hours" => "hours",
-                    _ => "minutes",
-                }
-            } else {
-                match unit.as_str() {
-                    "seconds" => "seconds",
-                    "minutes" => "minutes",
-                    "hours" => "hours",
-                    _ => "minutes",
-                }
+            let unit = match unit.as_str() {
+                "seconds" | "minutes" | "hours" => unit.as_str(),
+                _ => "minutes",
             };
             format!("every {count} {unit}")
         }
-        SchedulePayload::Daily { hour, minute } => {
-            format!("every day at {hour:02}:{minute:02}")
-        }
+        SchedulePayload::Daily { hour, minute } => format!("every day at {hour:02}:{minute:02}"),
         SchedulePayload::Weekdays { days, hour, minute } => {
-            // Use the shared helper from croniq-config — single source
-            // of truth for "Mon..Fri" range collapsing, weekday/weekend
-            // alias detection, and 3-letter capitalised output.
-            let parsed: Vec<Weekday> = days.iter().filter_map(|d| Weekday::parse(d)).collect();
-            format!(
-                "every {} at {hour:02}:{minute:02}",
-                format_weekday_list(&parsed)
-            )
+            // Space-joined day names — the parser accepts full and
+            // 3-letter forms and does its own range collapsing.
+            format!("every {} at {hour:02}:{minute:02}", days.join(" "))
         }
         SchedulePayload::Monthly {
             ordinals,
             hour,
             minute,
-        } => {
-            let body = ordinals.join(" ");
-            format!("every {body} of month at {hour:02}:{minute:02}")
-        }
-        SchedulePayload::Once { at } => format!("once at \"{at}\""),
+        } => format!("every {} of month at {hour:02}:{minute:02}", ordinals.join(" ")),
+        // Unquoted — the canonical form (the old bridge force-quoted it).
+        SchedulePayload::Once { at } => format!("once at {at}"),
         SchedulePayload::Disabled => "disabled".into(),
     }
+}
+
+/// Parse the loose line (wrapped in a synthetic job) and re-emit the
+/// schedule via the canonical formatter. `None` if it doesn't parse.
+fn canonical_schedule_line(loose: &str) -> Option<String> {
+    let wrapped = format!("job preview:line {{\n  {loose}\n}}\n");
+    let ast = Parser::parse(&wrapped).ok()?;
+    let node = ast.items.iter().find_map(|i| match i {
+        croniq_config::ast::Item::Job(j) => j.schedule.clone(),
+        _ => None,
+    })?;
+    Some(format_schedule_line(&node.kind))
+}
+
+fn format_schedule_inner(p: &SchedulePayload) -> String {
+    let loose = schedule_payload_to_loose_line(p);
+    // Fall back to the loose form verbatim if it doesn't parse (e.g. an
+    // empty weekday set) — this export must never throw, the UI relies
+    // on it always returning a string.
+    canonical_schedule_line(&loose).unwrap_or(loose)
+}
+
+fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String, String> {
+    let loose = schedule_payload_to_loose_line(p);
+    let key = key.trim();
+    let key = if key.is_empty() { "namespace:name" } else { key };
+    let src = format!("job {key} {{\n  {loose}\n}}\n");
+    let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
+    Ok(croniq_config::format::format(&ast))
 }
 
 // ── next_fires preview ─────────────────────────────────────────────
@@ -525,7 +556,9 @@ fn rule_to_payload(r: &croniq_config::ast::CalendarRule) -> CalendarRulePayload 
     }
 }
 
-/// Format a list of structured rules back to the multi-line DSL block.
+/// Format a list of structured rules as the canonical rule *lines*
+/// (no wrapping `calendar { … }`). For a paste-ready block use
+/// [`format_calendar_block`].
 #[wasm_bindgen(js_name = formatCalendarRules)]
 pub fn format_calendar_rules(value: JsValue) -> Result<String, JsValue> {
     let rules: Vec<CalendarRulePayload> =
@@ -533,39 +566,85 @@ pub fn format_calendar_rules(value: JsValue) -> Result<String, JsValue> {
     Ok(rules.iter().map(format_rule).collect::<Vec<_>>().join("\n"))
 }
 
-fn format_rule(r: &CalendarRulePayload) -> String {
-    // Per-rule-type formatting. `weekly` goes through the shared
-    // helper so the WASM bridge emits the same canonical form
-    // (`Mon..Fri`, weekday alias, etc.) as `croniq-config::format`.
-    // `window` keeps its inline `"HH:MM".."HH:MM"` shape because the
-    // runtime compiler in `croniq-scheduler::calendar` parses that
-    // form by splitting on `..` itself.
+/// Format a list of structured rules as a full, copy-paste-ready
+/// calendar block: `calendar <name> {\n  <rules>\n}`. A parse failure
+/// (e.g. a malformed rule) is surfaced as a thrown JsValue so the UI
+/// can show the diagnostic.
+#[wasm_bindgen(js_name = formatCalendarBlock)]
+pub fn format_calendar_block(value: JsValue, name: &str) -> Result<String, JsValue> {
+    let rules: Vec<CalendarRulePayload> =
+        serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    format_calendar_block_inner(&rules, name).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Build the loose DSL line for one rule from the form shape.
+///
+/// `timezone` is emitted as the bare directive `timezone "<tz>"` — it
+/// is not an include/exclude rule, so the action is ignored (this was
+/// the source of the `include timezone …` bug). `window` keeps its
+/// inline quoted `"HH:MM".."HH:MM"` endpoints. Everything else is a
+/// space-joined `<action> <rule_type> <args…>` that the parser and
+/// shared formatter then canonicalise.
+fn calendar_rule_to_loose_line(r: &CalendarRulePayload) -> String {
+    let rule_type_lower = r.rule_type.to_ascii_lowercase();
+
+    if rule_type_lower == "timezone" {
+        return match r.args.first() {
+            Some(tz) => format!("timezone \"{tz}\""),
+            None => "timezone".to_string(),
+        };
+    }
+
+    let action = if r.action == "exclude" {
+        "exclude"
+    } else {
+        "include"
+    };
     let body = if r.args.is_empty() {
         String::new()
-    } else if r.rule_type == "weekly" {
-        let parsed: Vec<Weekday> = r.args.iter().filter_map(|d| Weekday::parse(d)).collect();
-        if parsed.is_empty() {
-            // None of the args parsed as a weekday — keep them raw so
-            // the user can see and correct the typo.
-            r.args.join(" ")
-        } else {
-            format_weekday_list(&parsed)
-        }
-    } else if r.rule_type == "window" {
-        if r.args.len() == 2 {
-            format!("\"{}\"..\"{}\"", r.args[0], r.args[1])
-        } else {
-            r.args.join(" ")
-        }
+    } else if rule_type_lower == "window" && r.args.len() == 2 {
+        format!("\"{}\"..\"{}\"", r.args[0], r.args[1])
     } else {
-        // annual / monthly / timezone / etc — space-joined raw.
         r.args.join(" ")
     };
     if body.is_empty() {
-        format!("{} {}", r.action, r.rule_type)
+        format!("{action} {}", r.rule_type)
     } else {
-        format!("{} {} {body}", r.action, r.rule_type)
+        format!("{action} {} {body}", r.rule_type)
     }
+}
+
+/// Parse a single loose rule line (wrapped in a synthetic calendar) and
+/// re-emit it via the canonical formatter. `None` if it doesn't parse.
+fn canonical_calendar_rule_line(loose: &str) -> Option<String> {
+    let wrapped = format!("calendar preview {{\n{loose}\n}}\n");
+    let ast = Parser::parse(&wrapped).ok()?;
+    let rule = ast
+        .items
+        .iter()
+        .find_map(|i| match i {
+            croniq_config::ast::Item::Calendar(c) => c.rules.first(),
+            _ => None,
+        })?;
+    Some(format_calendar_rule_line(rule))
+}
+
+fn format_rule(r: &CalendarRulePayload) -> String {
+    let loose = calendar_rule_to_loose_line(r);
+    canonical_calendar_rule_line(&loose).unwrap_or(loose)
+}
+
+fn format_calendar_block_inner(rules: &[CalendarRulePayload], name: &str) -> Result<String, String> {
+    let name = name.trim();
+    let name = if name.is_empty() { "calendar-name" } else { name };
+    let body: String = rules
+        .iter()
+        .map(|r| format!("  {}", calendar_rule_to_loose_line(r)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let src = format!("calendar {name} {{\n{body}\n}}\n");
+    let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
+    Ok(croniq_config::format::format(&ast))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -704,5 +783,103 @@ mod tests {
         );
         assert!(r.ok, "{:?}", r.error);
         assert_eq!(r.fires, vec!["2026-04-27T09:00:00Z".to_string()]);
+    }
+
+    #[test]
+    fn schedule_once_line_is_unquoted() {
+        // Bug #1: the bridge used to force-quote the datetime.
+        let p = SchedulePayload::Once {
+            at: "2026-12-31T23:00:00Z".into(),
+        };
+        assert_eq!(format_schedule_inner(&p), "once at 2026-12-31T23:00:00Z");
+    }
+
+    #[test]
+    fn schedule_interval_singular_count_emits_plural() {
+        // Bug #4: the count == 1 branch was dead code; canonical DSL is
+        // always plural (`every 1 minutes`), matching `croniq fmt`.
+        let p = SchedulePayload::Interval {
+            count: 1,
+            unit: "minutes".into(),
+        };
+        assert_eq!(format_schedule_inner(&p), "every 1 minutes");
+    }
+
+    #[test]
+    fn schedule_block_wraps_in_job() {
+        let p = SchedulePayload::Interval {
+            count: 5,
+            unit: "minutes".into(),
+        };
+        let out = format_schedule_block_inner(&p, "reports:daily").unwrap();
+        assert_eq!(out, "job reports:daily {\n  every 5 minutes\n}\n");
+        // And it must be re-parseable at top level.
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn schedule_block_once_unquoted_and_valid() {
+        let p = SchedulePayload::Once {
+            at: "2026-12-31T23:00:00Z".into(),
+        };
+        let out = format_schedule_block_inner(&p, "migration:v2").unwrap();
+        assert!(out.contains("once at 2026-12-31T23:00:00Z"), "{out}");
+        assert!(!out.contains('"'), "once should be unquoted: {out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn schedule_block_rejects_invalid_key() {
+        let p = SchedulePayload::Interval {
+            count: 5,
+            unit: "minutes".into(),
+        };
+        // Missing namespace separator — the parser rejects it.
+        assert!(format_schedule_block_inner(&p, "not-a-valid-key").is_err());
+    }
+
+    #[test]
+    fn calendar_rule_timezone_is_bare_directive() {
+        // Bug #2: timezone was emitted as `include timezone …`.
+        let r = CalendarRulePayload {
+            action: "include".into(),
+            rule_type: "timezone".into(),
+            args: vec!["Europe/Vienna".into()],
+        };
+        assert_eq!(format_rule(&r), "timezone \"Europe/Vienna\"");
+        assert!(!format_rule(&r).contains("include"));
+    }
+
+    #[test]
+    fn calendar_block_wraps_and_canonicalises() {
+        let rules = vec![
+            CalendarRulePayload {
+                action: "include".into(),
+                rule_type: "timezone".into(),
+                args: vec!["Europe/Vienna".into()],
+            },
+            CalendarRulePayload {
+                action: "include".into(),
+                rule_type: "weekly".into(),
+                args: vec![
+                    "Mon".into(),
+                    "Tue".into(),
+                    "Wed".into(),
+                    "Thu".into(),
+                    "Fri".into(),
+                ],
+            },
+            CalendarRulePayload {
+                action: "exclude".into(),
+                rule_type: "annual".into(),
+                args: vec!["12-25".into()],
+            },
+        ];
+        let out = format_calendar_block_inner(&rules, "business-days").unwrap();
+        assert_eq!(
+            out,
+            "calendar business-days {\n  timezone \"Europe/Vienna\"\n  include weekly weekday\n  exclude annual 12-25\n}\n"
+        );
+        Parser::parse(&out).unwrap();
     }
 }
