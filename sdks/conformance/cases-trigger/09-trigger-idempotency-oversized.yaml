@@ -1,0 +1,36 @@
+name: "Trigger idempotency_key oversized (>200 chars) → error"
+description: |
+  idempotency_key is capped at 200 characters; a longer key is a caller bug.
+  The server rejects it with 400 (it is not silently truncated). The client
+  MUST surface this as an error to the caller — never a phantom success. A
+  binding MAY reject locally before sending (fail fast, no round-trip) OR
+  forward and surface the server's 400; both conform, so the HTTP expectation
+  is lenient (0 or 1 request). What is NOT allowed is returning a value. The
+  key below is 201 characters.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+      idempotency_key: "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkx"
+    expect:
+      error: true
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 400
+      body:
+        error: "idempotency_key exceeds 200 characters"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      max_count: 1
+      body_match:
+        job_key: "billing:invoice"
+        idempotency_key: "*"
