@@ -28,6 +28,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `sdks/conformance/cases-trigger/`
   ([#287](https://github.com/nuetzliches/croniq/issues/287)) and runs them
   automatically once those cases are present.
+- **First-class trigger (producer) client for the TypeScript SDK
+  ([#284](https://github.com/nuetzliches/croniq/issues/284)).** Brings the
+  Node SDK to parity with the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)):
+  `createTriggerClient(...)` / `CroniqTriggerClient.trigger(jobKey, { metadata,
+  require, prefer, timeout, idempotencyKey })` wraps `POST /v1/trigger` and
+  returns `{ executionId, queued, deduplicated }`. It is independent of the
+  runner and carries its own `jobs:trigger`-scoped credentials (runner poll
+  keys typically lack that scope). Unset optionals are omitted from the JSON
+  body; `idempotency_key` drives server-side dedup
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)) with a missing
+  `deduplicated` flag parsed as `false`; the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)) surfaces as a
+  `QueueOverflowError` (subclass of `HttpError`, carrying `retryAfterMs`) so a
+  batching producer can back off. The TypeScript conformance binding gains a
+  trigger runner that attaches to the shared producer cases
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)) as they land.
+- **Wire-level trigger (producer) cases in the shared conformance suite
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)).** The suite
+  previously modelled only the runner (consumer) loop. A new
+  `sdks/conformance/cases-trigger/` directory — with its own
+  `schema/trigger-case-schema.json` — pins the `POST /v1/trigger` producer
+  contract so every SDK's trigger client (#282–#286) validates against one
+  language-neutral spec instead of hand-rolled per-SDK tests. Cases cover the
+  minimal request (`job_key` only), the full request with snake_case
+  serialisation and omission of unset optionals (`metadata`, `require`,
+  `prefer`, `timeout`, `idempotency_key`), `ApiKey` auth with the producer's
+  own credentials, idempotency dedup (`deduplicated: true` surfaced; a missing
+  flag parsed as `false`) and oversized-key rejection, the `TriggerResponse`
+  shape (`execution_id`, `queued`, `deduplicated`), non-2xx errors, and the
+  per-job queue-overflow `429` from
+  [#299](https://github.com/nuetzliches/croniq/issues/299). Producer cases
+  live in a separate directory from runner cases so existing consumer-only
+  bindings keep passing untouched. CI validates the new cases against the new
+  schema across every SDK pipeline.
 
 ## [0.22.3] - 2026-07-14
 

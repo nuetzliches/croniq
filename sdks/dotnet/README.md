@@ -67,7 +67,7 @@ await builder.Build().RunAsync();
 - **OpenTelemetry** — opt-in via `tracerBuilder.AddCroniqRunnerInstrumentation()` (separate package).
 - **Shell-exec decoder** — handles DSL `runner shell { … }` / `runner exec { … }` jobs by decoding `__runner_exec` metadata and spawning a subprocess; stdout/stderr is streamed via the log writer.
 - **Producer-side trigger client** — `AddCroniqClient(...)` + `ICroniqTriggerClient.TriggerAsync(...)` wrap `POST /v1/trigger` with separate credentials (`jobs:trigger` scope) and optional idempotency keys.
-- **AOT-compatible** — strongly-typed JSON via source-generated `JsonSerializerContext`.
+- **Trim- and AOT-compatible** — the package declares `IsAotCompatible`/`IsTrimmable` and passes the trim/AOT analyzers. The DI/options layer stays reflection-free: source-generated JSON (`JsonSerializerContext`), source-generated `IConfiguration` binding, and source-generated `[OptionsValidator]` validation (no reflection-based `ValidateDataAnnotations`). Register interface handlers with `AddCroniqJob<T>(...)` and the trimmer preserves their constructors automatically.
 
 ## Triggering jobs on demand (producer client)
 

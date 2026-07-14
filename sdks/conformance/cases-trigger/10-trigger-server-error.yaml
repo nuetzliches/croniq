@@ -1,0 +1,31 @@
+name: "Trigger non-2xx (500) surfaced as an error"
+description: |
+  A server-side failure (500) must be surfaced to the caller as an error —
+  thrown exception, rejected future, or err return per the SDK's idiom — never
+  swallowed into a default/empty TriggerResponse. Generalises to any non-2xx
+  the client does not have a dedicated path for.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+    expect:
+      error: true
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 500
+      body:
+        error: "internal server error"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "billing:invoice"

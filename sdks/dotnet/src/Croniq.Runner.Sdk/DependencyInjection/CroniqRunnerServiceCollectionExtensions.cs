@@ -45,7 +45,6 @@ public static class CroniqRunnerServiceCollectionExtensions
 
         var optionsBuilder = services
             .AddOptions<CroniqRunnerOptions>()
-            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         if (configureOptions is not null)
@@ -79,7 +78,6 @@ public static class CroniqRunnerServiceCollectionExtensions
         services
             .AddOptions<CroniqRunnerOptions>()
             .Bind(configurationSection)
-            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         RegisterCore(services);
@@ -91,6 +89,11 @@ public static class CroniqRunnerServiceCollectionExtensions
 
     private static void RegisterCore(IServiceCollection services)
     {
+        // Source-generated DataAnnotations validation (trim/AOT-safe replacement
+        // for the reflection-based ValidateDataAnnotations()). Driven by the
+        // ValidateOnStart() registered in each public overload above.
+        services.AddSingleton<IValidateOptions<CroniqRunnerOptions>, CroniqRunnerOptionsValidator>();
+
         services.TryAddSingleton<RunnerStateProbe>();
         services.TryAddSingleton<IRunnerStateProbe>(sp => sp.GetRequiredService<RunnerStateProbe>());
         services.TryAddSingleton<RunnerIdentityResolver>();

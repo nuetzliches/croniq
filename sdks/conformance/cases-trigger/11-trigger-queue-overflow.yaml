@@ -1,0 +1,37 @@
+name: "Trigger per-job queue overflow → 429 surfaced as an error"
+description: |
+  Per-job queue-overflow backpressure (issue #299). POST /v1/trigger honours
+  the same per-job max_queue_depth cap (default 10) the scheduler enforces:
+  once a job's queued executions are at the cap, a further trigger is rejected
+  with 429 Too Many Requests instead of piling queued work up unbounded. The
+  client must surface the 429 as an error — a producer batching/retrying
+  triggers needs to observe the backpressure, not silently drop it. The server
+  returns its established trigger error shape (an empty TriggerResponse body
+  alongside the 429 status); the client keys off the status, not the body.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+    expect:
+      error: true
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 429
+      body:
+        execution_id: ""
+        queued: 0
+        deduplicated: false
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "billing:invoice"
