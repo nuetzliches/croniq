@@ -47,7 +47,6 @@ public static class CroniqClientServiceCollectionExtensions
 
         var optionsBuilder = services
             .AddOptions<CroniqClientOptions>()
-            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         if (configureOptions is not null)
@@ -81,7 +80,6 @@ public static class CroniqClientServiceCollectionExtensions
         services
             .AddOptions<CroniqClientOptions>()
             .Bind(configurationSection)
-            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         RegisterCore(services);
@@ -93,6 +91,11 @@ public static class CroniqClientServiceCollectionExtensions
 
     private static void RegisterCore(IServiceCollection services)
     {
+        // Source-generated DataAnnotations validation (trim/AOT-safe replacement
+        // for the reflection-based ValidateDataAnnotations()). Driven by the
+        // ValidateOnStart() registered in each public overload above.
+        services.AddSingleton<IValidateOptions<CroniqClientOptions>, CroniqClientOptionsValidator>();
+
         services.AddHttpClient<ICroniqTriggerClient, CroniqTriggerClient>((sp, http) =>
         {
             var opts = sp.GetRequiredService<IOptions<CroniqClientOptions>>().Value;
