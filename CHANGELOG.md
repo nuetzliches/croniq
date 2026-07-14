@@ -8,6 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **First-class trigger (producer) client for the TypeScript SDK
+  ([#284](https://github.com/nuetzliches/croniq/issues/284)).** Brings the
+  Node SDK to parity with the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)):
+  `createTriggerClient(...)` / `CroniqTriggerClient.trigger(jobKey, { metadata,
+  require, prefer, timeout, idempotencyKey })` wraps `POST /v1/trigger` and
+  returns `{ executionId, queued, deduplicated }`. It is independent of the
+  runner and carries its own `jobs:trigger`-scoped credentials (runner poll
+  keys typically lack that scope). Unset optionals are omitted from the JSON
+  body; `idempotency_key` drives server-side dedup
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)) with a missing
+  `deduplicated` flag parsed as `false`; the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)) surfaces as a
+  `QueueOverflowError` (subclass of `HttpError`, carrying `retryAfterMs`) so a
+  batching producer can back off. The TypeScript conformance binding gains a
+  trigger runner that attaches to the shared producer cases
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)) as they land.
 - **Wire-level trigger (producer) cases in the shared conformance suite
   ([#287](https://github.com/nuetzliches/croniq/issues/287)).** The suite
   previously modelled only the runner (consumer) loop. A new
