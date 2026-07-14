@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-07-14
+
+### Fixed
+
+- **Scheduler `tick` span no longer floods OTLP trace backends
+  ([#310](https://github.com/nuetzliches/croniq/issues/310)).** With the `otlp`
+  feature and `OTEL_EXPORTER_OTLP_ENDPOINT` set, the scheduler emitted one
+  `tick` root span **every second at `INFO`**, unconditionally — pure
+  scheduler-heartbeat noise that swamped any persistent trace backend
+  (Tempo, Elasticsearch/APM, …) and skewed latency dashboards whether or not a
+  job fired. The span is now emitted at `trace`, so it is off under the default
+  `info` filter, consistent with the log-side denoise already in place (per-fire
+  logs at debug/trace, a throttled `INFO` heartbeat for liveness —
+  [#275](https://github.com/nuetzliches/croniq/issues/275)). Operators who want
+  the per-tick span opt back in via `RUST_LOG`. Additionally, the OTLP **span**
+  layer now carries the same `info`-default level filter (overridable via
+  `OTEL_LOG_LEVEL`) that the OTLP log bridge already had: raising `RUST_LOG` for
+  local debugging no longer ships every debug/trace span to the collector, so
+  OTLP trace volume is decoupled from `RUST_LOG` and future hot-path spans can't
+  regress the flood.
+- **`POST /v1/trigger` now enforces the per-job queue-overflow cap
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)).** The scheduler
+  bounds scheduled fires at `max_queue_depth` (per-job override, default 10), but
+  the trigger endpoint enqueued directly and skipped the guard — a burst of
+  triggers (event storms, client retries, a hot producer) could pile queued
+  executions up unbounded for a single job. The endpoint now rejects with
+  `429 Too Many Requests` once the per-job queued count is at the cap, checked
+  after idempotency dedup (a coalesced trigger enqueues nothing) and before the
+  execution row is persisted, so a rejected trigger leaves no orphan row behind.
+
 ## [0.22.2] - 2026-07-06
 
 ### Fixed
