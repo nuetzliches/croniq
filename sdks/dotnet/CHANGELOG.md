@@ -6,6 +6,34 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Added
+
+- **Genuine trim/AOT compatibility — the package now declares
+  `IsAotCompatible`/`IsTrimmable`
+  ([#295](https://github.com/nuetzliches/croniq/issues/295)).** These flags
+  were dead configuration since day one (they lived in a
+  `$(IsPackable)`-conditioned group in `Directory.Build.props`, evaluated
+  before the .csproj set `IsPackable`, so the trim/AOT analyzers never ran).
+  Enabling them surfaced 22 findings in the DI/options layer, now all fixed:
+  - `IConfiguration` binding in `AddCroniqRunner`/`AddCroniqClient` goes
+    through the source-generated configuration binder
+    (`EnableConfigurationBindingGenerator`) instead of reflection
+    (was IL2026/IL3050).
+  - `ValidateDataAnnotations()` is replaced by source-generated
+    `[OptionsValidator]` validators (`CroniqRunnerOptionsValidator`,
+    `CroniqClientOptionsValidator`), keeping options validation
+    reflection-free (was IL2026).
+  - The `THandler` type parameter on the `AddCroniqJob<THandler>(...)` /
+    `AddCroniqDefaultHandler<THandler>()` overloads now carries
+    `[DynamicallyAccessedMembers(PublicConstructors)]` so the trimmer
+    preserves handler constructors for DI activation (was IL2091).
+
+  The flags now live in `Directory.Build.targets` (where `IsPackable` is
+  final), so the analyzers run on every build and `TreatWarningsAsErrors`
+  turns any future regression into a hard error. The JSON wire layer was
+  already source-generated. No behavioural or API changes; existing
+  `ValidateOnStart()` validation is unchanged.
+
 ## [0.3.1] - 2026-07-06
 
 ### Fixed
