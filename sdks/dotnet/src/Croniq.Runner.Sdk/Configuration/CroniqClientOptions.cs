@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 
+using Microsoft.Extensions.Options;
+
 namespace Croniq.Runner.Sdk.Configuration;
 
 /// <summary>
@@ -35,3 +37,12 @@ public sealed class CroniqClientOptions
     /// <summary>Per-request timeout for trigger calls.</summary>
     public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(30);
 }
+
+/// <summary>
+/// Source-generated validator for <see cref="CroniqClientOptions"/>. See
+/// <see cref="CroniqRunnerOptionsValidator"/> — same rationale: the
+/// <c>[OptionsValidator]</c> generator replaces reflection-based
+/// <c>ValidateDataAnnotations()</c> to keep the options layer trim/AOT-safe.
+/// </summary>
+[OptionsValidator]
+internal sealed partial class CroniqClientOptionsValidator : IValidateOptions<CroniqClientOptions>;

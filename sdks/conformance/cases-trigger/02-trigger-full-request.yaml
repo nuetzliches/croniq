@@ -1,0 +1,58 @@
+name: "Full trigger request — every field serialised snake_case"
+description: |
+  The client is given all optional fields. The outbound body MUST carry each
+  one under its snake_case wire name (job_key, metadata, require, prefer,
+  timeout, idempotency_key) with the caller's values intact. Guards against
+  camelCase leakage from the SDK's native argument names and against dropped
+  fields. The server returns a full TriggerResponse; the client surfaces all
+  three fields.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "reports:nightly"
+      metadata:
+        tenant: "acme"
+        source: "webhook"
+      require:
+        - "gpu"
+      prefer:
+        - "eu-west"
+      timeout: "15m"
+      idempotency_key: "evt-2026-07-14-001"
+    expect:
+      response:
+        execution_id: "exec-200"
+        queued: 3
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-200"
+        queued: 3
+        deduplicated: false
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      headers:
+        authorization: "ApiKey croniq_trigger_key"
+      body_match:
+        job_key: "reports:nightly"
+        metadata:
+          tenant: "acme"
+          source: "webhook"
+        require:
+          - "gpu"
+        prefer:
+          - "eu-west"
+        timeout: "15m"
+        idempotency_key: "evt-2026-07-14-001"

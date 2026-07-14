@@ -1,0 +1,39 @@
+name: "Trigger dedup — missing deduplicated field parses as false"
+description: |
+  Forward compatibility with a server that does not emit the deduplicated
+  field (older build, or a plain enqueue path that never sets it). The 200
+  body carries only execution_id + queued. The client MUST default
+  deduplicated to false rather than erroring on the missing key or leaving it
+  null. Complements 01-trigger-minimal (which also omits the flag) by stating
+  the parse contract explicitly.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "legacy:sync"
+      idempotency_key: "sync-1"
+    expect:
+      response:
+        execution_id: "exec-800"
+        queued: 1
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-800"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "legacy:sync"
+        idempotency_key: "sync-1"

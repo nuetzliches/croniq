@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 
+using Microsoft.Extensions.Options;
+
 namespace Croniq.Runner.Sdk.Configuration;
 
 /// <summary>
@@ -101,3 +103,13 @@ public sealed class CroniqRunnerOptions
     /// <summary>Streaming log-writer tunables.</summary>
     public LogWriterOptions LogWriter { get; set; } = new();
 }
+
+/// <summary>
+/// Source-generated validator for <see cref="CroniqRunnerOptions"/>. The
+/// <c>[OptionsValidator]</c> generator emits the DataAnnotation checks at
+/// compile time, replacing the reflection-based <c>ValidateDataAnnotations()</c>
+/// so the options layer stays trim- and AOT-safe. Registered as an
+/// <see cref="IValidateOptions{TOptions}"/> and driven by <c>ValidateOnStart()</c>.
+/// </summary>
+[OptionsValidator]
+internal sealed partial class CroniqRunnerOptionsValidator : IValidateOptions<CroniqRunnerOptions>;

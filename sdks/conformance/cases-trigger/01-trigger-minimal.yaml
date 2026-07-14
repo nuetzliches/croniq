@@ -1,0 +1,46 @@
+name: "Minimal trigger — job_key only → execution_id + queued"
+description: |
+  Baseline producer happy path. The client is given a job_key and nothing
+  else. The outbound body MUST carry job_key and MUST omit every unset
+  optional (metadata, require, prefer, timeout, idempotency_key) — a producer
+  does not emit fields the caller never supplied. The server returns a 200
+  with execution_id + queued and NO deduplicated field (older/plain server);
+  the client must surface execution_id and queued verbatim and default
+  deduplicated to false.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+    expect:
+      response:
+        execution_id: "exec-100"
+        queued: 1
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-100"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      headers:
+        authorization: "ApiKey croniq_trigger_key"
+      body_match:
+        job_key: "billing:invoice"
+      body_absent:
+        - metadata
+        - require
+        - prefer
+        - timeout
+        - idempotency_key
