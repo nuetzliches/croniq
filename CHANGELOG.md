@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Go SDK: first-class trigger (producer) client
+  ([#282](https://github.com/nuetzliches/croniq/issues/282)).** The Go SDK
+  gains `croniq.TriggerClient` (`NewTriggerClient(...)`) wrapping
+  `POST /v1/trigger`, at parity with the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)):
+  `Trigger(ctx, *TriggerRequest)` → `TriggerResponse{ExecutionID, Queued,
+  Deduplicated}`. It carries its **own** credentials (`WithAPIKey` /
+  `WithBearer`) — triggering needs the `jobs:trigger`/`admin` scope, distinct
+  from the runner's poll key — omits unset optionals (`metadata`, `require`,
+  `prefer`, `timeout`, `idempotency_key`) from the request body, forwards
+  arbitrary JSON `metadata` verbatim, surfaces the server's `deduplicated`
+  flag (defaulting to `false` for older servers,
+  [#279](https://github.com/nuetzliches/croniq/issues/279)), and returns
+  non-2xx responses — including the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)) — as a
+  `*croniq.ServerError` callers can key off `.Status`. The Go conformance
+  binding is wired to the shared producer cases in
+  `sdks/conformance/cases-trigger/`
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)) and runs them
+  automatically once those cases are present.
+
 ## [0.22.3] - 2026-07-14
 
 ### Fixed
