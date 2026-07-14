@@ -1080,6 +1080,35 @@ async fn handle_trigger(
         }
     }
 
+    // Per-job queue-overflow cap (#299). The scheduler bounds *scheduled*
+    // fires at `max_queue_depth` (per-job override, default 10 — see
+    // `scheduler::tick`); a manual `POST /v1/trigger` must honour the same cap
+    // or a burst of triggers (event storms, client retries, a hot producer)
+    // can pile queued executions up unbounded for one job — the exact overflow
+    // the scheduler guard prevents. Checked after dedup (a coalesced trigger
+    // adds nothing to the queue) and before persisting the execution row, so a
+    // rejected trigger leaves no orphan row behind. `dsl_jobs` unset (store-less
+    // dev servers, tests) or an unknown `job_key` falls back to the default 10.
+    let max_queue_depth = if let Some(ref dsl_jobs) = state.dsl_jobs {
+        let jobs = dsl_jobs.read().await;
+        jobs.iter()
+            .find(|j| j.key == req.job_key)
+            .and_then(|j| j.max_queue_depth)
+            .unwrap_or(10)
+    } else {
+        10
+    } as usize;
+    let queued_for_job = state.runner.queue.read().await.count_for_job(&req.job_key);
+    if queued_for_job >= max_queue_depth {
+        tracing::warn!(
+            job_key = %req.job_key,
+            queued = queued_for_job,
+            max = max_queue_depth,
+            "trigger rejected — per-job queue overflow (#299)"
+        );
+        return error_response(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     let exec_uuid = uuid::Uuid::new_v4();
     let execution_id = exec_uuid.to_string();
 
@@ -2045,6 +2074,58 @@ mod tests {
 
         let q = state.runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn trigger_enforces_per_job_queue_overflow_cap() {
+        // #299: POST /v1/trigger must honour the same per-job max_queue_depth
+        // cap the scheduler applies. With no DSL config loaded the fallback is
+        // the default of 10.
+        let (state, _store) = make_store_state();
+
+        // Fill the queue to the default cap of 10 for one job.
+        for i in 0..10 {
+            let (status, _) = post_json_status(
+                server_router(Arc::clone(&state)),
+                "/v1/trigger",
+                serde_json::json!({ "job_key": "billing:invoice" }),
+            )
+            .await;
+            assert_eq!(status, 200, "trigger #{i} within the cap must succeed");
+        }
+
+        // The 11th trigger for the same job overflows the cap → 429, and
+        // nothing extra is enqueued.
+        let (status, _) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "billing:invoice" }),
+        )
+        .await;
+        assert_eq!(status, 429, "trigger past the cap must be rejected");
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("billing:invoice"),
+            10,
+            "a rejected trigger must not enqueue"
+        );
+
+        // The cap is per-job: a different job is unaffected by the first
+        // job's full queue.
+        let (status, _) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "reports:daily" }),
+        )
+        .await;
+        assert_eq!(
+            status, 200,
+            "a different job must not be blocked by another job's queue"
+        );
     }
 
     #[tokio::test]
