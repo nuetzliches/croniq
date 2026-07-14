@@ -231,7 +231,18 @@ impl SchedulerLoop {
     }
 
     /// Evaluate all triggers at `now`, fire due ones, return results.
-    #[tracing::instrument(skip(self), fields(now = %now, trigger_count = self.triggers.len()))]
+    ///
+    /// The span is emitted at `trace` (not the `#[instrument]` default of
+    /// `info`) because the scheduler loop opens it once per second,
+    /// unconditionally, whether or not a job fired. At `info` that idle
+    /// per-second span floods any persistent OTLP trace backend with pure
+    /// scheduler-heartbeat noise (issue #310). `trace` matches the per-fire
+    /// `tracing::trace!` inside the loop and mirrors the log-side denoise
+    /// (per-fire logs at debug/trace; a throttled `info` heartbeat carries
+    /// liveness — #275). Operators who want the per-tick span opt back in via
+    /// `RUST_LOG=…=trace`; real work stays visible through the WARN events
+    /// here and the separate `info`-level completion span.
+    #[tracing::instrument(level = "trace", skip(self), fields(now = %now, trigger_count = self.triggers.len()))]
     pub async fn tick(&mut self, now: DateTime<Utc>) -> TickResult {
         let mut fired = Vec::new();
 
