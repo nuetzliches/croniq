@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Java SDK: first-class trigger (producer) client
+  ([#285](https://github.com/nuetzliches/croniq/issues/285)).** `CroniqTriggerClient`
+  wraps `POST /v1/trigger` for the Java SDK at parity with the .NET client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)). `trigger(...)` takes a
+  `job_key` plus optional `metadata`, `require`/`prefer`, `timeout`, and
+  `idempotency_key`, and returns `TriggerResult { executionId, queued, deduplicated }`.
+  The client carries its own credentials (`CroniqClientOptions` — the
+  `jobs:trigger`/`admin` scope, deliberately separate from the runner's poll keys),
+  omits unset optional fields from the wire body, defaults `deduplicated` to `false`
+  on older servers that omit it, and surfaces non-2xx responses as
+  `CroniqTriggerException` — including the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)), distinguished via
+  `isQueueOverflow()`. Wired into the Java SDK's conformance runner against the shared
+  trigger (producer) cases ([#287](https://github.com/nuetzliches/croniq/issues/287)).
+
 ## [0.22.3] - 2026-07-14
 
 ### Fixed

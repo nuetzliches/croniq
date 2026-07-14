@@ -24,7 +24,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  *       server versions that add new keys.
  * </ul>
  */
-final class CroniqJsonMapper {
+public final class CroniqJsonMapper {
 
     private static final ObjectMapper INSTANCE = JsonMapper.builder()
             .addModule(new JavaTimeModule())
@@ -33,7 +33,7 @@ final class CroniqJsonMapper {
 
     private CroniqJsonMapper() {}
 
-    static ObjectMapper instance() {
+    public static ObjectMapper instance() {
         return INSTANCE;
     }
 }
