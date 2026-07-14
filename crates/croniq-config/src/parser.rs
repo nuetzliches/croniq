@@ -1170,10 +1170,13 @@ fn parse_compact_interval(text: &str) -> Option<(u32, IntervalUnit)> {
         (rest, IntervalUnit::Seconds)
     } else if let Some(rest) = text.strip_suffix('m') {
         (rest, IntervalUnit::Minutes)
-    } else if let Some(rest) = text.strip_suffix('h') {
-        (rest, IntervalUnit::Hours)
     } else {
-        return None;
+        // Hours is the last recognised suffix; anything else is not a
+        // compact form. `?` returns `None` here, which clippy's
+        // `question_mark` lint (tightened in Rust 1.97) requires over a
+        // trailing `else { return None }`.
+        let rest = text.strip_suffix('h')?;
+        (rest, IntervalUnit::Hours)
     };
     if num_part.is_empty() {
         return None;

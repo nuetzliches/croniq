@@ -224,18 +224,31 @@ fn init_otlp(endpoint: String, hub: Arc<ConsoleHub>) -> Result<TelemetryGuard> {
         .build();
 
     let tracer = tracer_provider.tracer("croniq");
-    let otel_span_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
-    // Separate filter for the OTLP log bridge: if the user sets
-    // `RUST_LOG=trace` we don't want to flood the collector with
-    // library-internal events. Default to INFO+ for OTLP, override via
-    // OTEL_LOG_LEVEL if the operator wants finer-grained control.
-    let otlp_filter = std::env::var("OTEL_LOG_LEVEL")
-        .ok()
-        .and_then(|v| EnvFilter::try_new(v).ok())
-        .unwrap_or_else(|| EnvFilter::new("info"));
-    let otel_log_layer = otel_log_layer.with_filter(otlp_filter);
+    // Independent verbosity cap for BOTH OTLP layers, deliberately decoupled
+    // from the local `RUST_LOG` that drives stderr + the Live Console. Without
+    // it, raising `RUST_LOG` for local debugging would silently start shipping
+    // every debug/trace span and event to the collector. Defaults to INFO+,
+    // overridable via `OTEL_LOG_LEVEL`.
+    //
+    // The filter is applied to the span layer as well as the log bridge (issue
+    // #310): the log bridge always had one, but the span layer did not, so any
+    // high-frequency internal span — e.g. the per-second scheduler `tick` —
+    // could flood the trace backend. With `tick` now lowered to `trace` this
+    // cap keeps it (and any future INFO-and-below hot-path span) out of OTLP
+    // even when `RUST_LOG` is turned up. `EnvFilter` is not `Clone`, so each
+    // layer gets a fresh instance from this closure.
+    let otlp_level_filter = || {
+        std::env::var("OTEL_LOG_LEVEL")
+            .ok()
+            .and_then(|v| EnvFilter::try_new(v).ok())
+            .unwrap_or_else(|| EnvFilter::new("info"))
+    };
+    let otel_span_layer = tracing_opentelemetry::layer()
+        .with_tracer(tracer)
+        .with_filter(otlp_level_filter());
+    let otel_log_layer =
+        OpenTelemetryTracingBridge::new(&logger_provider).with_filter(otlp_level_filter());
 
     let env_filter = console_env_filter();
     let console_layer = LiveConsoleLayer::new(hub).with_filter(console_env_filter());
