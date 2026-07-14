@@ -127,6 +127,57 @@ the ack regardless. Calling `aclose()` yourself just lets you control *when*
 the drain happens (e.g. before a downstream API call that should see the
 events first).
 
+## Triggering jobs on demand (producer)
+
+The `Runner` above is the *consumer* side. To *fire* a job on demand — from a
+web request, a message handler, anywhere — use `TriggerClient` (the producer).
+It wraps `POST /v1/trigger` and is independent of the runner: a pure producer
+never polls, and it carries its **own** credentials, because triggering needs
+the `jobs:trigger` (or `admin`) scope that runner poll keys typically lack.
+
+```python
+import asyncio
+from croniq_runner import TriggerClient, TriggerClientOptions
+
+async def main():
+    async with TriggerClient(TriggerClientOptions(
+        server_url="http://localhost:4000",
+        api_key="croniq_...",  # jobs:trigger (or admin) scope — not a runner key
+    )) as client:
+        result = await client.trigger(
+            "billing:invoice",
+            metadata={"invoice_id": "inv_42"},
+            idempotency_key="evt-2026-07-14-001",  # optional: dedup retries
+        )
+        print(result.execution_id, result.queued, result.deduplicated)
+
+asyncio.run(main())
+```
+
+`trigger()` takes the same routing/metadata knobs as a scheduled fire:
+
+| Argument | Meaning |
+|----------|---------|
+| `job_key` | Job to fire, e.g. `"billing:invoice"` (required) |
+| `metadata` | Arbitrary JSON passed to the handler (merged over the job's DSL metadata) |
+| `require` | Capabilities a runner **must** have |
+| `prefer` | Capabilities used to prefer a runner when several are eligible |
+| `timeout` | Execution timeout as a duration string (`"30s"`, `"5m"`); server default when omitted |
+| `idempotency_key` | Dedup key (≤ 200 chars); repeat triggers with the same `(job_key, key)` coalesce onto the existing execution |
+
+…and returns a `TriggerResult`:
+
+| Field | Meaning |
+|-------|---------|
+| `execution_id` | The created — or, on a dedup hit, the existing — execution |
+| `queued` | Server work-queue depth after the trigger |
+| `deduplicated` | `True` when coalesced onto an existing execution via `idempotency_key`; `False` on servers without idempotency support |
+
+Unset optional arguments are omitted from the request body (never sent as
+`null`). A non-2xx response raises `httpx.HTTPStatusError` — including the
+per-job queue-overflow `429`, so a producer batching triggers observes that
+backpressure instead of piling work up unbounded.
+
 ## Conformance suite
 
 The Python binding for the [language-agnostic conformance
@@ -139,7 +190,9 @@ pytest tests/conformance
 ```
 
 The cases live at `sdks/conformance/cases/*.yaml` and are loaded by file —
-adding a new YAML automatically adds a new test.
+adding a new YAML automatically adds a new test. The producer (trigger) cases at
+`sdks/conformance/cases-trigger/*.yaml` are driven the same way and exercise
+`TriggerClient`.
 
 ## Development
 

@@ -97,3 +97,33 @@ class RegisterJobResponse(_Model):
     job_key: str | None = None
     trigger_id: str | None = None
     status: str | None = None  # "registered" | "skipped_dsl_precedence"
+
+
+class TriggerRequest(_Model):
+    """POST /v1/trigger request body (producer side).
+
+    Every field except ``job_key`` is optional; dumping with
+    ``exclude_none=True`` omits the ones the caller left unset (the server
+    treats an omitted optional and a ``null`` differently — see #283).
+    ``metadata`` is arbitrary caller JSON forwarded to the handler verbatim,
+    so its values are ``Any``, not strings.
+    """
+
+    job_key: str
+    metadata: dict[str, Any] | None = None
+    require: list[str] | None = None
+    prefer: list[str] | None = None
+    timeout: str | None = None
+    idempotency_key: str | None = None
+
+
+class TriggerResponse(_Model):
+    """POST /v1/trigger response body.
+
+    ``deduplicated`` is sent by servers with trigger-idempotency support
+    (#279); older servers omit it and the field defaults to ``False``.
+    """
+
+    execution_id: str
+    queued: int
+    deduplicated: bool = False

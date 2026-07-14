@@ -26,6 +26,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   live in a separate directory from runner cases so existing consumer-only
   bindings keep passing untouched. CI validates the new cases against the new
   schema across every SDK pipeline.
+- **First-class trigger (producer) client for the Python SDK
+  ([#283](https://github.com/nuetzliches/croniq/issues/283)).** `croniq_runner`
+  now ships `TriggerClient` / `TriggerClientOptions` / `TriggerResult`, wrapping
+  `POST /v1/trigger` at parity with the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)):
+  `await client.trigger(job_key, metadata=…, require=…, prefer=…, timeout=…,
+  idempotency_key=…)`. The client carries its own `jobs:trigger`-scoped
+  credentials (independent of the runner), omits unset optionals from the body
+  (never `null`), forwards `idempotency_key` for server-side dedup
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)) — surfacing
+  `deduplicated` and defaulting it to `false` on older servers — and raises on
+  non-2xx, including the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)). The Python
+  conformance binding is wired up to run the shared trigger cases from
+  [#287](https://github.com/nuetzliches/croniq/issues/287).
 
 ## [0.22.3] - 2026-07-14
 
