@@ -36,6 +36,27 @@
 //! }).await;
 //! # }
 //! ```
+//!
+//! # Triggering jobs on demand (producer)
+//!
+//! The runner above is the *consumer* side. To *fire* a job on demand — e.g. in
+//! response to an application event, in addition to the Croniqfile schedule —
+//! use the producer-side [`TriggerClient`] (`POST /v1/trigger`). It carries its
+//! own `jobs:trigger`-scoped credentials, independent of any runner. See the
+//! [`trigger`] module for details.
+//!
+//! ```rust,no_run
+//! use croniq_runner_sdk::TriggerClient;
+//!
+//! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = TriggerClient::builder("http://localhost:4000")
+//!     .api_key("croniq_trigger_key")
+//!     .build();
+//! let result = client.trigger("billing:invoice-generate").send().await?;
+//! # let _ = result;
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod client;
 pub(crate) mod enrichment;
@@ -43,9 +64,11 @@ pub mod handler;
 pub mod identity;
 pub mod log_writer;
 pub mod runner;
+pub mod trigger;
 
 pub use client::{ClientError, WorkEvent};
 pub use handler::{ExecutionContext, HandlerError};
 pub use identity::resolve_runner_id;
 pub use log_writer::LogWriter;
 pub use runner::CroniqRunner;
+pub use trigger::{TriggerClient, TriggerError, TriggerResult};
