@@ -8,6 +8,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Rust SDK: first-class trigger (producer) client
+  ([#286](https://github.com/nuetzliches/croniq/issues/286)).** The Rust runner
+  SDK (`croniq-runner-sdk`) gains `TriggerClient`
+  (`TriggerClient::builder(url).api_key(...).build()`) wrapping
+  `POST /v1/trigger`, at parity with the .NET producer client
+  ([#277](https://github.com/nuetzliches/croniq/issues/277)):
+  `client.trigger(job_key).metadata(...).require(...).prefer(...).timeout(...)
+  .idempotency_key(...).send().await` → `TriggerResult { execution_id, queued,
+  deduplicated }`. It carries its **own** credentials (`.api_key` /
+  `.bearer_token`) — triggering needs the `jobs:trigger`/`admin` scope, distinct
+  from the runner's poll key — omits unset optionals (`metadata`, `require`,
+  `prefer`, `timeout`, `idempotency_key`) from the request body, forwards
+  arbitrary JSON `metadata` verbatim, and surfaces the server's `deduplicated`
+  flag (defaulting to `false` for older servers,
+  [#279](https://github.com/nuetzliches/croniq/issues/279)). Non-2xx responses
+  surface as `TriggerError` — the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)) as a dedicated
+  `TriggerError::QueueOverflow` variant, other statuses as
+  `TriggerError::Server { status, body }`. A Rust conformance runner is wired to
+  the shared producer cases in `sdks/conformance/cases-trigger/`
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)) and runs them
+  automatically once those cases are present.
 - **Java SDK: first-class trigger (producer) client
   ([#285](https://github.com/nuetzliches/croniq/issues/285)).** `CroniqTriggerClient`
   wraps `POST /v1/trigger` for the Java SDK at parity with the .NET client

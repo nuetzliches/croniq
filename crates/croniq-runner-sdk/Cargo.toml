@@ -19,3 +19,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full", "test-util"] }
 tracing-subscriber = "0.3"
 tempfile = "3"
+# Parses the shared, language-agnostic trigger conformance cases
+# (sdks/conformance/cases-trigger/*.yaml) in tests/trigger_conformance.rs.
+serde_yaml = "0.9"
