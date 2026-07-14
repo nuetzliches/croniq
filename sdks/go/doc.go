@@ -40,6 +40,26 @@
 //	    }
 //	}
 //
+// # Triggering jobs (producer)
+//
+// Runners are the consumer side of Croniq. To fire a job on demand — the
+// producer side — use [TriggerClient], a first-class wrapper over
+// POST /v1/trigger that is independent of [Runner] and carries its own
+// credentials (the jobs:trigger scope):
+//
+//	tc := croniq.NewTriggerClient("http://localhost:4000").
+//	    WithAPIKey(os.Getenv("CRONIQ_TRIGGER_KEY"))
+//
+//	resp, err := tc.Trigger(ctx, &croniq.TriggerRequest{
+//	    JobKey:         "billing:invoice",
+//	    IdempotencyKey: "evt-2026-07-14-001",
+//	})
+//
+// Unset optional fields are omitted from the request body; a repeat trigger
+// carrying the same idempotency_key surfaces the existing execution with
+// TriggerResponse.Deduplicated set. A non-2xx response (including the 429
+// per-job queue-overflow cap) is returned as a [*ServerError].
+//
 // # Streaming logs
 //
 // For long-running handlers that emit a lot of output, use
