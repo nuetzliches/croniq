@@ -67,3 +67,28 @@ export interface WorkEvent {
   message: string;
   fields?: Record<string, string>;
 }
+
+/**
+ * Wire request for `POST /v1/trigger` (producer side). Optional fields are
+ * omitted from the JSON body when unset — a producer never emits a key the
+ * caller didn't supply (`JSON.stringify` drops `undefined` values).
+ */
+export interface TriggerRequest {
+  job_key: string;
+  metadata?: Record<string, unknown>;
+  require?: string[];
+  prefer?: string[];
+  timeout?: string;
+  idempotency_key?: string;
+}
+
+/**
+ * Wire response of `POST /v1/trigger`. `deduplicated` is sent by servers that
+ * support trigger idempotency keys (#279); older servers omit it and the
+ * client defaults it to `false`.
+ */
+export interface TriggerResponse {
+  execution_id: string;
+  queued: number;
+  deduplicated?: boolean;
+}

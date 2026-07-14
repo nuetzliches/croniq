@@ -3,12 +3,22 @@ import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 
 import type { CaseSpec } from './case-spec.js';
+import type { TriggerCaseSpec } from './trigger-case-spec.js';
 
 export function loadCase(path: string): CaseSpec {
   const text = readFileSync(path, 'utf8');
   const parsed = load(text) as CaseSpec;
   if (!parsed || typeof parsed !== 'object') {
     throw new Error(`failed to parse conformance case at ${path}`);
+  }
+  return parsed;
+}
+
+export function loadTriggerCase(path: string): TriggerCaseSpec {
+  const text = readFileSync(path, 'utf8');
+  const parsed = load(text) as TriggerCaseSpec;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`failed to parse trigger conformance case at ${path}`);
   }
   return parsed;
 }
