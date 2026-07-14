@@ -422,4 +422,90 @@ mod tests {
         assert!(result.deduplicated);
         assert_eq!(result.queued, 4);
     }
+
+    // ── Offline HTTP round-trip tests ────────────────────────────────────
+    //
+    // The shared trigger-conformance suite (tests/trigger_conformance.rs) also
+    // drives the wire path, but it no-ops unless the language-agnostic
+    // `sdks/conformance/cases-trigger/*.yaml` cases are present, so it gives no
+    // coverage on this crate in isolation. These tests pin the status → error
+    // mapping (200 success / 429 → QueueOverflow / other non-2xx → Server) with
+    // a minimal scripted TcpListener — no `wiremock`/`httpmock` dep, matching
+    // the hand-rolled mock the conformance harness already uses.
+
+    /// One-shot HTTP server: replies to the first request with `status`/`body`,
+    /// then returns its base URL. Drains the request headers first so reqwest
+    /// finishes writing before it sees the response.
+    async fn spawn_once(status: u16, reason: &'static str, body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 1024];
+                loop {
+                    match sock.read(&mut tmp).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len(),
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn send_returns_result_on_success() {
+        let url = spawn_once(
+            200,
+            "OK",
+            r#"{"execution_id":"exec-9","queued":3,"deduplicated":true}"#,
+        )
+        .await;
+        let client = TriggerClient::builder(&url).build();
+        let result = client.trigger("billing:invoice").send().await.unwrap();
+        assert_eq!(result.execution_id, "exec-9");
+        assert_eq!(result.queued, 3);
+        assert!(result.deduplicated);
+    }
+
+    #[tokio::test]
+    async fn send_maps_429_to_queue_overflow() {
+        let url = spawn_once(429, "Too Many Requests", "job at max_queue_depth").await;
+        let client = TriggerClient::builder(&url).build();
+        let err = client.trigger("billing:invoice").send().await.unwrap_err();
+        match err {
+            TriggerError::QueueOverflow { body } => assert!(body.contains("max_queue_depth")),
+            other => panic!("expected QueueOverflow, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_maps_other_non_success_to_server_error() {
+        let url = spawn_once(500, "Internal Server Error", "boom").await;
+        let client = TriggerClient::builder(&url).build();
+        let err = client.trigger("billing:invoice").send().await.unwrap_err();
+        match err {
+            TriggerError::Server { status, body } => {
+                assert_eq!(status, 500);
+                assert!(body.contains("boom"));
+            }
+            other => panic!("expected Server, got {other:?}"),
+        }
+    }
 }
