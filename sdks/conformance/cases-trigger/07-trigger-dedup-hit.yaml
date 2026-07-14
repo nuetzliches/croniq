@@ -1,0 +1,58 @@
+name: "Trigger dedup — repeat idempotency_key returns deduplicated: true"
+description: |
+  Idempotency semantics (issue #279). Two triggers carry the same
+  (job_key, idempotency_key). The first enqueues a new execution
+  (deduplicated: false). The second — a redelivery / retry / concurrent
+  publisher — coalesces to the SAME execution: the server responds 200 with
+  the EXISTING execution_id, an unchanged queue depth, and deduplicated: true.
+  The client must surface deduplicated=true and the existing execution_id
+  rather than treating the second call as a fresh enqueue. Both requests carry
+  the idempotency_key on the wire.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "orders:reconcile"
+      idempotency_key: "order-9931"
+    expect:
+      response:
+        execution_id: "exec-700"
+        queued: 4
+        deduplicated: false
+  - request:
+      job_key: "orders:reconcile"
+      idempotency_key: "order-9931"
+    expect:
+      response:
+        execution_id: "exec-700"
+        queued: 4
+        deduplicated: true
+
+server_script:
+  - on: "POST /v1/trigger"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-700"
+        queued: 4
+        deduplicated: false
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-700"
+        queued: 4
+        deduplicated: true
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 2
+      body_match:
+        job_key: "orders:reconcile"
+        idempotency_key: "order-9931"

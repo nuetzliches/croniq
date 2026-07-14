@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Wire-level trigger (producer) cases in the shared conformance suite
+  ([#287](https://github.com/nuetzliches/croniq/issues/287)).** The suite
+  previously modelled only the runner (consumer) loop. A new
+  `sdks/conformance/cases-trigger/` directory — with its own
+  `schema/trigger-case-schema.json` — pins the `POST /v1/trigger` producer
+  contract so every SDK's trigger client (#282–#286) validates against one
+  language-neutral spec instead of hand-rolled per-SDK tests. Cases cover the
+  minimal request (`job_key` only), the full request with snake_case
+  serialisation and omission of unset optionals (`metadata`, `require`,
+  `prefer`, `timeout`, `idempotency_key`), `ApiKey` auth with the producer's
+  own credentials, idempotency dedup (`deduplicated: true` surfaced; a missing
+  flag parsed as `false`) and oversized-key rejection, the `TriggerResponse`
+  shape (`execution_id`, `queued`, `deduplicated`), non-2xx errors, and the
+  per-job queue-overflow `429` from
+  [#299](https://github.com/nuetzliches/croniq/issues/299). Producer cases
+  live in a separate directory from runner cases so existing consumer-only
+  bindings keep passing untouched. CI validates the new cases against the new
+  schema across every SDK pipeline.
+
 ## [0.22.3] - 2026-07-14
 
 ### Fixed

@@ -1,0 +1,51 @@
+name: "Trigger metadata forwarded verbatim as a JSON object"
+description: |
+  metadata is arbitrary caller JSON forwarded to the runner as-is. The client
+  must serialise it as a nested JSON object under the `metadata` key (not a
+  stringified blob, not flattened) preserving keys and value types. This case
+  pins nested/typed values so a binding that coerces everything to strings, or
+  hoists metadata to top level, fails.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "email:send"
+      metadata:
+        user_id: "u-42"
+        attempt: 2
+        flags:
+          urgent: true
+    expect:
+      response:
+        execution_id: "exec-300"
+        queued: 1
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-300"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "email:send"
+        metadata:
+          user_id: "u-42"
+          attempt: 2
+          flags:
+            urgent: true
+      body_absent:
+        - require
+        - prefer
+        - timeout
+        - idempotency_key

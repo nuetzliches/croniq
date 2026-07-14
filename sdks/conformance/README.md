@@ -35,12 +35,24 @@ expectations. The same YAML drives every SDK — that's the point.
 sdks/conformance/
 ├── README.md                       this file
 ├── schema/
-│   └── case-schema.json            JSON-Schema for validation in CI
-└── cases/
-    ├── 01-poll-empty.yaml
-    ├── 02-poll-single-success.yaml
+│   ├── case-schema.json            JSON-Schema for runner (consumer) cases
+│   └── trigger-case-schema.json    JSON-Schema for trigger (producer) cases
+├── cases/                          runner (consumer) loop — poll/ack/renew/logs
+│   ├── 01-poll-empty.yaml
+│   ├── 02-poll-single-success.yaml
+│   └── …
+└── cases-trigger/                  trigger (producer) — POST /v1/trigger
+    ├── 01-trigger-minimal.yaml
+    ├── 02-trigger-full-request.yaml
     └── …
 ```
+
+Runner cases and trigger cases live in **separate directories with separate
+schemas** on purpose. A runner binding enumerates `cases/` and drives a poll
+loop from each file; a producer-shaped case dropped into `cases/` would break
+that loop. Keeping producer cases in `cases-trigger/` lets each SDK add a
+trigger runner independently (issues #282–#286) without disturbing bindings
+that only implement the consumer side.
 
 Bindings live with their SDK (each SDK author knows its own ecosystem
 best — central bindings would force a polyglot test runner). Current
@@ -139,6 +151,69 @@ Subset-match with one wildcard symbol:
 
 This keeps cases readable. Cases that need JSONPath-style expressiveness
 should propose an extension before reaching for ad-hoc string matching.
+
+## Trigger (producer) cases
+
+Cases in `cases-trigger/` pin the **producer** side — a trigger client
+wrapping `POST /v1/trigger` (issues #277, #282–#286). They validate against
+[`schema/trigger-case-schema.json`](schema/trigger-case-schema.json). The
+shape mirrors runner cases (`server_script` + `expectations.http` are
+identical) but swaps the poll loop for explicit calls:
+
+```yaml
+name: "Short imperative title"
+description: |
+  Why the case exists and what the trigger client must do.
+
+trigger_config:                        # → trigger client options (server_url injected by the binding)
+  api_key: "croniq_trigger_key"        # the producer's OWN credential (jobs:trigger scope), not a runner's
+  # bearer_token: "…"                  # alternative auth
+
+trigger_calls:                         # ordered trigger(...) invocations the binding must make
+  - request:                           # arguments passed to the client
+      job_key: "billing:invoice"
+      metadata: { tenant: "acme" }     # optional; omitted fields must NOT appear on the wire
+      require: ["gpu"]
+      prefer: ["eu-west"]
+      timeout: "15m"
+      idempotency_key: "evt-001"
+    expect:                            # what the client must surface to the caller
+      response:                        # success — subset match on the parsed TriggerResponse
+        execution_id: "exec-1"         # "*" allowed for any non-empty
+        queued: 3
+        deduplicated: false
+      # error: true                    # …OR the call must raise/return an error (mutually exclusive with response)
+
+server_script:                         # canned /v1/trigger responses (match_count sequences multi-call cases)
+  - on: "POST /v1/trigger"
+    respond: { status: 200, body: { execution_id: "exec-1", queued: 3 } }
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      headers: { authorization: "ApiKey croniq_trigger_key" }
+      body_match: { job_key: "billing:invoice" }   # subset match, same semantics as runner cases
+      body_absent: ["timeout", "idempotency_key"]   # keys that MUST be absent — pins omission of unset optionals
+```
+
+Notes for binding authors:
+
+- **`trigger_calls` are per-call.** Make each call in order; assert its
+  `expect` (a returned value on `response`, an error on `error: true`).
+  Multi-call cases fire `/v1/trigger` more than once — the mock sequences
+  responses by `match_count` exactly as for runner cases.
+- **`expect.response` is a subset match** on the parsed response object. A
+  missing `deduplicated` field on the wire parses as `false`.
+- **`body_absent`** lists top-level request-body keys that must NOT be
+  present. It exists because the subset `body_match` can only assert keys that
+  *are* present; a producer must not emit optionals the caller never supplied.
+  Asserted against the first matching request.
+- **No runner is configured** in a trigger case, so the credential in
+  `trigger_config` can only be the trigger client's own — that is how the
+  suite pins "the producer uses its own credentials, not a runner's".
 
 ## Writing a new binding
 

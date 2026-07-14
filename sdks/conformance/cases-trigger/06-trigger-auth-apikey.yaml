@@ -1,0 +1,37 @@
+name: "Trigger auth — Authorization: ApiKey {key} sent exactly once"
+description: |
+  When the trigger client is configured with an api_key it must attach the
+  Authorization header in the form "ApiKey {raw_key}" on the /v1/trigger
+  request — sent once, not duplicated. The trigger client carries ITS OWN
+  credentials (the jobs:trigger scope), independent of any runner's poll
+  credentials; a producer case configures no runner, so the key asserted here
+  can only be the trigger client's own.
+
+trigger_config:
+  api_key: "croniq_producer_only_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+    expect:
+      response:
+        execution_id: "exec-600"
+        queued: 1
+        deduplicated: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-600"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      headers:
+        authorization: "ApiKey croniq_producer_only_key"
