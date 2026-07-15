@@ -241,7 +241,10 @@ fn schedule_payload_to_loose_line(p: &SchedulePayload) -> String {
             ordinals,
             hour,
             minute,
-        } => format!("every {} of month at {hour:02}:{minute:02}", ordinals.join(" ")),
+        } => format!(
+            "every {} of month at {hour:02}:{minute:02}",
+            ordinals.join(" ")
+        ),
         // Unquoted — the canonical form (the old bridge force-quoted it).
         SchedulePayload::Once { at } => format!("once at {at}"),
         SchedulePayload::Disabled => "disabled".into(),
@@ -271,7 +274,11 @@ fn format_schedule_inner(p: &SchedulePayload) -> String {
 fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String, String> {
     let loose = schedule_payload_to_loose_line(p);
     let key = key.trim();
-    let key = if key.is_empty() { "namespace:name" } else { key };
+    let key = if key.is_empty() {
+        "namespace:name"
+    } else {
+        key
+    };
     let src = format!("job {key} {{\n  {loose}\n}}\n");
     let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
     Ok(croniq_config::format::format(&ast))
@@ -619,13 +626,10 @@ fn calendar_rule_to_loose_line(r: &CalendarRulePayload) -> String {
 fn canonical_calendar_rule_line(loose: &str) -> Option<String> {
     let wrapped = format!("calendar preview {{\n{loose}\n}}\n");
     let ast = Parser::parse(&wrapped).ok()?;
-    let rule = ast
-        .items
-        .iter()
-        .find_map(|i| match i {
-            croniq_config::ast::Item::Calendar(c) => c.rules.first(),
-            _ => None,
-        })?;
+    let rule = ast.items.iter().find_map(|i| match i {
+        croniq_config::ast::Item::Calendar(c) => c.rules.first(),
+        _ => None,
+    })?;
     Some(format_calendar_rule_line(rule))
 }
 
@@ -634,9 +638,16 @@ fn format_rule(r: &CalendarRulePayload) -> String {
     canonical_calendar_rule_line(&loose).unwrap_or(loose)
 }
 
-fn format_calendar_block_inner(rules: &[CalendarRulePayload], name: &str) -> Result<String, String> {
+fn format_calendar_block_inner(
+    rules: &[CalendarRulePayload],
+    name: &str,
+) -> Result<String, String> {
     let name = name.trim();
-    let name = if name.is_empty() { "calendar-name" } else { name };
+    let name = if name.is_empty() {
+        "calendar-name"
+    } else {
+        name
+    };
     let body: String = rules
         .iter()
         .map(|r| format!("  {}", calendar_rule_to_loose_line(r)))
