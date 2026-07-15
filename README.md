@@ -63,10 +63,10 @@ Build custom job execution runners in your language of choice. Runners poll the 
 | Language | Source | Package |
 |----------|--------|---------|
 | Rust     | [`crates/croniq-runner-sdk`](crates/croniq-runner-sdk) | (bundled with workspace, not published separately yet) |
-| .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) |
-| Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI — pre-release) |
+| .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet) |
+| Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI) |
 | Go (1.22+) | [`sdks/go`](sdks/go) | `github.com/nuetzliches/croniq/sdks/go` + `.../sdks/go/otel` (Go modules) |
-| TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm — pre-release) |
+| TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm) |
 | Java / Kotlin (JDK 21+) | [`sdks/java`](sdks/java) | `io.github.nuetzliches:croniq-runner` + `croniq-runner-spring-boot-starter` + `croniq-runner-kotlin-ext` + `croniq-runner-opentelemetry` (Maven Central) |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
