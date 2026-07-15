@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-07-15
+
+### Fixed
+
+- **`croniq fmt` no longer drops the `ephemeral` / `queued` schedule
+  modifier** ([#336](https://github.com/nuetzliches/croniq/issues/336)).
+  The execution-mode prefix is the semantic source for a job's
+  `execution_mode` and takes precedence over the `execution_mode`
+  directive and a `defaults` block, so a dropped prefix silently flipped
+  an ephemeral job to queued on `fmt -w` — also resetting `catch_up`
+  (`none` → `all`) and `max_queue_depth` (`1` → `null`). The formatter
+  now emits the prefix, so a round-trip through `fmt` is
+  semantics-preserving (`compile` output is unchanged). As part of the
+  fix the grammatical singular is kept for an interval count of 1
+  (`every 1 minute`, not `every 1 minutes`); that rule is now shared
+  across the `fmt`, schedule-summary, and cron-`convert` emitters so they
+  can no longer drift.
+- **`croniq quickstart` scaffolds the grammatical `every 1 minute`** in
+  its template
+  ([#339](https://github.com/nuetzliches/croniq/issues/339)), matching
+  the formatter output above.
+
 ## [0.24.0] - 2026-07-15
 
 ### Added
