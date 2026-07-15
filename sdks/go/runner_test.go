@@ -58,15 +58,20 @@ func (rs *recordingServer) handle(w http.ResponseWriter, r *http.Request) {
 
 	key := r.Method + " " + r.URL.Path
 	rs.hits[key]++
+	hit := rs.hits[key]
 	queue := rs.respond[key]
 	rs.mu.Unlock()
 
+	// Use the hit count captured under the lock above — reading
+	// rs.hits[key] here (unlocked) races with the rs.hits[key]++ write
+	// on a concurrent request, e.g. when a 409 conflict makes the runner
+	// retry while an earlier poll is still in flight.
 	var resp cannedResp
 	switch {
 	case len(queue) == 0:
 		resp = cannedResp{status: 200, body: "{}"}
-	case rs.hits[key]-1 < len(queue):
-		resp = queue[rs.hits[key]-1]
+	case hit-1 < len(queue):
+		resp = queue[hit-1]
 	default:
 		resp = queue[len(queue)-1]
 	}

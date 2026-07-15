@@ -33,7 +33,7 @@ use crate::api::auth_middleware::require_scope;
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware,
     routing::{delete, get, post, put},
 };
@@ -70,6 +70,14 @@ pub const DEFAULT_TRIGGER_DEDUP_WINDOW_SECS: u64 = 600;
 /// Maximum accepted length (in characters) of a trigger `idempotency_key`.
 /// Longer keys are rejected with `400 Bad Request`.
 const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
+
+/// Backpressure hint (seconds) sent as the `Retry-After` header when a
+/// `POST /v1/trigger` is rejected with `429` for per-job queue overflow
+/// (#299/#312). A short, fixed floor: the per-job queue drains as runners
+/// claim work, so a producer that waits this long before retrying gives the
+/// queue room without stalling throughput. The SDKs surface it as
+/// `retryAfterMs`.
+const TRIGGER_OVERFLOW_RETRY_AFTER_SECS: u64 = 1;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 
@@ -1007,12 +1015,15 @@ async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<TriggerRequest>,
-) -> (StatusCode, Json<TriggerResponse>) {
+) -> (StatusCode, HeaderMap, Json<TriggerResponse>) {
     // Follows this handler's established error style: status code + an
     // empty TriggerResponse body (same as the scope-rejection arm below).
+    // The queue-overflow arm below sets a `Retry-After` header; every other
+    // arm carries an empty one.
     let error_response = |status: StatusCode| {
         (
             status,
+            HeaderMap::new(),
             Json(TriggerResponse {
                 execution_id: String::new(),
                 queued: 0,
@@ -1062,6 +1073,7 @@ async fn handle_trigger(
                 );
                 return (
                     StatusCode::OK,
+                    HeaderMap::new(),
                     Json(TriggerResponse {
                         execution_id: existing.id.to_string(),
                         queued,
@@ -1106,7 +1118,23 @@ async fn handle_trigger(
             max = max_queue_depth,
             "trigger rejected — per-job queue overflow (#299)"
         );
-        return error_response(StatusCode::TOO_MANY_REQUESTS);
+        // Backpressure: tell producers (and the SDKs, which surface it as
+        // `retryAfterMs`) how long to wait before retrying instead of
+        // hammering a full queue.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            RETRY_AFTER,
+            HeaderValue::from(TRIGGER_OVERFLOW_RETRY_AFTER_SECS),
+        );
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            headers,
+            Json(TriggerResponse {
+                execution_id: String::new(),
+                queued: 0,
+                deduplicated: false,
+            }),
+        );
     }
 
     let exec_uuid = uuid::Uuid::new_v4();
@@ -1205,6 +1233,7 @@ async fn handle_trigger(
 
     (
         StatusCode::OK,
+        HeaderMap::new(),
         Json(TriggerResponse {
             execution_id,
             queued,
@@ -2125,6 +2154,50 @@ mod tests {
         assert_eq!(
             status, 200,
             "a different job must not be blocked by another job's queue"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_overflow_429_carries_retry_after_header() {
+        // #312: the per-job overflow 429 must carry a `Retry-After` hint so
+        // producers (and the SDKs, via `retryAfterMs`) can back off instead
+        // of hammering a full queue.
+        let (state, _store) = make_store_state();
+
+        // Fill the queue to the default cap of 10 for one job.
+        for _ in 0..10 {
+            let (status, _) = post_json_status(
+                server_router(Arc::clone(&state)),
+                "/v1/trigger",
+                serde_json::json!({ "job_key": "billing:invoice" }),
+            )
+            .await;
+            assert_eq!(status, 200);
+        }
+
+        // The 11th overflows — inspect the raw response so we can read headers
+        // (post_json_status drops them).
+        let resp = server_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/trigger")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "job_key": "billing:invoice" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status().as_u16(), 429);
+        assert_eq!(
+            resp.headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
+            Some("1"),
+            "overflow 429 must carry a Retry-After backpressure hint"
         );
     }
 

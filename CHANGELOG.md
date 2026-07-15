@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`POST /v1/trigger` now sends a `Retry-After` header on the per-job
+  queue-overflow `429`**
+  ([#299](https://github.com/nuetzliches/croniq/issues/299),
+  [#312](https://github.com/nuetzliches/croniq/issues/312)). Producers — and
+  the SDKs, which surface it as `retryAfterMs` — get an explicit backpressure
+  hint (seconds) telling them how long to wait before retrying, instead of
+  hammering a full queue. Previously the `429` carried no such hint.
+
+### Fixed
+
+- **`openapi.yaml` brought back in sync with the running server.** Bumped the
+  spec version to the released `0.23.0`, documented live routes that were
+  missing (`GET /v1/tags`, `GET /v1/jobs/states`, `GET /v1/system/diagnostics`,
+  `GET /v1/auth/config`, and the `GET /v1/alerts/deliveries` pair), and added
+  the `429` backpressure response on `POST /v1/trigger`.
+
 ## [0.23.0] - 2026-07-14
 
 ### Added
