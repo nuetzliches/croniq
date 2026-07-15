@@ -26,7 +26,7 @@ defaults {
 
 # Your first job — runs every minute
 job hello:world {
-  every 1 minutes
+  every 1 minute
   timeout 30s
   metadata { created_by quickstart }
 }
