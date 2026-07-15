@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15e'
+const WASM_VERSION = '2026-07-15f'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15e'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15f'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -1076,10 +1076,19 @@ const CONFIG_SCHEMA = {
       { key: 'operator_hint', label: 'Operator hint' },
     ] },
   ],
+  alerts: 'alerts',
   vars: 'freeform',
 }
 
-const cfgState = { block: 'server', values: {}, varsText: 'default_tz Europe/Vienna' }
+const cfgState = {
+  block: 'server',
+  values: {},
+  varsText: 'default_tz Europe/Vienna',
+  alerts: {
+    channels: [{ name: 'oncall', kind: 'shell', shell: '/usr/bin/page-oncall.sh', webhook: '', timeout: '', email: '' }],
+    rules: [{ name: 'prod-failures', when: 'job_failed', jobKey: 'billing:*', channels: 'oncall' }],
+  },
+}
 
 const cfgBlockEl = document.getElementById('cfg-block')
 const cfgFieldsEl = document.getElementById('cfg-fields')
@@ -1094,6 +1103,10 @@ function cfgVals() {
 function renderConfigFields() {
   cfgFieldsEl.innerHTML = ''
   const schema = CONFIG_SCHEMA[cfgState.block]
+  if (schema === 'alerts') {
+    renderAlertsEditor()
+    return
+  }
   if (schema === 'freeform') {
     const field = document.createElement('div')
     field.className = 'field'
@@ -1167,8 +1180,109 @@ function renderLeaf(f, vals) {
   cfgFieldsEl.appendChild(field)
 }
 
+// Repeatable channel/rule editor for the alerts block.
+function renderAlertsEditor() {
+  const A = cfgState.alerts
+  const head = (t) => { const h = document.createElement('div'); h.className = 'cfg-subhead'; h.textContent = t; return h }
+  const field = (labelText, input) => {
+    const f = document.createElement('div'); f.className = 'field'
+    const l = document.createElement('label'); l.textContent = labelText
+    f.appendChild(l); f.appendChild(input); return f
+  }
+  const textInput = (val, ph, on) => {
+    const i = document.createElement('input'); i.type = 'text'; i.value = val || ''
+    if (ph) i.placeholder = ph; i.spellcheck = false
+    i.addEventListener('input', () => { on(i.value); refreshConfig() }); return i
+  }
+  const selectInput = (val, opts, on) => {
+    const s = document.createElement('select')
+    opts.forEach((o) => { const op = document.createElement('option'); op.value = o; op.textContent = o; s.appendChild(op) })
+    s.value = val
+    s.addEventListener('change', () => { on(s.value); refreshConfig() }); return s
+  }
+  const removeBtn = (on) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'rule-remove'
+    b.textContent = '×'; b.addEventListener('click', on); return b
+  }
+  const addBtn = (label, on) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'rule-add'
+    b.textContent = label; b.addEventListener('click', on); return b
+  }
+
+  cfgFieldsEl.appendChild(head('Channels'))
+  A.channels.forEach((c, idx) => {
+    const row = document.createElement('div'); row.className = 'rule-row'
+    const h = document.createElement('div'); h.className = 'rule-row-head'
+    h.appendChild(textInput(c.name, 'name', (v) => { c.name = v }))
+    h.appendChild(selectInput(c.kind, ['shell', 'webhook', 'email'], (v) => { c.kind = v; renderConfigFields() }))
+    h.appendChild(removeBtn(() => { A.channels.splice(idx, 1); renderConfigFields(); refreshConfig() }))
+    row.appendChild(h)
+    if (c.kind === 'shell') {
+      row.appendChild(field('Command', textInput(c.shell, '/usr/bin/page-oncall.sh', (v) => { c.shell = v })))
+    } else if (c.kind === 'webhook') {
+      row.appendChild(field('Webhook URL', textInput(c.webhook, 'https://hooks.example.com/x', (v) => { c.webhook = v })))
+      row.appendChild(field('Timeout (optional)', textInput(c.timeout, '10s', (v) => { c.timeout = v })))
+    } else {
+      row.appendChild(field('Recipients (space-separated)', textInput(c.email, 'a@example.com b@example.com', (v) => { c.email = v })))
+    }
+    cfgFieldsEl.appendChild(row)
+  })
+  cfgFieldsEl.appendChild(addBtn('+ Add channel', () => {
+    A.channels.push({ name: '', kind: 'shell', shell: '', webhook: '', timeout: '', email: '' })
+    renderConfigFields(); refreshConfig()
+  }))
+
+  cfgFieldsEl.appendChild(head('Rules'))
+  A.rules.forEach((r, idx) => {
+    const row = document.createElement('div'); row.className = 'rule-row'
+    const h = document.createElement('div'); h.className = 'rule-row-head'
+    h.appendChild(textInput(r.name, 'name', (v) => { r.name = v }))
+    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire'], (v) => { r.when = v }))
+    h.appendChild(removeBtn(() => { A.rules.splice(idx, 1); renderConfigFields(); refreshConfig() }))
+    row.appendChild(h)
+    row.appendChild(field('Job key glob', textInput(r.jobKey, 'billing:*', (v) => { r.jobKey = v })))
+    row.appendChild(field('Channels (space-separated names)', textInput(r.channels, 'oncall', (v) => { r.channels = v })))
+    cfgFieldsEl.appendChild(row)
+  })
+  cfgFieldsEl.appendChild(addBtn('+ Add rule', () => {
+    A.rules.push({ name: '', when: 'job_failed', jobKey: '', channels: '' })
+    renderConfigFields(); refreshConfig()
+  }))
+}
+
+// Build the alerts directive tree (channel/rule sub-blocks with quoted names).
+function buildAlertsDirectives() {
+  const A = cfgState.alerts
+  const dirs = []
+  A.channels.forEach((c) => {
+    const name = (c.name || '').trim()
+    if (!name) return
+    const children = []
+    if (c.kind === 'shell') {
+      const v = (c.shell || '').trim(); if (v) children.push({ key: 'shell', args: [v] })
+    } else if (c.kind === 'webhook') {
+      const v = (c.webhook || '').trim(); if (v) children.push({ key: 'webhook', args: [v] })
+      const t = (c.timeout || '').trim(); if (t) children.push({ key: 'timeout', args: [t] })
+    } else {
+      const em = (c.email || '').split(/\s+/).filter(Boolean); if (em.length) children.push({ key: 'email', args: em })
+    }
+    if (children.length === 0) return
+    dirs.push({ key: 'channel', qualifier: name, quote_qualifier: true, children })
+  })
+  A.rules.forEach((r) => {
+    const name = (r.name || '').trim()
+    if (!name) return
+    const children = [{ key: 'when', args: [r.when] }]
+    const jk = (r.jobKey || '').trim(); if (jk) children.push({ key: 'job_key', args: [jk] })
+    const ch = (r.channels || '').split(/\s+/).filter(Boolean); if (ch.length) children.push({ key: 'channels', args: ch })
+    dirs.push({ key: 'rule', qualifier: name, quote_qualifier: true, children })
+  })
+  return dirs
+}
+
 // Turn the current block's form state into the wasm directive tree.
 function buildConfigDirectives() {
+  if (cfgState.block === 'alerts') return buildAlertsDirectives()
   if (cfgState.block === 'vars') {
     return cfgState.varsText
       .split('\n')
