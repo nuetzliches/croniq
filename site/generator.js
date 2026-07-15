@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15b'
+const WASM_VERSION = '2026-07-15c'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15b'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15c'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -962,8 +962,169 @@ function renderCalendarGrid() {
   }
 }
 
+// ── Config panel (top-level blocks) ─────────────────────────────────
+
+// Declarative form schema per block. `type` defaults to a text input;
+// `select` renders a dropdown (first option "" = unset); `multi` splits
+// the value on whitespace into multiple directive args. `vars` is a
+// freeform `key value` list (one per line) rather than fixed fields.
+const CONFIG_SCHEMA = {
+  server: [
+    { key: 'listen', label: 'Listen address', placeholder: ':4000' },
+    { key: 'data_dir', label: 'Data directory', placeholder: '/var/lib/croniq' },
+    { key: 'db', label: 'Database', placeholder: 'sqlite' },
+    { key: 'app_url', label: 'App URL', placeholder: 'https://cron.example.com' },
+  ],
+  smtp: [
+    { key: 'host', label: 'Host', placeholder: 'smtp.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '587' },
+    { key: 'security', label: 'Security', type: 'select', options: ['', 'starttls', 'tls', 'none'] },
+    { key: 'from', label: 'From', placeholder: 'Croniq <noreply@example.com>' },
+  ],
+  pull_api: [
+    { key: 'listen', label: 'Listen address', placeholder: ':4000' },
+    { key: 'auth', label: 'Auth', multi: true, placeholder: 'token {env.CRONIQ_JWT_SECRET}' },
+    { key: 'lease_ttl', label: 'Lease TTL', placeholder: '60s' },
+    { key: 'trigger_dedup_window', label: 'Trigger dedup window', placeholder: '10m' },
+  ],
+  mcp: [
+    { key: 'enabled', label: 'Enabled', type: 'select', options: ['', 'true', 'false'] },
+    { key: 'allowed_hosts', label: 'Allowed hosts', multi: true, placeholder: 'space-separated hosts' },
+  ],
+  policy: [
+    { key: 'dsl_adopt_on_mutate', label: 'Adopt DSL on mutate', type: 'select', options: ['', 'true', 'false'] },
+  ],
+  vars: 'freeform',
+}
+
+const cfgState = { block: 'server', values: {}, varsText: 'default_tz Europe/Vienna' }
+
+const cfgBlockEl = document.getElementById('cfg-block')
+const cfgFieldsEl = document.getElementById('cfg-fields')
+const cfgDslEl = document.getElementById('cfg-dsl')
+const cfgErrEl = document.getElementById('cfg-error')
+
+function cfgVals() {
+  if (!cfgState.values[cfgState.block]) cfgState.values[cfgState.block] = {}
+  return cfgState.values[cfgState.block]
+}
+
+function renderConfigFields() {
+  cfgFieldsEl.innerHTML = ''
+  const schema = CONFIG_SCHEMA[cfgState.block]
+  if (schema === 'freeform') {
+    const field = document.createElement('div')
+    field.className = 'field'
+    const label = document.createElement('label')
+    label.setAttribute('for', 'cfg-vars')
+    label.textContent = 'Variables (one per line: name value)'
+    const ta = document.createElement('textarea')
+    ta.id = 'cfg-vars'
+    ta.rows = 5
+    ta.spellcheck = false
+    ta.value = cfgState.varsText
+    ta.addEventListener('input', () => { cfgState.varsText = ta.value; refreshConfig() })
+    field.appendChild(label)
+    field.appendChild(ta)
+    cfgFieldsEl.appendChild(field)
+    return
+  }
+  const vals = cfgVals()
+  schema.forEach((f) => {
+    const field = document.createElement('div')
+    field.className = 'field'
+    const label = document.createElement('label')
+    label.setAttribute('for', `cfg-${cfgState.block}-${f.key}`)
+    label.textContent = f.label
+    field.appendChild(label)
+    let input
+    if (f.type === 'select') {
+      input = document.createElement('select')
+      f.options.forEach((o) => {
+        const opt = document.createElement('option')
+        opt.value = o
+        opt.textContent = o === '' ? '(unset)' : o
+        input.appendChild(opt)
+      })
+    } else {
+      input = document.createElement('input')
+      input.type = f.type === 'number' ? 'number' : 'text'
+      if (f.placeholder) input.placeholder = f.placeholder
+      input.spellcheck = false
+    }
+    input.id = `cfg-${cfgState.block}-${f.key}`
+    input.value = vals[f.key] ?? ''
+    const evt = f.type === 'select' ? 'change' : 'input'
+    input.addEventListener(evt, () => { vals[f.key] = input.value; refreshConfig() })
+    field.appendChild(input)
+    cfgFieldsEl.appendChild(field)
+  })
+}
+
+// Turn the current block's form state into the wasm directive list.
+function buildConfigDirectives() {
+  if (cfgState.block === 'vars') {
+    return cfgState.varsText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const parts = l.split(/\s+/)
+        return { key: parts[0], args: parts.slice(1) }
+      })
+      .filter((d) => d.key)
+  }
+  const vals = cfgVals()
+  const schema = CONFIG_SCHEMA[cfgState.block]
+  const dirs = []
+  schema.forEach((f) => {
+    const v = (vals[f.key] ?? '').trim()
+    if (!v) return
+    dirs.push({ key: f.key, args: f.multi ? v.split(/\s+/) : [v] })
+  })
+  return dirs
+}
+
+async function refreshConfig() {
+  await ensureWasm()
+  cfgErrEl.hidden = true
+  const dirs = buildConfigDirectives()
+  if (dirs.length === 0) {
+    cfgDslEl.textContent = ''
+    cfgErrEl.hidden = false
+    cfgErrEl.style.color = 'var(--fg-muted)'
+    cfgErrEl.textContent = 'Fill at least one field to generate the block.'
+    return
+  }
+  cfgErrEl.style.color = ''
+  try {
+    cfgDslEl.textContent = wasm.formatTopLevelBlock(cfgState.block, dirs)
+  } catch (e) {
+    cfgDslEl.textContent = ''
+    cfgErrEl.hidden = false
+    cfgErrEl.textContent = String(e)
+  }
+}
+
+cfgBlockEl.addEventListener('change', () => {
+  cfgState.block = cfgBlockEl.value
+  renderConfigFields()
+  refreshConfig()
+})
+
+document.getElementById('cfg-copy').addEventListener('click', async (e) => {
+  if (!cfgDslEl.textContent) return
+  await navigator.clipboard.writeText(cfgDslEl.textContent)
+  const btn = e.currentTarget
+  const orig = btn.textContent
+  btn.textContent = 'Copied!'
+  setTimeout(() => { btn.textContent = orig }, 1200)
+})
+
 // ── Bootstrap ──────────────────────────────────────────────────────
 
 renderRuleEditor()
 refreshSchedule()
 refreshCalendar()
+renderConfigFields()
+refreshConfig()
