@@ -583,6 +583,34 @@
                 <input id="sch-opt-runner-prefer" type="text" placeholder="space/comma separated" spellcheck="false">
               </div>
 
+              <div class="cfg-subhead">Runner command</div>
+              <div class="field">
+                <label for="sch-opt-re-mode">Runner mode</label>
+                <select id="sch-opt-re-mode">
+                  <option value="none">(none — runner decides)</option>
+                  <option value="shell">shell — one command line</option>
+                  <option value="exec">exec — argv (no shell)</option>
+                </select>
+              </div>
+              <div id="sch-opt-re-fields" hidden>
+                <div class="field" id="sch-opt-re-command-field">
+                  <label for="sch-opt-re-command">Command</label>
+                  <input id="sch-opt-re-command" type="text" placeholder="pg_dump -U app app &gt; /backups/app.sql" spellcheck="false">
+                </div>
+                <div class="field" id="sch-opt-re-args-field" hidden>
+                  <label for="sch-opt-re-args">Args (argv, space-separated)</label>
+                  <input id="sch-opt-re-args" type="text" placeholder="/usr/sbin/logrotate /etc/logrotate.conf" spellcheck="false">
+                </div>
+                <div class="field-row">
+                  <div class="field"><label for="sch-opt-re-workdir">Workdir</label><input id="sch-opt-re-workdir" type="text" placeholder="/opt" spellcheck="false"></div>
+                  <div class="field"><label for="sch-opt-re-user">User</label><input id="sch-opt-re-user" type="text" placeholder="postgres" spellcheck="false"></div>
+                </div>
+                <div class="field">
+                  <label for="sch-opt-re-env">Environment (one per line: NAME value)</label>
+                  <textarea id="sch-opt-re-env" rows="3" spellcheck="false" placeholder="PGPASSWORD {env.PGPASSWORD}"></textarea>
+                </div>
+              </div>
+
               <div class="field">
                 <label for="sch-opt-tags">Tags</label>
                 <input id="sch-opt-tags" type="text" placeholder="key=value, e.g. env=prod team=billing" spellcheck="false">
@@ -753,6 +781,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-07-15d"></script>
+  <script type="module" src="./generator.js?v=2026-07-15e"></script>
 </body>
 </html>

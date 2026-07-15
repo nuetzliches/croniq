@@ -353,6 +353,39 @@ pub struct JobOptions {
     pub queue_ttl: Option<String>,
     #[serde(default)]
     pub max_queue_depth: Option<u32>,
+
+    /// Runner execution payload — `runner shell { … }` / `runner exec
+    /// { … }`. Independent of the `runner_require`/`runner_prefer`
+    /// placement block (a job may carry both). (Phase 3c)
+    #[serde(default)]
+    pub runner_exec: Option<RunnerExecPayload>,
+}
+
+/// A single `KEY value` environment entry inside a runner exec block.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct EnvPair {
+    pub key: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// The runner execution command. `mode` is `shell` (a single `command`
+/// string) or `exec` (an `args` argv list); both may set `workdir`,
+/// `user`, and `env` entries.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RunnerExecPayload {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub workdir: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub env: Vec<EnvPair>,
 }
 
 /// Render a schedule payload plus job-level options as a full,
@@ -414,6 +447,9 @@ fn format_job_block_inner(
         lines.push(format!("  {line}"));
     }
     if let Some(line) = runner_loose_line(&o.runner_require, &o.runner_prefer) {
+        lines.push(format!("  {line}"));
+    }
+    if let Some(line) = runner_exec_loose_line(o.runner_exec.as_ref()) {
         lines.push(format!("  {line}"));
     }
     let tags: Vec<String> = o
@@ -486,7 +522,14 @@ fn escape_dquote(s: &str) -> String {
 /// Emit a token bare when the lexer accepts it as an ident, else quote
 /// it. Bare-ident chars per the lexer: alphanumerics + `:/*?-._+@`.
 /// Tags like `env=prod` contain `=` (not an ident char) so they quote.
+///
+/// A `{…}` placeholder (`{env.X}`, `{vars.Y}`, …) is left **bare** — the
+/// lexer only recognises placeholders unquoted; quoting one would turn
+/// it into a literal string with braces.
 fn quote_if_needed(s: &str) -> String {
+    if is_placeholder(s) {
+        return s.to_string();
+    }
     let bare_ok = !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || ":/*?-._+@".contains(c));
@@ -495,6 +538,14 @@ fn quote_if_needed(s: &str) -> String {
     } else {
         format!("\"{}\"", escape_dquote(s))
     }
+}
+
+/// Whether `s` is a single `{…}` placeholder token.
+fn is_placeholder(s: &str) -> bool {
+    s.len() >= 2
+        && s.starts_with('{')
+        && s.ends_with('}')
+        && !s[1..s.len() - 1].contains(['{', '}'])
 }
 
 /// `retry <strategy> { max_attempts N; base …; cap …; jitter … }` or
@@ -545,6 +596,57 @@ fn runner_loose_line(require: &[String], prefer: &[String]) -> Option<String> {
         return None;
     }
     Some(format!("runner {{ {} }}", parts.join("; ")))
+}
+
+/// `runner shell { command "…"; workdir …; user …; env { K V } }` or
+/// `runner exec { args …; … }`. `None` if there's no command/args to run.
+fn runner_exec_loose_line(r: Option<&RunnerExecPayload>) -> Option<String> {
+    let r = r?;
+    let mode = if r.mode.trim() == "exec" {
+        "exec"
+    } else {
+        "shell"
+    };
+    let mut inner: Vec<String> = Vec::new();
+    if mode == "shell" {
+        // `command` is required for a shell runner — without it there's
+        // nothing to emit.
+        let cmd = opt_str(&r.command)?;
+        inner.push(format!("command \"{}\"", escape_dquote(cmd)));
+    } else {
+        let args: Vec<String> = r
+            .args
+            .iter()
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .map(quote_if_needed)
+            .collect();
+        if args.is_empty() {
+            return None;
+        }
+        inner.push(format!("args {}", args.join(" ")));
+    }
+    if let Some(w) = opt_str(&r.workdir) {
+        inner.push(format!("workdir {}", quote_if_needed(w)));
+    }
+    if let Some(u) = opt_str(&r.user) {
+        inner.push(format!("user {}", quote_if_needed(u)));
+    }
+    let env_pairs: Vec<String> = r
+        .env
+        .iter()
+        .filter_map(|p| {
+            let k = p.key.trim();
+            if k.is_empty() {
+                return None;
+            }
+            Some(format!("{k} {}", quote_if_needed(p.value.trim())))
+        })
+        .collect();
+    if !env_pairs.is_empty() {
+        inner.push(format!("env {{ {} }}", env_pairs.join("; ")));
+    }
+    Some(format!("runner {mode} {{ {} }}", inner.join("; ")))
 }
 
 // ── next_fires preview ─────────────────────────────────────────────
@@ -1658,6 +1760,93 @@ mod tests {
         let out = format_top_level_block_inner("oidc", &dirs).unwrap();
         assert!(out.contains("issuer https://id.example.com"), "{out}");
         assert!(out.contains("client_id croniq"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    // ── Placeholder quoting + runner shell/exec (Phase 3c) ─────────
+
+    #[test]
+    fn placeholders_stay_bare() {
+        assert!(is_placeholder("{env.X}"));
+        assert!(is_placeholder("{vars.default_tz}"));
+        assert!(!is_placeholder("plain"));
+        assert!(!is_placeholder("{a}{b}"));
+        // A placeholder arg must NOT be quoted (else it becomes a literal).
+        assert_eq!(
+            quote_if_needed("{env.CRONIQ_JWT_SECRET}"),
+            "{env.CRONIQ_JWT_SECRET}"
+        );
+        // pull_api auth with a placeholder token round-trips as a placeholder.
+        let dirs = vec![dir("auth", &["token", "{env.CRONIQ_JWT_SECRET}"])];
+        let out = format_top_level_block_inner("pull_api", &dirs).unwrap();
+        assert!(out.contains("auth token {env.CRONIQ_JWT_SECRET}"), "{out}");
+        assert!(
+            !out.contains("\"{env"),
+            "placeholder must not be quoted: {out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn runner_exec_shell_with_env_placeholder() {
+        let o = JobOptions {
+            runner_exec: Some(RunnerExecPayload {
+                mode: "shell".into(),
+                command: Some("pg_dump -U app app > /backups/app.sql".into()),
+                workdir: Some("/opt".into()),
+                env: vec![EnvPair {
+                    key: "PGPASSWORD".into(),
+                    value: "{env.PGPASSWORD}".into(),
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "db:backup", &o).unwrap();
+        assert!(out.contains("runner shell {"), "{out}");
+        assert!(
+            out.contains("command \"pg_dump -U app app > /backups/app.sql\""),
+            "{out}"
+        );
+        assert!(out.contains("workdir /opt"), "{out}");
+        // env placeholder stays bare inside the env sub-block.
+        assert!(out.contains("env { PGPASSWORD {env.PGPASSWORD} }"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn runner_exec_exec_args() {
+        let o = JobOptions {
+            runner_exec: Some(RunnerExecPayload {
+                mode: "exec".into(),
+                args: vec!["/usr/sbin/logrotate".into(), "/etc/logrotate.conf".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:logrotate", &o).unwrap();
+        assert!(
+            out.contains("runner exec { args /usr/sbin/logrotate /etc/logrotate.conf }"),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn runner_exec_shell_without_command_is_omitted() {
+        let o = JobOptions {
+            runner_exec: Some(RunnerExecPayload {
+                mode: "shell".into(),
+                workdir: Some("/opt".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(
+            !out.contains("runner"),
+            "no command → no runner block: {out}"
+        );
         Parser::parse(&out).unwrap();
     }
 }
