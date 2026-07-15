@@ -6,6 +6,8 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-15
+
 ### Added
 
 - **Genuine trim/AOT compatibility — the package now declares

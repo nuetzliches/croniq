@@ -5,7 +5,23 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.2.0] - 2026-07-15
+
+### Added
+
+- **First-class producer trigger client**
+  ([#283](https://github.com/nuetzliches/croniq/issues/283)). `TriggerClient` —
+  configured via `TriggerClientOptions`, independent of the runner and carrying
+  its own `jobs:trigger`-scoped credentials — wraps `POST /v1/trigger`.
+  `await client.trigger(job_key, ...)` returns a `TriggerResult`
+  (`execution_id`, `queued`, `deduplicated`); an optional `idempotency_key`
+  drives server-side dedup
+  ([#279](https://github.com/nuetzliches/croniq/issues/279)), with a missing
+  `deduplicated` flag parsed as `False`. Non-2xx responses raise — including the
+  oversized-idempotency-key `400` and the per-job queue-overflow `429`
+  ([#299](https://github.com/nuetzliches/croniq/issues/299)).
+
+## [0.1.0] - 2026-05-25
 
 ### Added
 
