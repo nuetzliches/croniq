@@ -272,16 +272,190 @@ fn format_schedule_inner(p: &SchedulePayload) -> String {
 }
 
 fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String, String> {
-    let loose = schedule_payload_to_loose_line(p);
+    // A schedule-only block is a job block with no options.
+    format_job_block_inner(p, key, &JobOptions::default())
+}
+
+// ── Job options (the job block beyond the schedule line) ───────────
+
+/// Retry strategy from the form. `strategy` is `exponential` (uses
+/// base/cap/jitter) or `fixed` (uses delay); `max_attempts` applies to
+/// both. Empty/None fields are simply omitted from the emitted block.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RetryPayload {
+    #[serde(default)]
+    pub strategy: String,
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub cap: Option<String>,
+    #[serde(default)]
+    pub jitter: Option<f64>,
+    #[serde(default)]
+    pub delay: Option<String>,
+}
+
+/// Structured job-level options mirroring the form. Every field is
+/// optional — a default `JobOptions` yields a schedule-only job block.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct JobOptions {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<String>,
+    #[serde(default)]
+    pub retry: Option<RetryPayload>,
+    #[serde(default)]
+    pub runner_require: Vec<String>,
+    #[serde(default)]
+    pub runner_prefer: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// `"singleton"`, a positive integer string (→ `max_concurrent N`),
+    /// or `None`/empty for the default (unbounded) concurrency.
+    #[serde(default)]
+    pub concurrency: Option<String>,
+}
+
+/// Render a schedule payload plus job-level options as a full,
+/// copy-paste-ready `job <key> { … }` block. Options may be `null`/
+/// `undefined` (→ schedule-only block). Rejects invalid input (e.g. a
+/// malformed key or duration) with the parser error as a thrown value.
+#[wasm_bindgen(js_name = formatJobBlock)]
+pub fn format_job_block(value: JsValue, key: &str, options: JsValue) -> Result<String, JsValue> {
+    let payload: SchedulePayload =
+        serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let opts: JobOptions = if options.is_undefined() || options.is_null() {
+        JobOptions::default()
+    } else {
+        serde_wasm_bindgen::from_value(options).map_err(|e| JsValue::from_str(&e.to_string()))?
+    };
+    format_job_block_inner(&payload, key, &opts).map_err(|e| JsValue::from_str(&e))
+}
+
+fn format_job_block_inner(
+    p: &SchedulePayload,
+    key: &str,
+    o: &JobOptions,
+) -> Result<String, String> {
     let key = key.trim();
     let key = if key.is_empty() {
         "namespace:name"
     } else {
         key
     };
-    let src = format!("job {key} {{\n  {loose}\n}}\n");
+
+    let mut lines: Vec<String> = Vec::new();
+    // `description` floats to the top in the canonical formatter anyway;
+    // emit order here is not significant.
+    if let Some(d) = opt_str(&o.description) {
+        lines.push(format!("  description \"{}\"", escape_dquote(d)));
+    }
+    lines.push(format!("  {}", schedule_payload_to_loose_line(p)));
+    if let Some(t) = opt_str(&o.timeout) {
+        lines.push(format!("  timeout {t}"));
+    }
+    if let Some(line) = retry_loose_line(o.retry.as_ref()) {
+        lines.push(format!("  {line}"));
+    }
+    if let Some(line) = runner_loose_line(&o.runner_require, &o.runner_prefer) {
+        lines.push(format!("  {line}"));
+    }
+    let tags: Vec<String> = o
+        .tags
+        .iter()
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| quote_if_needed(t.trim()))
+        .collect();
+    if !tags.is_empty() {
+        lines.push(format!("  tags {}", tags.join(" ")));
+    }
+    if let Some(c) = opt_str(&o.concurrency) {
+        if c == "singleton" {
+            lines.push("  singleton".into());
+        } else {
+            lines.push(format!("  max_concurrent {c}"));
+        }
+    }
+
+    let src = format!("job {key} {{\n{}\n}}\n", lines.join("\n"));
     let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
     Ok(croniq_config::format::format(&ast))
+}
+
+/// Trim + treat empty as absent.
+fn opt_str(s: &Option<String>) -> Option<&str> {
+    s.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn escape_dquote(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Emit a token bare when the lexer accepts it as an ident, else quote
+/// it. Bare-ident chars per the lexer: alphanumerics + `:/*?-._+@`.
+/// Tags like `env=prod` contain `=` (not an ident char) so they quote.
+fn quote_if_needed(s: &str) -> String {
+    let bare_ok = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ":/*?-._+@".contains(c));
+    if bare_ok {
+        s.to_string()
+    } else {
+        format!("\"{}\"", escape_dquote(s))
+    }
+}
+
+/// `retry <strategy> { max_attempts N; base …; cap …; jitter … }` or
+/// `… { max_attempts N; delay … }` for the fixed strategy. `None` if
+/// the retry payload has no usable fields.
+fn retry_loose_line(r: Option<&RetryPayload>) -> Option<String> {
+    let r = r?;
+    let strat = {
+        let s = r.strategy.trim();
+        if s.is_empty() { "exponential" } else { s }
+    };
+    let mut inner: Vec<String> = Vec::new();
+    if let Some(n) = r.max_attempts {
+        inner.push(format!("max_attempts {n}"));
+    }
+    if strat == "fixed" {
+        if let Some(d) = opt_str(&r.delay) {
+            inner.push(format!("delay {d}"));
+        }
+    } else {
+        if let Some(b) = opt_str(&r.base) {
+            inner.push(format!("base {b}"));
+        }
+        if let Some(c) = opt_str(&r.cap) {
+            inner.push(format!("cap {c}"));
+        }
+        if let Some(j) = r.jitter {
+            inner.push(format!("jitter {j}"));
+        }
+    }
+    if inner.is_empty() {
+        return None;
+    }
+    Some(format!("retry {strat} {{ {} }}", inner.join("; ")))
+}
+
+/// `runner { require …; prefer … }` from the capability lists, or
+/// `None` if both are empty.
+fn runner_loose_line(require: &[String], prefer: &[String]) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for r in require.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        parts.push(format!("require {r}"));
+    }
+    for p in prefer.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        parts.push(format!("prefer {p}"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("runner {{ {} }}", parts.join("; ")))
 }
 
 // ── next_fires preview ─────────────────────────────────────────────
@@ -891,6 +1065,150 @@ mod tests {
             out,
             "calendar business-days {\n  timezone \"Europe/Vienna\"\n  include weekly weekday\n  exclude annual 12-25\n}\n"
         );
+        Parser::parse(&out).unwrap();
+    }
+
+    // ── Job options (Phase 1) ──────────────────────────────────────
+
+    fn interval5() -> SchedulePayload {
+        SchedulePayload::Interval {
+            count: 5,
+            unit: "minutes".into(),
+        }
+    }
+
+    #[test]
+    fn job_block_empty_options_equals_schedule_only() {
+        let out =
+            format_job_block_inner(&interval5(), "reports:daily", &JobOptions::default()).unwrap();
+        assert_eq!(out, "job reports:daily {\n  every 5 minutes\n}\n");
+    }
+
+    #[test]
+    fn job_block_description_floats_to_top_and_quotes() {
+        let o = JobOptions {
+            description: Some("Nightly ETL".into()),
+            timeout: Some("15m".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "etl:sync", &o).unwrap();
+        assert_eq!(
+            out,
+            "job etl:sync {\n  description \"Nightly ETL\"\n\n  every 5 minutes\n  timeout 15m\n}\n"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_retry_exponential_inline() {
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "exponential".into(),
+                max_attempts: Some(5),
+                base: Some("5s".into()),
+                cap: Some("2m".into()),
+                jitter: Some(0.3),
+                delay: None,
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(
+            out.contains("retry exponential { max_attempts 5; base 5s; cap 2m; jitter 0.3 }"),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_retry_fixed_uses_delay_not_base() {
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "fixed".into(),
+                max_attempts: Some(2),
+                delay: Some("10s".into()),
+                base: Some("SHOULD_BE_IGNORED".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(
+            out.contains("retry fixed { max_attempts 2; delay 10s }"),
+            "{out}"
+        );
+        assert!(!out.contains("SHOULD_BE_IGNORED"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_runner_require_prefer() {
+        let o = JobOptions {
+            runner_require: vec!["health-check".into(), "eu-west".into()],
+            runner_prefer: vec!["gpu".into()],
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(
+            out.contains("runner { require health-check; require eu-west; prefer gpu }"),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_tags_are_quoted_because_of_equals() {
+        let o = JobOptions {
+            tags: vec!["env=prod".into(), "team=billing".into()],
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "billing:run", &o).unwrap();
+        assert!(out.contains("tags \"env=prod\" \"team=billing\""), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_singleton_and_max_concurrent() {
+        let o1 = JobOptions {
+            concurrency: Some("singleton".into()),
+            ..Default::default()
+        };
+        let out1 = format_job_block_inner(&interval5(), "a:b", &o1).unwrap();
+        assert!(out1.contains("\n  singleton\n"), "{out1}");
+        Parser::parse(&out1).unwrap();
+
+        let o2 = JobOptions {
+            concurrency: Some("3".into()),
+            ..Default::default()
+        };
+        let out2 = format_job_block_inner(&interval5(), "a:b", &o2).unwrap();
+        assert!(out2.contains("max_concurrent 3"), "{out2}");
+        Parser::parse(&out2).unwrap();
+    }
+
+    #[test]
+    fn job_block_rejects_invalid_key() {
+        assert!(format_job_block_inner(&interval5(), "nokey", &JobOptions::default()).is_err());
+    }
+
+    #[test]
+    fn job_block_full_house_round_trips() {
+        let o = JobOptions {
+            description: Some("Full example".into()),
+            timeout: Some("30m".into()),
+            retry: Some(RetryPayload {
+                strategy: "exponential".into(),
+                max_attempts: Some(3),
+                base: Some("2s".into()),
+                ..Default::default()
+            }),
+            runner_require: vec!["billing".into()],
+            runner_prefer: vec![],
+            tags: vec!["env=prod".into()],
+            concurrency: Some("singleton".into()),
+        };
+        let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
+        // Must round-trip through the parser cleanly.
         Parser::parse(&out).unwrap();
     }
 }

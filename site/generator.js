@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-14a'
+const WASM_VERSION = '2026-07-15a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-14a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -54,6 +54,17 @@ const schState = {
   weekdays: { days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'], hour: 9, minute: 0 },
   monthly: { ordinals: ['1st'], hour: 3, minute: 0 },
   once: { at: '2026-12-31T23:00:00Z' },
+  // Optional job-level options (Phase 1). Empty/unset fields are omitted.
+  opts: {
+    description: '',
+    timeout: '',
+    retry: { enabled: false, strategy: 'exponential', max: 3, base: '5s', cap: '2m', jitter: 0.3, delay: '10s' },
+    runnerRequire: '',
+    runnerPrefer: '',
+    tags: '',
+    concurrency: 'default', // 'default' | 'singleton' | 'max_concurrent'
+    maxConcurrent: 3,
+  },
 }
 
 // Render weekday + ordinal toggle buttons once.
@@ -153,6 +164,100 @@ bindTime('sch-wd-time', () => schState.weekdays, (h, m) => { schState.weekdays.h
 bindTime('sch-mth-time', () => schState.monthly, (h, m) => { schState.monthly.hour = h; schState.monthly.minute = m })
 bindText('sch-once-at', () => schState.once.at, (v) => { schState.once.at = v })
 
+// ── Job options (Phase 1) ───────────────────────────────────────────
+
+const O = schState.opts
+bindText('sch-opt-description', () => O.description, (v) => { O.description = v })
+bindText('sch-opt-timeout', () => O.timeout, (v) => { O.timeout = v })
+bindText('sch-opt-runner-require', () => O.runnerRequire, (v) => { O.runnerRequire = v })
+bindText('sch-opt-runner-prefer', () => O.runnerPrefer, (v) => { O.runnerPrefer = v })
+bindText('sch-opt-tags', () => O.tags, (v) => { O.tags = v })
+bindText('sch-opt-retry-base', () => O.retry.base, (v) => { O.retry.base = v })
+bindText('sch-opt-retry-cap', () => O.retry.cap, (v) => { O.retry.cap = v })
+bindText('sch-opt-retry-delay', () => O.retry.delay, (v) => { O.retry.delay = v })
+bindNumber('sch-opt-retry-max', () => O.retry.max, (v) => { O.retry.max = v })
+
+// Jitter is a float in [0,1]; bindNumber is integer-only, so bind it raw.
+const jitterEl = document.getElementById('sch-opt-retry-jitter')
+jitterEl.value = O.retry.jitter
+jitterEl.addEventListener('input', () => {
+  const v = parseFloat(jitterEl.value)
+  if (!Number.isNaN(v)) O.retry.jitter = v
+  refreshSchedule()
+})
+
+// Retry enable toggle shows/hides the retry detail fields.
+const retryEnabledEl = document.getElementById('sch-opt-retry-enabled')
+const retryFieldsEl = document.getElementById('sch-opt-retry-fields')
+retryEnabledEl.checked = O.retry.enabled
+retryFieldsEl.hidden = !O.retry.enabled
+retryEnabledEl.addEventListener('change', () => {
+  O.retry.enabled = retryEnabledEl.checked
+  retryFieldsEl.hidden = !O.retry.enabled
+  refreshSchedule()
+})
+
+// Strategy select swaps exponential (base/cap/jitter) vs fixed (delay).
+const retryStrategyEl = document.getElementById('sch-opt-retry-strategy')
+const retryExpEl = document.getElementById('sch-opt-retry-exp')
+const retryFixedEl = document.getElementById('sch-opt-retry-fixed')
+function syncRetryStrategy() {
+  const fixed = O.retry.strategy === 'fixed'
+  retryExpEl.hidden = fixed
+  retryFixedEl.hidden = !fixed
+}
+retryStrategyEl.value = O.retry.strategy
+retryStrategyEl.addEventListener('change', () => {
+  O.retry.strategy = retryStrategyEl.value
+  syncRetryStrategy()
+  refreshSchedule()
+})
+syncRetryStrategy()
+
+// Concurrency select reveals the max-concurrent number field.
+const concurrencyEl = document.getElementById('sch-opt-concurrency')
+const maxcFieldEl = document.getElementById('sch-opt-maxc-field')
+function syncConcurrency() {
+  maxcFieldEl.hidden = O.concurrency !== 'max_concurrent'
+}
+concurrencyEl.value = O.concurrency
+concurrencyEl.addEventListener('change', () => {
+  O.concurrency = concurrencyEl.value
+  syncConcurrency()
+  refreshSchedule()
+})
+syncConcurrency()
+bindNumber('sch-opt-maxc', () => O.maxConcurrent, (v) => { O.maxConcurrent = v })
+
+// Assemble the wasm `JobOptions` shape from the form state. Omits empty
+// fields so the emitted block only carries what the user actually set.
+function buildJobOptions() {
+  const opts = {}
+  if (O.description.trim()) opts.description = O.description.trim()
+  if (O.timeout.trim()) opts.timeout = O.timeout.trim()
+  if (O.retry.enabled) {
+    const r = { strategy: O.retry.strategy }
+    if (O.retry.max) r.max_attempts = O.retry.max
+    if (O.retry.strategy === 'fixed') {
+      if (O.retry.delay.trim()) r.delay = O.retry.delay.trim()
+    } else {
+      if (O.retry.base.trim()) r.base = O.retry.base.trim()
+      if (O.retry.cap.trim()) r.cap = O.retry.cap.trim()
+      if (typeof O.retry.jitter === 'number') r.jitter = O.retry.jitter
+    }
+    opts.retry = r
+  }
+  const req = O.runnerRequire.split(/[\s,]+/).filter(Boolean)
+  const pref = O.runnerPrefer.split(/[\s,]+/).filter(Boolean)
+  if (req.length) opts.runner_require = req
+  if (pref.length) opts.runner_prefer = pref
+  const tags = O.tags.split(/[\s,]+/).filter(Boolean)
+  if (tags.length) opts.tags = tags
+  if (O.concurrency === 'singleton') opts.concurrency = 'singleton'
+  else if (O.concurrency === 'max_concurrent') opts.concurrency = String(O.maxConcurrent)
+  return opts
+}
+
 function buildSchedulePayload() {
   const m = schState.mode
   if (m === 'interval') return { mode: 'interval', count: schState.interval.count, unit: schState.interval.unit }
@@ -176,11 +281,12 @@ async function refreshSchedule() {
   let line = ''
   try { line = wasm.formatSchedule(payload) } catch { line = '' }
 
-  // Full, paste-ready `job <key> { … }` block for the output box + Copy.
-  // Throws on an invalid job key — surface that as the validation error.
+  // Full, paste-ready `job <key> { … }` block (schedule + options) for
+  // the output box + Copy. Throws on invalid input (bad key/duration) —
+  // surface that as the validation error.
   let block = ''
   try {
-    block = wasm.formatScheduleBlock(payload, schState.key)
+    block = wasm.formatJobBlock(payload, schState.key, buildJobOptions())
   } catch (e) {
     schDslEl.textContent = ''
     schErrEl.hidden = false
