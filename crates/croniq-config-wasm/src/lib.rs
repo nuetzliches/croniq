@@ -1038,14 +1038,19 @@ pub struct DirectivePayload {
     pub args: Vec<String>,
     #[serde(default)]
     pub qualifier: Option<String>,
+    /// Force-quote the qualifier (used for `alerts` channel/rule names,
+    /// which are string-qualified by convention). Bare qualifiers like a
+    /// `retry exponential` strategy leave this false.
+    #[serde(default)]
+    pub quote_qualifier: bool,
     #[serde(default)]
     pub children: Vec<DirectivePayload>,
 }
 
 /// Top-level blocks this emitter supports. `server`/`smtp`/… are flat
-/// directive lists; `observability`/`defaults` carry nested sub-blocks
-/// (handled generically via `DirectivePayload::children`). `alerts`
-/// (repeatable string-qualified sub-blocks) is handled separately.
+/// directive lists; `observability`/`defaults`/`alerts` carry nested
+/// sub-blocks (handled generically via `DirectivePayload::children`,
+/// with `alerts` channel/rule names force-quoted via `quote_qualifier`).
 const TOP_LEVEL_BLOCKS: &[&str] = &[
     "server",
     "pull_api",
@@ -1056,6 +1061,7 @@ const TOP_LEVEL_BLOCKS: &[&str] = &[
     "oidc",
     "observability",
     "defaults",
+    "alerts",
 ];
 
 /// Render a top-level block (`server { … }`, `observability { … }`, …)
@@ -1092,7 +1098,11 @@ fn emit_directive(d: &DirectivePayload, indent: usize) -> Option<String> {
             .filter(|q| !q.is_empty())
         {
             s.push(' ');
-            s.push_str(&quote_if_needed(q));
+            if d.quote_qualifier {
+                s.push_str(&format!("\"{}\"", escape_dquote(q)));
+            } else {
+                s.push_str(&quote_if_needed(q));
+            }
         }
         s.push_str(" {\n");
         s.push_str(&child_lines.join("\n"));
@@ -1585,6 +1595,7 @@ mod tests {
             key: key.into(),
             args: args.iter().map(|s| s.to_string()).collect(),
             qualifier: None,
+            quote_qualifier: false,
             children: vec![],
         }
     }
@@ -1598,8 +1609,72 @@ mod tests {
             key: key.into(),
             args: vec![],
             qualifier: qualifier.map(|s| s.to_string()),
+            quote_qualifier: false,
             children,
         }
+    }
+
+    /// Sub-block with a force-quoted qualifier (alerts channel/rule name).
+    fn qblock(key: &str, name: &str, children: Vec<DirectivePayload>) -> DirectivePayload {
+        DirectivePayload {
+            key: key.into(),
+            args: vec![],
+            qualifier: Some(name.into()),
+            quote_qualifier: true,
+            children,
+        }
+    }
+
+    #[test]
+    fn alerts_channels_and_rules() {
+        let dirs = vec![
+            qblock(
+                "channel",
+                "oncall",
+                vec![dir("shell", &["/usr/bin/page-oncall.sh"])],
+            ),
+            qblock(
+                "rule",
+                "prod-failures",
+                vec![
+                    dir("when", &["job_failed"]),
+                    dir("job_key", &["billing:*"]),
+                    dir("channels", &["oncall"]),
+                ],
+            ),
+        ];
+        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        assert!(out.contains("channel \"oncall\" {"), "{out}");
+        assert!(out.contains("rule \"prod-failures\" {"), "{out}");
+        assert!(out.contains("when job_failed"), "{out}");
+        assert!(out.contains("job_key billing:*"), "{out}");
+        assert!(out.contains("channels oncall"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn alerts_webhook_channel_email_channel() {
+        let dirs = vec![
+            qblock(
+                "channel",
+                "hook",
+                vec![
+                    dir("webhook", &["https://hooks.example.com/x"]),
+                    dir("timeout", &["10s"]),
+                ],
+            ),
+            qblock(
+                "channel",
+                "team",
+                vec![dir("email", &["a@example.com", "b@example.com"])],
+            ),
+        ];
+        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        assert!(out.contains("channel \"hook\" {"), "{out}");
+        assert!(out.contains("webhook https://hooks.example.com/x"), "{out}");
+        assert!(out.contains("channel \"team\" {"), "{out}");
+        assert!(out.contains("email a@example.com b@example.com"), "{out}");
+        Parser::parse(&out).unwrap();
     }
 
     #[test]
