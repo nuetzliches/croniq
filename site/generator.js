@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15c'
+const WASM_VERSION = '2026-07-15d'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15c'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15d'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -994,6 +994,42 @@ const CONFIG_SCHEMA = {
   policy: [
     { key: 'dsl_adopt_on_mutate', label: 'Adopt DSL on mutate', type: 'select', options: ['', 'true', 'false'] },
   ],
+  oidc: [
+    { key: 'issuer', label: 'Issuer', placeholder: 'https://id.example.com' },
+    { key: 'client_id', label: 'Client ID', placeholder: 'croniq' },
+    { key: 'redirect_url', label: 'Redirect URL', placeholder: 'https://cron.example.com/oidc/callback' },
+    { key: 'default_role', label: 'Default role', placeholder: 'viewer' },
+    { key: 'provider_name', label: 'Provider name' },
+    { key: 'post_login_redirect', label: 'Post-login redirect' },
+  ],
+  observability: [
+    { sub: 'log', label: 'Logging', fields: [
+      { key: 'level', label: 'Level', type: 'select', options: ['', 'trace', 'debug', 'info', 'warn', 'error'] },
+      { key: 'format', label: 'Format', type: 'select', options: ['', 'json', 'text'] },
+      { key: 'output', label: 'Output', placeholder: 'stderr' },
+    ] },
+    { sub: 'metrics', label: 'Metrics', fields: [
+      { key: 'listen', label: 'Listen', placeholder: ':9900' },
+      { key: 'path', label: 'Path', placeholder: '/metrics' },
+    ] },
+  ],
+  defaults: [
+    { key: 'timezone', label: 'Timezone', placeholder: 'Europe/Vienna' },
+    { key: 'timeout', label: 'Timeout', placeholder: '5m' },
+    { key: 'execution_mode', label: 'Execution mode', type: 'select', options: ['', 'queued', 'ephemeral'] },
+    { key: 'catch_up', label: 'Catch-up', type: 'select', options: ['', 'all', 'latest', 'none'] },
+    { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'fixed'] }, fields: [
+      { key: 'max_attempts', label: 'Max attempts', type: 'number' },
+      { key: 'base', label: 'Base', placeholder: '2s' },
+      { key: 'cap', label: 'Cap', placeholder: '30s' },
+      { key: 'jitter', label: 'Jitter', type: 'number' },
+      { key: 'delay', label: 'Delay', placeholder: '10s' },
+    ] },
+    { sub: 'dead_letter', label: 'Dead letter', fields: [
+      { key: 'retention', label: 'Retention', placeholder: '30d' },
+      { key: 'operator_hint', label: 'Operator hint' },
+    ] },
+  ],
   vars: 'freeform',
 }
 
@@ -1030,38 +1066,62 @@ function renderConfigFields() {
     return
   }
   const vals = cfgVals()
-  schema.forEach((f) => {
-    const field = document.createElement('div')
-    field.className = 'field'
-    const label = document.createElement('label')
-    label.setAttribute('for', `cfg-${cfgState.block}-${f.key}`)
-    label.textContent = f.label
-    field.appendChild(label)
-    let input
-    if (f.type === 'select') {
-      input = document.createElement('select')
-      f.options.forEach((o) => {
-        const opt = document.createElement('option')
-        opt.value = o
-        opt.textContent = o === '' ? '(unset)' : o
-        input.appendChild(opt)
-      })
+  schema.forEach((entry) => {
+    if (entry.sub) {
+      // Sub-block: a small heading, an optional qualifier select, then
+      // its leaf fields keyed as `<sub>.<field>`.
+      const head = document.createElement('div')
+      head.className = 'cfg-subhead'
+      head.textContent = entry.label
+      cfgFieldsEl.appendChild(head)
+      if (entry.qualifier) {
+        const qKey = `${entry.sub}.__q`
+        if (vals[qKey] === undefined) vals[qKey] = entry.qualifier.options[0]
+        renderLeaf(
+          { key: qKey, label: 'Strategy', type: 'select', options: entry.qualifier.options },
+          vals,
+        )
+      }
+      entry.fields.forEach((f) => renderLeaf({ ...f, key: `${entry.sub}.${f.key}` }, vals))
     } else {
-      input = document.createElement('input')
-      input.type = f.type === 'number' ? 'number' : 'text'
-      if (f.placeholder) input.placeholder = f.placeholder
-      input.spellcheck = false
+      renderLeaf(entry, vals)
     }
-    input.id = `cfg-${cfgState.block}-${f.key}`
-    input.value = vals[f.key] ?? ''
-    const evt = f.type === 'select' ? 'change' : 'input'
-    input.addEventListener(evt, () => { vals[f.key] = input.value; refreshConfig() })
-    field.appendChild(input)
-    cfgFieldsEl.appendChild(field)
   })
 }
 
-// Turn the current block's form state into the wasm directive list.
+// Render one leaf input (text/number/select) bound to `vals[f.key]`.
+function renderLeaf(f, vals) {
+  const field = document.createElement('div')
+  field.className = 'field'
+  const label = document.createElement('label')
+  const id = `cfg-${cfgState.block}-${f.key.replace(/\./g, '-')}`
+  label.setAttribute('for', id)
+  label.textContent = f.label
+  field.appendChild(label)
+  let input
+  if (f.type === 'select') {
+    input = document.createElement('select')
+    f.options.forEach((o) => {
+      const opt = document.createElement('option')
+      opt.value = o
+      opt.textContent = o === '' ? '(unset)' : o
+      input.appendChild(opt)
+    })
+  } else {
+    input = document.createElement('input')
+    input.type = f.type === 'number' ? 'number' : 'text'
+    if (f.placeholder) input.placeholder = f.placeholder
+    input.spellcheck = false
+  }
+  input.id = id
+  input.value = vals[f.key] ?? ''
+  const evt = f.type === 'select' ? 'change' : 'input'
+  input.addEventListener(evt, () => { vals[f.key] = input.value; refreshConfig() })
+  field.appendChild(input)
+  cfgFieldsEl.appendChild(field)
+}
+
+// Turn the current block's form state into the wasm directive tree.
 function buildConfigDirectives() {
   if (cfgState.block === 'vars') {
     return cfgState.varsText
@@ -1077,10 +1137,26 @@ function buildConfigDirectives() {
   const vals = cfgVals()
   const schema = CONFIG_SCHEMA[cfgState.block]
   const dirs = []
-  schema.forEach((f) => {
-    const v = (vals[f.key] ?? '').trim()
-    if (!v) return
-    dirs.push({ key: f.key, args: f.multi ? v.split(/\s+/) : [v] })
+  const leaf = (key, f) => {
+    const v = (vals[key] ?? '').trim()
+    if (!v) return null
+    return { key: f.key, args: f.multi ? v.split(/\s+/) : [v] }
+  }
+  schema.forEach((entry) => {
+    if (entry.sub) {
+      const children = []
+      entry.fields.forEach((f) => {
+        const d = leaf(`${entry.sub}.${f.key}`, f)
+        if (d) children.push(d)
+      })
+      if (children.length === 0) return
+      const dir = { key: entry.sub, children }
+      if (entry.qualifier) dir.qualifier = vals[`${entry.sub}.__q`] || entry.qualifier.options[0]
+      dirs.push(dir)
+    } else {
+      const d = leaf(entry.key, entry)
+      if (d) dirs.push(d)
+    }
   })
   return dirs
 }

@@ -923,27 +923,42 @@ fn format_calendar_block_inner(
 
 // ── Top-level config blocks (Phase 3a) ─────────────────────────────
 
-/// One directive inside a top-level block: `key arg arg …`. Args are
-/// quoted on emit only when the lexer wouldn't accept them bare.
+/// One directive inside a top-level block. Either a leaf `key arg arg …`
+/// or, when `children` is non-empty, a nested sub-block
+/// `key [qualifier] { …children… }` (e.g. `retry exponential { … }`,
+/// `log { … }`). Args/qualifiers are quoted only when the lexer wouldn't
+/// accept them bare. A leaf with no args and no children is skipped
+/// (blank field).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectivePayload {
     pub key: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub qualifier: Option<String>,
+    #[serde(default)]
+    pub children: Vec<DirectivePayload>,
 }
 
-/// Flat singleton top-level blocks this emitter supports. These all
-/// parse as a plain directive list (no named sub-blocks), so a generic
-/// `<name> { key args… }` builder covers them. Sub-block containers
-/// (observability, alerts, auth) and `defaults` need bespoke emitters
-/// and are handled separately.
-const FLAT_TOP_LEVEL_BLOCKS: &[&str] = &[
-    "server", "pull_api", "mcp", "policy", "smtp", "vars", "oidc",
+/// Top-level blocks this emitter supports. `server`/`smtp`/… are flat
+/// directive lists; `observability`/`defaults` carry nested sub-blocks
+/// (handled generically via `DirectivePayload::children`). `alerts`
+/// (repeatable string-qualified sub-blocks) is handled separately.
+const TOP_LEVEL_BLOCKS: &[&str] = &[
+    "server",
+    "pull_api",
+    "mcp",
+    "policy",
+    "smtp",
+    "vars",
+    "oidc",
+    "observability",
+    "defaults",
 ];
 
-/// Render a flat top-level block (`server { … }`, `smtp { … }`, …) from
-/// a directive list. Empty directives/args are skipped; unknown block
-/// names and parse failures are surfaced as thrown values.
+/// Render a top-level block (`server { … }`, `observability { … }`, …)
+/// from a directive tree. Empty directives/args/sub-blocks are skipped;
+/// unknown block names and parse failures are surfaced as thrown values.
 #[wasm_bindgen(js_name = formatTopLevelBlock)]
 pub fn format_top_level_block(name: &str, directives: JsValue) -> Result<String, JsValue> {
     let dirs: Vec<DirectivePayload> = serde_wasm_bindgen::from_value(directives)
@@ -951,31 +966,61 @@ pub fn format_top_level_block(name: &str, directives: JsValue) -> Result<String,
     format_top_level_block_inner(name, &dirs).map_err(|e| JsValue::from_str(&e))
 }
 
+/// Render one directive (leaf or nested sub-block) at the given indent.
+/// Returns `None` when the directive is effectively empty (blank field /
+/// empty sub-block), so it is omitted from the output.
+fn emit_directive(d: &DirectivePayload, indent: usize) -> Option<String> {
+    let key = d.key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let pad = "  ".repeat(indent);
+
+    let child_lines: Vec<String> = d
+        .children
+        .iter()
+        .filter_map(|c| emit_directive(c, indent + 1))
+        .collect();
+    if !child_lines.is_empty() {
+        let mut s = format!("{pad}{key}");
+        if let Some(q) = d
+            .qualifier
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+        {
+            s.push(' ');
+            s.push_str(&quote_if_needed(q));
+        }
+        s.push_str(" {\n");
+        s.push_str(&child_lines.join("\n"));
+        s.push('\n');
+        s.push_str(&pad);
+        s.push('}');
+        return Some(s);
+    }
+
+    // Leaf: `key arg…`. A key with no value means the field was left
+    // blank — skip it (none of the supported directives are valueless).
+    let args: Vec<String> = d
+        .args
+        .iter()
+        .map(|a| a.trim())
+        .filter(|a| !a.is_empty())
+        .map(quote_if_needed)
+        .collect();
+    if args.is_empty() {
+        return None;
+    }
+    Some(format!("{pad}{key} {}", args.join(" ")))
+}
+
 fn format_top_level_block_inner(name: &str, dirs: &[DirectivePayload]) -> Result<String, String> {
     let name = name.trim();
-    if !FLAT_TOP_LEVEL_BLOCKS.contains(&name) {
+    if !TOP_LEVEL_BLOCKS.contains(&name) {
         return Err(format!("unsupported top-level block: '{name}'"));
     }
-    let mut lines: Vec<String> = Vec::new();
-    for d in dirs {
-        let key = d.key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let args: Vec<String> = d
-            .args
-            .iter()
-            .map(|a| a.trim())
-            .filter(|a| !a.is_empty())
-            .map(quote_if_needed)
-            .collect();
-        // A key with no value means the field was left blank — skip it.
-        // (None of the supported flat blocks have valueless directives.)
-        if args.is_empty() {
-            continue;
-        }
-        lines.push(format!("  {key} {}", args.join(" ")));
-    }
+    let lines: Vec<String> = dirs.iter().filter_map(|d| emit_directive(d, 1)).collect();
     if lines.is_empty() {
         return Err("no settings — fill at least one field".into());
     }
@@ -1437,6 +1482,21 @@ mod tests {
         DirectivePayload {
             key: key.into(),
             args: args.iter().map(|s| s.to_string()).collect(),
+            qualifier: None,
+            children: vec![],
+        }
+    }
+
+    fn block(
+        key: &str,
+        qualifier: Option<&str>,
+        children: Vec<DirectivePayload>,
+    ) -> DirectivePayload {
+        DirectivePayload {
+            key: key.into(),
+            args: vec![],
+            qualifier: qualifier.map(|s| s.to_string()),
+            children,
         }
     }
 
@@ -1516,5 +1576,88 @@ mod tests {
     #[test]
     fn top_level_rejects_unknown_block() {
         assert!(format_top_level_block_inner("not_a_block", &[dir("x", &["y"])]).is_err());
+    }
+
+    // ── Nested config blocks (Phase 3b) ────────────────────────────
+
+    #[test]
+    fn observability_nested_sub_blocks() {
+        let dirs = vec![
+            block(
+                "log",
+                None,
+                vec![
+                    dir("level", &["info"]),
+                    dir("format", &["json"]),
+                    dir("output", &["stderr"]),
+                ],
+            ),
+            block(
+                "metrics",
+                None,
+                vec![dir("listen", &[":9900"]), dir("path", &["/metrics"])],
+            ),
+        ];
+        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        assert!(
+            out.contains("log { level info; format json; output stderr }"),
+            "{out}"
+        );
+        assert!(
+            out.contains("metrics { listen :9900; path /metrics }"),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn observability_empty_sub_block_is_skipped() {
+        // A sub-block whose children are all blank must not emit an empty `{}`.
+        let dirs = vec![
+            block("log", None, vec![dir("level", &["info"])]),
+            block("metrics", None, vec![dir("listen", &[""])]),
+        ];
+        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        assert!(out.contains("log {"), "{out}");
+        assert!(
+            !out.contains("metrics"),
+            "empty metrics sub-block must be skipped: {out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn defaults_flat_plus_nested_retry() {
+        let dirs = vec![
+            dir("timezone", &["Europe/Vienna"]),
+            dir("timeout", &["5m"]),
+            block(
+                "retry",
+                Some("exponential"),
+                vec![dir("max_attempts", &["3"]), dir("base", &["2s"])],
+            ),
+            block("dead_letter", None, vec![dir("retention", &["30d"])]),
+        ];
+        let out = format_top_level_block_inner("defaults", &dirs).unwrap();
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        assert!(
+            out.contains("retry exponential { max_attempts 3; base 2s }"),
+            "{out}"
+        );
+        assert!(out.contains("dead_letter { retention 30d }"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn oidc_flat_block_quotes_urls_only_when_needed() {
+        let dirs = vec![
+            dir("issuer", &["https://id.example.com"]),
+            dir("client_id", &["croniq"]),
+            dir("default_role", &["viewer"]),
+        ];
+        let out = format_top_level_block_inner("oidc", &dirs).unwrap();
+        assert!(out.contains("issuer https://id.example.com"), "{out}");
+        assert!(out.contains("client_id croniq"), "{out}");
+        Parser::parse(&out).unwrap();
     }
 }
