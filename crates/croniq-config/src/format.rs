@@ -140,6 +140,20 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
 
 fn format_schedule(out: &mut String, sched: &ScheduleNode, indent: usize) {
     write_indent(out, indent);
+    // Emit the explicit execution-mode prefix (`ephemeral` / `queued`) if the
+    // source carried one. Dropping it is not cosmetic: the schedule-prefix
+    // mode is the semantic source for `execution_mode` and takes precedence
+    // over the `execution_mode` directive and `defaults` (see
+    // compile::compile_job), so a lost prefix silently flips a job's runtime
+    // semantics (issue #336). `queued` must be preserved too — with a
+    // `defaults { execution_mode ephemeral }` block, dropping it would flip
+    // the job to ephemeral.
+    if let Some(mode) = sched.mode {
+        out.push_str(match mode {
+            ScheduleMode::Ephemeral => "ephemeral ",
+            ScheduleMode::Queued => "queued ",
+        });
+    }
     out.push_str(&format_schedule_line(&sched.kind));
 
     if sched.options.is_empty() {
@@ -163,11 +177,18 @@ pub fn format_schedule_line(kind: &ScheduleKind) -> String {
     match kind {
         ScheduleKind::Interval { count, unit } => {
             let unit_str = match unit {
-                IntervalUnit::Seconds => "seconds",
-                IntervalUnit::Minutes => "minutes",
-                IntervalUnit::Hours => "hours",
+                IntervalUnit::Seconds => "second",
+                IntervalUnit::Minutes => "minute",
+                IntervalUnit::Hours => "hour",
             };
-            format!("every {count} {unit_str}")
+            // Grammatical singular for a count of 1 (`every 1 minute`, not
+            // `every 1 minutes`); pluralise otherwise. Both forms parse, so
+            // singular input round-trips unchanged (issue #336). The
+            // count-of-1 rule lives in `plural` so every emitter shares it.
+            format!(
+                "every {}",
+                crate::plural::interval_phrase(*count as u64, unit_str)
+            )
         }
         ScheduleKind::Daily { time } => format!("every day at {}", time.raw),
         ScheduleKind::Weekdays { days, time } => {
@@ -625,6 +646,84 @@ job etl:sync {
         );
         // And it must round-trip cleanly.
         Parser::parse(&formatted).unwrap();
+    }
+
+    #[test]
+    fn format_preserves_ephemeral_prefix() {
+        // Issue #336: `fmt` dropped the `ephemeral` schedule prefix, which
+        // silently flipped the compiled `execution_mode` from ephemeral to
+        // queued. The prefix must survive a round-trip.
+        let src = r#"job demo:poll {
+  ephemeral every 1 minute
+  runner { require worker }
+  timeout 2 minutes
+}"#;
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(
+            formatted.contains("ephemeral every 1 minute"),
+            "ephemeral prefix must be retained:\n{formatted}"
+        );
+        // Re-parse and confirm the mode survived at the AST level (this is
+        // what compile reads to set execution_mode).
+        let ast2 = Parser::parse(&formatted).unwrap();
+        if let Item::Job(ref j) = ast2.items[0] {
+            assert_eq!(
+                j.schedule.as_ref().unwrap().mode,
+                Some(ScheduleMode::Ephemeral),
+                "mode must round-trip as Ephemeral:\n{formatted}"
+            );
+        } else {
+            panic!("expected a job item");
+        }
+    }
+
+    #[test]
+    fn format_preserves_queued_prefix() {
+        // The `queued` prefix must survive too: it takes precedence over a
+        // `defaults { execution_mode ephemeral }` block, so dropping it is
+        // not a semantic no-op (issue #336).
+        let src = "job demo:beat { queued every 5 minutes }";
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(
+            formatted.contains("queued every 5 minutes"),
+            "queued prefix must be retained:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn format_interval_uses_singular_unit_for_count_one() {
+        // Issue #336: `every 1 minute` must not be rewritten to the
+        // ungrammatical `every 1 minutes`. Counts other than 1 stay plural.
+        assert_eq!(
+            format_schedule_line(&ScheduleKind::Interval {
+                count: 1,
+                unit: IntervalUnit::Minutes,
+            }),
+            "every 1 minute"
+        );
+        assert_eq!(
+            format_schedule_line(&ScheduleKind::Interval {
+                count: 1,
+                unit: IntervalUnit::Seconds,
+            }),
+            "every 1 second"
+        );
+        assert_eq!(
+            format_schedule_line(&ScheduleKind::Interval {
+                count: 1,
+                unit: IntervalUnit::Hours,
+            }),
+            "every 1 hour"
+        );
+        assert_eq!(
+            format_schedule_line(&ScheduleKind::Interval {
+                count: 2,
+                unit: IntervalUnit::Minutes,
+            }),
+            "every 2 minutes"
+        );
     }
 
     #[test]
