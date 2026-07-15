@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Croniq API
   description: Distributed job scheduling platform
-  version: 0.4.0
+  version: 0.23.0
   license:
     name: MIT OR Apache-2.0
 
@@ -42,8 +42,8 @@ components:
       properties:
         version:
           type: string
-          description: "Cargo package version, baked in at compile time (e.g. \"0.4.2\")."
-          example: "0.4.2"
+          description: "Cargo package version, baked in at compile time (e.g. \"0.23.0\")."
+          example: "0.23.0"
         git_sha:
           type: string
           description: "Short git SHA of the build commit, or \"unknown\" outside a git checkout."
@@ -294,6 +294,30 @@ components:
         provider_name: { type: string, nullable: true }
         login_url: { type: string, nullable: true }
 
+    AuthConfigResponse:
+      type: object
+      description: >
+        Combined sign-in-method probe (issue #138) — the single payload the
+        login UI fetches before any auth happens, so it can render the SSO
+        button, password form, and up-front TOTP field in one round-trip.
+      required: [oidc, password, totp]
+      properties:
+        oidc: { $ref: "#/components/schemas/OidcConfigResponse" }
+        password:
+          type: object
+          required: [enabled]
+          properties:
+            enabled: { type: boolean, description: Password login is available. }
+        totp:
+          type: object
+          required: [required]
+          properties:
+            required:
+              type: boolean
+              description: >
+                Server enforces 2FA for every password login; the UI shows the
+                code field up-front so login finishes in a single request.
+
     # ─── PR-B1 Audit + Stats ──────────────────────────────────────────────
 
     AuditEvent:
@@ -410,6 +434,89 @@ components:
         overrides:
           type: array
           items: { $ref: "#/components/schemas/AlertRuleOverride" }
+
+    AlertDelivery:
+      type: object
+      description: One per-fire alert delivery-log row (issue #140).
+      required: [delivery_id, rule_name, channel_name, job_key, state, fired_at]
+      properties:
+        delivery_id: { type: string }
+        rule_name: { type: string }
+        channel_name: { type: string }
+        job_key: { type: string }
+        execution_id: { type: string, nullable: true }
+        state:
+          type: string
+          enum: [delivered, failed, throttled]
+          description: >
+            `delivered` = channel handler succeeded; `failed` = handler
+            errored (see `error`); `throttled` = rule matched but the
+            per-(rule, job_key) throttle window suppressed the fire.
+        error:
+          type: string
+          nullable: true
+          description: Failure reason; set when `state` is `failed`.
+        fired_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time, nullable: true }
+
+    TagCount:
+      type: object
+      description: A distinct tag value and how many entities of the queried kind carry it.
+      required: [tag, count]
+      properties:
+        tag: { type: string }
+        count:
+          type: integer
+          description: Number of entities carrying this tag.
+
+    JobScheduleState:
+      type: object
+      description: >
+        Per-job scheduling-liveness view (issue #250), derived from the
+        persisted `job_states` the scheduler advances on every fire.
+      required: [job_key, status, fire_count, overdue, execution_mode]
+      properties:
+        job_key: { type: string }
+        status:
+          type: string
+          enum: [active, paused, disabled, exhausted]
+          description: Lowercase trigger status.
+        next_fire_at: { type: string, format: date-time, nullable: true }
+        last_fired_at: { type: string, format: date-time, nullable: true }
+        fire_count: { type: integer }
+        overdue:
+          type: boolean
+          description: >
+            true when the trigger is active but its next scheduled fire is in
+            the past — the scheduler hasn't advanced it (a missed fire).
+        execution_mode:
+          type: string
+          enum: [queued, ephemeral]
+          description: >
+            `queued` (persisted executions) or `ephemeral` (fire-and-forget,
+            no execution rows). Explains why an `ephemeral` job legitimately
+            shows no execution history. Defaults to `queued`.
+
+    Diagnostic:
+      type: object
+      description: A single configuration-health finding from the diagnostics report.
+      required: [id, severity, title, detail]
+      properties:
+        id:
+          type: string
+          description: Stable machine-readable id (e.g. "email.delivery"), safe to match on.
+        severity:
+          type: string
+          enum: [critical, warning, info]
+          description: >
+            `critical` = actively broken or unsafe; `warning` = degraded /
+            risky-by-default; `info` = FYI with no action required.
+        title: { type: string, description: One-line human summary. }
+        detail: { type: string, description: What it means and why it matters. }
+        remedy:
+          type: string
+          nullable: true
+          description: Suggested fix; `null` for purely informational findings.
 
 paths:
   /health:
@@ -930,6 +1037,49 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AlertsConfigView" }
 
+  /v1/alerts/deliveries:
+    get:
+      summary: List the per-fire alert delivery log
+      description: >
+        Read-only view of alert deliveries (delivered / failed / throttled),
+        newest-first. Backs the alerts UI and `doctor`. Requires `alerts:read`.
+      parameters:
+        - { name: job_key, in: query, schema: { type: string } }
+        - { name: rule_name, in: query, schema: { type: string } }
+        - name: state
+          in: query
+          description: Only return deliveries in this state. A typo is rejected with 400, not silently ignored.
+          schema:
+            type: string
+            enum: [delivered, failed, throttled]
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - name: limit
+          in: query
+          description: Max rows. Capped server-side at 500.
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        "200":
+          description: Delivery-log rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AlertDelivery" }
+        "400": { description: Unknown state filter }
+
+  /v1/alerts/deliveries/{id}:
+    get:
+      summary: Get a single alert delivery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Delivery row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDelivery" }
+        "404": { description: No delivery with that id }
+
   /v1/alerts/rules/{name}/snooze:
     post:
       summary: Snooze an alert rule until a deadline
@@ -1411,6 +1561,24 @@ paths:
         "200":
           description: Job updated (already existed)
 
+  /v1/jobs/states:
+    get:
+      summary: Per-job scheduling liveness
+      description: >
+        Per-job scheduling-liveness view derived from the persisted
+        `job_states` the scheduler advances on every fire (issue #250).
+        Static sibling of `/v1/jobs/{job_key}` — routed first. The UI polls
+        this to badge overdue jobs (a silently-stalled scheduler otherwise
+        reads as healthy). Requires the `jobs:read` scope.
+      responses:
+        "200":
+          description: Schedule-state rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/JobScheduleState" }
+
   /v1/trigger:
     post:
       summary: Trigger a job immediately
@@ -1467,6 +1635,24 @@ paths:
                       true when the trigger coalesced to an existing
                       execution via idempotency_key.
         "400": { description: Invalid request (e.g. idempotency_key longer than 200 characters) }
+        "429":
+          description: >
+            Per-job queue-overflow cap hit (#299/#312). The number of queued
+            executions for this `job_key` already reached its `max_queue_depth`
+            (per-job override, default 10), so the trigger is rejected rather
+            than piling work up unbounded for one job. The body is an empty
+            TriggerResponse (`execution_id: ""`, `queued: 0`,
+            `deduplicated: false`). Producers treat this as backpressure and
+            back off — the SDKs surface it as a dedicated queue-overflow error
+            that carries `retryAfterMs`, read from the `Retry-After` header.
+          headers:
+            Retry-After:
+              required: true
+              description: >
+                Suggested backoff before retrying, in seconds (RFC 9110).
+                Always set on this response; the SDKs surface it as
+                `retryAfterMs`.
+              schema: { type: integer }
 
   /v1/admin/reload-config:
     post:
@@ -1670,6 +1856,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OidcConfigResponse" }
+
+  /v1/auth/config:
+    get:
+      summary: Probe every UI sign-in method (OIDC + password + TOTP)
+      description: >
+        Combined sign-in-method probe (issue #138). Canonical replacement for
+        the OIDC-only `/v1/auth/oidc/config` — both are kept for now. Read-only,
+        no secrets; the login UI fetches this once before any auth happens.
+      security: []
+      responses:
+        "200":
+          description: Sign-in-method summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthConfigResponse" }
 
   /v1/auth/oidc/login:
     get:
@@ -2091,3 +2292,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/FailureHeatmap" }
+
+  /v1/tags:
+    get:
+      summary: Distinct tags across an entity kind
+      description: >
+        Distinct tag values across the entity kind with usage counts, sorted
+        by count desc then alphabetically. Backs UI autocomplete and filter
+        chips. `entity=jobs` requires the `jobs:read` scope; `entity=runners`
+        requires `runners:read`.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity kind to aggregate over.
+          schema:
+            type: string
+            enum: [jobs, runners]
+            default: jobs
+      responses:
+        "200":
+          description: Tags with usage counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TagCount" }
+        "400": { description: Unknown entity kind }
+
+  /v1/system/diagnostics:
+    get:
+      summary: Configuration health report (admin)
+      description: >
+        Admin-only, read-only configuration-health report. Reports posture
+        (e.g. "no SMTP configured", "app URL not pinned"), never secrets.
+        Backs the Settings → System UI panel and mirrors the boot-time
+        warnings / `croniq-server doctor` output. Requires the `admin` scope.
+      responses:
+        "200":
+          description: Diagnostic findings
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Diagnostic" }

@@ -19,7 +19,7 @@ to pre-login UI and to external uptime probes; they return no secrets.
 ```
 GET /version  →  200
 {
-  "version":    "0.4.2",                  // from CARGO_PKG_VERSION
+  "version":    "0.23.0",                 // from CARGO_PKG_VERSION
   "git_sha":    "f3aea44",                // short SHA, "unknown" outside a checkout
   "build_time": "2026-05-23T12:35:00Z",   // RFC 3339 UTC, baked in at build
   "env":        "production"              // from CRONIQ_ENV, defaults to "unknown"

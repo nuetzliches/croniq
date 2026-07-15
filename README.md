@@ -425,7 +425,7 @@ X-Croniq-Signature: sha256=<hex(hmac-sha256(secret, raw_body))>
   "reason":         "dead_letter",       // or "dropped"
   "error":          "runner exited 1: connection refused",
   "fired_at":       "2026-05-25T08:12:00Z",
-  "croniq_version": "0.4.2"
+  "croniq_version": "0.23.0"
 }
 ```
 
