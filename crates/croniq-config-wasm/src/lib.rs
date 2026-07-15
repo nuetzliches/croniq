@@ -921,6 +921,69 @@ fn format_calendar_block_inner(
     Ok(croniq_config::format::format(&ast))
 }
 
+// ── Top-level config blocks (Phase 3a) ─────────────────────────────
+
+/// One directive inside a top-level block: `key arg arg …`. Args are
+/// quoted on emit only when the lexer wouldn't accept them bare.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DirectivePayload {
+    pub key: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Flat singleton top-level blocks this emitter supports. These all
+/// parse as a plain directive list (no named sub-blocks), so a generic
+/// `<name> { key args… }` builder covers them. Sub-block containers
+/// (observability, alerts, auth) and `defaults` need bespoke emitters
+/// and are handled separately.
+const FLAT_TOP_LEVEL_BLOCKS: &[&str] = &[
+    "server", "pull_api", "mcp", "policy", "smtp", "vars", "oidc",
+];
+
+/// Render a flat top-level block (`server { … }`, `smtp { … }`, …) from
+/// a directive list. Empty directives/args are skipped; unknown block
+/// names and parse failures are surfaced as thrown values.
+#[wasm_bindgen(js_name = formatTopLevelBlock)]
+pub fn format_top_level_block(name: &str, directives: JsValue) -> Result<String, JsValue> {
+    let dirs: Vec<DirectivePayload> = serde_wasm_bindgen::from_value(directives)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    format_top_level_block_inner(name, &dirs).map_err(|e| JsValue::from_str(&e))
+}
+
+fn format_top_level_block_inner(name: &str, dirs: &[DirectivePayload]) -> Result<String, String> {
+    let name = name.trim();
+    if !FLAT_TOP_LEVEL_BLOCKS.contains(&name) {
+        return Err(format!("unsupported top-level block: '{name}'"));
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for d in dirs {
+        let key = d.key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let args: Vec<String> = d
+            .args
+            .iter()
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .map(quote_if_needed)
+            .collect();
+        // A key with no value means the field was left blank — skip it.
+        // (None of the supported flat blocks have valueless directives.)
+        if args.is_empty() {
+            continue;
+        }
+        lines.push(format!("  {key} {}", args.join(" ")));
+    }
+    if lines.is_empty() {
+        return Err("no settings — fill at least one field".into());
+    }
+    let src = format!("{name} {{\n{}\n}}\n", lines.join("\n"));
+    let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
+    Ok(croniq_config::format::format(&ast))
+}
+
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1366,5 +1429,92 @@ mod tests {
         let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
         assert!(out.contains("queue_ttl none"), "{out}");
         Parser::parse(&out).unwrap();
+    }
+
+    // ── Top-level config blocks (Phase 3a) ─────────────────────────
+
+    fn dir(key: &str, args: &[&str]) -> DirectivePayload {
+        DirectivePayload {
+            key: key.into(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn top_level_server_block() {
+        let dirs = vec![
+            dir("listen", &[":4000"]),
+            dir("data_dir", &["/var/lib/croniq"]),
+            dir("db", &["sqlite"]),
+        ];
+        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        assert_eq!(
+            out,
+            "server {\n  listen :4000\n  data_dir /var/lib/croniq\n  db sqlite\n}\n"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_smtp_from_is_quoted() {
+        // `from` has spaces + <> → must be quoted.
+        let dirs = vec![
+            dir("host", &["smtp.example.com"]),
+            dir("port", &["587"]),
+            dir("security", &["starttls"]),
+            dir("from", &["Croniq <noreply@example.com>"]),
+        ];
+        let out = format_top_level_block_inner("smtp", &dirs).unwrap();
+        assert!(
+            out.contains("from \"Croniq <noreply@example.com>\""),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_mcp_multi_arg_and_bool() {
+        let dirs = vec![
+            dir("enabled", &["true"]),
+            dir("allowed_hosts", &["localhost:8443", "[::1]:8443"]),
+        ];
+        let out = format_top_level_block_inner("mcp", &dirs).unwrap();
+        // `[::1]:8443` contains `[` `]` → quoted; the plain host stays bare.
+        assert!(
+            out.contains("allowed_hosts localhost:8443 \"[::1]:8443\""),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_vars_arbitrary_entries() {
+        let dirs = vec![
+            dir("default_tz", &["Europe/Vienna"]),
+            dir("region", &["eu"]),
+        ];
+        let out = format_top_level_block_inner("vars", &dirs).unwrap();
+        assert!(out.contains("default_tz Europe/Vienna"), "{out}");
+        assert!(out.contains("region eu"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_skips_empty_and_errors_when_all_empty() {
+        // Empty keys/args are skipped.
+        let dirs = vec![
+            dir("listen", &[":4000"]),
+            dir("", &["ignored"]),
+            dir("db", &[""]),
+        ];
+        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        assert_eq!(out, "server {\n  listen :4000\n}\n");
+        // Nothing set at all → error (the UI shows a hint instead).
+        assert!(format_top_level_block_inner("server", &[]).is_err());
+    }
+
+    #[test]
+    fn top_level_rejects_unknown_block() {
+        assert!(format_top_level_block_inner("not_a_block", &[dir("x", &["y"])]).is_err());
     }
 }
