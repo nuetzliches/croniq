@@ -1289,14 +1289,15 @@ mod tests {
     }
 
     #[test]
-    fn schedule_interval_singular_count_emits_plural() {
-        // Bug #4: the count == 1 branch was dead code; canonical DSL is
-        // always plural (`every 1 minutes`), matching `croniq fmt`.
+    fn schedule_interval_singular_count_emits_singular() {
+        // Issue #336: a count of 1 uses the grammatical singular
+        // (`every 1 minute`), matching `croniq fmt`. The unit is pluralised
+        // only for counts other than 1. Both forms parse, so this round-trips.
         let p = SchedulePayload::Interval {
             count: 1,
             unit: "minutes".into(),
         };
-        assert_eq!(format_schedule_inner(&p), "every 1 minutes");
+        assert_eq!(format_schedule_inner(&p), "every 1 minute");
     }
 
     #[test]
