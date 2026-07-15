@@ -7,5 +7,6 @@ pub mod import;
 pub mod lexer;
 pub mod parser;
 pub mod placeholders;
+pub mod plural;
 pub mod schedule;
 pub mod validate;

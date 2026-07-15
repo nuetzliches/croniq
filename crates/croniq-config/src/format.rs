@@ -183,9 +183,12 @@ pub fn format_schedule_line(kind: &ScheduleKind) -> String {
             };
             // Grammatical singular for a count of 1 (`every 1 minute`, not
             // `every 1 minutes`); pluralise otherwise. Both forms parse, so
-            // singular input round-trips unchanged (issue #336).
-            let plural = if *count == 1 { "" } else { "s" };
-            format!("every {count} {unit_str}{plural}")
+            // singular input round-trips unchanged (issue #336). The
+            // count-of-1 rule lives in `plural` so every emitter shares it.
+            format!(
+                "every {}",
+                crate::plural::interval_phrase(*count as u64, unit_str)
+            )
         }
         ScheduleKind::Daily { time } => format!("every day at {}", time.raw),
         ScheduleKind::Weekdays { days, time } => {

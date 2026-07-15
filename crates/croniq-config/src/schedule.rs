@@ -65,16 +65,22 @@ impl CompiledSchedule {
     pub fn summary(&self) -> String {
         match self {
             CompiledSchedule::Interval { seconds } => {
+                // Grammatical number lives in `plural` so this emitter can't
+                // drift from `format` / `convert` on the count-of-1 rule.
                 if *seconds >= 3600 && seconds % 3600 == 0 {
-                    let n = seconds / 3600;
-                    format!("every {n} hour{s}", s = if n == 1 { "" } else { "s" })
+                    format!(
+                        "every {}",
+                        crate::plural::interval_phrase(seconds / 3600, "hour")
+                    )
                 } else if *seconds >= 60 && seconds % 60 == 0 {
-                    let n = seconds / 60;
-                    format!("every {n} minute{s}", s = if n == 1 { "" } else { "s" })
+                    format!(
+                        "every {}",
+                        crate::plural::interval_phrase(seconds / 60, "minute")
+                    )
                 } else {
                     format!(
-                        "every {seconds} second{s}",
-                        s = if *seconds == 1 { "" } else { "s" }
+                        "every {}",
+                        crate::plural::interval_phrase(*seconds, "second")
                     )
                 }
             }

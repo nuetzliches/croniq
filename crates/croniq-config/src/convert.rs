@@ -7,10 +7,10 @@
 //!
 //! | Cron expression    | Croniq equivalent              |
 //! |--------------------|--------------------------------|
-//! | `* * * * *`        | `every 1 minutes`              |
+//! | `* * * * *`        | `every 1 minute`               |
 //! | `*/5 * * * *`      | `every 5 minutes`              |
 //! | `*/30 * * * *`     | `every 30 minutes`             |
-//! | `0 * * * *`        | `every 1 hours`                |
+//! | `0 * * * *`        | `every 1 hour`                 |
 //! | `0 */2 * * *`      | `every 2 hours`                |
 //! | `0 9 * * *`        | `every day at 09:00`           |
 //! | `0 9 * * 1`        | `every monday at 09:00`        |
@@ -20,7 +20,7 @@
 //! | `0 3 1,15 * *`     | `every 1st 15th of month at 03:00` |
 //! | `0 3 L * *`        | `every last of month at 03:00` |
 //! | `@daily`           | `every day at 00:00`           |
-//! | `@hourly`          | `every 1 hours`                |
+//! | `@hourly`          | `every 1 hour`                 |
 //! | `@weekly`          | `every monday at 00:00`        |
 //! | `@monthly`         | `every 1st of month at 00:00`  |
 //! | `@yearly`/`@annually` | `every 1st of month at 00:00` (January — partial) |
@@ -30,6 +30,8 @@
 //! Cron expressions using both day-of-month AND day-of-week simultaneously
 //! cannot be expressed in Croniq's DSL (which is intentional). The converter
 //! will emit a best-effort translation with a warning in that case.
+
+use crate::plural::interval_phrase;
 
 /// Conversion result: the Croniq schedule string plus optional warnings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,7 +83,7 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
         }
         "@hourly" => {
             return Ok(ConversionResult {
-                schedule: "every 1 hours".into(),
+                schedule: format!("every {}", interval_phrase(1, "hour")),
                 warnings: vec![],
             });
         }
@@ -106,15 +108,15 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
     if is_step(minute) && is_star(hour) && is_star(dom) && is_star(dow) {
         let n = parse_step(minute)?;
         return Ok(ConversionResult {
-            schedule: format!("every {n} minutes"),
+            schedule: format!("every {}", interval_phrase(n as u64, "minute")),
             warnings,
         });
     }
 
-    // `* * * * *` → every 1 minutes
+    // `* * * * *` → every 1 minute
     if is_star(minute) && is_star(hour) && is_star(dom) && is_star(dow) {
         return Ok(ConversionResult {
-            schedule: "every 1 minutes".into(),
+            schedule: format!("every {}", interval_phrase(1, "minute")),
             warnings,
         });
     }
@@ -123,15 +125,15 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
     if is_zero(minute) && is_step(hour) && is_star(dom) && is_star(dow) {
         let n = parse_step(hour)?;
         return Ok(ConversionResult {
-            schedule: format!("every {n} hours"),
+            schedule: format!("every {}", interval_phrase(n as u64, "hour")),
             warnings,
         });
     }
 
-    // `0 * * * *` → every 1 hours
+    // `0 * * * *` → every 1 hour
     if is_zero(minute) && is_star(hour) && is_star(dom) && is_star(dow) {
         return Ok(ConversionResult {
-            schedule: "every 1 hours".into(),
+            schedule: format!("every {}", interval_phrase(1, "hour")),
             warnings,
         });
     }
@@ -345,7 +347,15 @@ mod tests {
 
     #[test]
     fn every_minute() {
-        assert_eq!(conv("* * * * *"), "every 1 minutes");
+        // Grammatical singular for a count of 1 (issue #336), consistent
+        // with `format::format_schedule_line` and `schedule::summary`.
+        assert_eq!(conv("* * * * *"), "every 1 minute");
+    }
+
+    #[test]
+    fn every_1_minute_step() {
+        // `*/1` also yields a count of 1 and must stay singular.
+        assert_eq!(conv("*/1 * * * *"), "every 1 minute");
     }
 
     #[test]
@@ -365,7 +375,13 @@ mod tests {
 
     #[test]
     fn every_hour() {
-        assert_eq!(conv("0 * * * *"), "every 1 hours");
+        assert_eq!(conv("0 * * * *"), "every 1 hour");
+    }
+
+    #[test]
+    fn every_1_hour_step() {
+        // `0 */1 * * *` also yields a count of 1 and must stay singular.
+        assert_eq!(conv("0 */1 * * *"), "every 1 hour");
     }
 
     #[test]
@@ -476,7 +492,7 @@ mod tests {
 
     #[test]
     fn at_hourly() {
-        assert_eq!(conv("@hourly"), "every 1 hours");
+        assert_eq!(conv("@hourly"), "every 1 hour");
     }
 
     #[test]
