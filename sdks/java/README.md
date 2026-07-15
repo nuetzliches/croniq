@@ -5,7 +5,7 @@
 
 Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) in Java (21+) or Kotlin. The SDK polls a Croniq server for work, dispatches typed handlers, streams structured logs back, and reports completion — using virtual threads (Project Loom), `java.net.http.HttpClient`, Jackson, and SLF4J only.
 
-> **Status:** feature-complete as of v0.16.0. All seven PRs of [#133](https://github.com/nuetzliches/croniq/issues/133) have landed — core poll/ack loop, lease renewal, graceful drain, streaming logs, auth header, self-register, Spring Boot starter, Kotlin coroutine extensions, OpenTelemetry observer. First Maven Central publish is queued behind the Sonatype Central Portal sign-off; until that goes through, the artefacts are reachable by building from source (`./gradlew publishToMavenLocal`) or by pulling the snapshot CI job's `maven-local-smoke` artefact. The badge above will start resolving once the first release goes public.
+> **Status:** feature-complete and published to Maven Central as of `v0.2.0`. All seven PRs of [#133](https://github.com/nuetzliches/croniq/issues/133) have landed — core poll/ack loop, lease renewal, graceful drain, streaming logs, auth header, self-register, Spring Boot starter, Kotlin coroutine extensions, OpenTelemetry observer. All four modules resolve directly from Maven Central (e.g. `io.github.nuetzliches:croniq-runner:0.2.0`).
 
 ## Modules
 
