@@ -6,8 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-15
+
 ### Added
 
+- **`croniq-server` now runs on PostgreSQL at runtime**
+  ([#326](https://github.com/nuetzliches/croniq/issues/326)), building on the
+  CI-guarded store backend from
+  [#298](https://github.com/nuetzliches/croniq/issues/298). Select it with
+  `server { db postgres://… }` or the `CRONIQ_DB` env var (env wins). The
+  synchronous Postgres driver runs on a dedicated OS thread behind a
+  `PgStoreHandle` actor so it never blocks the async runtime, and an
+  end-to-end CI job boots the server against a Postgres service container.
+  SQLite remains the default.
 - **`POST /v1/trigger` now sends a `Retry-After` header on the per-job
   queue-overflow `429`**
   ([#299](https://github.com/nuetzliches/croniq/issues/299),
@@ -15,14 +26,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the SDKs, which surface it as `retryAfterMs` — get an explicit backpressure
   hint (seconds) telling them how long to wait before retrying, instead of
   hammering a full queue. Previously the `429` carried no such hint.
+- **The DSL generator on the docs site now emits complete, paste-ready
+  Croniqfile blocks.** `/generator.html` was extended from bare
+  schedule/calendar fragments to full `job` / `calendar` blocks, the
+  top-level config blocks (`server`, `pull_api`, `mcp`, `oidc`,
+  `observability`, `defaults`, `alerts`), and job options (`runner
+  shell`/`exec`, retry, `singleton`/`max_concurrent`, and more)
+  ([#324](https://github.com/nuetzliches/croniq/issues/324) and follow-ups).
 
 ### Fixed
 
-- **`openapi.yaml` brought back in sync with the running server.** Bumped the
-  spec version to the released `0.23.0`, documented live routes that were
-  missing (`GET /v1/tags`, `GET /v1/jobs/states`, `GET /v1/system/diagnostics`,
-  `GET /v1/auth/config`, and the `GET /v1/alerts/deliveries` pair), and added
-  the `429` backpressure response on `POST /v1/trigger`.
+- **`openapi.yaml` re-synced with the running server.** The spec version now
+  tracks the release, and it documents live routes that were missing
+  (`GET /v1/tags`, `GET /v1/jobs/states`, `GET /v1/system/diagnostics`,
+  `GET /v1/auth/config`, and the `GET /v1/alerts/deliveries` pair) plus the
+  `429` backpressure response on `POST /v1/trigger`.
 
 ## [0.23.0] - 2026-07-14
 
