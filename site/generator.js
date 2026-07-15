@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15d'
+const WASM_VERSION = '2026-07-15e'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15d'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15e'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -75,6 +75,8 @@ const schState = {
     catchUp: 'default',      // 'default' | 'all' | 'latest' | 'none'
     queueTtl: '',
     maxQueueDepth: '',
+    // Phase 3c — runner execution payload.
+    runnerExec: { mode: 'none', command: '', args: '', workdir: '', user: '', env: '' },
   },
 }
 
@@ -253,6 +255,26 @@ bindText('sch-opt-max-queue', () => O.maxQueueDepth, (v) => { O.maxQueueDepth = 
 bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
 bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
 
+// Runner command (Phase 3c).
+const RE = O.runnerExec
+bindText('sch-opt-re-command', () => RE.command, (v) => { RE.command = v })
+bindText('sch-opt-re-args', () => RE.args, (v) => { RE.args = v })
+bindText('sch-opt-re-workdir', () => RE.workdir, (v) => { RE.workdir = v })
+bindText('sch-opt-re-user', () => RE.user, (v) => { RE.user = v })
+bindText('sch-opt-re-env', () => RE.env, (v) => { RE.env = v })
+const reModeEl = document.getElementById('sch-opt-re-mode')
+const reFieldsEl = document.getElementById('sch-opt-re-fields')
+const reCommandFieldEl = document.getElementById('sch-opt-re-command-field')
+const reArgsFieldEl = document.getElementById('sch-opt-re-args-field')
+function syncRunnerExec() {
+  reFieldsEl.hidden = RE.mode === 'none'
+  reCommandFieldEl.hidden = RE.mode !== 'shell'
+  reArgsFieldEl.hidden = RE.mode !== 'exec'
+}
+reModeEl.value = RE.mode
+reModeEl.addEventListener('change', () => { RE.mode = reModeEl.value; syncRunnerExec(); refreshSchedule() })
+syncRunnerExec()
+
 // The recurring-only constraints section is meaningless for once/disabled.
 const recurringOptsEl = document.getElementById('sch-opt-recurring')
 function syncRecurringVisibility() {
@@ -304,6 +326,30 @@ function buildJobOptions() {
   if (O.catchUp !== 'default') opts.catch_up = O.catchUp
   if (O.queueTtl.trim()) opts.queue_ttl = O.queueTtl.trim()
   if (O.maxQueueDepth) opts.max_queue_depth = parseInt(O.maxQueueDepth, 10)
+
+  // Runner command payload. The wasm side omits it when there's no
+  // command/args, so an incomplete draft simply produces no runner block.
+  if (RE.mode !== 'none') {
+    const re = { mode: RE.mode }
+    if (RE.mode === 'shell') {
+      if (RE.command.trim()) re.command = RE.command.trim()
+    } else {
+      const args = RE.args.split(/\s+/).filter(Boolean)
+      if (args.length) re.args = args
+    }
+    if (RE.workdir.trim()) re.workdir = RE.workdir.trim()
+    if (RE.user.trim()) re.user = RE.user.trim()
+    const env = RE.env
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const i = l.search(/\s/)
+        return i === -1 ? { key: l, value: '' } : { key: l.slice(0, i), value: l.slice(i + 1).trim() }
+      })
+    if (env.length) re.env = env
+    opts.runner_exec = re
+  }
   return opts
 }
 
