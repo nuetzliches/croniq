@@ -13,3 +13,14 @@ pub type DynStore = Arc<dyn Store + Send + Sync>;
 pub fn sqlite_store(store: SqliteStore) -> DynStore {
     Arc::new(store)
 }
+
+/// Convenience constructor: wrap a [`PgStoreHandle`] as a DynStore. The handle
+/// drives the synchronous `PgStore` on a dedicated OS thread, so it is safe to
+/// call from inside the server's async runtime (see the module docs on
+/// [`croniq_store::pg_actor`]). Only available with the `postgres` feature.
+///
+/// [`PgStoreHandle`]: croniq_store::pg_actor::PgStoreHandle
+#[cfg(feature = "postgres")]
+pub fn pg_store(handle: croniq_store::pg_actor::PgStoreHandle) -> DynStore {
+    Arc::new(handle)
+}

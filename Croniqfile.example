@@ -3,6 +3,14 @@
 server {
   listen :4000
   data_dir /var/lib/croniq
+  # Persistence backend. `sqlite` (default) keeps everything in
+  # <data_dir>/croniq.db — one binary, zero setup, no external database.
+  # A `postgres://…` (or `postgresql://…`) value here — or via the CRONIQ_DB
+  # env var, which takes precedence — connects to PostgreSQL instead. That
+  # requires a build with the `postgres` feature; the official Docker image and
+  # release binaries include it. Any unrecognised value fails at boot, and a
+  # postgres:// DSN on a build without the feature is rejected at boot too — the
+  # server never silently falls back to SQLite.
   db sqlite
   # Public base URL for invite / password-reset / OIDC login links.
   # Optional: if omitted, falls back to the CRONIQ_APP_URL env var, then to

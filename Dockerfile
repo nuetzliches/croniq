@@ -5,8 +5,8 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build release binaries. `--features croniq-server/otlp,croniq-server/smtp`
-# compiles two optional layers into the server:
+# Build release binaries. `--features croniq-server/{otlp,smtp,postgres}`
+# compiles three optional layers into the server:
 #   * otlp (issue #121) -- OTLP exporter, honours OTEL_EXPORTER_OTLP_ENDPOINT
 #     at runtime. The gate in src/telemetry.rs::decide keeps it dormant when
 #     the env var is unset, same behaviour as the off-build.
@@ -14,8 +14,12 @@ COPY crates/ crates/
 #     emails. When CRONIQ_SMTP_URL is unset at runtime the NoopSender stays
 #     active and the API keeps returning the token URL in the JSON response,
 #     so the off-build behaviour is preserved.
+#   * postgres -- lets `server { db postgres://… }` / CRONIQ_DB select a
+#     PostgreSQL backend at runtime. SQLite stays the default; the feature only
+#     adds the (pure-Rust, NoTls) postgres driver, so the runtime image needs no
+#     extra system libraries.
 RUN cargo build --release \
-      --features croniq-server/otlp,croniq-server/smtp \
+      --features croniq-server/otlp,croniq-server/smtp,croniq-server/postgres \
       --bin croniq-server \
       --bin croniq \
       --bin croniq-mcp \
