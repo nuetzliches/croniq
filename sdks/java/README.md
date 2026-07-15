@@ -57,6 +57,75 @@ sdks/java/
 
 This mirrors the reference .NET SDK at [`sdks/dotnet/src/Croniq.Runner.Sdk/`](../dotnet/src/Croniq.Runner.Sdk/) so contributors who know one ecosystem can navigate the other.
 
+## Triggering jobs on demand (producer)
+
+The runner above is the **consumer** side. The **producer** side — firing a job _immediately_, e.g. in response to an application event — is a separate, first-class client (`CroniqTriggerClient`, in the `core` module) that wraps `POST /v1/trigger`. It is independent of `CroniqRunner`: a pure producer never polls, and it carries its **own** credentials (`CroniqClientOptions`), because triggering needs the `jobs:trigger` (or `admin`) scope that runner poll keys typically don't carry. (Parity with the .NET SDK's `ICroniqTriggerClient`.)
+
+```java
+import io.croniq.runner.CroniqTriggerClient;
+import io.croniq.runner.TriggerRequest;
+import io.croniq.runner.TriggerResult;
+import io.croniq.runner.config.CroniqClientOptions;
+import java.util.List;
+import java.util.Map;
+
+// Thread-safe and intended to be long-lived: build one per server + credential and share it.
+var client = new CroniqTriggerClient(
+    CroniqClientOptions.builder()
+        .serverUrl("http://localhost:4000")
+        .apiKey(System.getenv("CRONIQ_TRIGGER_KEY")) // jobs:trigger scope — NOT a runner poll key
+        .build());
+
+TriggerResult result = client.trigger(
+    TriggerRequest.builder("billing:invoice-generate")
+        .metadata(Map.of("invoice_id", "inv_42"))
+        .require(List.of("billing"))
+        .prefer(List.of("eu-central"))
+        .timeout("10m")
+        .idempotencyKey("evt-2026-07-14-001") // optional server-side dedup
+        .build());
+
+// result.executionId(), result.queued(), result.deduplicated()
+// Fire with no options at all: client.trigger("billing:invoice-generate");
+```
+
+The same registered handler serves both its Croniqfile schedule (safety-net / reconcile floor) and near-real-time, event-driven fires — one execution and observability path, no second code path.
+
+`TriggerRequest.builder(jobKey)` takes the same routing/metadata knobs as a scheduled fire:
+
+| Builder method    | Meaning                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `jobKey`          | Job to fire, e.g. `billing:invoice-generate` (required).                                       |
+| `metadata`        | Arbitrary JSON (`Map<String, Object>`) forwarded to the handler, merged over the job's DSL metadata. |
+| `require`         | Capabilities a runner **must** have to be assigned this execution.                             |
+| `prefer`          | Capabilities used to prefer runners when several are eligible.                                 |
+| `timeout`         | Execution timeout as a duration string (`"30s"`, `"5m"`); server default when omitted.         |
+| `idempotencyKey`  | Optional dedup key (≤ 200 chars); repeat triggers with the same key coalesce onto the existing execution. |
+
+…and `trigger(...)` returns a `TriggerResult`:
+
+| Accessor          | Meaning                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `executionId()`   | The created — or, on a dedup hit, the existing — execution.                                    |
+| `queued()`        | Server work-queue depth after the trigger was processed.                                       |
+| `deduplicated()`  | `true` when coalesced onto an existing execution via `idempotencyKey`; `false` on servers without idempotency support. |
+
+- **Unset optionals are omitted** from the JSON body (never sent as `null`) — a producer never emits `metadata` / `require` / `prefer` / `timeout` / `idempotency_key` the caller didn't supply.
+- **Idempotency.** Pass `idempotencyKey` so at-least-once producers (event redelivery, retries, concurrent publishers) coalesce onto one execution; `result.deduplicated()` is `true` when the server returned an existing execution.
+- **Backpressure.** Every failure — a non-2xx response, a transport failure, or a serialisation error — surfaces as `CroniqTriggerException` (never a default/empty result). The per-job queue-overflow `429` is `e.isQueueOverflow()` (`e.statusCode()` carries the raw status; `0` for transport errors), so a batching / retrying producer can back off instead of dropping work:
+
+  ```java
+  try {
+      client.trigger(TriggerRequest.builder("billing:invoice-generate").build());
+  } catch (CroniqTriggerException e) {
+      if (e.isQueueOverflow()) {
+          // 429: job at its per-job queue-depth cap — back off and retry later
+      } else {
+          throw e;
+      }
+  }
+  ```
+
 ## Wire-protocol conformance
 
 The SDK is validated against the shared, language-neutral conformance suite at [`sdks/conformance/`](../conformance/) — the same 12 YAML cases that drive the .NET SDK. Future Python / Go / TypeScript SDKs will pass the same cases.
