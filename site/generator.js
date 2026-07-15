@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15a'
+const WASM_VERSION = '2026-07-15b'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15b'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -64,6 +64,17 @@ const schState = {
     tags: '',
     concurrency: 'default', // 'default' | 'singleton' | 'max_concurrent'
     maxConcurrent: 3,
+    // Phase 2 — schedule constraints (recurring modes only) + execution.
+    schedCalendar: '',
+    schedTimezone: '',
+    windowFrom: '',
+    windowTo: '',
+    notBefore: '',
+    notAfter: '',
+    executionMode: 'queued', // 'queued' | 'ephemeral'
+    catchUp: 'default',      // 'default' | 'all' | 'latest' | 'none'
+    queueTtl: '',
+    maxQueueDepth: '',
   },
 }
 
@@ -111,6 +122,7 @@ schModeEl.addEventListener('change', () => {
   document.querySelectorAll('.sch-fields').forEach((el) => {
     el.hidden = el.id !== `sch-fields-${schState.mode}`
   })
+  syncRecurringVisibility()
   refreshSchedule()
 })
 
@@ -229,6 +241,25 @@ concurrencyEl.addEventListener('change', () => {
 syncConcurrency()
 bindNumber('sch-opt-maxc', () => O.maxConcurrent, (v) => { O.maxConcurrent = v })
 
+// Phase 2 — schedule constraints + execution directives.
+bindText('sch-opt-calendar', () => O.schedCalendar, (v) => { O.schedCalendar = v })
+bindText('sch-opt-timezone', () => O.schedTimezone, (v) => { O.schedTimezone = v })
+bindText('sch-opt-window-from', () => O.windowFrom, (v) => { O.windowFrom = v })
+bindText('sch-opt-window-to', () => O.windowTo, (v) => { O.windowTo = v })
+bindText('sch-opt-not-before', () => O.notBefore, (v) => { O.notBefore = v })
+bindText('sch-opt-not-after', () => O.notAfter, (v) => { O.notAfter = v })
+bindText('sch-opt-queue-ttl', () => O.queueTtl, (v) => { O.queueTtl = v })
+bindText('sch-opt-max-queue', () => O.maxQueueDepth, (v) => { O.maxQueueDepth = v })
+bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
+bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
+
+// The recurring-only constraints section is meaningless for once/disabled.
+const recurringOptsEl = document.getElementById('sch-opt-recurring')
+function syncRecurringVisibility() {
+  recurringOptsEl.hidden = schState.mode === 'once' || schState.mode === 'disabled'
+}
+syncRecurringVisibility()
+
 // Assemble the wasm `JobOptions` shape from the form state. Omits empty
 // fields so the emitted block only carries what the user actually set.
 function buildJobOptions() {
@@ -255,6 +286,24 @@ function buildJobOptions() {
   if (tags.length) opts.tags = tags
   if (O.concurrency === 'singleton') opts.concurrency = 'singleton'
   else if (O.concurrency === 'max_concurrent') opts.concurrency = String(O.maxConcurrent)
+
+  // Recurring-only scheduling constraints — the schedule-options block is
+  // invalid on once/disabled, so don't emit them there (the wasm bridge
+  // drops them defensively too).
+  const recurring = schState.mode !== 'once' && schState.mode !== 'disabled'
+  if (recurring) {
+    if (O.schedCalendar.trim()) opts.schedule_calendar = O.schedCalendar.trim()
+    if (O.schedTimezone.trim()) opts.schedule_timezone = O.schedTimezone.trim()
+    if (O.windowFrom && O.windowTo) opts.window = `${O.windowFrom}..${O.windowTo}`
+    if (O.notBefore.trim()) opts.not_before = O.notBefore.trim()
+    if (O.notAfter.trim()) opts.not_after = O.notAfter.trim()
+  }
+  // Execution directives apply in every mode. `queued` is the implicit
+  // default, so only emit an explicit `ephemeral`.
+  if (O.executionMode === 'ephemeral') opts.execution_mode = 'ephemeral'
+  if (O.catchUp !== 'default') opts.catch_up = O.catchUp
+  if (O.queueTtl.trim()) opts.queue_ttl = O.queueTtl.trim()
+  if (O.maxQueueDepth) opts.max_queue_depth = parseInt(O.maxQueueDepth, 10)
   return opts
 }
 

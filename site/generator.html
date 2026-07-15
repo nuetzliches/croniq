@@ -584,6 +584,51 @@
                   <input id="sch-opt-maxc" type="number" min="1" value="3">
                 </div>
               </div>
+
+              <!-- Recurring-only scheduling constraints. These attach to
+                   the schedule block, which the parser only allows on
+                   `every …` schedules — hidden for once/disabled. -->
+              <div id="sch-opt-recurring">
+                <div class="field">
+                  <label for="sch-opt-calendar">Calendar (name of a defined <code>calendar</code>)</label>
+                  <input id="sch-opt-calendar" type="text" placeholder="e.g. business-days" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="sch-opt-timezone">Timezone</label>
+                  <input id="sch-opt-timezone" type="text" placeholder="IANA, e.g. Europe/Vienna" spellcheck="false">
+                </div>
+                <div class="field-row">
+                  <div class="field"><label for="sch-opt-window-from">Window from (UTC)</label><input id="sch-opt-window-from" type="time"></div>
+                  <div class="field"><label for="sch-opt-window-to">Window to (UTC)</label><input id="sch-opt-window-to" type="time"></div>
+                </div>
+                <div class="field-row">
+                  <div class="field"><label for="sch-opt-not-before">Not before (UTC)</label><input id="sch-opt-not-before" type="text" placeholder="2026-01-01T00:00:00Z" spellcheck="false"></div>
+                  <div class="field"><label for="sch-opt-not-after">Not after (UTC)</label><input id="sch-opt-not-after" type="text" placeholder="2026-12-31T23:59:59Z" spellcheck="false"></div>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <div class="field">
+                  <label for="sch-opt-exec-mode">Execution mode</label>
+                  <select id="sch-opt-exec-mode">
+                    <option value="queued">queued (default)</option>
+                    <option value="ephemeral">ephemeral</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="sch-opt-catch-up">Catch-up</label>
+                  <select id="sch-opt-catch-up">
+                    <option value="default">default</option>
+                    <option value="all">all</option>
+                    <option value="latest">latest</option>
+                    <option value="none">none</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field"><label for="sch-opt-queue-ttl">Queue TTL</label><input id="sch-opt-queue-ttl" type="text" placeholder="e.g. 10m · none" spellcheck="false"></div>
+                <div class="field"><label for="sch-opt-max-queue">Max queue depth</label><input id="sch-opt-max-queue" type="number" min="1" placeholder="unbounded"></div>
+              </div>
             </details>
           </div>
 
@@ -652,6 +697,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-07-15a"></script>
+  <script type="module" src="./generator.js?v=2026-07-15b"></script>
 </body>
 </html>
