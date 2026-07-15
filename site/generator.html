@@ -398,6 +398,17 @@
       padding: 2rem 0;
     }
 
+    /* Sub-block heading in the Config tab (e.g. "Logging", "Retry"). */
+    .cfg-subhead {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin: 0.4rem 0 0.5rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--border);
+    }
+
     /* Optional job-options disclosure inside the Schedule card. */
     .job-opts {
       margin-top: 1rem;
@@ -704,6 +715,9 @@
                 <option value="pull_api">pull_api — runner pull endpoint</option>
                 <option value="mcp">mcp — Model Context Protocol server</option>
                 <option value="policy">policy — DSL adoption policy</option>
+                <option value="oidc">oidc — single sign-on</option>
+                <option value="observability">observability — logging &amp; metrics</option>
+                <option value="defaults">defaults — job-wide defaults</option>
                 <option value="vars">vars — reusable variables</option>
               </select>
             </div>
@@ -739,6 +753,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-07-15c"></script>
+  <script type="module" src="./generator.js?v=2026-07-15d"></script>
 </body>
 </html>
