@@ -58,7 +58,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 ## Runner SDKs
 
-Build custom job execution runners in your language of choice. Runners poll the Croniq server for work, dispatch handlers, and report outcomes — schedules and policies stay in your Croniqfile.
+Build custom job execution runners in your language of choice. Runners poll the Croniq server for work, dispatch handlers, and report outcomes — schedules and policies stay in your Croniqfile. Each SDK is also a **first-class producer**: alongside the runner (consumer) loop it ships a trigger client that fires jobs on demand via `POST /v1/trigger` — see [Triggering jobs on demand](#triggering-jobs-on-demand-producer) below.
 
 | Language | Source | Package |
 |----------|--------|---------|
@@ -78,6 +78,38 @@ The Go SDK ships idiomatic `context.Context` propagation, `log/slog` structured 
 The TypeScript / Node.js SDK is ESM-first, uses native `fetch` and `AbortController`, and ships the same streaming log writer (batch + drain-before-ack) and server-side cancellation semantics as the .NET SDK. See [`sdks/typescript/README.md`](sdks/typescript/README.md) for the quickstart.
 
 The Java SDK is JDK 21+, virtual-thread-first (Project Loom), with `java.net.http.HttpClient`, Jackson, and SLF4J as its only runtime deps. Ships in four modules: `croniq-runner` (core), `croniq-runner-spring-boot-starter` (Spring Boot 3 auto-config + `@CroniqJob` discovery + `croniq.runner.*` properties), `croniq-runner-kotlin-ext` (coroutine adapters + Kotlin DSL on top of the Java core), and `croniq-runner-opentelemetry` (opt-in observer with one span per execution). Maven Central first-publish is queued behind the Sonatype Central Portal sign-off. See [`sdks/java/README.md`](sdks/java/README.md) for the quickstart.
+
+### Triggering jobs on demand (producer)
+
+The paragraphs above cover the **consumer** (runner) side — polling for work and executing handlers. The **producer** side fires a job _immediately_ via `POST /v1/trigger` (e.g. from a web handler or a message consumer, in addition to the Croniqfile schedule), so the **same** registered handler serves both periodic and near-real-time, event-driven runs — one execution path, one observability path, no second job definition.
+
+Every SDK ships this as a **first-class trigger client**, deliberately independent of the runner: triggering needs the `jobs:trigger` (or `admin`) scope, which runner poll keys typically don't carry, so the trigger client takes **its own** credentials rather than reusing a runner's.
+
+| Language | Producer entry point |
+|----------|----------------------|
+| Rust | `TriggerClient::builder(url).api_key(…).build()` |
+| .NET | `AddCroniqClient(…)` → inject `ICroniqTriggerClient` |
+| Python | `TriggerClient(TriggerClientOptions(…))` |
+| Go | `croniq.NewTriggerClient(url).WithAPIKey(…)` |
+| TypeScript / Node.js | `createTriggerClient({ … })` |
+| Java / Kotlin | `new CroniqTriggerClient(…)` |
+
+```rust
+use croniq_runner_sdk::TriggerClient;
+
+let client = TriggerClient::builder("http://localhost:4000")
+    .api_key("croniq_trigger_key") // jobs:trigger scope — not a runner poll key
+    .build();
+
+let result = client
+    .trigger("billing:invoice-generate")
+    .idempotency_key("evt-2026-07-14-001") // repeat (job_key, key) coalesces onto the existing execution
+    .send()
+    .await?;
+// result.execution_id, result.queued, result.deduplicated
+```
+
+An optional `idempotency_key` (≤ 200 chars, 10-minute dedup window) coalesces repeat triggers onto the existing execution. When a job is already at its `max_queue_depth` cap the trigger is rejected with `429 Too Many Requests`; every SDK surfaces this as a dedicated backpressure error (e.g. Rust's `TriggerError::QueueOverflow`) so a batching producer can back off rather than pile queued work up unbounded. See the `POST /v1/trigger` row in the [REST API](#rest-api) table.
 
 ### Language-agnostic conformance suite
 
@@ -436,7 +468,7 @@ graph LR
 | `croniq-runner` | HTTP Pull-API server, registry, work queue |
 | `croniq-bridge` | JobConfig to WorkItem translation |
 | `croniq-auth` | JWT, API key hashing, password auth |
-| `croniq-server` | HTTP server with ~35 REST endpoints |
+| `croniq-server` | HTTP server with 80+ REST endpoints (incl. the `POST /v1/trigger` producer API) |
 | `croniq-mcp` | MCP server for AI assistants |
 | `croniq-cli` | CLI: validate, fmt, compile, init, migrate, quickstart |
 | `croniq-runner-sdk` | Client library for building runners |
@@ -453,6 +485,7 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 |---|---|
 | Auth | `POST /v1/auth/login`, `/refresh`, `/logout` |
 | Jobs | `GET/POST /v1/jobs`, `GET/DELETE /v1/jobs/{key}`, `POST .../activate`, `POST /v1/jobs/register` |
+| Trigger | `POST /v1/trigger` — fire a job on demand (producer side, `jobs:trigger` scope). Optional `idempotency_key` (≤ 200 chars, 10-min dedup window) coalesces repeats onto the existing execution; returns **`429`** when the job is at its `max_queue_depth` cap (queue-overflow backpressure) |
 | Schedules | `GET/POST /v1/schedules`, `GET/DELETE /v1/schedules/{id}` |
 | Runners | `GET /v1/runners`, `GET /v1/runners/stream` (SSE), `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
