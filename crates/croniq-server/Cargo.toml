@@ -73,6 +73,11 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 
 [features]
 default = []
+# Enable the PostgreSQL persistence backend. The server drives the sync
+# `croniq-store` PgStore on a dedicated OS thread (see
+# `croniq_store::pg_actor::PgStoreHandle`) so it is safe to call from inside the
+# async runtime. When off (default), a `postgres://…` DSN is rejected at boot.
+postgres = ["croniq-store/postgres"]
 otlp = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",

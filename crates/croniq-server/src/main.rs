@@ -135,13 +135,13 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Open (or create) the SQLite store
-    std::fs::create_dir_all(&cli.data_dir)?;
-    let db_path = cli.data_dir.join("croniq.db");
-    let store: DynStore = sqlite_store(
-        SqliteStore::open(&db_path)
-            .with_context(|| format!("failed to open database at {}", db_path.display()))?,
-    );
+    // Open (or create) the persistence store. The backend is chosen from
+    // `server { db … }` (the CRONIQ_DB env var overrides it): `sqlite`
+    // (default) opens the embedded DB under --data-dir, while a `postgres://…`
+    // DSN connects to PostgreSQL (requires a build with `--features postgres`).
+    // An unrecognised value — or a Postgres DSN on a SQLite-only build — is a
+    // hard boot error, never a silent fall-back to SQLite.
+    let store: DynStore = open_store(&loaded.runtime.server.db, &cli.data_dir)?;
 
     // Reconcile CRONIQ_INIT_API_KEY against the stored 'default' client.
     // On an existing data dir, init has already run, so the env var was
@@ -982,6 +982,104 @@ fn resolve_require_totp(rt: &croniq_config::compile::RuntimeConfig) -> bool {
     }
 }
 
+/// The persistence backend selected by `server { db … }` / `CRONIQ_DB`.
+///
+/// SQLite (the default) is always available. PostgreSQL is available when the
+/// binary is built with `--features postgres`: the server drives the
+/// synchronous `croniq-store` `PgStore` on a dedicated OS thread (via
+/// `croniq_store::pg_actor::PgStoreHandle`) so the driver's internal `block_on`
+/// never runs inside croniq-server's `#[tokio::main]` runtime — which would
+/// otherwise panic ("Cannot start a runtime from within a runtime"). On a build
+/// *without* that feature, a `postgres://…` DSN is rejected at boot rather than
+/// silently opening SQLite.
+enum DbBackend {
+    /// Embedded SQLite under `--data-dir` (the default).
+    Sqlite,
+    /// A `postgres://…` / `postgresql://…` DSN. Served by
+    /// `croniq_store::pg_actor::PgStoreHandle` on `--features postgres` builds;
+    /// rejected at boot otherwise.
+    Postgres,
+}
+
+/// Resolve the effective DB spec. Precedence (highest first): the `CRONIQ_DB`
+/// env var → the Croniqfile `server { db … }` value → the default `sqlite`.
+/// A blank value at any level falls through to the next.
+fn resolve_db_spec(server_db: &str) -> String {
+    if let Ok(s) = std::env::var("CRONIQ_DB") {
+        let s = s.trim();
+        if !s.is_empty() {
+            return s.to_string();
+        }
+    }
+    let s = server_db.trim();
+    if s.is_empty() {
+        "sqlite".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Classify a resolved DB spec into a [`DbBackend`], or fail with a clear
+/// message. Deliberately strict: an unknown value is an error rather than a
+/// silent fall-back to SQLite, so a typo (`postgress://…`), a different engine
+/// (`mysql://…`), or a bare path never masquerade as a working config.
+fn classify_db_backend(spec: &str) -> Result<DbBackend> {
+    let s = spec.trim();
+    if s.eq_ignore_ascii_case("sqlite") {
+        Ok(DbBackend::Sqlite)
+    } else if s.starts_with("postgres://") || s.starts_with("postgresql://") {
+        Ok(DbBackend::Postgres)
+    } else {
+        anyhow::bail!(
+            "unrecognised `server {{ db … }}` value {s:?} (or CRONIQ_DB): expected \
+             `sqlite` or a `postgres://…` / `postgresql://…` connection string"
+        )
+    }
+}
+
+/// Open the persistence store selected by `server_db` (resolved together with
+/// the `CRONIQ_DB` env var). SQLite creates `<data_dir>/croniq.db`. A Postgres
+/// DSN connects via [`croniq_store::pg_actor::PgStoreHandle`] on a
+/// `--features postgres` build, and is rejected at boot otherwise (see
+/// [`DbBackend`]). An unknown backend is always a hard error, never a silent
+/// fall-back to SQLite.
+fn open_store(server_db: &str, data_dir: &std::path::Path) -> Result<DynStore> {
+    let spec = resolve_db_spec(server_db);
+    match classify_db_backend(&spec)? {
+        DbBackend::Sqlite => {
+            std::fs::create_dir_all(data_dir)?;
+            let db_path = data_dir.join("croniq.db");
+            tracing::info!(backend = "sqlite", path = %db_path.display(), "opening store");
+            Ok(sqlite_store(SqliteStore::open(&db_path).with_context(
+                || format!("failed to open database at {}", db_path.display()),
+            )?))
+        }
+        DbBackend::Postgres => open_postgres_store(&spec),
+    }
+}
+
+/// Connect to PostgreSQL. On a `--features postgres` build this drives the
+/// synchronous `PgStore` on a dedicated OS thread (so its internal `block_on`
+/// never runs inside the async runtime); on a build without the feature it is a
+/// hard boot error rather than a silent SQLite fall-back.
+#[cfg(feature = "postgres")]
+fn open_postgres_store(spec: &str) -> Result<DynStore> {
+    tracing::info!(backend = "postgres", "opening store");
+    let handle = croniq_store::pg_actor::PgStoreHandle::connect(spec)
+        .map_err(|e| anyhow::anyhow!("failed to connect to PostgreSQL: {e}"))?;
+    Ok(croniq_server::store::pg_store(handle))
+}
+
+#[cfg(not(feature = "postgres"))]
+fn open_postgres_store(_spec: &str) -> Result<DynStore> {
+    anyhow::bail!(
+        "refusing to start: `server {{ db postgres://… }}` (or CRONIQ_DB) selects \
+         PostgreSQL, but this croniq-server binary was built without the `postgres` \
+         feature. Rebuild with `--features postgres` (the official Docker image and \
+         release binaries include it), or use `db sqlite` (embedded, the default)."
+    )
+}
+
 /// Parse a duration string like `"60s"`, `"2m"`, `"1h"`, or a bare integer
 /// (interpreted as seconds) into seconds. Returns an error string on malformed
 /// input rather than silently falling back, so that bad config surfaces at boot
@@ -1106,5 +1204,79 @@ mod app_base_url_tests {
             resolve_app_base_url(Some("  https://dsl.example  ")),
             Some("https://dsl.example".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod db_backend_tests {
+    use super::{DbBackend, classify_db_backend, resolve_db_spec};
+
+    /// Serialise env mutation: `CRONIQ_DB` is process-global and cargo runs
+    /// tests in parallel, so concurrent set/remove would race.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static M: OnceLock<Mutex<()>> = OnceLock::new();
+        match M.get_or_init(|| Mutex::new(())).lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    #[test]
+    fn defaults_to_sqlite_when_blank() {
+        let _g = env_guard();
+        unsafe { std::env::remove_var("CRONIQ_DB") };
+        assert_eq!(resolve_db_spec(""), "sqlite");
+        assert_eq!(resolve_db_spec("   "), "sqlite");
+        assert_eq!(resolve_db_spec("sqlite"), "sqlite");
+    }
+
+    #[test]
+    fn env_overrides_dsl() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_DB", "postgres://h/db") };
+        let spec = resolve_db_spec("sqlite");
+        unsafe { std::env::remove_var("CRONIQ_DB") };
+        assert_eq!(spec, "postgres://h/db");
+    }
+
+    #[test]
+    fn blank_env_falls_through_to_dsl() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("CRONIQ_DB", "   ") };
+        let spec = resolve_db_spec("postgresql://dsl/db");
+        unsafe { std::env::remove_var("CRONIQ_DB") };
+        assert_eq!(spec, "postgresql://dsl/db");
+    }
+
+    #[test]
+    fn classify_accepts_sqlite_and_postgres() {
+        assert!(matches!(
+            classify_db_backend("sqlite").unwrap(),
+            DbBackend::Sqlite
+        ));
+        // Case-insensitive keyword.
+        assert!(matches!(
+            classify_db_backend("SQLite").unwrap(),
+            DbBackend::Sqlite
+        ));
+        assert!(matches!(
+            classify_db_backend("postgres://u:p@h:5432/db").unwrap(),
+            DbBackend::Postgres
+        ));
+        assert!(matches!(
+            classify_db_backend("postgresql://h/db").unwrap(),
+            DbBackend::Postgres
+        ));
+    }
+
+    #[test]
+    fn classify_rejects_unknown() {
+        // A different engine, a typo'd scheme, and a bare path all error
+        // rather than silently opening SQLite.
+        assert!(classify_db_backend("mysql://h/db").is_err());
+        assert!(classify_db_backend("postgress://typo").is_err());
+        assert!(classify_db_backend("/var/lib/croniq/croniq.db").is_err());
+        assert!(classify_db_backend("").is_err());
     }
 }

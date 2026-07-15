@@ -91,13 +91,14 @@ jobs:
 
       - name: Build release binaries
         shell: bash
-        # `--features croniq-server/otlp` matches the Dockerfile so brew /
-        # tarball / image installs all honour `OTEL_EXPORTER_OTLP_ENDPOINT`
-        # without a separate "otlp" asset matrix. Runtime gate in
-        # src/telemetry.rs keeps the exporter dormant when unset.
+        # `--features croniq-server/otlp,croniq-server/postgres` matches the
+        # Dockerfile so brew / tarball / image installs all honour
+        # `OTEL_EXPORTER_OTLP_ENDPOINT` and can select `db postgres://…` /
+        # CRONIQ_DB. Runtime gate in src/telemetry.rs keeps the exporter dormant
+        # when unset; SQLite stays the default DB backend.
         run: |
           cargo build --release --target ${{ matrix.target }} \
-            --features croniq-server/otlp \
+            --features croniq-server/otlp,croniq-server/postgres \
             --bin croniq-server \
             --bin croniq \
             --bin croniq-mcp \
