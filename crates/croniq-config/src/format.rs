@@ -140,42 +140,7 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
 
 fn format_schedule(out: &mut String, sched: &ScheduleNode, indent: usize) {
     write_indent(out, indent);
-    match &sched.kind {
-        ScheduleKind::Interval { count, unit } => {
-            let unit_str = match unit {
-                IntervalUnit::Seconds => "seconds",
-                IntervalUnit::Minutes => "minutes",
-                IntervalUnit::Hours => "hours",
-            };
-            out.push_str(&format!("every {count} {unit_str}"));
-        }
-        ScheduleKind::Daily { time } => {
-            out.push_str(&format!("every day at {}", time.raw));
-        }
-        ScheduleKind::Weekdays { days, time } => {
-            out.push_str("every ");
-            out.push_str(&format_weekday_list(days));
-            out.push_str(&format!(" at {}", time.raw));
-        }
-        ScheduleKind::Monthly { ordinals, time } => {
-            out.push_str("every ");
-            let ords: Vec<String> = ordinals
-                .iter()
-                .map(|o| match o {
-                    MonthOrdinal::Day(d) => format_ordinal(*d),
-                    MonthOrdinal::Last => "last".to_string(),
-                })
-                .collect();
-            out.push_str(&ords.join(" "));
-            out.push_str(&format!(" of month at {}", time.raw));
-        }
-        ScheduleKind::Once { at } => {
-            out.push_str(&format!("once at {}", format_string_value(at)));
-        }
-        ScheduleKind::Disabled => {
-            out.push_str("disabled");
-        }
-    }
+    out.push_str(&format_schedule_line(&sched.kind));
 
     if sched.options.is_empty() {
         out.push('\n');
@@ -184,6 +149,42 @@ fn format_schedule(out: &mut String, sched: &ScheduleNode, indent: usize) {
         format_directives(out, &sched.options, indent + 1);
         write_indent(out, indent);
         out.push_str("}\n");
+    }
+}
+
+/// Format just the schedule expression line — `every 5 minutes`,
+/// `every day at 09:00`, `once at 2026-…`, `disabled`, … — with no
+/// indentation and no trailing options block.
+///
+/// Public so the WASM bridge (in-browser generator) can reuse the
+/// canonical emitter instead of hand-rolling its own, which drifted
+/// from this one (force-quoted `once`, a dead singular-unit branch).
+pub fn format_schedule_line(kind: &ScheduleKind) -> String {
+    match kind {
+        ScheduleKind::Interval { count, unit } => {
+            let unit_str = match unit {
+                IntervalUnit::Seconds => "seconds",
+                IntervalUnit::Minutes => "minutes",
+                IntervalUnit::Hours => "hours",
+            };
+            format!("every {count} {unit_str}")
+        }
+        ScheduleKind::Daily { time } => format!("every day at {}", time.raw),
+        ScheduleKind::Weekdays { days, time } => {
+            format!("every {} at {}", format_weekday_list(days), time.raw)
+        }
+        ScheduleKind::Monthly { ordinals, time } => {
+            let ords: Vec<String> = ordinals
+                .iter()
+                .map(|o| match o {
+                    MonthOrdinal::Day(d) => format_ordinal(*d),
+                    MonthOrdinal::Last => "last".to_string(),
+                })
+                .collect();
+            format!("every {} of month at {}", ords.join(" "), time.raw)
+        }
+        ScheduleKind::Once { at } => format!("once at {}", format_string_value(at)),
+        ScheduleKind::Disabled => "disabled".to_string(),
     }
 }
 
@@ -383,40 +384,66 @@ fn format_named_block(out: &mut String, block: &NamedBlock, indent: usize) {
 
 fn format_calendar_rule(out: &mut String, rule: &CalendarRule, indent: usize) {
     write_indent(out, indent);
+    out.push_str(&format_calendar_rule_line(rule));
+    out.push('\n');
+}
+
+/// Format a single calendar rule as its canonical DSL line, without
+/// indentation or a trailing newline.
+///
+/// Public so the WASM bridge reuses this instead of hand-rolling its
+/// own emitter (which incorrectly prefixed the `timezone` directive
+/// with `include`/`exclude`).
+pub fn format_calendar_rule_line(rule: &CalendarRule) -> String {
+    let rule_type_lower = rule.rule_type.value.to_ascii_lowercase();
+
+    // `timezone` is a bare directive (`timezone "Europe/Vienna"`), not
+    // an include/exclude rule. The parser stores it as a synthetic
+    // `Include` rule with `rule_type == "timezone"` (see
+    // parser::parse_calendar_rule), so drop the spurious action prefix
+    // here — otherwise round-tripping yields the invalid-looking
+    // `include timezone …`.
+    if rule_type_lower == "timezone" {
+        let mut s = format_string_value(&rule.rule_type);
+        for arg in &rule.args {
+            s.push(' ');
+            s.push_str(&format_string_value(arg));
+        }
+        return s;
+    }
+
     let kind = match rule.kind {
         CalendarRuleKind::Include => "include",
         CalendarRuleKind::Exclude => "exclude",
     };
-    out.push_str(kind);
-    out.push(' ');
-    out.push_str(&format_string_value(&rule.rule_type));
+    let mut s = String::from(kind);
+    s.push(' ');
+    s.push_str(&format_string_value(&rule.rule_type));
 
     // Special case `weekly`: re-collapse the expanded list back to
     // 3-letter capitalised tokens, dropping quotes and emitting
     // `Mon..Fri` for runs ≥ 3. This matches the DSL convention from
     // #60 — pre-expansion the parser stored args like `["monday",
     // "tuesday", …]` (lowercase full, after PR-D's range expansion).
-    let rule_type_lower = rule.rule_type.value.to_ascii_lowercase();
     if rule_type_lower == "weekly" {
         let parsed: Option<Vec<Weekday>> =
             rule.args.iter().map(|a| Weekday::parse(&a.value)).collect();
         if let Some(days) = parsed
             && !days.is_empty()
         {
-            out.push(' ');
-            out.push_str(&format_weekday_list(&days));
-            out.push('\n');
-            return;
+            s.push(' ');
+            s.push_str(&format_weekday_list(&days));
+            return s;
         }
         // Fall-through if any arg failed to parse — preserve verbatim
         // so the user still sees what they wrote and can fix the typo.
     }
 
     for arg in &rule.args {
-        out.push(' ');
-        out.push_str(&format_string_value(arg));
+        s.push(' ');
+        s.push_str(&format_string_value(arg));
     }
-    out.push('\n');
+    s
 }
 
 fn format_string_value(val: &StringValue) -> String {
@@ -576,5 +603,40 @@ job etl:sync {
         let ast = Parser::parse(src).unwrap();
         let formatted = format(&ast);
         assert!(formatted.contains("include weekly Mon..Wed"));
+    }
+
+    #[test]
+    fn calendar_timezone_stays_bare_directive() {
+        // The parser stores `timezone "…"` as a synthetic Include rule.
+        // The formatter must NOT re-emit it as `include timezone …`.
+        let src = r#"calendar biz {
+  timezone "Europe/Vienna"
+  include weekly Mon Tue Wed Thu Fri
+}"#;
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(
+            formatted.contains("timezone \"Europe/Vienna\""),
+            "got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("include timezone"),
+            "timezone must not be prefixed with include:\n{formatted}"
+        );
+        // And it must round-trip cleanly.
+        Parser::parse(&formatted).unwrap();
+    }
+
+    #[test]
+    fn schedule_once_stays_unquoted() {
+        // `once at <datetime>` is canonical unquoted; the formatter must
+        // preserve that (the WASM bridge previously force-quoted it).
+        let src = "job migration:v2 { once at 2026-04-01T03:00:00Z }";
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(
+            formatted.contains("once at 2026-04-01T03:00:00Z"),
+            "got:\n{formatted}"
+        );
     }
 }

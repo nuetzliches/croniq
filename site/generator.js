@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-04-26b'
+const WASM_VERSION = '2026-07-14a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-04-26b'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-14a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -47,6 +47,7 @@ const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th',
   '21st', '22nd', '23rd', '24th', '25th', '26th', '27th', '28th', '29th', '30th', '31st', 'last']
 
 const schState = {
+  key: 'reports:daily',
   mode: 'interval',
   interval: { count: 5, unit: 'minutes' },
   daily: { hour: 9, minute: 0 },
@@ -107,8 +108,13 @@ schModeEl.addEventListener('change', () => {
 function bindNumber(id, getter, setter) {
   const el = document.getElementById(id)
   el.value = getter()
+  const min = el.min !== '' ? parseInt(el.min, 10) : 1
   el.addEventListener('input', () => {
-    setter(parseInt(el.value, 10) || 0)
+    const raw = parseInt(el.value, 10)
+    // Ignore empty/garbage input instead of coercing to 0 — that used to
+    // silently emit `every 0 minutes`. Clamp valid input to the field min.
+    if (Number.isNaN(raw)) return
+    setter(Math.max(min, raw))
     refreshSchedule()
   })
 }
@@ -139,6 +145,7 @@ function bindSelect(id, getter, setter) {
   })
 }
 
+bindText('sch-key', () => schState.key, (v) => { schState.key = v })
 bindNumber('sch-int-count', () => schState.interval.count, (v) => { schState.interval.count = v })
 bindSelect('sch-int-unit', () => schState.interval.unit, (v) => { schState.interval.unit = v })
 bindTime('sch-daily-time', () => schState.daily, (h, m) => { schState.daily.hour = h; schState.daily.minute = m })
@@ -163,9 +170,17 @@ const schFiresEl = document.getElementById('sch-fires')
 async function refreshSchedule() {
   await ensureWasm()
   schErrEl.hidden = true
-  let dsl = ''
+  const payload = buildSchedulePayload()
+
+  // Bare schedule line — drives the next-fires preview (and never throws).
+  let line = ''
+  try { line = wasm.formatSchedule(payload) } catch { line = '' }
+
+  // Full, paste-ready `job <key> { … }` block for the output box + Copy.
+  // Throws on an invalid job key — surface that as the validation error.
+  let block = ''
   try {
-    dsl = wasm.formatSchedule(buildSchedulePayload())
+    block = wasm.formatScheduleBlock(payload, schState.key)
   } catch (e) {
     schDslEl.textContent = ''
     schErrEl.hidden = false
@@ -173,7 +188,7 @@ async function refreshSchedule() {
     schFiresEl.textContent = ''
     return
   }
-  schDslEl.textContent = dsl
+  schDslEl.textContent = block
 
   // Live next-fires preview, current UTC instant. The wasm crate's
   // next-fire path is UTC-only by design (see PR #55) — for the
@@ -181,7 +196,7 @@ async function refreshSchedule() {
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   let result
   try {
-    result = wasm.nextFires(dsl, now, 5)
+    result = wasm.nextFires(line, now, 5)
   } catch (e) {
     result = { ok: false, fires: [], error: String(e) }
   }
@@ -211,6 +226,7 @@ document.getElementById('sch-copy').addEventListener('click', async (e) => {
 // ── Calendar panel ──────────────────────────────────────────────────
 
 const calState = {
+  name: 'business-days',
   rules: [
     { action: 'include', rule_type: 'weekly', args: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] },
     { action: 'exclude', rule_type: 'annual', args: ['12-25'] },
@@ -224,6 +240,10 @@ const calDslEl = document.getElementById('cal-dsl')
 const calErrEl = document.getElementById('cal-error')
 const calMonthLbl = document.getElementById('cal-month')
 const calGridEl = document.getElementById('cal-grid')
+const calNameEl = document.getElementById('cal-name')
+
+calNameEl.value = calState.name
+calNameEl.addEventListener('input', () => { calState.name = calNameEl.value; refreshCalendar() })
 
 const RULE_TYPES = ['weekly', 'window', 'monthly', 'annual', 'timezone']
 
@@ -275,6 +295,14 @@ function renderRuleEditor() {
     })
     action.value = rule.action
     action.addEventListener('change', () => { rule.action = action.value; refreshCalendar() })
+    if (rule.rule_type === 'timezone') {
+      // `timezone` is a bare directive — include/exclude is meaningless
+      // (and prefixing it produced the invalid `include timezone …`).
+      // Hide but keep the grid cell so the row layout stays aligned.
+      action.disabled = true
+      action.style.visibility = 'hidden'
+      action.setAttribute('aria-hidden', 'true')
+    }
 
     const ruleType = document.createElement('select')
     RULE_TYPES.forEach((t) => {
@@ -603,27 +631,22 @@ document.getElementById('cal-add-rule').addEventListener('click', () => {
 async function refreshCalendar() {
   await ensureWasm()
   calErrEl.hidden = true
-  let dsl = ''
+
+  // Full, paste-ready `calendar <name> { … }` block for the output box +
+  // Copy. `formatCalendarBlock` parses internally, so a throw here is
+  // also our validation signal — skip the grid and show the diagnostic,
+  // leaving the old grid visible until the input is fixed.
+  let block = ''
   try {
-    dsl = wasm.formatCalendarRules(calState.rules)
+    block = wasm.formatCalendarBlock(calState.rules, calState.name)
   } catch (e) {
     calDslEl.textContent = ''
     calErrEl.hidden = false
     calErrEl.textContent = String(e)
     return
   }
-  calDslEl.textContent = dsl
+  calDslEl.textContent = block
 
-  // Validate by re-parsing. If the parser rejects, surface the error
-  // and skip grid-rendering — old grid stays visible until the user
-  // fixes the input.
-  let parsed
-  try { parsed = wasm.parseCalendarRules(dsl) } catch (e) { parsed = { ok: false, diagnostics: [String(e)] } }
-  if (!parsed.ok) {
-    calErrEl.hidden = false
-    calErrEl.textContent = parsed.diagnostics.join('\n')
-    return
-  }
   renderCalendarGrid()
 }
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Croniq — DSL Generator</title>
-  <meta name="description" content="Build Croniqfile schedules and calendars from a form. Copy-paste straight into your Croniqfile — no install required.">
+  <meta name="description" content="Build complete Croniqfile job and calendar blocks from a form. Copy-paste straight into your Croniqfile — no install required.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='8' fill='none' stroke='%23a78bfa' stroke-width='2'/><circle cx='12' cy='12' r='2' fill='%23a78bfa'/></svg>">
   <link rel="stylesheet" href="styles.css">
   <style>
@@ -394,7 +394,7 @@
       <a href="./index.html" class="back-link">← Back to home</a>
       <div class="gen-hero">
         <h1>Croniqfile DSL Generator</h1>
-        <p>Build schedule and calendar blocks from a form. Copy-paste straight into your <code>Croniqfile</code> — no Croniq install required.</p>
+        <p>Build complete <code>job</code> and <code>calendar</code> blocks from a form. Copy-paste straight into your <code>Croniqfile</code> — no Croniq install required.</p>
       </div>
 
       <div class="tabs" role="tablist">
@@ -407,6 +407,10 @@
         <div class="gen-grid">
           <div class="gen-card">
             <h3>Schedule</h3>
+            <div class="field">
+              <label for="sch-key">Job key (<code>namespace:name</code>)</label>
+              <input id="sch-key" type="text" value="reports:daily" placeholder="namespace:name" spellcheck="false">
+            </div>
             <div class="field">
               <label for="sch-mode">Mode</label>
               <select id="sch-mode">
@@ -501,6 +505,10 @@
       <div class="tab-panel" id="tab-calendar">
         <div class="gen-grid">
           <div class="gen-card">
+            <div class="field">
+              <label for="cal-name">Calendar name</label>
+              <input id="cal-name" type="text" value="business-days" placeholder="business-days" spellcheck="false">
+            </div>
             <h3>Rules</h3>
             <div class="rule-list" id="cal-rules"></div>
             <button class="rule-add" id="cal-add-rule">+ Add rule</button>
@@ -543,6 +551,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-04-26b"></script>
+  <script type="module" src="./generator.js?v=2026-07-14a"></script>
 </body>
 </html>
