@@ -14,6 +14,7 @@ description = "Croniq Runner SDK — polls work, dispatches handlers, streams lo
 // namespace (which hosts other unrelated projects too).
 mavenPublishing {
   coordinates(project.group.toString(), "croniq-runner", project.version.toString())
+  pom { name.set("Croniq Runner SDK") }
 }
 
 dependencies {

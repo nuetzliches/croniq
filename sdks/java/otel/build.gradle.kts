@@ -1,6 +1,6 @@
-// io.croniq:runner-opentelemetry — opt-in OpenTelemetry instrumentation
-// implementing CroniqRunnerObserver. Consumers who don't use OTel pull only
-// :core and avoid this artifact entirely.
+// io.github.nuetzliches:croniq-runner-opentelemetry — opt-in OpenTelemetry
+// instrumentation implementing CroniqRunnerObserver. Consumers who don't use
+// OTel pull only :core and avoid this artifact entirely.
 
 plugins {
   id("croniq.java-conventions")
@@ -14,7 +14,8 @@ description = "OpenTelemetry instrumentation for the Croniq Runner SDK."
 // here used to belong to the OSSRH plugin and is no longer wired. Match the
 // idiom used by the other published modules.
 mavenPublishing {
-  coordinates(project.group.toString(), "runner-opentelemetry", project.version.toString())
+  coordinates(project.group.toString(), "croniq-runner-opentelemetry", project.version.toString())
+  pom { name.set("Croniq Runner SDK :: OpenTelemetry") }
 }
 
 dependencies {

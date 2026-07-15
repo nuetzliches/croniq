@@ -1,11 +1,12 @@
 name: Java SDK Release
 
-# Publishes the three Java SDK modules to the Sonatype Central Portal when
+# Publishes the four Java SDK modules to the Sonatype Central Portal when
 # a tag of the form `java-sdk-vX.Y.Z` is pushed:
 #
 #   io.github.nuetzliches:croniq-runner                       (core)
 #   io.github.nuetzliches:croniq-runner-spring-boot-starter   (Spring Boot)
 #   io.github.nuetzliches:croniq-runner-kotlin-ext            (Kotlin ext)
+#   io.github.nuetzliches:croniq-runner-opentelemetry         (OpenTelemetry)
 #
 # The tag prefix keeps Java releases independent of the .NET / Go / Python /
 # TS / Rust-server release cadences, mirroring the convention used by the
@@ -58,7 +59,7 @@ env:
 
 jobs:
   publish:
-    name: Build, sign, publish (3 modules)
+    name: Build, sign, publish (4 modules)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -125,7 +126,7 @@ jobs:
         run: |
           EXPECTED="${{ steps.version.outputs.version }}"
           MISSING=0
-          for module in core spring-boot-starter kotlin-ext; do
+          for module in core spring-boot-starter kotlin-ext otel; do
             f="${module}/build/libs/${module}-${EXPECTED}.jar"
             if [ ! -f "$f" ]; then
               echo "::error::expected ${f} not found"
@@ -134,7 +135,7 @@ jobs:
             fi
           done
           if [ "$MISSING" = "1" ]; then exit 1; fi
-          echo "✓ all 3 main jars present at the expected version"
+          echo "✓ all 4 main jars present at the expected version"
 
       - name: Publish to Maven Central
         # `publishAndReleaseToMavenCentral` (vanniktech 0.30) uploads the
@@ -156,6 +157,7 @@ jobs:
           echo "  io.github.nuetzliches:croniq-runner@${{ steps.version.outputs.version }}"
           echo "  io.github.nuetzliches:croniq-runner-spring-boot-starter@${{ steps.version.outputs.version }}"
           echo "  io.github.nuetzliches:croniq-runner-kotlin-ext@${{ steps.version.outputs.version }}"
+          echo "  io.github.nuetzliches:croniq-runner-opentelemetry@${{ steps.version.outputs.version }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -164,6 +166,7 @@ jobs:
             sdks/java/core/build/libs/
             sdks/java/spring-boot-starter/build/libs/
             sdks/java/kotlin-ext/build/libs/
+            sdks/java/otel/build/libs/
           if-no-files-found: error
           # Capped at the repo-wide retention max (currently 14 days).
           # Maven Central is the durable copy; the artifact is just a

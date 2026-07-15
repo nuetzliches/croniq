@@ -15,6 +15,7 @@ description = "Spring Boot starter for the Croniq Runner SDK."
 // ambiguous since the parent namespace hosts other Spring Boot starters too.
 mavenPublishing {
   coordinates(project.group.toString(), "croniq-runner-spring-boot-starter", project.version.toString())
+  pom { name.set("Croniq Runner SDK :: Spring Boot Starter") }
 }
 
 dependencies {

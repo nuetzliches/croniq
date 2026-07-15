@@ -11,6 +11,7 @@ description = "Kotlin coroutine extensions for the Croniq Runner SDK."
 
 mavenPublishing {
   coordinates(project.group.toString(), "croniq-runner-kotlin-ext", project.version.toString())
+  pom { name.set("Croniq Runner SDK :: Kotlin Extensions") }
 }
 
 dependencies {
