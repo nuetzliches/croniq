@@ -317,6 +317,42 @@ pub struct JobOptions {
     /// or `None`/empty for the default (unbounded) concurrency.
     #[serde(default)]
     pub concurrency: Option<String>,
+
+    // ── Schedule-options block (Phase 2) ──
+    // These attach *inside* the schedule line (`every … { … }`) and are
+    // only valid on `every …` schedules — the parser rejects a block on
+    // `once`/`disabled`, so they are dropped for those modes.
+    /// Reference to a `calendar <name>` block defined elsewhere.
+    #[serde(default)]
+    pub schedule_calendar: Option<String>,
+    /// IANA timezone the schedule is evaluated in.
+    #[serde(default)]
+    pub schedule_timezone: Option<String>,
+    /// RFC3339 lower bound — the schedule doesn't fire before this.
+    #[serde(default)]
+    pub not_before: Option<String>,
+    /// RFC3339 upper bound — the schedule doesn't fire after this.
+    #[serde(default)]
+    pub not_after: Option<String>,
+
+    // ── Job-level scheduling / execution directives (Phase 2) ──
+    /// Time-of-day window `HH:MM..HH:MM` (a job-level directive, *not* a
+    /// schedule option — see the grammar).
+    #[serde(default)]
+    pub window: Option<String>,
+    /// `queued` (default) or `ephemeral`. Emitted as the `execution_mode`
+    /// directive rather than the schedule prefix, because the canonical
+    /// formatter drops the prefix (so the prefix wouldn't round-trip).
+    #[serde(default)]
+    pub execution_mode: Option<String>,
+    /// `all` | `latest` | `none`.
+    #[serde(default)]
+    pub catch_up: Option<String>,
+    /// Duration or `none`.
+    #[serde(default)]
+    pub queue_ttl: Option<String>,
+    #[serde(default)]
+    pub max_queue_depth: Option<u32>,
 }
 
 /// Render a schedule payload plus job-level options as a full,
@@ -353,9 +389,26 @@ fn format_job_block_inner(
     if let Some(d) = opt_str(&o.description) {
         lines.push(format!("  description \"{}\"", escape_dquote(d)));
     }
-    lines.push(format!("  {}", schedule_payload_to_loose_line(p)));
+    lines.push(format!("  {}", schedule_line_with_options(p, o)));
     if let Some(t) = opt_str(&o.timeout) {
         lines.push(format!("  timeout {t}"));
+    }
+    // Job-level scheduling / execution directives.
+    if let Some(w) = opt_str(&o.window) {
+        // `HH:MM..HH:MM` — a bare range token; never quote it.
+        lines.push(format!("  window {w}"));
+    }
+    if let Some(m) = opt_str(&o.execution_mode) {
+        lines.push(format!("  execution_mode {m}"));
+    }
+    if let Some(c) = opt_str(&o.catch_up) {
+        lines.push(format!("  catch_up {c}"));
+    }
+    if let Some(q) = opt_str(&o.queue_ttl) {
+        lines.push(format!("  queue_ttl {q}"));
+    }
+    if let Some(d) = o.max_queue_depth {
+        lines.push(format!("  max_queue_depth {d}"));
     }
     if let Some(line) = retry_loose_line(o.retry.as_ref()) {
         lines.push(format!("  {line}"));
@@ -383,6 +436,42 @@ fn format_job_block_inner(
     let src = format!("job {key} {{\n{}\n}}\n", lines.join("\n"));
     let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
     Ok(croniq_config::format::format(&ast))
+}
+
+/// Build the schedule line, appending an `{ … }` schedule-options block
+/// when any option is set. The block is only valid on `every …`
+/// schedules — the parser rejects it on `once`/`disabled`, so options
+/// are silently dropped there (the UI hides them for those modes).
+fn schedule_line_with_options(p: &SchedulePayload, o: &JobOptions) -> String {
+    let base = schedule_payload_to_loose_line(p);
+    let supports_block = matches!(
+        p,
+        SchedulePayload::Interval { .. }
+            | SchedulePayload::Daily { .. }
+            | SchedulePayload::Weekdays { .. }
+            | SchedulePayload::Monthly { .. }
+    );
+    if !supports_block {
+        return base;
+    }
+    let mut inner: Vec<String> = Vec::new();
+    if let Some(c) = opt_str(&o.schedule_calendar) {
+        inner.push(format!("calendar {}", quote_if_needed(c)));
+    }
+    if let Some(t) = opt_str(&o.schedule_timezone) {
+        inner.push(format!("timezone {}", quote_if_needed(t)));
+    }
+    if let Some(nb) = opt_str(&o.not_before) {
+        inner.push(format!("not_before {nb}"));
+    }
+    if let Some(na) = opt_str(&o.not_after) {
+        inner.push(format!("not_after {na}"));
+    }
+    if inner.is_empty() {
+        base
+    } else {
+        format!("{base} {{ {} }}", inner.join("; "))
+    }
 }
 
 /// Trim + treat empty as absent.
@@ -1206,9 +1295,76 @@ mod tests {
             runner_prefer: vec![],
             tags: vec!["env=prod".into()],
             concurrency: Some("singleton".into()),
+            ..Default::default()
         };
         let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
         // Must round-trip through the parser cleanly.
+        Parser::parse(&out).unwrap();
+    }
+
+    // ── Schedule-options + scheduling directives (Phase 2) ─────────
+
+    #[test]
+    fn job_block_schedule_options_attach_to_every() {
+        let o = JobOptions {
+            schedule_calendar: Some("business-days".into()),
+            schedule_timezone: Some("Europe/Vienna".into()),
+            not_before: Some("2026-01-01T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "reports:daily", &o).unwrap();
+        // The block canonicalises to a multi-line schedule block.
+        assert!(out.contains("every 5 minutes {"), "{out}");
+        assert!(out.contains("calendar business-days"), "{out}");
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        assert!(out.contains("not_before 2026-01-01T00:00:00Z"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_schedule_options_dropped_on_once() {
+        // `once` schedules can't carry a schedule-options block.
+        let once = SchedulePayload::Once {
+            at: "2026-12-31T23:00:00Z".into(),
+        };
+        let o = JobOptions {
+            schedule_calendar: Some("business-days".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&once, "migration:v2", &o).unwrap();
+        assert!(
+            !out.contains("calendar"),
+            "options must be dropped on once: {out}"
+        );
+        assert!(out.contains("once at 2026-12-31T23:00:00Z"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_window_and_execution_mode() {
+        let o = JobOptions {
+            window: Some("02:00..06:00".into()),
+            execution_mode: Some("ephemeral".into()),
+            catch_up: Some("latest".into()),
+            max_queue_depth: Some(100),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:sweep", &o).unwrap();
+        assert!(out.contains("window 02:00..06:00"), "{out}");
+        assert!(out.contains("execution_mode ephemeral"), "{out}");
+        assert!(out.contains("catch_up latest"), "{out}");
+        assert!(out.contains("max_queue_depth 100"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_queue_ttl_none() {
+        let o = JobOptions {
+            queue_ttl: Some("none".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(out.contains("queue_ttl none"), "{out}");
         Parser::parse(&out).unwrap();
     }
 }
