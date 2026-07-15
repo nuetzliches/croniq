@@ -41,10 +41,11 @@ mavenPublishing {
     // explicit `croniq-runner*` prefix to disambiguate.
 
     pom {
-        // Vanniktech defaults pom.name to `${groupId}:${artifactId}` if not
-        // set explicitly here. Each subproject sets its own description via
-        // `description = "..."` in build.gradle.kts; that flows through to
-        // pom.description automatically.
+        // pom.name is REQUIRED by the Central Portal validator (it rejects the
+        // deployment with "Project name is missing" otherwise) and is NOT
+        // auto-populated by Vanniktech — each subproject sets it explicitly in
+        // its own `mavenPublishing { pom { name.set(...) } }` block. Description
+        // flows automatically from each subproject's `description = "..."`.
         description.set(provider { project.description ?: project.name })
         url.set("https://github.com/nuetzliches/croniq")
         inceptionYear.set("2026")
