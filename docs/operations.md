@@ -304,3 +304,37 @@ Is this a permanent change to how the rule should behave?
 
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
+
+## Data retention
+
+The server's watchdog runs a housekeeping sweep every 30 s. Two sources of
+row growth are capped there; both apply to the SQLite and Postgres backends.
+
+### Dead letters
+
+Per-job `dead_letter { retention <dur> }` (default `30d`). Each dead-letter row
+is stamped with an `expires_at = created_at + retention` at write time; the
+sweep deletes rows past their `expires_at`. Set `retention 0` (or
+`dead_letter { enabled false }`) to disable.
+
+### Terminal executions (issue #344)
+
+Non-`ephemeral` executions are persisted for run history and would otherwise
+accumulate forever. Two **opt-in** knobs cap them; both prune terminal
+executions (`completed` / `failed` / `cancelled`) together with their logs, and
+both **exclude `dead` executions** (those follow dead-letter retention above).
+
+- **Age sweep** — `server { execution_retention <dur> }` (e.g. `30d`). Prunes
+  executions whose `completed_at` is older than the cutoff.
+- **Per-job cap** — `keep_last <N>` in `defaults { }` or a `job { }` block.
+  Keeps the newest `N` terminal executions per job and prunes the rest. Applies
+  on top of the age sweep.
+
+Both are **off by default** — an upgrade never silently deletes run history.
+Deletions run in bounded batches, so the first sweep after enabling retention
+on a large existing database drains the backlog over several ticks rather than
+in one long-locking statement (this matters most for SQLite's whole-database
+write lock). An invalid or zero `execution_retention` is ignored (pruning
+stays disabled) and logged at boot. Changes to these knobs take effect on
+server restart. Once pruned, an execution and its logs are gone; dashboards,
+`/metrics` aggregates, and the UI run history reflect only the retained window.

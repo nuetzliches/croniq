@@ -58,6 +58,7 @@ fn pg_backend_exercises_all_traits() {
     trigger_definitions(&store, &s);
     calendar_definitions(&store, &s);
     execution_logs(&store);
+    execution_retention(&store, &s);
     dsl_adoptions(&store, &s);
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
@@ -680,6 +681,89 @@ fn execution_logs(store: &PgStore) {
     );
     assert_eq!(logs[0].message, "line 0");
     assert_eq!(logs[3].message, "line 3");
+}
+
+/// Seed an execution, optionally driving it to a terminal state at a chosen
+/// `completed_at`. Returns the row id.
+fn seed_execution(
+    store: &PgStore,
+    job_key: &str,
+    completed: Option<(ExecutionState, DateTime<Utc>)>,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    store
+        .create_execution(&Execution {
+            id,
+            job_key: job_key.to_string(),
+            fire_at: ts(),
+            attempt: 1,
+            state: ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            idempotency_key: None,
+            metadata: HashMap::new(),
+            created_at: ts(),
+        })
+        .unwrap();
+    if let Some((state, at)) = completed {
+        store
+            .complete_execution(id, state, Some(1), None, None, at)
+            .unwrap();
+    }
+    id
+}
+
+/// Execution retention (issue #344): age sweep + per-job keep_last, Postgres.
+fn execution_retention(store: &PgStore, s: &str) {
+    let old_ts = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let recent_ts = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+    let cutoff = Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap();
+
+    let job = format!("ret-{s}");
+    let old = seed_execution(store, &job, Some((ExecutionState::Completed, old_ts)));
+    store
+        .append_log(&ExecutionLogEntry {
+            id: Uuid::new_v4(),
+            execution_id: old,
+            timestamp: ts(),
+            level: "info".into(),
+            message: "old".into(),
+            fields: HashMap::new(),
+            seq: 0,
+        })
+        .unwrap();
+    let recent = seed_execution(store, &job, Some((ExecutionState::Failed, recent_ts)));
+    let live = seed_execution(store, &job, None);
+    let dead = seed_execution(store, &job, Some((ExecutionState::Dead, old_ts)));
+
+    let deleted = store.prune_executions_older_than(cutoff, 100).unwrap();
+    assert_eq!(deleted, 1, "only the old completed execution is pruned");
+    assert!(store.get_execution(old).unwrap().is_none());
+    assert!(store.get_execution(recent).unwrap().is_some());
+    assert!(store.get_execution(live).unwrap().is_some());
+    assert!(store.get_execution(dead).unwrap().is_some());
+    assert!(store.read_logs(old, 100).unwrap().is_empty());
+
+    // keep_last: newest 1 of 4 completed survives.
+    let cap = format!("cap-{s}");
+    let mut ids = Vec::new();
+    for min in 0..4u32 {
+        let at = Utc.with_ymd_and_hms(2026, 7, 1, 0, min, 0).unwrap();
+        ids.push((
+            seed_execution(store, &cap, Some((ExecutionState::Completed, at))),
+            min,
+        ));
+    }
+    let capped = store.prune_executions_keep_last(&cap, 1, 100).unwrap();
+    assert_eq!(capped, 3, "keeps the newest, deletes the 3 oldest");
+    for (id, min) in &ids {
+        assert_eq!(store.get_execution(*id).unwrap().is_some(), *min == 3);
+    }
 }
 
 fn dsl_adoptions(store: &PgStore, s: &str) {

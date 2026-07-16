@@ -707,6 +707,39 @@ async fn main() -> Result<()> {
     );
     let watchdog_store = Arc::clone(&store);
 
+    // Age-based execution retention (issue #344). Parsed once at boot from
+    // `server { execution_retention <dur> }`. Invalid or zero ⇒ disabled: a
+    // data-deleting knob must never fall back to "delete everything". Per-job
+    // `keep_last` caps are read by the watchdog from its DSL job snapshot and
+    // need no wiring here.
+    let execution_retention: Option<chrono::Duration> = loaded
+        .runtime
+        .server
+        .execution_retention
+        .as_deref()
+        .and_then(|raw| match croniq_execution::retry::parse_duration(raw) {
+            Some(d) if !d.is_zero() => match chrono::Duration::from_std(d) {
+                Ok(d) => Some(d),
+                Err(_) => {
+                    tracing::error!(value = %raw, "server.execution_retention too large; execution pruning disabled");
+                    None
+                }
+            },
+            Some(_) => {
+                tracing::warn!(
+                    "server.execution_retention is zero; ignoring (would delete all run history)"
+                );
+                None
+            }
+            None => {
+                tracing::error!(value = %raw, "invalid server.execution_retention duration; execution pruning disabled");
+                None
+            }
+        });
+    if let Some(dur) = execution_retention {
+        tracing::info!(days = dur.num_days(), "execution retention enabled");
+    }
+
     let _watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -739,6 +772,19 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     tracing::error!(error = %e, "watchdog: failed to purge expired dead-letters");
                 }
+            }
+
+            // Enforce execution retention (issue #344): the global age sweep
+            // (`execution_retention`) plus per-job `keep_last` caps. No-op when
+            // neither is configured; a large first-time backlog drains over
+            // several ticks (bounded batches, see WatchdogLoop::prune_executions).
+            let pruned = watchdog.prune_executions(now, execution_retention);
+            if pruned.total() > 0 {
+                tracing::info!(
+                    by_age = pruned.by_age,
+                    by_cap = pruned.by_cap,
+                    "watchdog: pruned terminal executions"
+                );
             }
         }
     });

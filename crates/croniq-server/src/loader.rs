@@ -552,6 +552,10 @@ pub fn job_config_from_definition(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        // API-registered jobs have no Croniqfile `keep_last` (v1 supports
+        // per-job caps only for DSL jobs); the global `execution_retention`
+        // age sweep still covers them.
+        keep_last: None,
         // API-registered jobs carry a concurrency limit (if any) through
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,
@@ -605,6 +609,10 @@ pub fn job_config_from_job_def(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        // API-registered jobs have no Croniqfile `keep_last` (v1 supports
+        // per-job caps only for DSL jobs); the global `execution_retention`
+        // age sweep still covers them.
+        keep_last: None,
         // API-registered jobs carry a concurrency limit (if any) through
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,

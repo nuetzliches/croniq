@@ -22,10 +22,34 @@ use std::sync::{Arc, Mutex};
 
 use crate::loader::job_config_from_job_def;
 use crate::store::DynStore;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
 use croniq_store::models::{ExecutionFilter, ExecutionState, JobStatus};
+
+/// Max execution rows deleted per prune DELETE statement. Bounds SQLite's
+/// whole-DB write-lock hold time; a backlog drains across ticks/batches.
+const PRUNE_BATCH: u32 = 5_000;
+/// Max batches per reason per sweep, so the first prune on a large backlog
+/// doesn't monopolise the 30 s watchdog tick. Backlog beyond
+/// `PRUNE_BATCH * PRUNE_MAX_BATCHES` rows carries over to the next tick.
+const PRUNE_MAX_BATCHES: usize = 20;
+
+/// Counts from one [`WatchdogLoop::prune_executions`] pass (issue #344).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PruneResult {
+    /// Rows deleted by the global `execution_retention` age sweep.
+    pub by_age: u64,
+    /// Rows deleted by per-job `keep_last` caps.
+    pub by_cap: u64,
+}
+
+impl PruneResult {
+    /// Total execution rows deleted this pass.
+    pub fn total(&self) -> u64 {
+        self.by_age + self.by_cap
+    }
+}
 
 /// Result of a single watchdog sweep.
 #[derive(Debug, Clone, Default)]
@@ -243,6 +267,64 @@ impl WatchdogLoop {
                 None
             }
         }
+    }
+
+    /// Enforce execution retention (issue #344): the global age sweep plus
+    /// per-job `keep_last` caps read from the DSL job snapshot. Deletes
+    /// terminal executions (`completed` / `failed` / `cancelled`) and their
+    /// logs in bounded batches; `dead` executions are left to dead-letter
+    /// retention. `retention` is the already-parsed age threshold (`None`
+    /// disables the age sweep). Returns per-reason delete counts.
+    ///
+    /// Store calls are synchronous; each DELETE is bounded to [`PRUNE_BATCH`]
+    /// rows and looped up to [`PRUNE_MAX_BATCHES`] times per reason so a large
+    /// initial backlog drains over several ticks instead of one long-locking
+    /// statement (matters most for SQLite's whole-DB write lock).
+    pub fn prune_executions(&self, now: DateTime<Utc>, retention: Option<Duration>) -> PruneResult {
+        let mut result = PruneResult::default();
+
+        if let Some(dur) = retention {
+            let cutoff = now - dur;
+            for _ in 0..PRUNE_MAX_BATCHES {
+                match self.store.prune_executions_older_than(cutoff, PRUNE_BATCH) {
+                    Ok(n) => {
+                        result.by_age += n;
+                        if n < PRUNE_BATCH as u64 {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "watchdog: execution_retention prune failed");
+                        break;
+                    }
+                }
+            }
+        }
+
+        for job in self.jobs.values() {
+            let Some(keep) = job.keep_last else {
+                continue;
+            };
+            for _ in 0..PRUNE_MAX_BATCHES {
+                match self
+                    .store
+                    .prune_executions_keep_last(&job.key, keep, PRUNE_BATCH)
+                {
+                    Ok(n) => {
+                        result.by_cap += n;
+                        if n < PRUNE_BATCH as u64 {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(job_key = %job.key, error = %e, "watchdog: keep_last prune failed");
+                        break;
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Run one sweep at `now`.
@@ -679,6 +761,7 @@ mod tests {
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
             queue_ttl: None,
             max_queue_depth: None,
+            keep_last: None,
             max_concurrent: None,
             tags: vec![],
         }
@@ -720,6 +803,84 @@ mod tests {
     fn long_dead_time() -> DateTime<Utc> {
         // 5 minutes ago — well past the 2-minute dead threshold
         Utc::now() - ChronoDuration::minutes(5)
+    }
+
+    #[test]
+    fn prune_executions_enforces_age_and_keep_last() {
+        let store = make_store();
+        let now = Utc::now();
+        let seed = |job_key: &str, at: DateTime<Utc>, state: ExecutionState| -> Uuid {
+            let id = Uuid::new_v4();
+            store
+                .create_execution(&Execution {
+                    id,
+                    job_key: job_key.into(),
+                    fire_at: at,
+                    attempt: 1,
+                    state: ExecutionState::Queued,
+                    runner_id: None,
+                    claimed_at: None,
+                    started_at: None,
+                    completed_at: None,
+                    duration_ms: None,
+                    error: None,
+                    dead_reason: None,
+                    idempotency_key: None,
+                    metadata: HashMap::new(),
+                    created_at: at,
+                })
+                .unwrap();
+            store
+                .complete_execution(id, state, Some(1), None, None, at)
+                .unwrap();
+            id
+        };
+
+        // Age sweep (retention 30d): a 40-day-old completed row is stale; a
+        // 1-day-old one is fresh and kept.
+        let stale = seed(
+            "ret:job",
+            now - ChronoDuration::days(40),
+            ExecutionState::Completed,
+        );
+        let fresh = seed(
+            "ret:job",
+            now - ChronoDuration::days(1),
+            ExecutionState::Completed,
+        );
+
+        // keep_last=1: three fresh completed rows for a capped job (not caught
+        // by the age sweep, so this exercises the per-job cap in isolation).
+        let recent = now - ChronoDuration::days(1);
+        let capped_ids: Vec<Uuid> = (0..3)
+            .map(|i| {
+                seed(
+                    "cap:job",
+                    recent + ChronoDuration::seconds(i),
+                    ExecutionState::Completed,
+                )
+            })
+            .collect();
+
+        let mut capped_job = make_job("cap:job");
+        capped_job.keep_last = Some(1);
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("ret:job"), capped_job],
+            Arc::clone(&store),
+            make_runner(),
+        );
+
+        let result = watchdog.prune_executions(now, Some(ChronoDuration::days(30)));
+        assert_eq!(result.by_age, 1, "only the 40-day-old row is age-pruned");
+        assert_eq!(result.by_cap, 2, "keep_last=1 removes 2 of 3 capped rows");
+
+        assert!(store.get_execution(stale).unwrap().is_none());
+        assert!(store.get_execution(fresh).unwrap().is_some());
+        let survivors = capped_ids
+            .iter()
+            .filter(|id| store.get_execution(**id).unwrap().is_some())
+            .count();
+        assert_eq!(survivors, 1);
     }
 
     #[tokio::test]
