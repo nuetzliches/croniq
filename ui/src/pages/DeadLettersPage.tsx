@@ -8,6 +8,7 @@ import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatDate, truncate } from '@/lib/utils'
+import { ExecutionLink } from '@/components/entity-links'
 
 // The job's `description` (and any `operator_hint` baked into dead_reason)
 // is the fastest path from "this failed" to "here's what to do". The job
@@ -83,7 +84,7 @@ function DeadLetterDetail({
           {[
             ['Execution', (
               <span key="x" className="row mono" style={{ gap: 6, alignItems: 'center' }}>
-                {data.execution_id}
+                <ExecutionLink id={data.execution_id} />
                 <CopyButton value={data.execution_id} label="Copy execution id" />
               </span>
             )],
@@ -210,7 +211,7 @@ export function DeadLettersPage() {
                   Replay queued for {lastReplay.job_key} · attempt {lastReplay.attempt}
                 </p>
                 <p className="row mono dim" style={{ margin: '2px 0 0', gap: 4, alignItems: 'center' }}>
-                  <span className="ellipsis">{lastReplay.execution_id}</span>
+                  <span className="ellipsis"><ExecutionLink id={lastReplay.execution_id} /></span>
                   <CopyButton value={lastReplay.execution_id} label="Copy new execution id" />
                 </p>
               </div>

@@ -49,6 +49,15 @@ export function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "..." : s
 }
 
+/// True on macOS/iOS, where ⌘ (Command) is the shortcut modifier; false on
+/// Windows/Linux, where users expect Ctrl. This only drives what shortcut
+/// badges DISPLAY — the key handlers accept `metaKey || ctrlKey` regardless.
+/// `navigator.platform` is deprecated but remains the most reliable signal;
+/// fall back to the UA string.
+export const isMac =
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent)
+
 /// Shorten a UUID-ish ID to its first 8 chars. Pair with the full string
 /// on hover so users can copy it.
 export function shortId(id: string): string {

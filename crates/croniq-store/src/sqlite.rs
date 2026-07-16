@@ -2182,6 +2182,48 @@ impl AlertStore for SqliteStore {
     }
 }
 
+impl MaintenanceStore for SqliteStore {
+    fn get_maintenance(&self) -> Result<MaintenanceState, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at
+                 FROM maintenance WHERE id = 1",
+            )
+            .map_err(map_err)?;
+        stmt.query_row([], row_to_maintenance)
+            .optional()
+            .map_err(map_err)
+            .map(Option::unwrap_or_default)
+    }
+
+    fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO maintenance
+                (id, manual_active, window_start, window_end, note, updated_by, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                manual_active = excluded.manual_active,
+                window_start  = excluded.window_start,
+                window_end    = excluded.window_end,
+                note          = excluded.note,
+                updated_by    = excluded.updated_by,
+                updated_at    = excluded.updated_at",
+            params![
+                state.manual_active,
+                opt_dt_to_sql(&state.window_start),
+                opt_dt_to_sql(&state.window_end),
+                state.note,
+                state.updated_by,
+                opt_dt_to_sql(&state.updated_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+}
+
 impl Store for SqliteStore {}
 
 // ─── Row mappers ───
@@ -2268,6 +2310,17 @@ fn row_to_alert_rule_override(
         set_by_user_id: row.get(5)?,
         set_at: sql_to_dt(&row.get::<_, String>(6)?),
         expires_at: sql_to_opt_dt(row.get(7)?),
+    })
+}
+
+fn row_to_maintenance(row: &rusqlite::Row<'_>) -> Result<MaintenanceState, rusqlite::Error> {
+    Ok(MaintenanceState {
+        manual_active: row.get(0)?,
+        window_start: sql_to_opt_dt(row.get(1)?),
+        window_end: sql_to_opt_dt(row.get(2)?),
+        note: row.get(3)?,
+        updated_by: row.get(4)?,
+        updated_at: sql_to_opt_dt(row.get(5)?),
     })
 }
 

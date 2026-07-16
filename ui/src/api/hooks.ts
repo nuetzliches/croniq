@@ -28,6 +28,31 @@ export function useVersion() {
   })
 }
 
+// Global maintenance switch. Any authenticated user can read it (the banner
+// polls this); only admins can set it. Poll ~10s so a scheduled window or an
+// admin toggle appears/clears for everyone without a reload.
+export function useMaintenance() {
+  return useQuery({
+    queryKey: ['maintenance'],
+    queryFn: () => apiFetch<T.MaintenanceResponse>('/v1/maintenance'),
+    refetchInterval: 10000,
+  })
+}
+
+export function useSetMaintenance() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      manual_active: boolean
+      window_start: string | null
+      window_end: string | null
+      note: string | null
+    }) => apiPut<T.MaintenanceResponse>('/v1/maintenance', body),
+    onSuccess: (data) => qc.setQueryData(['maintenance'], data),
+    meta: { action: 'Update maintenance mode' },
+  })
+}
+
 // Jobs
 export function useJobs() {
   return useQuery({ queryKey: ['jobs'], queryFn: () => apiFetch<T.JobDefinition[]>('/v1/jobs') })

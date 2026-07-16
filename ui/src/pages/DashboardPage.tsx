@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { ArrowUpRight, Cpu, Activity, BarChart2 } from 'lucide-react'
 import {
   useHealth,
@@ -19,6 +19,7 @@ import {
   HeatCell,
 } from '@/components/primitives'
 import { formatRelative } from '@/lib/utils'
+import { JobLink } from '@/components/entity-links'
 import type { Execution, ThroughputBucket, RunnerSummary } from '@/api/types'
 
 export function DashboardPage() {
@@ -279,6 +280,7 @@ function HeatmapCard({
 }
 
 function ActivityCard({ executions, loading }: { executions: Execution[]; loading: boolean }) {
+  const navigate = useNavigate()
   return (
     <section className="card" style={{ padding: 0 }}>
       <div className="row between" style={{ padding: 16 }}>
@@ -298,16 +300,26 @@ function ActivityCard({ executions, loading }: { executions: Execution[]; loadin
           executions.slice(0, 8).map((e) => (
             <div
               key={e.id}
-              className="row"
+              role="button"
+              tabIndex={0}
+              className="row hoverable"
+              onClick={() => navigate(`/executions/${encodeURIComponent(e.id)}`)}
+              onKeyDown={(ev) => {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                  ev.preventDefault()
+                  navigate(`/executions/${encodeURIComponent(e.id)}`)
+                }
+              }}
               style={{
                 padding: '8px 10px',
                 gap: 10,
                 fontSize: 12.5,
-                borderRadius: 'var(--r-2)',
               }}
             >
               <StatusPill state={e.state} />
-              <span className="ellipsis grow mono" style={{ fontSize: 12 }}>{e.job_key}</span>
+              <span className="ellipsis grow mono" style={{ fontSize: 12 }}>
+                <JobLink jobKey={e.job_key} />
+              </span>
               {e.duration_ms != null ? (
                 <span className="dim mono tnum" style={{ fontSize: 11 }}>{e.duration_ms}ms</span>
               ) : null}
@@ -350,13 +362,16 @@ function RunnerFleetCard({
           />
         ) : (
           runners.slice(0, 6).map((r) => (
-            <div
+            <Link
               key={r.runner_id}
-              className="row"
+              to={`/runners/${encodeURIComponent(r.runner_id)}`}
+              className="row hoverable"
               style={{
                 padding: '10px 16px',
                 gap: 12,
                 borderBottom: '1px solid var(--divider)',
+                color: 'inherit',
+                textDecoration: 'none',
               }}
             >
               <Donut value={r.inflight} max={Math.max(r.max_inflight, 1)} size={32} thickness={3} />
@@ -369,7 +384,7 @@ function RunnerFleetCard({
                 </span>
               </div>
               <StatusPill state={r.status} />
-            </div>
+            </Link>
           ))
         )}
       </div>

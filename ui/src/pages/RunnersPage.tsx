@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import clsx from 'clsx'
-import { Trash2, Wifi, WifiOff, MousePointerClick, Activity } from 'lucide-react'
-import { useRunnersSSE, useDeleteRunner, useRunnerTags, useExecutions } from '@/api/hooks'
+import { Trash2, Wifi, WifiOff, MousePointerClick, Activity, ArrowRight } from 'lucide-react'
+import { useDeleteRunner, useRunnerTags, useExecutions } from '@/api/hooks'
+import { useRunnersStream } from '@/api/runners-stream'
 import type { RunnerSummary } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
@@ -12,6 +13,7 @@ import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { Spinner } from '@/components/ui/spinner'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { JobLink } from '@/components/entity-links'
 
 function CapacityRing({ inflight, max, size = 52 }: { inflight: number; max: number; size?: number }) {
   const pct = max > 0 ? Math.min(inflight / max, 1) : 0
@@ -39,7 +41,7 @@ const statusVariant = (s: string) =>
   s === 'Online' ? 'ok' : s === 'Stale' ? 'warn' : 'err'
 
 export function RunnersPage() {
-  const { data: runners, isConnected } = useRunnersSSE()
+  const { data: runners, isConnected } = useRunnersStream()
   const tagCounts = useRunnerTags()
   const navigate = useNavigate()
   const { runnerId: routeId } = useParams<{ runnerId: string }>()
@@ -265,9 +267,21 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
       <div className="card" style={{ padding: 0 }}>
         <div className="row between" style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
           <p className="card-title" style={{ margin: 0 }}>Recent executions</p>
-          <span className="dim mono" style={{ fontSize: 11 }}>
-            {executions.data?.length ?? 0} rows
-          </span>
+          <div className="row gap-8" style={{ alignItems: 'center' }}>
+            <span className="dim mono" style={{ fontSize: 11 }}>
+              {executions.data?.length ?? 0} rows
+            </span>
+            {(executions.data?.length ?? 0) > 0 ? (
+              <Link
+                to={`/executions?runner_id=${encodeURIComponent(runner.runner_id)}`}
+                className="btn sm ghost"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                View all executions
+                <ArrowRight size={12} />
+              </Link>
+            ) : null}
+          </div>
         </div>
         {executions.isLoading ? (
           <div className="flex justify-center py-6"><Spinner className="h-4 w-4" /></div>
@@ -290,7 +304,7 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
             <tbody>
               {(executions.data ?? []).map((e) => (
                 <tr key={e.id}>
-                  <td className="mono ellipsis" style={{ maxWidth: 220 }} title={e.job_key}>{e.job_key}</td>
+                  <td className="mono ellipsis" style={{ maxWidth: 220 }} title={e.job_key}><JobLink jobKey={e.job_key} /></td>
                   <td>
                     <Badge variant={stateVariant(e.state)}>{e.state}</Badge>
                   </td>

@@ -18,7 +18,7 @@ use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::AppState;
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{Trigger, TriggerState};
-use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
+use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus, MaintenanceState};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -118,6 +118,9 @@ pub struct SchedulerLoop {
     store: DynStore,
     runner: Arc<AppState>,
     quota: QuotaGuard,
+    /// Shared global maintenance switch (from `ServerState`). Defaults to an
+    /// all-off handle; wired by `set_maintenance_handle` at boot.
+    maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
 }
 
 impl SchedulerLoop {
@@ -134,7 +137,18 @@ impl SchedulerLoop {
             store,
             runner,
             quota: QuotaGuard::new(),
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         }
+    }
+
+    /// Wire the shared maintenance switch (from `ServerState`) so the tick can
+    /// freeze dispatch while maintenance is active. Until this is called the
+    /// scheduler uses an all-off handle (never paused).
+    pub fn set_maintenance_handle(
+        &mut self,
+        maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
+    ) {
+        self.maintenance = maintenance;
     }
 
     /// Override the per-job per-minute trigger rate (useful for benchmarking
@@ -246,10 +260,24 @@ impl SchedulerLoop {
     pub async fn tick(&mut self, now: DateTime<Utc>) -> TickResult {
         let mut fired = Vec::new();
 
+        // Global maintenance freezes dispatch. We still advance each due
+        // trigger's schedule below (mark_fired) so no catch-up backlog builds
+        // up, but emit no execution or work item while the switch is active.
+        let maintenance_active = self
+            .maintenance
+            .read()
+            .map(|m| m.is_active(now))
+            .unwrap_or(false);
+
         for trigger in self.triggers.values_mut() {
             let Some(fire_at) = trigger.evaluate(now) else {
                 continue;
             };
+
+            if maintenance_active {
+                trigger.mark_fired(fire_at, now);
+                continue;
+            }
 
             // Per-fire trace event — gives operators a single "decided to
             // fire" record per trigger inside the parent `tick` span,

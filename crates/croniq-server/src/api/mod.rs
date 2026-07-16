@@ -13,6 +13,7 @@ pub mod execution_logs;
 pub mod executions;
 pub mod invitations;
 pub mod jobs;
+pub mod maintenance;
 pub mod oidc;
 pub mod password_reset;
 pub mod pat;
@@ -57,7 +58,7 @@ use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
 use croniq_config::compile::{CalendarConfig, JobConfig};
-use croniq_store::models::{Execution, ExecutionFilter, ExecutionState};
+use croniq_store::models::{Execution, ExecutionFilter, ExecutionState, MaintenanceState};
 
 /// Default maximum time a poll request will block waiting for work.
 const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -169,6 +170,10 @@ pub struct ServerState {
     /// Resolved at boot from the Croniqfile `pull_api {
     /// trigger_dedup_window … }` directive; default 10 minutes.
     pub trigger_dedup_window_secs: u64,
+    /// Global maintenance switch. Cached in-memory (the store is the source of
+    /// truth) so the scheduler tick and the work-poll can check it cheaply
+    /// every cycle; the PUT handler updates both the store and this cache.
+    pub maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
 }
 
 impl ServerState {
@@ -198,6 +203,7 @@ impl ServerState {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         })
     }
 
@@ -230,6 +236,7 @@ impl ServerState {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         })
     }
 
@@ -261,6 +268,7 @@ impl ServerState {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         })
     }
 }
@@ -509,6 +517,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Admin
         .route("/v1/admin/reload-config", post(admin::handle_reload_config))
+        .route(
+            "/v1/maintenance",
+            get(maintenance::handle_get_maintenance).put(maintenance::handle_set_maintenance),
+        )
         // System diagnostics (config health) — admin-only
         .route("/v1/system/diagnostics", get(system::handle_diagnostics))
         // Auth management
@@ -781,7 +793,20 @@ async fn handle_poll(
         // cannot miss an enqueue that races with our check.
         let notified = state.runner.work_notify.notified();
 
-        let work = try_dequeue_for(&state, &req.runner_id, &req.capabilities, capacity).await;
+        // Global maintenance freezes dispatch: hand out no new work, but keep
+        // the long-poll alive (so runners don't hot-loop) and still deliver
+        // cancels. Queued work resumes when maintenance clears — the PUT
+        // handler pings `work_notify` so a waiting poll re-evaluates promptly.
+        let frozen = state
+            .maintenance
+            .read()
+            .map(|m| m.is_active(Utc::now()))
+            .unwrap_or(false);
+        let work = if frozen {
+            Vec::new()
+        } else {
+            try_dequeue_for(&state, &req.runner_id, &req.capabilities, capacity).await
+        };
         let cancel = state.runner.drain_cancels(&req.runner_id).await;
 
         if !work.is_empty() || !cancel.is_empty() {
@@ -1597,6 +1622,7 @@ mod tests {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         });
         (state, rx)
     }
@@ -1773,6 +1799,7 @@ mod tests {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1847,6 +1874,7 @@ mod tests {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1928,6 +1956,7 @@ mod tests {
             console_hub: None,
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
+            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         });
         let app = server_router(Arc::clone(&state));
 

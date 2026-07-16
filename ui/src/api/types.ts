@@ -13,6 +13,17 @@ export interface VersionResponse {
   env: string
 }
 
+export interface MaintenanceResponse {
+  /** Effective now: manual toggle on, or inside the scheduled window. */
+  active: boolean
+  manual_active: boolean
+  window_start: string | null
+  window_end: string | null
+  note: string | null
+  updated_by: string | null
+  updated_at: string | null
+}
+
 export interface JobDefinition {
   job_key: string
   description: string | null

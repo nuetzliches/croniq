@@ -9,6 +9,7 @@ import { Activity, Ban, X, MousePointerClick } from 'lucide-react'
 import { shortId } from '@/lib/utils'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { ExecutionDetail } from '@/components/ExecutionDetail'
+import { JobLink, RunnerLink } from '@/components/entity-links'
 
 const STATES = ['', 'queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
 const PAGE_SIZE = 50
@@ -22,16 +23,18 @@ export function ExecutionsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const stateFilter = searchParams.get('state') ?? ''
   const jobFilter = searchParams.get('job_key') ?? ''
+  const runnerFilter = searchParams.get('runner_id') ?? ''
   const [limit, setLimit] = useState(PAGE_SIZE)
   const executions = useExecutions({
     state: stateFilter || undefined,
     job_key: jobFilter || undefined,
+    runner_id: runnerFilter || undefined,
     limit,
   })
   const cancelExecution = useCancelExecution()
 
   const rows = executions.data ?? []
-  const hasFilters = !!(stateFilter || jobFilter)
+  const hasFilters = !!(stateFilter || jobFilter || runnerFilter)
   const reachedEnd = rows.length < limit
   const selected = routeId ? rows.find((r) => r.id === routeId) ?? null : null
 
@@ -39,7 +42,7 @@ export function ExecutionsPage() {
   const selectExecution = (id: string | null) =>
     navigate({ pathname: id ? `/executions/${id}` : '/executions', search: searchParams.toString() })
 
-  function setFilter(key: 'state' | 'job_key', v: string) {
+  function setFilter(key: 'state' | 'job_key' | 'runner_id', v: string) {
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev)
@@ -53,6 +56,7 @@ export function ExecutionsPage() {
   }
   const setStateAndReset = (v: string) => setFilter('state', v)
   const setJobAndReset = (v: string) => setFilter('job_key', v)
+  const setRunnerAndReset = (v: string) => setFilter('runner_id', v)
 
   return (
     <div className="split">
@@ -104,6 +108,25 @@ export function ExecutionsPage() {
               ) : null}
             </div>
           </label>
+          {runnerFilter ? (
+            <div className="col" style={{ gap: 4, fontSize: 12 }}>
+              <span className="dim">Runner</span>
+              <div className="row between" style={{ gap: 6 }}>
+                <span className="mono ellipsis" style={{ minWidth: 0, flex: 1 }} title={runnerFilter}>
+                  <RunnerLink runnerId={runnerFilter} />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRunnerAndReset('')}
+                  aria-label="Clear runner filter"
+                  className="btn icon sm ghost"
+                  style={{ width: 24, height: 24, flexShrink: 0 }}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            </div>
+          ) : null}
           {hasFilters ? (
             <button
               type="button"
@@ -111,6 +134,7 @@ export function ExecutionsPage() {
               onClick={() => {
                 setStateAndReset('')
                 setJobAndReset('')
+                setRunnerAndReset('')
               }}
             >
               Clear filters
@@ -211,8 +235,8 @@ function ExecutionRow({
       style={{ cursor: 'pointer' }}
     >
       <div className="row between" style={{ gap: 8, alignItems: 'center' }}>
-        <span className="key ellipsis mono" style={{ minWidth: 0, flex: 1, fontSize: 12 }} title={e.job_key}>
-          {e.job_key}
+        <span className="key ellipsis mono" style={{ minWidth: 0, flex: 1, fontSize: 12 }}>
+          <JobLink jobKey={e.job_key} />
         </span>
         <StatusPill state={e.state} />
         {isCancellable ? (
@@ -242,7 +266,7 @@ function ExecutionRow({
       </div>
       <div className="row between" style={{ fontSize: 10.5 }}>
         <span className="mono dim ellipsis" style={{ minWidth: 0, flex: 1 }}>
-          {e.runner_id ?? '—'}
+          {e.runner_id ? <RunnerLink runnerId={e.runner_id} /> : '—'}
         </span>
         <span className="mono">{e.duration_ms ? `${e.duration_ms} ms` : '—'}</span>
       </div>

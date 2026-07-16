@@ -435,6 +435,16 @@ pub trait AlertStore {
     ) -> Result<Vec<String>, StoreError>;
 }
 
+/// Global maintenance switch persistence (single-row table).
+pub trait MaintenanceStore {
+    /// Read the current maintenance state, or the all-off default when the
+    /// switch has never been written.
+    fn get_maintenance(&self) -> Result<MaintenanceState, StoreError>;
+
+    /// Upsert the singleton maintenance row.
+    fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError>;
+}
+
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
@@ -470,5 +480,6 @@ pub trait Store:
     + DslAdoptionStore
     + ExecutionLogStore
     + AlertStore
+    + MaintenanceStore
 {
 }

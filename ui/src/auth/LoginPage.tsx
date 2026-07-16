@@ -4,6 +4,7 @@ import { Lock, Shield, ShieldCheck, ArrowRight, ExternalLink, Bell } from 'lucid
 import clsx from 'clsx'
 import { useAuthStore } from './store'
 import { apiFetch, apiPost } from '@/api/client'
+import { isMac } from '@/lib/utils'
 import {
   isMfaRequired,
   isEnrollmentRequired,
@@ -536,7 +537,7 @@ export function LoginPage() {
         </div>
 
         <div className="login-formfoot">
-          <span>⌘<span style={{ letterSpacing: 1 }}>↵</span> sign in</span>
+          <span>{isMac ? '⌘' : 'Ctrl'}<span style={{ letterSpacing: 1 }}>↵</span> sign in</span>
           <span>·</span>
           <span>Tab to switch fields</span>
         </div>

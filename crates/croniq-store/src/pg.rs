@@ -83,6 +83,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("017_alert_deliveries", PG_MIGRATION_017),
     ("018_alert_rule_overrides", PG_MIGRATION_018),
     ("019_trigger_idempotency", PG_MIGRATION_019),
+    ("020_maintenance", PG_MIGRATION_020),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -426,6 +427,18 @@ CREATE TABLE IF NOT EXISTS alert_rule_overrides (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_rule_overrides_expires_at
     ON alert_rule_overrides(expires_at);
+"#;
+
+const PG_MIGRATION_020: &str = r#"
+CREATE TABLE IF NOT EXISTS maintenance (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    manual_active BOOLEAN NOT NULL DEFAULT FALSE,
+    window_start  TIMESTAMPTZ,
+    window_end    TIMESTAMPTZ,
+    note          TEXT,
+    updated_by    TEXT,
+    updated_at    TIMESTAMPTZ
+);
 "#;
 
 fn map_err(e: postgres::Error) -> StoreError {
@@ -2469,6 +2482,46 @@ impl AlertStore for PgStore {
     }
 }
 
+impl MaintenanceStore for PgStore {
+    fn get_maintenance(&self) -> Result<MaintenanceState, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at
+                 FROM maintenance WHERE id = 1",
+                &[],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(row_to_maintenance).unwrap_or_default())
+    }
+
+    fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        db.execute(
+            "INSERT INTO maintenance
+                (id, manual_active, window_start, window_end, note, updated_by, updated_at)
+             VALUES (1, $1, $2, $3, $4, $5, $6)
+             ON CONFLICT(id) DO UPDATE SET
+                manual_active = EXCLUDED.manual_active,
+                window_start  = EXCLUDED.window_start,
+                window_end    = EXCLUDED.window_end,
+                note          = EXCLUDED.note,
+                updated_by    = EXCLUDED.updated_by,
+                updated_at    = EXCLUDED.updated_at",
+            &[
+                &state.manual_active,
+                &state.window_start,
+                &state.window_end,
+                &state.note,
+                &state.updated_by,
+                &state.updated_at,
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+}
+
 impl Store for PgStore {}
 
 // ─── Row mappers ───
@@ -2696,6 +2749,17 @@ fn row_to_alert_rule_override(row: &postgres::Row) -> AlertRuleOverride {
         set_by_user_id: row.get(5),
         set_at: row.get(6),
         expires_at: row.get(7),
+    }
+}
+
+fn row_to_maintenance(row: &postgres::Row) -> MaintenanceState {
+    MaintenanceState {
+        manual_active: row.get(0),
+        window_start: row.get(1),
+        window_end: row.get(2),
+        note: row.get(3),
+        updated_by: row.get(4),
+        updated_at: row.get(5),
     }
 }
 

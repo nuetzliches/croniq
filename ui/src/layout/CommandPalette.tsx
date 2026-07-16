@@ -70,7 +70,7 @@ export function CommandPalette({ onClose }: CommandPaletteProps) {
         icon: Cpu,
         label: r.runner_id,
         sub: `${r.status}${r.tags.length ? ' • ' + r.tags.join(' ') : ''}`,
-        go: () => navigate('/runners'),
+        go: () => navigate(`/runners/${encodeURIComponent(r.runner_id)}`),
       }))
     const all = [...actions, ...jobMatches, ...runnerMatches]
     return ql ? all.filter((it) => (it.label + ' ' + (it.sub ?? '')).toLowerCase().includes(ql)) : all
