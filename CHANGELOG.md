@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-16
+
+### Added
+
+- **Global maintenance switch**
+  ([#342](https://github.com/nuetzliches/croniq/pull/342)). A manual toggle
+  plus an optional scheduled `[start, end)` window freezes job dispatch
+  server-wide: running executions finish, scheduled fires are skipped (the
+  schedule still advances, so there is no catch-up burst when the window ends),
+  and queued work plus triggers accepted during the window resume once it
+  clears. Backed by a `maintenance` store singleton (migration 020,
+  SQLite/Postgres), gated in the scheduler tick and the runner work-poll, and
+  exposed via `GET` (any authenticated caller) / `PUT` (admin only)
+  `/v1/maintenance`. The UI adds an admin-only topbar popover and an app-wide
+  banner shown to every user while maintenance is active.
+- **Entity cross-links across the UI**
+  ([#342](https://github.com/nuetzliches/croniq/pull/342)). Reusable
+  job/runner/execution links wire the dashboard, jobs, executions, runners,
+  dead-letters, alerts, and the command palette together, plus a runner-scoped
+  executions filter driven from the URL.
+- **The running Croniq version is now shown in the app topbar**, and the topbar
+  live indicator reflects real runner-stream (SSE) connectivity. The
+  command-palette shortcut badge is platform-aware (`Ctrl K` on Windows/Linux,
+  `⌘K` on macOS).
+
+### Fixed
+
+- **Dashboard "runners online" KPI counted zero**
+  ([#342](https://github.com/nuetzliches/croniq/pull/342)). The runners SSE
+  stream serialized runner status via `Debug` (`"Online"`) instead of serde
+  (`"online"`), so once the shared stream fed the app-wide runners cache the
+  case-sensitive KPI filter matched nothing. The stream now emits the same
+  lowercase status as the REST `/v1/runners` endpoint.
+
 ## [0.24.1] - 2026-07-15
 
 ### Fixed
