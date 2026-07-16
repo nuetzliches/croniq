@@ -355,6 +355,14 @@ pub struct ServerConfig {
     /// (`server { app_url "https://…" }`). `None` ⇒ the server falls back
     /// to the `CRONIQ_APP_URL` env var, then to per-request host derivation.
     pub app_url: Option<String>,
+    /// Age-based retention for terminal executions
+    /// (`server { execution_retention 30d }`, issue #344). Duration string
+    /// (`30d`, `7d`, `12h`); `None` (absent) ⇒ pruning is disabled and run
+    /// history is kept forever. The server's watchdog deletes `completed` /
+    /// `failed` / `cancelled` executions (and their logs) older than this;
+    /// `dead` executions are left to dead-letter retention.
+    #[serde(default)]
+    pub execution_retention: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -424,6 +432,14 @@ pub struct JobConfig {
     /// Max queued executions per job before new fires are skipped.
     /// `None` falls back to the global default of 10.
     pub max_queue_depth: Option<u32>,
+    /// Per-job cap on retained terminal executions (`keep_last N`, issue
+    /// #344). The watchdog keeps the newest `N` `completed` / `failed` /
+    /// `cancelled` executions of this job and prunes older ones (with their
+    /// logs). `None` ⇒ no per-job cap. Forced to `None` for `ephemeral`
+    /// jobs, whose executions are never persisted. Applies on top of the
+    /// global `server { execution_retention }` age sweep.
+    #[serde(default)]
+    pub keep_last: Option<u32>,
     /// Max concurrently claimed (in-flight) executions of this job
     /// (issue #278). `singleton` compiles to `Some(1)`; `max_concurrent N`
     /// to `Some(N)`. `None` means unlimited. Also stamped into the job's
@@ -549,6 +565,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         data_dir: "./.data".into(),
         db: "sqlite".into(),
         app_url: None,
+        execution_retention: None,
     };
     let mut pull_api = None;
     let mut observability = None;
@@ -566,6 +583,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut default_catch_up = CatchUpPolicy::default();
     let mut default_queue_ttl: Option<String> = None;
     let mut default_max_queue_depth: Option<u32> = None;
+    let mut default_keep_last: Option<u32> = None;
     let mut jobs = Vec::new();
     let mut calendars = Vec::new();
 
@@ -596,6 +614,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         "app_url" => {
                             if let Some(v) = first_arg(d, &vars) {
                                 server.app_url = Some(v);
+                            }
+                        }
+                        "execution_retention" => {
+                            if let Some(v) = first_arg(d, &vars) {
+                                server.execution_retention = Some(v);
                             }
                         }
                         _ => {}
@@ -677,6 +700,10 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 default_max_queue_depth =
                                     first_arg(dir, &vars).and_then(|v| v.parse().ok());
                             }
+                            "keep_last" => {
+                                default_keep_last =
+                                    first_arg(dir, &vars).and_then(|v| v.parse().ok());
+                            }
                             _ => {}
                         },
                         DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
@@ -707,6 +734,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         catch_up: default_catch_up,
                         queue_ttl: default_queue_ttl.clone(),
                         max_queue_depth: default_max_queue_depth,
+                        keep_last: default_keep_last,
                     },
                     &vars,
                 ));
@@ -1166,6 +1194,7 @@ struct JobDefaults {
     catch_up: CatchUpPolicy,
     queue_ttl: Option<String>,
     max_queue_depth: Option<u32>,
+    keep_last: Option<u32>,
 }
 
 fn compile_job(
@@ -1216,6 +1245,7 @@ fn compile_job(
     let mut catch_up = defaults.catch_up;
     let mut queue_ttl = defaults.queue_ttl.clone();
     let mut max_queue_depth = defaults.max_queue_depth;
+    let mut keep_last = defaults.keep_last;
     let mut max_concurrent: Option<u32> = None;
     let mut tags: Vec<String> = Vec::new();
 
@@ -1247,6 +1277,9 @@ fn compile_job(
                 }
                 "max_queue_depth" => {
                     max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
+                }
+                "keep_last" => {
+                    keep_last = first_arg(d, vars).and_then(|v| v.parse().ok());
                 }
                 // Per-job concurrency guard (issue #278). `singleton` is a
                 // bare directive equivalent to `max_concurrent 1`. Invalid
@@ -1308,6 +1341,9 @@ fn compile_job(
         catch_up = CatchUpPolicy::None;
         queue_ttl = None;
         max_queue_depth = Some(1);
+        // Ephemeral executions are never persisted, so there is no run
+        // history to cap — drop any inherited/explicit `keep_last`.
+        keep_last = None;
         // `singleton` / `max_concurrent` can't be enforced for ephemeral jobs:
         // executions aren't persisted, so the claim-time guard never sees an
         // in-flight run (issue #302). Drop the limit so the compiled job never
@@ -1346,6 +1382,7 @@ fn compile_job(
         catch_up,
         queue_ttl,
         max_queue_depth,
+        keep_last,
         max_concurrent,
         tags,
     }
@@ -1542,6 +1579,39 @@ mod tests {
     fn compile_server_without_app_url_is_none() {
         let ast = Parser::parse("server { listen :4000 }").unwrap();
         assert_eq!(compile(&ast).server.app_url, None);
+    }
+
+    #[test]
+    fn compile_server_execution_retention() {
+        let ast = Parser::parse("server { listen :4000; execution_retention 30d }").unwrap();
+        assert_eq!(
+            compile(&ast).server.execution_retention.as_deref(),
+            Some("30d")
+        );
+        // Absent ⇒ None (pruning disabled, history kept).
+        let ast = Parser::parse("server { listen :4000 }").unwrap();
+        assert_eq!(compile(&ast).server.execution_retention, None);
+    }
+
+    #[test]
+    fn compile_keep_last_default_and_job_override() {
+        let ast = Parser::parse(
+            r#"
+            defaults { keep_last 100 }
+            job a:one { every 1 minute }
+            job b:two { every 1 minute; keep_last 5 }
+            job c:eph { ephemeral every 1 minute; keep_last 5 }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let job = |k: &str| cfg.jobs.iter().find(|j| j.key == k).unwrap();
+        // Inherits the defaults value.
+        assert_eq!(job("a:one").keep_last, Some(100));
+        // Job-level directive overrides the default.
+        assert_eq!(job("b:two").keep_last, Some(5));
+        // Ephemeral jobs never persist executions ⇒ keep_last forced off.
+        assert_eq!(job("c:eph").keep_last, None);
     }
 
     #[test]

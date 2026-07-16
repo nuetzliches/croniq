@@ -17,6 +17,12 @@ server {
   # the request's forwarded/Host headers. Set it to pin links on a
   # directly-exposed server. Quote the value — an unquoted // starts a comment.
   # app_url "https://cron.example.com"
+  # Age-based retention for terminal executions (completed/failed/cancelled).
+  # The watchdog prunes finished executions — and their logs — older than this,
+  # capping run-history growth on long-lived servers. `dead` executions are
+  # left to dead-letter retention. Duration: 30d, 7d, 12h, … Omitted (the
+  # default) ⇒ history is kept forever. Applies to both SQLite and Postgres.
+  # execution_retention 30d
 }
 
 pull_api {
@@ -122,6 +128,11 @@ job ops:health-check:eu-west {
   every 5 minutes
   runner { require health-check; require eu-west }
   timeout 30s
+  # Per-job history cap: keep only the newest N terminal executions of this
+  # job; the watchdog prunes older ones (and their logs). Handy for very
+  # high-frequency jobs. Applies on top of the global execution_retention age
+  # sweep; also settable in `defaults { }`. Ignored for ephemeral jobs.
+  keep_last 500
 }
 
 job reports:monthly-summary {

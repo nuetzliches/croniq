@@ -830,6 +830,161 @@ fn dead_letter_purge_expired() {
     );
 }
 
+// ─── Execution retention (issue #344) ───
+
+/// Persist `exec` then drive it to terminal `state` with the given
+/// `completed_at`, so retention tests can control the terminal timestamp.
+fn complete_at(
+    store: &impl ExecutionStore,
+    exec: &Execution,
+    state: ExecutionState,
+    completed_at: chrono::DateTime<Utc>,
+) {
+    store.create_execution(exec).unwrap();
+    store
+        .complete_execution(exec.id, state, Some(1), None, None, completed_at)
+        .unwrap();
+}
+
+#[test]
+fn prune_executions_older_than_deletes_old_terminal_and_logs() {
+    let store = create_memory_store().unwrap();
+
+    // Old completed (before cutoff) — pruned together with its logs.
+    let old = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(
+        &store,
+        &old,
+        ExecutionState::Completed,
+        utc(2026, 1, 10, 0, 0),
+    );
+    store
+        .append_log(&log_entry(old.id, "info", "old log"))
+        .unwrap();
+
+    // Recent completed (after cutoff) — kept.
+    let recent = make_execution("ret:job", utc(2026, 3, 1, 0, 0));
+    complete_at(
+        &store,
+        &recent,
+        ExecutionState::Failed,
+        utc(2026, 3, 20, 0, 0),
+    );
+
+    // Still queued (NULL completed_at) — kept.
+    let live = make_execution("ret:job", utc(2026, 3, 28, 0, 0));
+    store.create_execution(&live).unwrap();
+
+    // Dead, even if old — kept (dead-letter retention owns it).
+    let dead = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(&store, &dead, ExecutionState::Dead, utc(2026, 1, 10, 0, 0));
+
+    let cutoff = utc(2026, 2, 1, 0, 0);
+    let deleted = store.prune_executions_older_than(cutoff, 100).unwrap();
+
+    assert_eq!(deleted, 1, "only the old completed execution is pruned");
+    assert!(store.get_execution(old.id).unwrap().is_none());
+    assert!(store.get_execution(recent.id).unwrap().is_some());
+    assert!(store.get_execution(live.id).unwrap().is_some());
+    assert!(store.get_execution(dead.id).unwrap().is_some());
+    assert!(
+        store.read_logs(old.id, 100).unwrap().is_empty(),
+        "logs of the pruned execution are removed too"
+    );
+}
+
+#[test]
+fn prune_executions_older_than_respects_batch_limit() {
+    let store = create_memory_store().unwrap();
+    for min in 0..5 {
+        let e = make_execution("ret:batch", utc(2026, 1, 1, 0, 0));
+        complete_at(
+            &store,
+            &e,
+            ExecutionState::Completed,
+            utc(2026, 1, 1, 0, min),
+        );
+    }
+    let cutoff = utc(2026, 2, 1, 0, 0);
+    assert_eq!(store.prune_executions_older_than(cutoff, 2).unwrap(), 2);
+    assert_eq!(store.prune_executions_older_than(cutoff, 100).unwrap(), 3);
+    assert_eq!(store.prune_executions_older_than(cutoff, 100).unwrap(), 0);
+}
+
+#[test]
+fn prune_executions_keep_last_keeps_newest_n_per_job() {
+    let store = create_memory_store().unwrap();
+
+    // 5 completed executions for the capped job, ascending completion time.
+    let mut ids = Vec::new();
+    for min in 0..5 {
+        let e = make_execution("cap:job", utc(2026, 3, 1, 0, 0));
+        complete_at(
+            &store,
+            &e,
+            ExecutionState::Completed,
+            utc(2026, 3, 1, 0, min),
+        );
+        ids.push((e.id, min));
+    }
+    // A different job's history must stay untouched.
+    let other = make_execution("other:job", utc(2026, 3, 1, 0, 0));
+    complete_at(
+        &store,
+        &other,
+        ExecutionState::Completed,
+        utc(2026, 3, 1, 0, 0),
+    );
+
+    let deleted = store.prune_executions_keep_last("cap:job", 2, 100).unwrap();
+    assert_eq!(deleted, 3, "keeps the 2 newest, deletes the 3 oldest");
+
+    for (id, min) in &ids {
+        assert_eq!(
+            store.get_execution(*id).unwrap().is_some(),
+            *min >= 3,
+            "survival mismatch at minute {min}"
+        );
+    }
+    assert!(store.get_execution(other.id).unwrap().is_some());
+}
+
+#[test]
+fn prune_executions_keep_last_excludes_dead_and_live() {
+    let store = create_memory_store().unwrap();
+
+    // Queued (no completed_at) and dead don't count toward keep_last and are
+    // never removed by it.
+    let queued = make_execution("cap:mix", utc(2026, 3, 1, 0, 0));
+    store.create_execution(&queued).unwrap();
+    let dead = make_execution("cap:mix", utc(2026, 3, 1, 0, 0));
+    complete_at(&store, &dead, ExecutionState::Dead, utc(2026, 3, 1, 0, 0));
+
+    // Three completed — with keep_last=1, the two oldest go.
+    let mut done = Vec::new();
+    for min in 0..3 {
+        let e = make_execution("cap:mix", utc(2026, 3, 1, 0, 0));
+        complete_at(
+            &store,
+            &e,
+            ExecutionState::Completed,
+            utc(2026, 3, 2, 0, min),
+        );
+        done.push((e.id, min));
+    }
+
+    let deleted = store.prune_executions_keep_last("cap:mix", 1, 100).unwrap();
+    assert_eq!(deleted, 2);
+    assert!(
+        store.get_execution(queued.id).unwrap().is_some(),
+        "queued kept"
+    );
+    assert!(store.get_execution(dead.id).unwrap().is_some(), "dead kept");
+    for (id, min) in &done {
+        assert_eq!(store.get_execution(*id).unwrap().is_some(), *min == 2);
+    }
+}
+
 // ─── ExecutionLogStore ───
 
 fn log_entry(execution_id: Uuid, level: &str, message: &str) -> ExecutionLogEntry {

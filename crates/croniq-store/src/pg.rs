@@ -84,6 +84,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("018_alert_rule_overrides", PG_MIGRATION_018),
     ("019_trigger_idempotency", PG_MIGRATION_019),
     ("020_maintenance", PG_MIGRATION_020),
+    ("021_execution_retention_indexes", PG_MIGRATION_021),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -158,6 +159,18 @@ ALTER TABLE executions ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 CREATE INDEX IF NOT EXISTS idx_executions_job_key_idempotency_key
     ON executions(job_key, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+"#;
+
+// Execution retention (issue #344). Partial indexes on the terminal
+// timestamp back the age sweep and per-job keep_last prune. Mirrors
+// migrations/021_execution_retention_indexes.sql.
+const PG_MIGRATION_021: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_executions_completed_at
+    ON executions(completed_at)
+    WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_executions_job_key_completed_at
+    ON executions(job_key, completed_at)
+    WHERE completed_at IS NOT NULL;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -863,6 +876,77 @@ impl ExecutionStore for PgStore {
             });
         }
         Ok(out)
+    }
+
+    fn prune_executions_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let mut tx = client.transaction().map_err(map_err)?;
+        let limit_i = limit as i64;
+        // Child logs first, then parents (mirrors the SQLite path). Both
+        // subqueries are identical and deterministic so they match the same
+        // batch even though `executions` is read twice.
+        tx.execute(
+            "DELETE FROM execution_logs WHERE execution_id IN (
+                 SELECT id FROM executions
+                 WHERE completed_at IS NOT NULL AND completed_at <= $1 AND state <> 'dead'
+                 ORDER BY completed_at ASC, id ASC
+                 LIMIT $2
+             )",
+            &[&cutoff, &limit_i],
+        )
+        .map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM executions WHERE id IN (
+                     SELECT id FROM executions
+                     WHERE completed_at IS NOT NULL AND completed_at <= $1 AND state <> 'dead'
+                     ORDER BY completed_at ASC, id ASC
+                     LIMIT $2
+                 )",
+                &[&cutoff, &limit_i],
+            )
+            .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
+        Ok(affected)
+    }
+
+    fn prune_executions_keep_last(
+        &self,
+        job_key: &str,
+        keep_last: u32,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let mut tx = client.transaction().map_err(map_err)?;
+        let limit_i = limit as i64;
+        let keep_i = keep_last as i64;
+        tx.execute(
+            "DELETE FROM execution_logs WHERE execution_id IN (
+                 SELECT id FROM executions
+                 WHERE job_key = $1 AND completed_at IS NOT NULL AND state <> 'dead'
+                 ORDER BY completed_at DESC, id DESC
+                 LIMIT $2 OFFSET $3
+             )",
+            &[&job_key, &limit_i, &keep_i],
+        )
+        .map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM executions WHERE id IN (
+                     SELECT id FROM executions
+                     WHERE job_key = $1 AND completed_at IS NOT NULL AND state <> 'dead'
+                     ORDER BY completed_at DESC, id DESC
+                     LIMIT $2 OFFSET $3
+                 )",
+                &[&job_key, &limit_i, &keep_i],
+            )
+            .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
+        Ok(affected)
     }
 }
 

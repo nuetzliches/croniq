@@ -185,6 +185,12 @@ Jobs can be defined in a **Croniqfile** (declarative DSL), via the **REST API**,
 server {
   listen :4000
   data_dir /var/lib/croniq
+
+  # Age-based retention for terminal executions (completed/failed/cancelled):
+  # the watchdog prunes finished executions + their logs older than this,
+  # capping run-history growth. Omitted ⇒ history kept forever. (dead
+  # executions follow dead-letter retention instead.)
+  # execution_retention 30d
 }
 
 defaults {
@@ -206,6 +212,10 @@ defaults {
 
   # Max queued executions per job before new fires are skipped (default: 10)
   # max_queue_depth 10
+
+  # Per-job history cap: keep only the newest N terminal executions per job
+  # (also settable per job). Applies on top of server.execution_retention.
+  # keep_last 500
 }
 
 calendar business-days {

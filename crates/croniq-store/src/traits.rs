@@ -128,6 +128,33 @@ pub trait ExecutionStore {
     /// demand with one grouped scan (no separate counters are persisted).
     /// Returns one entry per `job_key` that has at least one execution.
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError>;
+
+    /// Age-based retention: delete up to `limit` terminal executions whose
+    /// `completed_at` is at or before `cutoff`, together with their
+    /// `execution_logs` (issue #344). Terminal here means `completed` /
+    /// `failed` / `cancelled`; `dead` executions are excluded — their
+    /// lifecycle is governed by dead-letter retention ([`DeadLetterStore::
+    /// purge_expired`]). Runs in a single transaction and returns the number
+    /// of execution rows deleted. Callers loop until the return value is
+    /// below `limit` to drain a backlog in bounded batches, which keeps
+    /// write-lock time short on SQLite.
+    fn prune_executions_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, StoreError>;
+
+    /// Per-job cap: delete up to `limit` terminal executions of `job_key`
+    /// beyond the newest `keep_last` (ordered by `completed_at` descending),
+    /// together with their `execution_logs` (issue #344). `dead` executions
+    /// are excluded, matching [`Self::prune_executions_older_than`]. Runs in
+    /// a single transaction and returns the number of execution rows deleted.
+    fn prune_executions_keep_last(
+        &self,
+        job_key: &str,
+        keep_last: u32,
+        limit: u32,
+    ) -> Result<u64, StoreError>;
 }
 
 /// Runner persistence.

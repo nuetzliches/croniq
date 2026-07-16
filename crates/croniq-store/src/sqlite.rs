@@ -470,6 +470,79 @@ impl ExecutionStore for SqliteStore {
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
+
+    fn prune_executions_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        let cutoff_s = dt_to_sql(&cutoff);
+        // Child logs first: `execution_logs` has an enforced FK to
+        // `executions(id)` (PRAGMA foreign_keys=ON), so the parent delete
+        // would fail otherwise. Both subqueries are identical and
+        // deterministic (ORDER BY completed_at, id) over an unmodified
+        // `executions` table, so they select the exact same batch.
+        tx.execute(
+            "DELETE FROM execution_logs WHERE execution_id IN (
+                 SELECT id FROM executions
+                 WHERE completed_at IS NOT NULL AND completed_at <= ?1 AND state <> 'dead'
+                 ORDER BY completed_at ASC, id ASC
+                 LIMIT ?2
+             )",
+            params![cutoff_s, limit],
+        )
+        .map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM executions WHERE id IN (
+                     SELECT id FROM executions
+                     WHERE completed_at IS NOT NULL AND completed_at <= ?1 AND state <> 'dead'
+                     ORDER BY completed_at ASC, id ASC
+                     LIMIT ?2
+                 )",
+                params![cutoff_s, limit],
+            )
+            .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
+        Ok(affected as u64)
+    }
+
+    fn prune_executions_keep_last(
+        &self,
+        job_key: &str,
+        keep_last: u32,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        // Keep the newest `keep_last` terminal rows (OFFSET), delete up to
+        // `limit` older ones. Child logs first (see `prune_executions_older_than`).
+        tx.execute(
+            "DELETE FROM execution_logs WHERE execution_id IN (
+                 SELECT id FROM executions
+                 WHERE job_key = ?1 AND completed_at IS NOT NULL AND state <> 'dead'
+                 ORDER BY completed_at DESC, id DESC
+                 LIMIT ?2 OFFSET ?3
+             )",
+            params![job_key, limit, keep_last],
+        )
+        .map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM executions WHERE id IN (
+                     SELECT id FROM executions
+                     WHERE job_key = ?1 AND completed_at IS NOT NULL AND state <> 'dead'
+                     ORDER BY completed_at DESC, id DESC
+                     LIMIT ?2 OFFSET ?3
+                 )",
+                params![job_key, limit, keep_last],
+            )
+            .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
+        Ok(affected as u64)
+    }
 }
 
 // ─── RunnerStore ───

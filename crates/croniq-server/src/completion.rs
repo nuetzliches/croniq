@@ -471,6 +471,7 @@ mod tests {
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
             queue_ttl: None,
             max_queue_depth: None,
+            keep_last: None,
             max_concurrent: None,
             tags: vec![],
         }

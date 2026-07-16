@@ -57,6 +57,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("019_trigger_idempotency.sql"),
     ),
     ("020_maintenance", include_str!("020_maintenance.sql")),
+    (
+        "021_execution_retention_indexes",
+        include_str!("021_execution_retention_indexes.sql"),
+    ),
 ];
 
 /// Run all pending migrations.

@@ -282,6 +282,24 @@ impl ExecutionStore for PgStoreHandle {
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
         self.call(|s| s.job_execution_metrics())
     }
+
+    fn prune_executions_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        self.call(move |s| s.prune_executions_older_than(cutoff, limit))
+    }
+
+    fn prune_executions_keep_last(
+        &self,
+        job_key: &str,
+        keep_last: u32,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        let job_key = job_key.to_owned();
+        self.call(move |s| s.prune_executions_keep_last(&job_key, keep_last, limit))
+    }
 }
 
 // ─── RunnerStore ───

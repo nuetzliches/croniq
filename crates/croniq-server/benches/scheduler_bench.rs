@@ -42,6 +42,7 @@ fn make_job(key: &str, mode: ExecutionMode) -> JobConfig {
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        keep_last: None,
         max_concurrent: None,
         tags: vec![],
     }

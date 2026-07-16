@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Execution retention**
+  ([#344](https://github.com/nuetzliches/croniq/issues/344)). Terminal
+  executions were persisted forever, so run history grew unbounded. Two opt-in
+  knobs now cap it, enforced by the existing 30 s watchdog sweep on both the
+  SQLite and Postgres backends: a global `server { execution_retention <dur> }`
+  age sweep that prunes `completed` / `failed` / `cancelled` executions (and
+  their logs) older than the given duration (`30d`, `7d`, `12h`, …), and a
+  per-job `keep_last N` cap (settable in `defaults { }` or a `job { }` block)
+  that keeps only the newest N terminal executions of a job. `dead` executions
+  are excluded from both — their lifecycle stays governed by dead-letter
+  retention. Both are disabled by default (history is kept forever) so an
+  upgrade never silently deletes run history; deletions run in bounded batches
+  to keep SQLite write-lock time short, and `ephemeral` jobs are unaffected
+  (their executions are never persisted). New partial indexes on
+  `executions(completed_at)` back the prune (migration 021).
+
 ## [0.25.0] - 2026-07-16
 
 ### Added
