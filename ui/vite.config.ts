@@ -38,6 +38,7 @@ export default defineConfig({
     proxy: {
       '/v1': API_ORIGIN,
       '/health': API_ORIGIN,
+      '/version': API_ORIGIN,
       '/metrics': API_ORIGIN,
     },
   },

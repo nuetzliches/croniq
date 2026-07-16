@@ -17,7 +17,7 @@
 .kbd {
   font-family: var(--font-mono-app);
   font-size: 11px;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border: 1px solid var(--border-2);
   border-radius: 4px;
   background: var(--bg-2);
@@ -32,6 +32,42 @@
 }
 
 ::selection { background: var(--accent-bg); color: var(--fg); }
+
+/* ── cross-link (entity → detail navigation) ───────────────────
+   Inline accent link used by <JobLink>/<RunnerLink>/<ExecutionLink>.
+   Deliberately framework-agnostic: it only reads the custom design
+   tokens (always defined on :root), so it renders identically inside
+   the custom-token pages and the shadcn/Tailwind components. It sets
+   its own colour + decoration to override Tailwind's preflight `a`
+   reset, and inherits font-size/family from the surrounding text. */
+.xlink {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: var(--r-1);
+  transition: color .12s var(--easing);
+}
+.xlink:hover {
+  color: var(--accent-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.xlink:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+/* ── hoverable (generic clickable row — dashboard lists, …) ──── */
+.hoverable {
+  cursor: pointer;
+  border-radius: var(--r-2);
+  transition: background .12s var(--easing);
+}
+.hoverable:hover { background: var(--hover); }
+.hoverable:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: -2px;
+}
 
 /* ── pill ──────────────────────────────────────────────────── */
 .pill {

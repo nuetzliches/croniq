@@ -23,6 +23,7 @@ import {
   useThrottleRule,
   useClearOverride,
 } from '@/api/hooks'
+import { JobLink } from '@/components/entity-links'
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -719,7 +720,7 @@ export function DeliveryRow({ delivery: r }: { delivery: AlertDelivery }) {
         <RelativeTime iso={r.fired_at} />
       </td>
       <td className="mono" style={{ padding: '8px 12px', fontSize: 12 }}>
-        {r.job_key}
+        <JobLink jobKey={r.job_key} />
       </td>
       <td className="mono" style={{ padding: '8px 12px', fontSize: 12 }}>
         {r.rule_name}

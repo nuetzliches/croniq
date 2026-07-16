@@ -2,9 +2,13 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { PanelLeft, Search, Bell } from 'lucide-react'
 import { useSidebarStore } from './sidebar-store'
-import { useDeadLetter, useDeadLetters, useVersion } from '@/api/hooks'
-import { EnvBadge } from '@/components/primitives'
+import { useCurrentUser, useDeadLetter, useDeadLetters, useVersion } from '@/api/hooks'
+import { EnvBadge, VersionChip } from '@/components/primitives'
 import { CommandPalette } from './CommandPalette'
+import { MaintenanceControl } from './maintenance'
+import { useRunnersStream } from '@/api/runners-stream'
+import { isMac } from '@/lib/utils'
+import clsx from 'clsx'
 
 const ROUTE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
@@ -88,8 +92,10 @@ export function Topbar() {
   const navigate = useNavigate()
   const { data: deadLetters } = useDeadLetters()
   const { data: version } = useVersion()
+  const { data: me } = useCurrentUser()
   const dlCount = deadLetters?.length ?? 0
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const { isConnected } = useRunnersStream()
 
   const crumbs = useCrumbs()
 
@@ -138,14 +144,20 @@ export function Topbar() {
         >
           <Search size={14} />
           <span className="grow">Search jobs, runners, executions…</span>
-          <span className="kbd">⌘K</span>
+          <span className="kbd">{isMac ? '⌘K' : 'Ctrl K'}</span>
         </button>
       </div>
 
       <div className="topbar-right">
-        <span className="live" aria-hidden>
+        {version ? <VersionChip version={version} /> : null}
+        {me?.role === 'admin' ? <MaintenanceControl /> : null}
+        <span
+          className={clsx('live', !isConnected && 'offline')}
+          role="status"
+          title={isConnected ? 'Live — receiving realtime updates' : 'Disconnected — reconnecting…'}
+        >
           <span className="live-dot" />
-          <span>live</span>
+          <span>{isConnected ? 'live' : 'offline'}</span>
         </span>
         <button
           type="button"

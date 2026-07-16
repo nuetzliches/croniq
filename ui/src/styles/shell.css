@@ -496,6 +496,14 @@
   70%  { box-shadow: 0 0 0 6px oklch(0.74 0.15 152 / 0); }
   100% { box-shadow: 0 0 0 0 oklch(0.74 0.15 152 / 0); }
 }
+/* Disconnected: the runners SSE dropped and is backing off to reconnect.
+   Amber + no pulse, so it reads distinctly from the steady green "live". */
+.topbar .live.offline { color: var(--warn); }
+.live.offline .live-dot {
+  background: var(--warn);
+  animation: none;
+  box-shadow: none;
+}
 
 /* ── page wrapper ──────────────────────────────────────────── */
 .page {

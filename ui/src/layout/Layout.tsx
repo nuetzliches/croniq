@@ -5,6 +5,8 @@ import { Topbar } from './Topbar'
 import { Spinner } from '@/components/ui/spinner'
 import { useSidebarStore } from './sidebar-store'
 import { CommandPalette } from './CommandPalette'
+import { RunnersStreamProvider } from '@/api/runners-stream'
+import { MaintenanceBanner } from './maintenance'
 
 export function Layout() {
   const collapsed = useSidebarStore((s) => s.collapsed)
@@ -25,6 +27,7 @@ export function Layout() {
   }, [])
 
   return (
+    <RunnersStreamProvider>
     <div className="app" data-sidebar={collapsed ? 'collapsed' : undefined}>
       <div className="app-bg" aria-hidden="true">
         <div className="app-spot app-spot-a" />
@@ -33,12 +36,14 @@ export function Layout() {
       <Sidebar />
       <Topbar />
       <main className="main">
+        <MaintenanceBanner />
         <Suspense fallback={<PageFallback />}>
           <Outlet />
         </Suspense>
       </main>
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
     </div>
+    </RunnersStreamProvider>
   )
 }
 

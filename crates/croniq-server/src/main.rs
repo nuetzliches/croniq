@@ -475,12 +475,22 @@ async fn main() -> Result<()> {
     let mcp_jobs = dsl_jobs_initial.clone();
     let mcp_triggers = Arc::clone(&trigger_snapshot);
 
+    // Load the persisted maintenance switch into the shared in-memory cache
+    // (the store stays the source of truth) so the switch survives restarts,
+    // then hand the scheduler a clone so its tick can freeze dispatch.
+    if let Ok(m) = store.get_maintenance()
+        && let Ok(mut guard) = server_state.maintenance.write()
+    {
+        *guard = m;
+    }
+
     let mut scheduler_loop = SchedulerLoop::new(
         triggers,
         jobs.clone(),
         scheduler_store,
         Arc::clone(&runner_state),
     );
+    scheduler_loop.set_maintenance_handle(Arc::clone(&server_state.maintenance));
 
     let scheduler_reload_store = Arc::clone(&store);
     let scheduler_reload_snapshot = Arc::clone(&trigger_snapshot);

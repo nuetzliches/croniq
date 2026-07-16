@@ -35,6 +35,7 @@ import {
   useAlertDeliveries,
 } from '@/api/hooks'
 import { DeliveriesList } from '@/pages/AlertsPage'
+import { RunnerLink, ExecutionLink } from '@/components/entity-links'
 import {
   EmptyState,
   StatusPill,
@@ -885,13 +886,17 @@ function OverviewTab({
               {executions.slice(0, 12).map((e) => (
                 <tr key={e.id}>
                   <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
-                    {e.id.slice(0, 8)}
+                    <ExecutionLink id={e.id}>{e.id.slice(0, 8)}</ExecutionLink>
                   </td>
                   <td>
                     <StatusPill state={e.state} />
                   </td>
                   <td className="mono dim" style={{ fontSize: 11.5 }}>
-                    {e.runner_id ? e.runner_id.slice(-8) : '—'}
+                    {e.runner_id ? (
+                      <RunnerLink runnerId={e.runner_id}>{e.runner_id.slice(-8)}</RunnerLink>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td className="dim">{formatRelative(e.fire_at)}</td>
                   <td className="num">{durationFmt(e.duration_ms)}</td>
@@ -951,7 +956,9 @@ function OverviewTab({
               label="Assigned runner"
               value={
                 job.assigned_runner_id ? (
-                  <span className="mono">{job.assigned_runner_id.slice(-8)}</span>
+                  <RunnerLink runnerId={job.assigned_runner_id} className="mono">
+                    {job.assigned_runner_id.slice(-8)}
+                  </RunnerLink>
                 ) : (
                   <span className="dim">any</span>
                 )
@@ -1065,13 +1072,17 @@ function ExecutionsTab({
           {executions.map((e) => (
             <tr key={e.id}>
               <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
-                {e.id.slice(0, 8)}
+                <ExecutionLink id={e.id}>{e.id.slice(0, 8)}</ExecutionLink>
               </td>
               <td>
                 <StatusPill state={e.state} />
               </td>
               <td className="mono dim" style={{ fontSize: 11.5 }}>
-                {e.runner_id ? e.runner_id.slice(-8) : '—'}
+                {e.runner_id ? (
+                  <RunnerLink runnerId={e.runner_id}>{e.runner_id.slice(-8)}</RunnerLink>
+                ) : (
+                  '—'
+                )}
               </td>
               <td className="dim">{formatRelative(e.fire_at)}</td>
               <td className="num">{durationFmt(e.duration_ms)}</td>

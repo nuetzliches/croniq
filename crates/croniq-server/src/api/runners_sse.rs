@@ -38,7 +38,13 @@ pub async fn handle_runner_stream(
                     .map(|r| {
                         serde_json::json!({
                             "runner_id": r.runner_id,
-                            "status": format!("{:?}", r.status_at(now)),
+                            // Serialize via serde (lowercase, e.g. "online") so the
+                            // SSE payload matches the REST `/v1/runners` shape. A prior
+                            // `format!("{:?}", …)` emitted the PascalCase variant
+                            // ("Online"), which broke case-sensitive consumers like the
+                            // dashboard "runners online" KPI once the stream feeds the
+                            // shared ['runners'] cache app-wide.
+                            "status": r.status_at(now),
                             "capabilities": r.capabilities,
                             "tags": r.tags,
                             "inflight": r.inflight.len(),

@@ -855,4 +855,15 @@ impl ExecutionLogStore for PgStoreHandle {
 }
 
 // The blanket marker: PgStoreHandle satisfies every sub-trait above.
+impl MaintenanceStore for PgStoreHandle {
+    fn get_maintenance(&self) -> Result<MaintenanceState, StoreError> {
+        self.call(|s| s.get_maintenance())
+    }
+
+    fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError> {
+        let state = state.clone();
+        self.call(move |s| s.set_maintenance(&state))
+    }
+}
+
 impl Store for PgStoreHandle {}

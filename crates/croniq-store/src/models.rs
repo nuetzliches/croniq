@@ -645,6 +645,51 @@ impl AlertRuleOverride {
     }
 }
 
+/// Global maintenance switch state (singleton row).
+///
+/// When [`is_active`](MaintenanceState::is_active) is true the scheduler stops
+/// emitting new work and the work-poll hands out nothing — dispatch is frozen.
+/// In-flight executions still finish; queued work and triggers accepted during
+/// the window resume once it clears. Maintenance is either a manual toggle
+/// (`manual_active`, on until turned off) or a scheduled `[window_start,
+/// window_end)` window that activates and clears itself.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MaintenanceState {
+    /// Manual toggle: paused now until an operator turns it off.
+    pub manual_active: bool,
+    /// Optional lower bound of the scheduled window (`None` = starts now).
+    pub window_start: Option<DateTime<Utc>>,
+    /// Optional upper bound; the window auto-clears once `now >= window_end`.
+    pub window_end: Option<DateTime<Utc>>,
+    /// Optional operator message surfaced in the UI banner.
+    pub note: Option<String>,
+    /// Caller (user_id / api_client_id) that last changed the switch.
+    pub updated_by: Option<String>,
+    /// When the switch was last changed; `None` on the never-set default.
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl MaintenanceState {
+    /// Whether a scheduled window is configured (at least one bound set).
+    pub fn has_window(&self) -> bool {
+        self.window_start.is_some() || self.window_end.is_some()
+    }
+
+    /// Whether the scheduled window contains `now`. A window with only a
+    /// start is open-ended; with only an end starts immediately.
+    pub fn window_active(&self, now: DateTime<Utc>) -> bool {
+        self.has_window()
+            && self.window_start.is_none_or(|s| now >= s)
+            && self.window_end.is_none_or(|e| now < e)
+    }
+
+    /// Effective maintenance state at `now`: the manual toggle OR an active
+    /// scheduled window. The single check the dispatch gates call.
+    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+        self.manual_active || self.window_active(now)
+    }
+}
+
 // ─── Work Item Tracking ───
 
 /// A log entry pushed by a runner during execution.
