@@ -3,8 +3,9 @@ import { stateVariant } from '@/components/ui/badge-variants'
 import { CopyButton } from '@/components/ui/copy-button'
 import { LogsPanel } from '@/components/LogsPanel'
 import { JobLink, RunnerLink } from '@/components/entity-links'
+import { RelativeTime } from '@/components/ui/relative-time'
 import type { Execution } from '@/api/types'
-import { formatDate } from '@/lib/utils'
+import { formatDate, isRescheduled } from '@/lib/utils'
 
 export function ExecutionDetail({ execution }: { execution: Execution }) {
   return (
@@ -23,6 +24,18 @@ export function ExecutionDetail({ execution }: { execution: Execution }) {
           ['Runner', execution.runner_id ? <RunnerLink key="runner" runnerId={execution.runner_id} className="font-mono" /> : '—'],
           ['Duration', execution.duration_ms ? `${execution.duration_ms}ms` : '—'],
           ['Fire at', formatDate(execution.fire_at)],
+          // Original logical fire time — only shown when it diverges from
+          // fire_at (retry or dead-letter replay); redundant otherwise.
+          ...(isRescheduled(execution)
+            ? [[
+                'Scheduled for',
+                <span key="sf" className="flex flex-wrap items-baseline gap-1.5">
+                  {formatDate(execution.scheduled_for)}
+                  <span className="text-muted-foreground">·</span>
+                  <RelativeTime iso={execution.scheduled_for} />
+                </span>,
+              ]]
+            : []),
           ['Completed', execution.completed_at ? formatDate(execution.completed_at) : '—'],
           // Only present on triggered executions whose caller sent a dedup
           // key (#279) — hidden for the (vast) keyless majority.

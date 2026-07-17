@@ -5,8 +5,8 @@ import { useExecutions, useCancelExecution } from '@/api/hooks'
 import type { Execution } from '@/api/types'
 import { StatusPill } from '@/components/primitives'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Activity, Ban, X, MousePointerClick } from 'lucide-react'
-import { shortId } from '@/lib/utils'
+import { Activity, Ban, History, X, MousePointerClick } from 'lucide-react'
+import { shortId, formatDate, isRescheduled } from '@/lib/utils'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { ExecutionDetail } from '@/components/ExecutionDetail'
 import { JobLink, RunnerLink } from '@/components/entity-links'
@@ -260,7 +260,18 @@ function ExecutionRow({
         <span className="mono dim" style={{ minWidth: 0, flex: 1 }} title={e.id}>
           {shortId(e.id)}
         </span>
-        <span className="dim">
+        <span className="dim row" style={{ gap: 4, alignItems: 'center' }}>
+          {isRescheduled(e) ? (
+            // Retry or replay: the row's fire_at moved past the trigger's
+            // logical fire time.
+            <span
+              className="row"
+              style={{ flexShrink: 0 }}
+              title={`Originally scheduled for ${formatDate(e.scheduled_for)}`}
+            >
+              <History size={10} aria-label="Rescheduled" />
+            </span>
+          ) : null}
           <RelativeTime iso={e.fire_at} />
         </span>
       </div>
