@@ -655,6 +655,30 @@ impl DeadLetterStore for SqliteStore {
         Ok(())
     }
 
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM dead_letters WHERE id = ?1",
+                params![dead_letter_id.to_string()],
+            )
+            .map_err(map_err)?;
+        if affected == 0 {
+            // Dropping the uncommitted transaction rolls it back.
+            return Err(StoreError::NotFound(format!(
+                "dead letter {dead_letter_id}"
+            )));
+        }
+        insert_execution_with(&tx, execution)?;
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn

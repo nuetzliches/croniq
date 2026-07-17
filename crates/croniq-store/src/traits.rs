@@ -202,6 +202,24 @@ pub trait DeadLetterStore {
         now: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
+    /// Remove a dead letter AND persist its replay execution in a single
+    /// transaction. Both writes commit together or both fail.
+    ///
+    /// Replaces the previous two-call replay pattern (`create_execution`
+    /// followed by `remove_dead_letter`): a failure between the calls left a
+    /// `queued` execution row that is never enqueued as a work item (it only
+    /// runs after a restart catch-up) while the dead letter stayed replayable
+    /// — replaying it again then duplicates the execution. Same orphaning
+    /// class `complete_as_dead` closed for the dead-lettering path (#104).
+    ///
+    /// Fails with [`StoreError::NotFound`] — writing nothing — when the dead
+    /// letter no longer exists, e.g. a concurrent replay already consumed it.
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError>;
+
     /// Get a dead letter by ID.
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError>;
 

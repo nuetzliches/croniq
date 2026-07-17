@@ -893,6 +893,94 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
 }
 
 #[test]
+fn replay_dead_letter_creates_execution_and_removes_dead_letter() {
+    let store = create_memory_store().unwrap();
+
+    let dl_id = Uuid::new_v4();
+    store
+        .add_dead_letter(&DeadLetter {
+            id: dl_id,
+            execution_id: Uuid::new_v4(),
+            job_key: "billing:invoice".into(),
+            fire_at: utc(2026, 3, 29, 2, 0),
+            scheduled_for: utc(2026, 3, 29, 2, 0),
+            attempt: 3,
+            error: "connection refused".into(),
+            dead_reason: "retry_exhausted".into(),
+            metadata: HashMap::new(),
+            created_at: now(),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let replay = make_execution("billing:invoice", now());
+    store.replay_dead_letter(dl_id, &replay).unwrap();
+
+    // Replay execution was persisted…
+    let stored = store.get_execution(replay.id).unwrap().unwrap();
+    assert_eq!(stored.state, ExecutionState::Queued);
+    assert_eq!(stored.job_key, "billing:invoice");
+
+    // …and the dead letter is gone.
+    assert!(store.get_dead_letter(dl_id).unwrap().is_none());
+}
+
+#[test]
+fn replay_dead_letter_rolls_back_removal_when_execution_id_collides() {
+    let store = create_memory_store().unwrap();
+
+    let dl_id = Uuid::new_v4();
+    store
+        .add_dead_letter(&DeadLetter {
+            id: dl_id,
+            execution_id: Uuid::new_v4(),
+            job_key: "etl:sync".into(),
+            fire_at: now(),
+            scheduled_for: now(),
+            attempt: 2,
+            error: "boom".into(),
+            dead_reason: "timeout".into(),
+            metadata: HashMap::new(),
+            created_at: now(),
+            expires_at: None,
+        })
+        .unwrap();
+
+    // Pre-seed an execution with the same ID so the replay insert collides.
+    let existing = make_execution("etl:sync", now());
+    store.create_execution(&existing).unwrap();
+
+    let res = store.replay_dead_letter(dl_id, &existing);
+    assert!(
+        res.is_err(),
+        "expected replay_dead_letter to fail on PK collision"
+    );
+
+    // The dead letter must survive — its DELETE was rolled back together
+    // with the failing execution INSERT, so the replay can be retried.
+    assert!(
+        store.get_dead_letter(dl_id).unwrap().is_some(),
+        "dead letter removed despite failed execution insert — atomicity broken"
+    );
+}
+
+#[test]
+fn replay_dead_letter_missing_dead_letter_is_not_found_and_writes_nothing() {
+    let store = create_memory_store().unwrap();
+
+    let replay = make_execution("billing:invoice", now());
+    let res = store.replay_dead_letter(Uuid::new_v4(), &replay);
+    assert!(
+        matches!(res, Err(StoreError::NotFound(_))),
+        "expected NotFound for a vanished dead letter, got {res:?}"
+    );
+
+    // No execution row may exist — a concurrent replay already consumed the
+    // dead letter, so persisting a second execution would duplicate the run.
+    assert!(store.get_execution(replay.id).unwrap().is_none());
+}
+
+#[test]
 fn dead_letter_purge_expired() {
     let store = create_memory_store().unwrap();
 
