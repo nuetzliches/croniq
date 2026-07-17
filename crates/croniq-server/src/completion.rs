@@ -754,6 +754,7 @@ mod tests {
             delegate! {
                 add_dead_letter(dl: &DeadLetter) -> ();
                 complete_as_dead(execution_id: Uuid, duration_ms: Option<i64>, error: Option<&str>, dead_letter: &DeadLetter, now: DateTime<Utc>) -> ();
+                replay_dead_letter(dead_letter_id: Uuid, execution: &Execution) -> ();
                 get_dead_letter(id: Uuid) -> Option<DeadLetter>;
                 list_dead_letters(filter: &DeadLetterFilter) -> Vec<DeadLetter>;
                 remove_dead_letter(id: Uuid) -> ();
