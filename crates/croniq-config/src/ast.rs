@@ -292,6 +292,17 @@ pub enum Weekday {
 }
 
 impl Weekday {
+    /// All seven days in canonical week order (Monday..Sunday).
+    pub const ALL: &'static [Weekday; 7] = &[
+        Self::Monday,
+        Self::Tuesday,
+        Self::Wednesday,
+        Self::Thursday,
+        Self::Friday,
+        Self::Saturday,
+        Self::Sunday,
+    ];
+
     /// Accepts both full names (`monday`) and 3-letter abbreviations
     /// (`mon`), case-insensitively. The Croniqfile DSL canonicalises
     /// to lower-case full names on output, but the parser is generous
@@ -307,6 +318,26 @@ impl Weekday {
             "sunday" | "sun" => Some(Self::Sunday),
             _ => None,
         }
+    }
+
+    /// Expand the `weekday`/`weekend` group aliases (case-insensitive).
+    /// Returns `None` for anything else, including single day names.
+    /// Aliases stay full-length only — a 3-letter form would be
+    /// ambiguous (`wee`?).
+    pub fn parse_group(s: &str) -> Option<&'static [Weekday]> {
+        match s.to_ascii_lowercase().as_str() {
+            "weekday" => Some(&Self::ALL[0..5]),
+            "weekend" => Some(&Self::ALL[5..7]),
+            _ => None,
+        }
+    }
+
+    /// Parse a token that is either a single day name (`monday`, `Mon`)
+    /// or a group alias (`weekday`, `weekend`). Single days come back
+    /// as a one-element slice.
+    pub fn parse_token(s: &str) -> Option<&'static [Weekday]> {
+        Self::parse_group(s)
+            .or_else(|| Self::parse(s).map(|d| &Self::ALL[d as usize..d as usize + 1]))
     }
 
     pub fn as_str(self) -> &'static str {
@@ -364,4 +395,35 @@ pub struct NamedBlock {
     pub qualifier: Option<StringValue>,
     pub directives: Vec<DirectiveOrBlock>,
     pub span: Span,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Weekday;
+
+    #[test]
+    fn parse_group_expands_aliases() {
+        assert_eq!(Weekday::parse_group("weekday"), Some(&Weekday::ALL[0..5]));
+        assert_eq!(Weekday::parse_group("weekend"), Some(&Weekday::ALL[5..7]));
+        // Case-insensitive.
+        assert_eq!(Weekday::parse_group("WEEKDAY"), Some(&Weekday::ALL[0..5]));
+        // Single day names are not groups.
+        assert_eq!(Weekday::parse_group("monday"), None);
+        // No 3-letter alias forms.
+        assert_eq!(Weekday::parse_group("wee"), None);
+        assert_eq!(Weekday::parse_group("funday"), None);
+    }
+
+    #[test]
+    fn parse_token_accepts_days_and_aliases() {
+        assert_eq!(Weekday::parse_token("weekday"), Some(&Weekday::ALL[0..5]));
+        assert_eq!(
+            Weekday::parse_token("weekend"),
+            Some(&[Weekday::Saturday, Weekday::Sunday][..])
+        );
+        assert_eq!(Weekday::parse_token("Mon"), Some(&[Weekday::Monday][..]));
+        assert_eq!(Weekday::parse_token("sunday"), Some(&[Weekday::Sunday][..]));
+        assert_eq!(Weekday::parse_token("funday"), None);
+        assert_eq!(Weekday::parse_token("wee"), None);
+    }
 }

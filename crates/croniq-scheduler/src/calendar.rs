@@ -3,7 +3,9 @@
 //! A calendar determines whether a given datetime is "allowed" for job execution.
 //! Rules: `(all includes match) AND (no exclude matches)`. No includes = everything allowed.
 
+use crate::schedule::ast_weekday_to_chrono;
 use chrono::{Datelike, NaiveDate, NaiveTime};
+use croniq_config::calendar_args::{self, AnnualArg};
 
 /// A compiled calendar with evaluated rules.
 #[derive(Debug, Clone)]
@@ -107,45 +109,30 @@ impl CalendarRule {
     }
 }
 
+// Argument parsing is shared with croniq-config's `validate` via
+// `calendar_args`, so offline validation and runtime compilation cannot
+// diverge (#356).
 fn compile_rule(rule_type: &str, args: &[String]) -> Result<CalendarRule, CalendarError> {
     match rule_type {
         "weekly" => {
-            let days: Vec<chrono::Weekday> = args
-                .iter()
-                .map(|s| parse_weekday(s))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut days: Vec<chrono::Weekday> = Vec::new();
+            for arg in args {
+                let parsed =
+                    calendar_args::parse_weekly_arg(arg).map_err(CalendarError::InvalidRule)?;
+                days.extend(parsed.iter().map(ast_weekday_to_chrono));
+            }
             Ok(CalendarRule::Weekly(days))
         }
         "window" => {
-            if args.is_empty() {
-                return Err(CalendarError::InvalidRule(
-                    "window requires start..end times".into(),
-                ));
-            }
             // Args might be ["08:00..18:00"] (range) or ["08:00", "18:00"]
-            let (start_str, end_str) = if args.len() == 1 {
-                // Single arg with ".." separator
-                args[0].split_once("..").ok_or_else(|| {
-                    CalendarError::InvalidRule(format!("invalid window: {}", args[0]))
-                })?
-            } else if args.len() == 2 {
-                (args[0].as_str(), args[1].as_str())
-            } else {
-                return Err(CalendarError::InvalidRule(
-                    "window expects start..end or start end".into(),
-                ));
-            };
-            let start = parse_time(start_str)?;
-            let end = parse_time(end_str)?;
+            let (start, end) =
+                calendar_args::parse_window_args(args).map_err(CalendarError::InvalidRule)?;
             Ok(CalendarRule::Window(start, end))
         }
         "monthly" => {
             let days: Vec<u32> = args
                 .iter()
-                .map(|s| {
-                    s.parse::<u32>()
-                        .map_err(|_| CalendarError::InvalidRule(format!("invalid day: {s}")))
-                })
+                .map(|s| calendar_args::parse_monthly_arg(s).map_err(CalendarError::InvalidRule))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(CalendarRule::Monthly(days))
         }
@@ -154,27 +141,10 @@ fn compile_rule(rule_type: &str, args: &[String]) -> Result<CalendarRule, Calend
             let mut specific_dates = Vec::new();
 
             for arg in args {
-                if arg.len() == 5 && arg.contains('-') {
-                    // MM-DD format
-                    let parts: Vec<&str> = arg.split('-').collect();
-                    if parts.len() == 2 {
-                        let month: u32 = parts[0].parse().map_err(|_| {
-                            CalendarError::InvalidRule(format!("invalid date: {arg}"))
-                        })?;
-                        let day: u32 = parts[1].parse().map_err(|_| {
-                            CalendarError::InvalidRule(format!("invalid date: {arg}"))
-                        })?;
-                        annual_dates.push((month, day));
-                    }
-                } else if arg.len() == 10 && arg.chars().filter(|c| *c == '-').count() == 2 {
-                    // YYYY-MM-DD format — specific date
-                    let date = NaiveDate::parse_from_str(arg, "%Y-%m-%d")
-                        .map_err(|_| CalendarError::InvalidRule(format!("invalid date: {arg}")))?;
-                    specific_dates.push(date);
-                } else {
-                    return Err(CalendarError::InvalidRule(format!(
-                        "invalid annual date format: {arg} (expected MM-DD or YYYY-MM-DD)"
-                    )));
+                match calendar_args::parse_annual_arg(arg).map_err(CalendarError::InvalidRule)? {
+                    AnnualArg::MonthDay(month, day) => annual_dates.push((month, day)),
+                    AnnualArg::Date(date) => specific_dates.push(date),
+                    AnnualArg::Ignored => continue,
                 }
             }
 
@@ -198,36 +168,6 @@ fn compile_rule(rule_type: &str, args: &[String]) -> Result<CalendarRule, Calend
         }
         other => Err(CalendarError::UnknownRuleType(other.to_string())),
     }
-}
-
-fn parse_weekday(s: &str) -> Result<chrono::Weekday, CalendarError> {
-    match s.to_lowercase().as_str() {
-        "monday" | "mon" => Ok(chrono::Weekday::Mon),
-        "tuesday" | "tue" => Ok(chrono::Weekday::Tue),
-        "wednesday" | "wed" => Ok(chrono::Weekday::Wed),
-        "thursday" | "thu" => Ok(chrono::Weekday::Thu),
-        "friday" | "fri" => Ok(chrono::Weekday::Fri),
-        "saturday" | "sat" => Ok(chrono::Weekday::Sat),
-        "sunday" | "sun" => Ok(chrono::Weekday::Sun),
-        other => Err(CalendarError::InvalidRule(format!(
-            "unknown weekday: {other}"
-        ))),
-    }
-}
-
-fn parse_time(s: &str) -> Result<NaiveTime, CalendarError> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return Err(CalendarError::InvalidRule(format!("invalid time: {s}")));
-    }
-    let hour: u32 = parts[0]
-        .parse()
-        .map_err(|_| CalendarError::InvalidRule(format!("invalid time: {s}")))?;
-    let minute: u32 = parts[1]
-        .parse()
-        .map_err(|_| CalendarError::InvalidRule(format!("invalid time: {s}")))?;
-    NaiveTime::from_hms_opt(hour, minute, 0)
-        .ok_or_else(|| CalendarError::InvalidRule(format!("invalid time: {s}")))
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -404,5 +344,79 @@ mod tests {
         assert_eq!(cal.excludes.len(), 1);
         assert!(cal.is_allowed(date(2026, 3, 30), time(9, 0)));
         assert!(!cal.is_allowed(date(2026, 1, 1), time(9, 0)));
+    }
+
+    fn weekly_config(args: Vec<String>) -> croniq_config::compile::CalendarConfig {
+        croniq_config::compile::CalendarConfig {
+            name: "biz".into(),
+            timezone: None,
+            rules: vec![croniq_config::compile::CalendarRuleConfig {
+                kind: "include".into(),
+                rule_type: "weekly".into(),
+                args,
+            }],
+        }
+    }
+
+    // #356: the `weekday`/`weekend` group aliases that `fmt` and the cron
+    // converter emit must compile. This is also the shape a compile-time
+    // resolved variable (`include weekly {days}` with `days = "weekday"`)
+    // produces, which bypasses the parser-side expansion.
+    #[test]
+    fn compile_weekly_weekday_alias() {
+        let cal = Calendar::from_config(&weekly_config(vec!["weekday".into()])).unwrap();
+        // 2026-03-30 is a Monday, 2026-03-29 is a Sunday.
+        assert!(cal.is_allowed(date(2026, 3, 30), time(9, 0)));
+        assert!(!cal.is_allowed(date(2026, 3, 29), time(9, 0)));
+    }
+
+    #[test]
+    fn compile_weekly_weekend_alias() {
+        let cal = Calendar::from_config(&weekly_config(vec!["weekend".into()])).unwrap();
+        assert!(cal.is_allowed(date(2026, 3, 29), time(9, 0)));
+        assert!(!cal.is_allowed(date(2026, 3, 30), time(9, 0)));
+    }
+
+    #[test]
+    fn compile_weekly_alias_mixed_with_day() {
+        let cal =
+            Calendar::from_config(&weekly_config(vec!["weekday".into(), "sunday".into()])).unwrap();
+        assert!(cal.is_allowed(date(2026, 3, 29), time(9, 0))); // Sunday
+        assert!(cal.is_allowed(date(2026, 3, 30), time(9, 0))); // Monday
+        assert!(!cal.is_allowed(date(2026, 3, 28), time(9, 0))); // Saturday
+    }
+
+    #[test]
+    fn compile_weekly_unknown_day_errors() {
+        let err = Calendar::from_config(&weekly_config(vec!["funday".into()])).unwrap_err();
+        assert_eq!(err.to_string(), "invalid rule: unknown weekday: funday");
+    }
+
+    #[test]
+    fn compile_window_from_config() {
+        let rule = compile_rule("window", &["08:00..18:00".to_string()]).unwrap();
+        assert!(matches!(rule, CalendarRule::Window(_, _)));
+        assert!(rule.matches(date(2026, 3, 30), time(9, 0)));
+        assert!(!rule.matches(date(2026, 3, 30), time(19, 0)));
+    }
+
+    #[test]
+    fn compile_monthly_from_config() {
+        let rule = compile_rule("monthly", &["1".to_string(), "15".to_string()]).unwrap();
+        assert!(rule.matches(date(2026, 3, 15), time(9, 0)));
+        assert!(!rule.matches(date(2026, 3, 16), time(9, 0)));
+        // Out-of-range days compile and are simply inert (runtime parity).
+        assert!(compile_rule("monthly", &["45".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn compile_annual_ignored_arg_skipped() {
+        // A len-5 arg with too many dashes has always been silently
+        // skipped — the refactor must not make the loader stricter.
+        let rule = compile_rule("annual", &["1-2-3".to_string(), "12-25".to_string()]).unwrap();
+        match rule {
+            CalendarRule::Annual(dates) => assert_eq!(dates, vec![(12, 25)]),
+            other => panic!("expected Annual, got {other:?}"),
+        }
     }
 }

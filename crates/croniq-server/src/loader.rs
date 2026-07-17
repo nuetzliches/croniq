@@ -815,6 +815,43 @@ mod tests {
     }
 
     #[test]
+    fn calendar_with_weekday_alias_loads() {
+        // #356 repro: the `weekday` alias used to fail compilation, the
+        // calendar was silently skipped, and the job lost its gate.
+        let src = r#"
+            calendar biz { include weekly weekday }
+            job demo:tick {
+                every 1 minutes { calendar biz }
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        assert!(
+            cfg.triggers["demo:tick"].calendar.is_some(),
+            "calendar gate must not be dropped"
+        );
+    }
+
+    #[test]
+    fn fmt_round_trip_calendar_survives_load() {
+        // #356: `croniq fmt` collapses Mon–Fri to `weekday` — a fmt
+        // round-trip of a working Croniqfile must stay loadable.
+        let src = r#"
+            calendar biz { include weekly "Mon".."Fri" }
+            job demo:tick {
+                every day at 09:00 { calendar biz }
+            }
+        "#;
+        let ast = croniq_config::parser::Parser::parse(src).unwrap();
+        let formatted = croniq_config::format::format(&ast);
+        assert!(
+            formatted.contains("include weekly weekday"),
+            "fmt should emit the alias, got:\n{formatted}"
+        );
+        let cfg = load_str(&formatted).unwrap();
+        assert!(cfg.triggers["demo:tick"].calendar.is_some());
+    }
+
+    #[test]
     fn disabled_job_creates_paused_trigger() {
         let src = r#"
             job reports:monthly {
