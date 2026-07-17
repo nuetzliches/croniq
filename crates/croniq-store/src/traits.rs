@@ -219,7 +219,17 @@ pub trait DeadLetterStore {
     /// `None` empties the entire queue. Returns the number of rows deleted.
     fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError>;
 
-    /// Purge expired dead letters.
+    /// Purge dead letters whose `expires_at` has passed.
+    ///
+    /// Rows with `expires_at = NULL` are deliberately skipped and live
+    /// forever: NULL means "no TTL" — either the job's policy disabled
+    /// retention (`dead_letter { retention 0 }`) or the row was backfilled
+    /// by migration 009 for a pre-existing orphaned `dead` execution, where
+    /// guessing a retention would have risked deleting triage data nobody
+    /// chose a TTL for. Such rows are only removed explicitly — UI
+    /// bulk-delete, `DELETE /v1/dead-letters/{id}`, or
+    /// `POST /v1/dead-letters/bulk-delete` (see [`Self::remove_dead_letter`],
+    /// [`Self::remove_dead_letters`], [`Self::clear_dead_letters`]).
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
 }
 
