@@ -174,6 +174,13 @@ pub struct ServerState {
     /// truth) so the scheduler tick and the work-poll can check it cheaply
     /// every cycle; the PUT handler updates both the store and this cache.
     pub maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
+    /// Jobs paused at load time because their `calendar` reference did not
+    /// resolve (issue #361), keyed by job key with a human-readable reason.
+    /// Populated on boot and on every hot-reload from
+    /// `loader::LoadedConfig::calendar_faults`; surfaced as `config_error` on
+    /// `GET /v1/jobs/states` and counted by `croniq_config_calendar_faults`.
+    /// Empty under `policy { strict_calendars false }`.
+    pub config_faults: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
 impl ServerState {
@@ -194,6 +201,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -227,6 +235,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -259,6 +268,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1225,6 +1235,9 @@ async fn handle_trigger(
             id: exec_uuid,
             job_key: req.job_key.clone(),
             fire_at: now,
+            // Manual trigger: the logical fire time is the moment of the
+            // trigger call itself.
+            scheduled_for: now,
             attempt: 1,
             state: ExecutionState::Queued,
             runner_id: None,
@@ -1239,7 +1252,12 @@ async fn handle_trigger(
             created_at: now,
         };
         if let Err(e) = store.create_execution(&execution) {
-            tracing::error!(job_key = %req.job_key, error = %e, "failed to persist triggered execution");
+            // Enqueueing anyway would hand a runner an execution_id with no
+            // backing row: the CompletionProcessor could never record its
+            // outcome and the run would vanish without history. Reject the
+            // trigger instead; the caller can retry.
+            tracing::error!(job_key = %req.job_key, error = %e, "failed to persist triggered execution — trigger rejected");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -1247,6 +1265,7 @@ async fn handle_trigger(
         execution_id: execution_id.clone(),
         job_key: req.job_key,
         fire_at: now,
+        scheduled_for: now,
         attempt: 1,
         require: req.require,
         prefer: req.prefer,
@@ -1446,6 +1465,7 @@ mod tests {
                 execution_id: "exec-1".into(),
                 job_key: "billing:invoice".into(),
                 fire_at: chrono::Utc::now(),
+                scheduled_for: chrono::Utc::now(),
                 attempt: 1,
                 require: vec![],
                 prefer: vec![],
@@ -1618,6 +1638,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1795,6 +1816,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1870,6 +1892,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1952,6 +1975,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -2051,6 +2075,7 @@ mod tests {
                 id,
                 job_key: job_key.into(),
                 fire_at: created_at,
+                scheduled_for: created_at,
                 attempt: 1,
                 state,
                 runner_id: None,
@@ -2375,6 +2400,7 @@ mod tests {
                 id,
                 job_key: job_key.into(),
                 fire_at: now,
+                scheduled_for: now,
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,
@@ -2393,6 +2419,7 @@ mod tests {
             execution_id: id.to_string(),
             job_key: job_key.into(),
             fire_at: now,
+            scheduled_for: now,
             attempt: 1,
             require: vec![],
             prefer: vec![],
@@ -2578,6 +2605,7 @@ mod tests {
             execution_id: unguarded_id.to_string(),
             job_key: "etl:free".into(),
             fire_at: Utc::now(),
+            scheduled_for: Utc::now(),
             attempt: 1,
             require: vec![],
             prefer: vec![],

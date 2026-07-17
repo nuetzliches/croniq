@@ -202,6 +202,24 @@ pub trait DeadLetterStore {
         now: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
+    /// Remove a dead letter AND persist its replay execution in a single
+    /// transaction. Both writes commit together or both fail.
+    ///
+    /// Replaces the previous two-call replay pattern (`create_execution`
+    /// followed by `remove_dead_letter`): a failure between the calls left a
+    /// `queued` execution row that is never enqueued as a work item (it only
+    /// runs after a restart catch-up) while the dead letter stayed replayable
+    /// — replaying it again then duplicates the execution. Same orphaning
+    /// class `complete_as_dead` closed for the dead-lettering path (#104).
+    ///
+    /// Fails with [`StoreError::NotFound`] — writing nothing — when the dead
+    /// letter no longer exists, e.g. a concurrent replay already consumed it.
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError>;
+
     /// Get a dead letter by ID.
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError>;
 
@@ -219,7 +237,17 @@ pub trait DeadLetterStore {
     /// `None` empties the entire queue. Returns the number of rows deleted.
     fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError>;
 
-    /// Purge expired dead letters.
+    /// Purge dead letters whose `expires_at` has passed.
+    ///
+    /// Rows with `expires_at = NULL` are deliberately skipped and live
+    /// forever: NULL means "no TTL" — either the job's policy disabled
+    /// retention (`dead_letter { retention 0 }`) or the row was backfilled
+    /// by migration 009 for a pre-existing orphaned `dead` execution, where
+    /// guessing a retention would have risked deleting triage data nobody
+    /// chose a TTL for. Such rows are only removed explicitly — UI
+    /// bulk-delete, `DELETE /v1/dead-letters/{id}`, or
+    /// `POST /v1/dead-letters/bulk-delete` (see [`Self::remove_dead_letter`],
+    /// [`Self::remove_dead_letters`], [`Self::clear_dead_letters`]).
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
 }
 

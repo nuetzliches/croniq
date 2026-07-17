@@ -13,4 +13,7 @@ internal sealed record WorkAssignment(
     [property: JsonPropertyName("fire_at")] string FireAt,
     [property: JsonPropertyName("attempt")] int Attempt,
     [property: JsonPropertyName("metadata")] JsonElement Metadata,
-    [property: JsonPropertyName("timeout")] string Timeout);
+    [property: JsonPropertyName("timeout")] string Timeout,
+    // Original logical fire time (RFC 3339); null when the server predates the
+    // field. Trailing + defaulted to keep positional construction compatible.
+    [property: JsonPropertyName("scheduled_for")] string? ScheduledFor = null);

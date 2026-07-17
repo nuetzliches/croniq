@@ -45,6 +45,10 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         .load(Ordering::Relaxed);
     let reload_apply_err = state.reload_counters.apply_error.load(Ordering::Relaxed);
 
+    // Jobs paused because a referenced calendar did not resolve (issue #361).
+    // A non-zero value means jobs are fail-closed and not firing on schedule.
+    let calendar_faults = state.config_faults.read().map(|f| f.len()).unwrap_or(0);
+
     let mut body = format!(
         "# HELP croniq_runners_total Number of known runners by status.\n\
          # TYPE croniq_runners_total gauge\n\
@@ -58,7 +62,10 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          # TYPE croniq_config_reload_total counter\n\
          croniq_config_reload_total{{result=\"success\"}} {reload_success}\n\
          croniq_config_reload_total{{result=\"validation_error\"}} {reload_validation_err}\n\
-         croniq_config_reload_total{{result=\"apply_error\"}} {reload_apply_err}\n"
+         croniq_config_reload_total{{result=\"apply_error\"}} {reload_apply_err}\n\
+         # HELP croniq_config_calendar_faults Jobs paused because a referenced calendar did not resolve.\n\
+         # TYPE croniq_config_calendar_faults gauge\n\
+         croniq_config_calendar_faults {calendar_faults}\n"
     );
 
     // Scheduler liveness (issue #248). The scheduler updates the heartbeat
@@ -470,6 +477,7 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             job_key: "etl:sync".into(),
             fire_at: Utc::now(),
+            scheduled_for: Utc::now(),
             attempt: 1,
             state: ExecutionState::Queued,
             runner_id: None,

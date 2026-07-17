@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // HandlerFunc is the function signature every job handler implements.
@@ -21,11 +22,17 @@ type HandlerFunc func(ctx context.Context, ec *ExecutionContext) error
 type ExecutionContext struct {
 	ExecutionID string
 	JobKey      string
-	Attempt     int
-	Metadata    json.RawMessage
-	Timeout     string
-	RunnerID    string
-	RunnerTags  []string
+	// ScheduledFor is the trigger's original logical fire time — stable across
+	// retries and dead-letter replays. Use this (not time.Now()) for
+	// time-relative job logic like "the month being reported". Zero
+	// (check with IsZero()) when the server predates the field; the SDK never
+	// falls back to the queue fire time.
+	ScheduledFor time.Time
+	Attempt      int
+	Metadata     json.RawMessage
+	Timeout      string
+	RunnerID     string
+	RunnerTags   []string
 
 	client *Client
 
@@ -35,6 +42,21 @@ type ExecutionContext struct {
 	// its drain before sending the final ack.
 	logWriterOnce sync.Once
 	logWriter     *LogWriter
+}
+
+// parseScheduledFor parses the server's scheduled_for (RFC 3339) into a
+// time.Time. Returns the zero value when the field is absent (older server)
+// or unparseable — never falls back to fire_at, which would reintroduce the
+// wrong-logical-time bug. Callers check the result with IsZero().
+func parseScheduledFor(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // Log pushes a single log event for this execution. Errors are logged

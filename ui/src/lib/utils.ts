@@ -1,8 +1,17 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import type { Execution } from "@/api/types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+/// True when the row's due time diverged from the trigger's logical fire
+/// time — i.e. the execution is a retry (fire_at = now+backoff) or a
+/// dead-letter replay (fire_at = now). Compares epoch millis so formatting
+/// differences never trip it.
+export function isRescheduled(e: Pick<Execution, "fire_at" | "scheduled_for">): boolean {
+  return new Date(e.fire_at).getTime() !== new Date(e.scheduled_for).getTime()
 }
 
 /// ISO 8601 in UTC: "2026-04-25 17:14:54Z". Locale-stable so screenshots

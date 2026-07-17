@@ -35,6 +35,11 @@ export interface JobDefinition {
   timeout: string | null
   max_retries: number | null
   dead_letter_enabled: boolean | null
+  // Dead-letter policy (parity with the DSL `dead_letter { … }` block).
+  // null = system default (retention 30d, no hint, no stale-replay guard).
+  dead_letter_retention: string | null
+  dead_letter_operator_hint: string | null
+  dead_letter_replay_max_age: string | null
   tags: string[]
 }
 
@@ -64,6 +69,10 @@ export interface JobScheduleState {
   /// `queued` (persisted executions) or `ephemeral` (no execution history by
   /// design). Older servers omit this — treat `undefined` as `queued`.
   execution_mode?: ExecutionMode
+  /// Set when the job is `paused` because its calendar reference didn't resolve
+  /// at load time (issue #361). Distinguishes a fail-closed pause from a manual
+  /// one; the value is a human-readable reason. Absent for healthy jobs.
+  config_error?: string
 }
 
 export interface TriggerDefinition {
@@ -93,6 +102,8 @@ export interface Execution {
   id: string
   job_key: string
   fire_at: string
+  /** Original logical fire time, constant across retries and replay. */
+  scheduled_for: string
   attempt: number
   state: string
   runner_id: string | null
@@ -110,6 +121,8 @@ export interface DeadLetter {
   execution_id: string
   job_key: string
   fire_at: string
+  /** Original logical fire time; anchors the stale-replay guard. */
+  scheduled_for: string
   attempt: number
   error: string
   dead_reason: string
@@ -120,6 +133,21 @@ export interface DeadLetter {
 
 export interface BulkDeleteResponse {
   deleted: number
+}
+
+export interface ReplayResponse {
+  execution_id: string
+  attempt: number
+  scheduled_for: string
+}
+
+/** 409 body when the stale-replay guard rejects a replay. */
+export interface StaleReplayError {
+  error: 'stale_replay'
+  message: string
+  scheduled_for: string
+  age_seconds: number
+  replay_max_age: string
 }
 
 export interface ExecutionLogEntry {

@@ -18,6 +18,11 @@ export interface WorkAssignment {
   execution_id: string;
   job_key: string;
   fire_at: string;
+  /**
+   * Original logical fire time (RFC 3339). Absent when the server predates
+   * the field — consumers must not fall back to `fire_at`.
+   */
+  scheduled_for?: string;
   attempt: number;
   metadata: unknown;
   timeout?: string;

@@ -189,6 +189,11 @@ fn default_list_limit() -> u32 {
 pub struct DlqRetryParams {
     /// The dead-letter ID to retry (UUID string).
     pub dead_letter_id: String,
+    /// Override the stale-replay guard (`dead_letter { replay_max_age … }`).
+    /// Without this, retrying a dead letter whose original schedule is older
+    /// than the job's `replay_max_age` is refused.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -211,6 +216,18 @@ pub struct UpdateJobParams {
     /// Toggle dead-letter persistence. Omit to leave unchanged.
     #[serde(default)]
     pub dead_letter_enabled: Option<bool>,
+
+    /// New dead-letter retention (e.g. `"14d"`). Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_retention: Option<String>,
+
+    /// New operator triage hint. Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_operator_hint: Option<String>,
+
+    /// New stale-replay guard (e.g. `"7d"`). Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_replay_max_age: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -319,6 +336,15 @@ pub struct CreateJobParams {
     /// Toggle dead-letter persistence on permanent failure.
     #[serde(default)]
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration (e.g. `"14d"`); missing = system default (30d).
+    #[serde(default)]
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    #[serde(default)]
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard (e.g. `"7d"`); missing = replays always allowed.
+    #[serde(default)]
+    pub dead_letter_replay_max_age: Option<String>,
     /// Free-form tags for filtering (e.g. `["env=prod", "team=ops"]`).
     /// Not routing-relevant — runner capabilities handle routing.
     #[serde(default)]
@@ -754,6 +780,7 @@ impl CroniqMcp {
                 id,
                 job_key: p.job_key.clone(),
                 fire_at: now,
+                scheduled_for: now,
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,
@@ -776,6 +803,7 @@ impl CroniqMcp {
             execution_id: execution_id.clone(),
             job_key: p.job_key.clone(),
             fire_at: now,
+            scheduled_for: now,
             attempt: 1,
             require: p.require,
             prefer: p.prefer,
@@ -851,6 +879,7 @@ impl CroniqMcp {
                 id,
                 job_key: p.job_key.clone(),
                 fire_at: now,
+                scheduled_for: now,
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,
@@ -873,6 +902,7 @@ impl CroniqMcp {
             execution_id: id.to_string(),
             job_key: p.job_key.clone(),
             fire_at: now,
+            scheduled_for: now,
             attempt: 1,
             require: p.require,
             prefer: p.prefer,
@@ -934,6 +964,15 @@ impl CroniqMcp {
         if let Some(dle) = p.dead_letter_enabled {
             job.dead_letter_enabled = Some(dle);
         }
+        if let Some(r) = p.dead_letter_retention {
+            job.dead_letter_retention = Some(r);
+        }
+        if let Some(h) = p.dead_letter_operator_hint {
+            job.dead_letter_operator_hint = Some(h);
+        }
+        if let Some(a) = p.dead_letter_replay_max_age {
+            job.dead_letter_replay_max_age = Some(a);
+        }
         job.updated_at = Utc::now();
 
         store
@@ -969,8 +1008,30 @@ impl CroniqMcp {
                 )
             })?;
 
-        let new_id = Uuid::new_v4();
         let now = Utc::now();
+
+        // Stale-replay guard (opt-in via `dead_letter { replay_max_age … }`),
+        // mirroring the HTTP replay endpoint. Anchored on the dead letter's
+        // original scheduled_for — the drift that breaks time-coupled jobs.
+        if !p.force
+            && let Some(job) = self.jobs.get(&dl.job_key)
+            && let Some(max_age_str) = job.dead_letter.replay_max_age.as_ref()
+            && let Some(max_age) = croniq_execution::retry::parse_duration(max_age_str)
+        {
+            let age = now - dl.scheduled_for;
+            if age > chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX) {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "Dead letter '{}' was originally scheduled {} days ago; job declares replay_max_age {max_age_str}. Pass force:true to retry anyway.",
+                        p.dead_letter_id,
+                        age.num_days()
+                    ),
+                    None,
+                ));
+            }
+        }
+
+        let new_id = Uuid::new_v4();
         let next_attempt = dl.attempt + 1;
 
         // Create a fresh execution for the retry.
@@ -978,6 +1039,9 @@ impl CroniqMcp {
             id: new_id,
             job_key: dl.job_key.clone(),
             fire_at: now,
+            // Preserve the original logical fire time across replay so
+            // time-coupled jobs compute against the intended instant.
+            scheduled_for: dl.scheduled_for,
             attempt: next_attempt,
             state: ExecutionState::Queued,
             runner_id: None,
@@ -992,14 +1056,21 @@ impl CroniqMcp {
             created_at: now,
         };
 
+        // Single transaction: a failure leaves neither an orphaned `queued`
+        // execution nor a still-replayable dead letter. NotFound means a
+        // concurrent retry consumed the dead letter after our read above.
         store
-            .create_execution(&execution)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        // Remove from dead-letter queue.
-        store
-            .remove_dead_letter(dl_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .replay_dead_letter(dl_id, &execution)
+            .map_err(|e| match e {
+                croniq_store::traits::StoreError::NotFound(_) => McpError::invalid_params(
+                    format!(
+                        "Dead letter '{}' not found (already replayed?)",
+                        p.dead_letter_id
+                    ),
+                    None,
+                ),
+                e => McpError::internal_error(e.to_string(), None),
+            })?;
 
         // Look up job config for require/prefer/timeout
         let job = self.jobs.get(&dl.job_key);
@@ -1009,6 +1080,7 @@ impl CroniqMcp {
             execution_id: new_id.to_string(),
             job_key: dl.job_key.clone(),
             fire_at: now,
+            scheduled_for: dl.scheduled_for,
             attempt: next_attempt,
             require: job.map(|j| j.runner.require.clone()).unwrap_or_default(),
             prefer: job.map(|j| j.runner.prefer.clone()).unwrap_or_default(),
@@ -1300,6 +1372,9 @@ impl CroniqMcp {
                 timeout: cfg.timeout.clone(),
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: cfg.tags.clone(),
             };
             return serde_json::to_string_pretty(&synth)
@@ -1342,6 +1417,9 @@ impl CroniqMcp {
             timeout: p.timeout,
             max_retries: p.max_retries,
             dead_letter_enabled: p.dead_letter_enabled,
+            dead_letter_retention: p.dead_letter_retention,
+            dead_letter_operator_hint: p.dead_letter_operator_hint,
+            dead_letter_replay_max_age: p.dead_letter_replay_max_age,
             tags: p.tags.unwrap_or_default(),
         };
         store
@@ -2023,6 +2101,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2042,6 +2121,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2054,6 +2134,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2075,6 +2156,7 @@ mod tests {
             execution_id: exec_id,
             job_key: "billing:invoice".into(),
             fire_at: Utc::now(),
+            scheduled_for: Utc::now(),
             attempt: 3,
             error: "db timeout".into(),
             dead_reason: "max retries".into(),
@@ -2088,6 +2170,7 @@ mod tests {
         let result = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: dl_id.to_string(),
+                force: false,
             }))
             .await
             .unwrap();

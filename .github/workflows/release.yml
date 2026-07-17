@@ -169,7 +169,7 @@ jobs:
         # `linux/amd64` → `linux-amd64`, used as cache scope + artefact
         # name. Slashes break both, so we normalise once here.
         run: echo "name=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
@@ -264,7 +264,7 @@ jobs:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
@@ -312,7 +312,7 @@ jobs:
           done
           cat SHA256SUMS
       - name: Create release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
           # Semver pre-release identifiers always contain a `-` (e.g.

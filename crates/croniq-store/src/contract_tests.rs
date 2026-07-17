@@ -21,6 +21,7 @@ fn make_execution(job_key: &str, fire_at: chrono::DateTime<Utc>) -> Execution {
         id: Uuid::new_v4(),
         job_key: job_key.to_string(),
         fire_at,
+        scheduled_for: fire_at,
         attempt: 1,
         state: ExecutionState::Queued,
         runner_id: None,
@@ -214,6 +215,21 @@ fn execution_create_and_get() {
     assert_eq!(loaded.id, exec.id);
     assert_eq!(loaded.job_key, "billing:invoice");
     assert_eq!(loaded.state, ExecutionState::Queued);
+}
+
+#[test]
+fn execution_scheduled_for_survives_round_trip_distinct_from_fire_at() {
+    // The retry/replay case: fire_at has drifted to "now" but scheduled_for
+    // stays pinned to the original logical fire time.
+    let store = create_memory_store().unwrap();
+    let mut exec = make_execution("billing:report", utc(2026, 6, 8, 0, 5));
+    exec.scheduled_for = utc(2026, 6, 1, 6, 0);
+
+    store.create_execution(&exec).unwrap();
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+
+    assert_eq!(loaded.fire_at, utc(2026, 6, 8, 0, 5));
+    assert_eq!(loaded.scheduled_for, utc(2026, 6, 1, 6, 0));
 }
 
 #[test]
@@ -637,6 +653,7 @@ fn dead_letter_add_and_get() {
         execution_id: Uuid::new_v4(),
         job_key: "billing:invoice".into(),
         fire_at: utc(2026, 3, 29, 2, 0),
+        scheduled_for: utc(2026, 3, 29, 2, 0),
         attempt: 5,
         error: "max retries exhausted".into(),
         dead_reason: "retry_exhausted".into(),
@@ -664,6 +681,7 @@ fn dead_letter_list_and_remove() {
                 execution_id: Uuid::new_v4(),
                 job_key: "etl:sync".into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 3,
                 error: "timeout".into(),
                 dead_reason: "timeout".into(),
@@ -702,6 +720,7 @@ fn dead_letter_remove_many_by_ids() {
                 execution_id: Uuid::new_v4(),
                 job_key: "etl:sync".into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 1,
                 error: "boom".into(),
                 dead_reason: "timeout".into(),
@@ -741,6 +760,7 @@ fn dead_letter_clear_all_and_by_job_key() {
                 execution_id: Uuid::new_v4(),
                 job_key: job_key.into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 1,
                 error: "boom".into(),
                 dead_reason: "timeout".into(),
@@ -786,6 +806,7 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
         execution_id: exec.id,
         job_key: exec.job_key.clone(),
         fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
         attempt: 3,
         error: "connection refused".into(),
         dead_reason: "exhausted after 3 attempts: connection refused".into(),
@@ -813,6 +834,7 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
     assert_eq!(stored.execution_id, exec.id);
     assert_eq!(stored.attempt, 3);
     assert_eq!(stored.expires_at, dl.expires_at);
+    assert_eq!(stored.scheduled_for, dl.scheduled_for);
 }
 
 #[test]
@@ -830,6 +852,7 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
             execution_id: Uuid::new_v4(),
             job_key: "other:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "x".into(),
             dead_reason: "x".into(),
@@ -844,6 +867,7 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
         execution_id: exec.id,
         job_key: exec.job_key.clone(),
         fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
         attempt: 3,
         error: "boom".into(),
         dead_reason: "exhausted".into(),
@@ -869,6 +893,94 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
 }
 
 #[test]
+fn replay_dead_letter_creates_execution_and_removes_dead_letter() {
+    let store = create_memory_store().unwrap();
+
+    let dl_id = Uuid::new_v4();
+    store
+        .add_dead_letter(&DeadLetter {
+            id: dl_id,
+            execution_id: Uuid::new_v4(),
+            job_key: "billing:invoice".into(),
+            fire_at: utc(2026, 3, 29, 2, 0),
+            scheduled_for: utc(2026, 3, 29, 2, 0),
+            attempt: 3,
+            error: "connection refused".into(),
+            dead_reason: "retry_exhausted".into(),
+            metadata: HashMap::new(),
+            created_at: now(),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let replay = make_execution("billing:invoice", now());
+    store.replay_dead_letter(dl_id, &replay).unwrap();
+
+    // Replay execution was persisted…
+    let stored = store.get_execution(replay.id).unwrap().unwrap();
+    assert_eq!(stored.state, ExecutionState::Queued);
+    assert_eq!(stored.job_key, "billing:invoice");
+
+    // …and the dead letter is gone.
+    assert!(store.get_dead_letter(dl_id).unwrap().is_none());
+}
+
+#[test]
+fn replay_dead_letter_rolls_back_removal_when_execution_id_collides() {
+    let store = create_memory_store().unwrap();
+
+    let dl_id = Uuid::new_v4();
+    store
+        .add_dead_letter(&DeadLetter {
+            id: dl_id,
+            execution_id: Uuid::new_v4(),
+            job_key: "etl:sync".into(),
+            fire_at: now(),
+            scheduled_for: now(),
+            attempt: 2,
+            error: "boom".into(),
+            dead_reason: "timeout".into(),
+            metadata: HashMap::new(),
+            created_at: now(),
+            expires_at: None,
+        })
+        .unwrap();
+
+    // Pre-seed an execution with the same ID so the replay insert collides.
+    let existing = make_execution("etl:sync", now());
+    store.create_execution(&existing).unwrap();
+
+    let res = store.replay_dead_letter(dl_id, &existing);
+    assert!(
+        res.is_err(),
+        "expected replay_dead_letter to fail on PK collision"
+    );
+
+    // The dead letter must survive — its DELETE was rolled back together
+    // with the failing execution INSERT, so the replay can be retried.
+    assert!(
+        store.get_dead_letter(dl_id).unwrap().is_some(),
+        "dead letter removed despite failed execution insert — atomicity broken"
+    );
+}
+
+#[test]
+fn replay_dead_letter_missing_dead_letter_is_not_found_and_writes_nothing() {
+    let store = create_memory_store().unwrap();
+
+    let replay = make_execution("billing:invoice", now());
+    let res = store.replay_dead_letter(Uuid::new_v4(), &replay);
+    assert!(
+        matches!(res, Err(StoreError::NotFound(_))),
+        "expected NotFound for a vanished dead letter, got {res:?}"
+    );
+
+    // No execution row may exist — a concurrent replay already consumed the
+    // dead letter, so persisting a second execution would duplicate the run.
+    assert!(store.get_execution(replay.id).unwrap().is_none());
+}
+
+#[test]
 fn dead_letter_purge_expired() {
     let store = create_memory_store().unwrap();
 
@@ -879,6 +991,7 @@ fn dead_letter_purge_expired() {
             execution_id: Uuid::new_v4(),
             job_key: "a:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "err".into(),
             dead_reason: "reason".into(),
@@ -895,6 +1008,7 @@ fn dead_letter_purge_expired() {
             execution_id: Uuid::new_v4(),
             job_key: "b:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "err".into(),
             dead_reason: "reason".into(),
@@ -2035,4 +2149,57 @@ fn idempotency_key_round_trips_through_store() {
         .unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].idempotency_key.as_deref(), Some("evt-7"));
+}
+
+// ─── JobDefinitionStore ───
+
+#[test]
+fn job_definition_dead_letter_policy_round_trips() {
+    let store = create_memory_store().unwrap();
+
+    let job = JobDefinition {
+        job_key: "billing:invoice".into(),
+        description: Some("invoices".into()),
+        assigned_runner_id: None,
+        is_active: true,
+        metadata: HashMap::new(),
+        created_at: now(),
+        updated_at: now(),
+        timeout: Some("10m".into()),
+        max_retries: Some(2),
+        dead_letter_enabled: Some(true),
+        tags: vec!["env=prod".into()],
+        dead_letter_retention: Some("14d".into()),
+        dead_letter_operator_hint: Some("re-run the export first".into()),
+        dead_letter_replay_max_age: Some("7d".into()),
+    };
+    store.create_job_definition(&job).unwrap();
+
+    let loaded = store
+        .get_job_definition("billing:invoice")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.dead_letter_retention.as_deref(), Some("14d"));
+    assert_eq!(
+        loaded.dead_letter_operator_hint.as_deref(),
+        Some("re-run the export first")
+    );
+    assert_eq!(loaded.dead_letter_replay_max_age.as_deref(), Some("7d"));
+
+    // NULL (unset) means "system default" and must round-trip as None —
+    // the upsert overwrites the previously stored values.
+    let cleared = JobDefinition {
+        dead_letter_retention: None,
+        dead_letter_operator_hint: None,
+        dead_letter_replay_max_age: None,
+        ..job
+    };
+    store.create_job_definition(&cleared).unwrap();
+    let loaded = store
+        .get_job_definition("billing:invoice")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.dead_letter_retention, None);
+    assert_eq!(loaded.dead_letter_operator_hint, None);
+    assert_eq!(loaded.dead_letter_replay_max_age, None);
 }

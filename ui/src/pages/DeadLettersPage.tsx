@@ -9,6 +9,27 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatDate, truncate } from '@/lib/utils'
 import { ExecutionLink } from '@/components/entity-links'
+import { ApiError } from '@/api/client'
+import type { StaleReplayError } from '@/api/types'
+
+// Coarse age string for the stale-replay confirm dialog (e.g. "34 days").
+function humanizeAge(secs: number): string {
+  if (secs >= 172800) return `${Math.floor(secs / 86400)} days`
+  if (secs >= 86400) return '1 day'
+  if (secs >= 7200) return `${Math.floor(secs / 3600)} hours`
+  if (secs >= 3600) return '1 hour'
+  return `${Math.floor(secs / 60)} minutes`
+}
+
+function isStaleReplayError(e: unknown): e is ApiError & { body: StaleReplayError } {
+  return (
+    e instanceof ApiError &&
+    e.status === 409 &&
+    typeof e.body === 'object' &&
+    e.body !== null &&
+    (e.body as { error?: string }).error === 'stale_replay'
+  )
+}
 
 // The job's `description` (and any `operator_hint` baked into dead_reason)
 // is the fastest path from "this failed" to "here's what to do". The job
@@ -27,11 +48,13 @@ function DeadLetterDetail({
   id,
   onReplay,
   onDelete,
+  confirm,
 }: {
   id: string
   onReplay: (result: { execution_id: string; attempt: number }) => void
   onClose: () => void
   onDelete: () => void
+  confirm: ReturnType<typeof useConfirm>['confirm']
 }) {
   const { data, isLoading } = useDeadLetter(id)
   const replay = useReplayDeadLetter()
@@ -39,10 +62,24 @@ function DeadLetterDetail({
   if (isLoading) return <div className="flex justify-center py-8"><Spinner className="h-5 w-5" /></div>
   if (!data) return null
 
-  async function handleReplay() {
+  async function handleReplay(force = false) {
     if (!data) return
-    const result = await replay.mutateAsync(data.id)
-    onReplay(result)
+    try {
+      const result = await replay.mutateAsync({ id: data.id, force })
+      onReplay(result)
+    } catch (e) {
+      // The stale-replay guard (409) is not a failure — offer to override.
+      if (isStaleReplayError(e)) {
+        const ok = await confirm({
+          title: 'Replay stale dead letter?',
+          description: `Originally scheduled ${humanizeAge(e.body.age_seconds)} ago — this job declares replay_max_age ${e.body.replay_max_age}, so its logic may be time-sensitive (it could compute against the wrong period). Replay anyway?`,
+          confirmLabel: 'Replay anyway',
+        })
+        if (ok) await handleReplay(true)
+        return
+      }
+      throw e
+    }
   }
 
   return (
@@ -65,7 +102,7 @@ function DeadLetterDetail({
             <button
               type="button"
               className="btn sm primary"
-              onClick={handleReplay}
+              onClick={() => handleReplay()}
               disabled={replay.isPending}
             >
               {replay.isPending ? <Spinner className="h-3.5 w-3.5" /> : <RotateCcw size={13} />} Replay
@@ -86,6 +123,13 @@ function DeadLetterDetail({
               <span key="x" className="row mono" style={{ gap: 6, alignItems: 'center' }}>
                 <ExecutionLink id={data.execution_id} />
                 <CopyButton value={data.execution_id} label="Copy execution id" />
+              </span>
+            )],
+            ['Scheduled', (
+              <span key="s" className="row" style={{ gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                {formatDate(data.scheduled_for)}
+                <span className="dim">·</span>
+                <RelativeTime iso={data.scheduled_for} />
               </span>
             )],
             ['Created', formatDate(data.created_at)],
@@ -308,6 +352,7 @@ export function DeadLettersPage() {
             }}
             onClose={() => setSelectedId(null)}
             onDelete={() => handleRowDelete(selectedDL)}
+            confirm={confirm}
           />
         ) : (
           <EmptyState

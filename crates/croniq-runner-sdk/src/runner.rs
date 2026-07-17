@@ -386,11 +386,24 @@ impl CroniqRunner {
                         // may lazy-init a streaming log writer) and the post-
                         // handler drain step. See `crate::log_writer` and #115.
                         let log_writer_slot = Arc::new(OnceLock::new());
+                        // Parse the logical fire time; a missing or malformed
+                        // value yields None rather than falling back to
+                        // fire_at — see ExecutionContext::scheduled_for.
+                        let scheduled_for = assignment.scheduled_for.as_deref().and_then(|s| {
+                            match chrono::DateTime::parse_from_rfc3339(s) {
+                                Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+                                Err(e) => {
+                                    tracing::warn!(value = %s, error = %e, "failed to parse scheduled_for");
+                                    None
+                                }
+                            }
+                        });
                         let ctx = ExecutionContext {
                             client: Arc::clone(&client),
                             log_writer_slot: Arc::clone(&log_writer_slot),
                             execution_id: assignment.execution_id,
                             job_key: assignment.job_key,
+                            scheduled_for,
                             attempt: assignment.attempt,
                             metadata: assignment.metadata,
                             timeout: assignment.timeout,

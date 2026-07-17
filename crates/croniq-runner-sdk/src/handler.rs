@@ -20,6 +20,11 @@ pub struct ExecutionContext {
     pub(crate) log_writer_slot: Arc<OnceLock<Arc<LogWriterInner>>>,
     pub execution_id: String,
     pub job_key: String,
+    /// The trigger's original logical fire time — stable across retries and
+    /// dead-letter replays. Use this (not wall-clock now) for time-relative
+    /// job logic like "the month being reported". `None` when the server
+    /// predates the field; the SDK never falls back to the queue fire time.
+    pub scheduled_for: Option<chrono::DateTime<chrono::Utc>>,
     pub attempt: u32,
     pub metadata: serde_json::Value,
     pub timeout: String,
@@ -32,6 +37,7 @@ impl std::fmt::Debug for ExecutionContext {
         f.debug_struct("ExecutionContext")
             .field("execution_id", &self.execution_id)
             .field("job_key", &self.job_key)
+            .field("scheduled_for", &self.scheduled_for)
             .field("attempt", &self.attempt)
             .field("timeout", &self.timeout)
             .field("runner_id", &self.runner_id)

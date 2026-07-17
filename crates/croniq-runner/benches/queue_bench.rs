@@ -10,6 +10,7 @@ fn make_item(id: usize, require: Vec<&str>) -> WorkItem {
         execution_id: format!("exec-{id}"),
         job_key: format!("job:{id}"),
         fire_at: Utc::now(),
+        scheduled_for: Utc::now(),
         attempt: 1,
         require: require.into_iter().map(String::from).collect(),
         prefer: vec![],

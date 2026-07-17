@@ -6,6 +6,10 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Added
+
+- **`CroniqExecutionContext.ScheduledFor`** exposes the trigger's original logical fire time (`DateTimeOffset?`), stable across retries and dead-letter replays. Use it for time-relative job logic (e.g. the month a report covers) instead of `DateTimeOffset.UtcNow`. `null` when the server predates the field — the SDK never falls back to the queue fire time.
+
 ## [0.4.0] - 2026-07-15
 
 ### Added

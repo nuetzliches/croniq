@@ -94,7 +94,16 @@ async fn main() -> Result<()> {
 
     let job_count = loaded.runtime.jobs.len();
     let active = loaded.triggers.len();
-    tracing::info!(jobs = job_count, triggers = active, "configuration loaded");
+    // Jobs paused because a referenced calendar did not resolve (issue #361).
+    // The per-job ERROR was already logged by the loader; surface the count in
+    // the summary so a fail-closed startup does not read as fully healthy.
+    let calendar_faults = loaded.calendar_faults.len();
+    tracing::info!(
+        jobs = job_count,
+        triggers = active,
+        calendar_faults,
+        "configuration loaded"
+    );
 
     // `croniq-server doctor`: report config health and exit without binding
     // ports, opening the DB, or starting any task.
@@ -299,6 +308,9 @@ async fn main() -> Result<()> {
             loaded.runtime.policy.dsl_adopt_on_mutate,
             std::sync::atomic::Ordering::Relaxed,
         );
+        // Surface jobs paused by an unresolved calendar reference (issue #361)
+        // so `GET /v1/jobs/states` and `/metrics` can report them.
+        *s.config_faults.write().unwrap() = std::mem::take(&mut loaded.calendar_faults);
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
@@ -497,6 +509,7 @@ async fn main() -> Result<()> {
     let scheduler_reload_dsl = Arc::clone(&dsl_jobs_shared);
     let scheduler_reload_dsl_cals = Arc::clone(&dsl_calendars_shared);
     let scheduler_reload_policy = Arc::clone(&server_state.policy_dsl_adopt_on_mutate);
+    let scheduler_reload_faults = Arc::clone(&server_state.config_faults);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
 
     let scheduler_task_heartbeat = Arc::clone(&scheduler_heartbeat);
@@ -589,6 +602,7 @@ async fn main() -> Result<()> {
                                 &scheduler_reload_dsl_cals,
                                 &scheduler_reload_policy,
                                 &scheduler_reload_snapshot,
+                                &scheduler_reload_faults,
                             ).await;
                             scheduler_reload_counters.inc_success();
                             tracing::info!(

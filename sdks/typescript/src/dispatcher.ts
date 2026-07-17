@@ -2,7 +2,7 @@ import { anySignal } from './abort.js';
 import type { CroniqClient } from './client.js';
 import { ExecutionContextImpl } from './context.js';
 import { sleep } from './deferred.js';
-import { parseTimeoutMs } from './duration.js';
+import { parseScheduledFor, parseTimeoutMs } from './duration.js';
 import { LogEnrichment } from './enrichment.js';
 import { type HandlerRegistry, NoHandlerRegisteredError } from './handler.js';
 import { scopedLogger, type Logger } from './logger.js';
@@ -49,6 +49,9 @@ export class ExecutionDispatcher {
     const jobKey = assignment.job_key;
     const attempt = assignment.attempt;
     const timeoutMs = parseTimeoutMs(assignment.timeout) ?? 5 * 60_000;
+    // Original logical fire time; a missing or unparseable value yields null
+    // rather than falling back to fire_at (see ExecutionContext.scheduledFor).
+    const scheduledFor = parseScheduledFor(assignment.scheduled_for);
 
     const handlerLogger = scopedLogger(logger, {
       execution_id: executionId,
@@ -61,6 +64,7 @@ export class ExecutionDispatcher {
     const ctx = new ExecutionContextImpl({
       executionId,
       jobKey,
+      scheduledFor,
       attempt,
       metadata: assignment.metadata,
       timeoutMs,

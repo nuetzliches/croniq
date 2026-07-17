@@ -85,7 +85,10 @@ impl ExecutionPolicy {
                     ExecutionOutcome::DeadLetter {
                         reason,
                         operator_hint: self.dead_letter.operator_hint.clone(),
-                        expires_after: Some(self.dead_letter.retention),
+                        // retention 0 = keep forever: None maps to a NULL
+                        // expires_at, which the purge sweep skips.
+                        expires_after: (!self.dead_letter.retention.is_zero())
+                            .then_some(self.dead_letter.retention),
                     }
                 } else {
                     ExecutionOutcome::Dropped { reason }
@@ -285,6 +288,29 @@ mod tests {
             } => {
                 assert_eq!(operator_hint.as_deref(), Some("Check billing DB"));
                 assert_eq!(expires_after, Some(Duration::from_secs(60 * 86400)));
+            }
+            other => panic!("expected DeadLetter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dead_letter_retention_zero_never_expires() {
+        let policy = ExecutionPolicy {
+            retry: RetryPolicy::none(),
+            dead_letter: DeadLetterPolicy::default().with_retention("0"),
+            ..Default::default()
+        };
+
+        let result = ExecutionResult {
+            success: false,
+            error: Some("db down".into()),
+            duration: Duration::from_secs(1),
+            attempt: 1,
+        };
+
+        match policy.evaluate(&result) {
+            ExecutionOutcome::DeadLetter { expires_after, .. } => {
+                assert_eq!(expires_after, None, "retention 0 must mean keep forever");
             }
             other => panic!("expected DeadLetter, got {other:?}"),
         }

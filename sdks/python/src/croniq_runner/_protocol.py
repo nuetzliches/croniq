@@ -37,6 +37,9 @@ class WorkAssignment(_Model):
     execution_id: str
     job_key: str
     fire_at: str
+    # Original logical fire time (RFC 3339). None when the server predates the
+    # field — the SDK must not fall back to fire_at.
+    scheduled_for: str | None = None
     attempt: int
     metadata: dict[str, Any] = Field(default_factory=dict)
     timeout: str

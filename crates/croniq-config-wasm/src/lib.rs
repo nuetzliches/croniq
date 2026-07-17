@@ -309,6 +309,8 @@ pub struct DeadLetterPayload {
     pub retention: Option<String>,
     #[serde(default)]
     pub operator_hint: Option<String>,
+    #[serde(default)]
+    pub replay_max_age: Option<String>,
 }
 
 /// Structured job-level options mirroring the form. Every field is
@@ -617,6 +619,9 @@ fn dead_letter_loose_line(dl: Option<&DeadLetterPayload>) -> Option<String> {
     }
     if let Some(h) = opt_str(&dl.operator_hint) {
         inner.push(format!("operator_hint \"{}\"", escape_dquote(h)));
+    }
+    if let Some(a) = opt_str(&dl.replay_max_age) {
+        inner.push(format!("replay_max_age {a}"));
     }
     if inner.is_empty() {
         return None;
@@ -1559,13 +1564,14 @@ mod tests {
                 enabled: Some(true),
                 retention: Some("60d".into()),
                 operator_hint: Some("check billing db".into()),
+                replay_max_age: Some("7d".into()),
             }),
             ..Default::default()
         };
         let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
         assert!(
             out.contains(
-                "dead_letter { enabled true; retention 60d; operator_hint \"check billing db\" }"
+                "dead_letter { enabled true; retention 60d; operator_hint \"check billing db\"; replay_max_age 7d }"
             ),
             "{out}"
         );

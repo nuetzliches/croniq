@@ -296,6 +296,10 @@ impl CompletionProcessor {
                     id: retry_id,
                     job_key: execution.job_key.clone(),
                     fire_at: retry_fire_at,
+                    // Carry the original logical fire time forward: fire_at
+                    // drifts to now+backoff on each retry, scheduled_for stays
+                    // pinned so time-coupled job logic sees the same instant.
+                    scheduled_for: execution.scheduled_for,
                     attempt: next_attempt,
                     state: ExecutionState::Queued,
                     runner_id: None,
@@ -313,32 +317,90 @@ impl CompletionProcessor {
                     created_at: now,
                 };
 
-                if let Err(e) = self.store.create_execution(&retry_execution) {
-                    tracing::error!(error = %e, "failed to persist retry execution");
-                }
+                match self.store.create_execution(&retry_execution) {
+                    Ok(()) => {
+                        // Enqueue the retry work item
+                        let item = croniq_runner::WorkItem {
+                            execution_id: retry_id.to_string(),
+                            job_key: execution.job_key.clone(),
+                            fire_at: retry_fire_at,
+                            scheduled_for: execution.scheduled_for,
+                            attempt: next_attempt,
+                            require: job.runner.require.clone(),
+                            prefer: job.runner.prefer.clone(),
+                            metadata: serde_json::json!(execution.metadata),
+                            timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+                        };
+                        self.runner.queue.write().await.enqueue(item);
+                        self.runner.work_notify.notify_waiters();
 
-                // Enqueue the retry work item
-                let item = croniq_runner::WorkItem {
-                    execution_id: retry_id.to_string(),
-                    job_key: execution.job_key.clone(),
-                    fire_at: retry_fire_at,
-                    attempt: next_attempt,
-                    require: job.runner.require.clone(),
-                    prefer: job.runner.prefer.clone(),
-                    metadata: serde_json::json!(execution.metadata),
-                    timeout: job.timeout.unwrap_or_else(|| "5m".into()),
-                };
-                self.runner.queue.write().await.enqueue(item);
-                self.runner.work_notify.notify_waiters();
-
-                tracing::info!(
-                    id = %exec_uuid,
-                    retry_id = %retry_id,
-                    attempt = next_attempt,
-                    "execution will retry"
-                );
-                ProcessedOutcome::Retrying {
-                    attempt: next_attempt,
+                        tracing::info!(
+                            id = %exec_uuid,
+                            retry_id = %retry_id,
+                            attempt = next_attempt,
+                            "execution will retry"
+                        );
+                        ProcessedOutcome::Retrying {
+                            attempt: next_attempt,
+                        }
+                    }
+                    Err(e) => {
+                        // The retry row could not be persisted. Enqueueing
+                        // anyway would hand a runner an execution_id with no
+                        // backing row — its status updates, events and final
+                        // completion would all target a nonexistent execution
+                        // and the attempt would vanish without history. Skip
+                        // the enqueue and terminate the chain instead:
+                        // dead-letter the original execution (best-effort,
+                        // when enabled) so the lost retry stays
+                        // operator-visible and replayable.
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "failed to persist retry execution — retry not enqueued"
+                        );
+                        let reason =
+                            format!("retry attempt {next_attempt} could not be persisted: {e}");
+                        let mut dead_lettered = false;
+                        if policy.dead_letter.enabled {
+                            let dl = DeadLetter {
+                                id: Uuid::new_v4(),
+                                execution_id: exec_uuid,
+                                job_key: execution.job_key.clone(),
+                                fire_at: execution.fire_at,
+                                scheduled_for: execution.scheduled_for,
+                                attempt: execution.attempt,
+                                error: event.error.clone().unwrap_or_default(),
+                                dead_reason: reason.clone(),
+                                metadata: execution.metadata.clone(),
+                                created_at: now,
+                                // The helper yields None for retention 0
+                                // ("keep forever"), matching purge_expired's
+                                // NULL semantics.
+                                expires_at: policy.dead_letter.expires_at(now),
+                            };
+                            match self.store.complete_as_dead(
+                                exec_uuid,
+                                Some(event.duration_ms as i64),
+                                event.error.as_deref(),
+                                &dl,
+                                now,
+                            ) {
+                                Ok(()) => dead_lettered = true,
+                                Err(e2) => tracing::error!(
+                                    id = %exec_uuid,
+                                    error = %e2,
+                                    "dead-letter fallback after failed retry persist also failed"
+                                ),
+                            }
+                        }
+                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        if dead_lettered {
+                            ProcessedOutcome::DeadLettered { reason }
+                        } else {
+                            ProcessedOutcome::Dropped { reason }
+                        }
+                    }
                 }
             }
 
@@ -362,6 +424,7 @@ impl CompletionProcessor {
                     execution_id: exec_uuid,
                     job_key: execution.job_key.clone(),
                     fire_at: execution.fire_at,
+                    scheduled_for: execution.scheduled_for,
                     attempt: execution.attempt,
                     error: event.error.clone().unwrap_or_default(),
                     dead_reason,
@@ -492,6 +555,7 @@ mod tests {
                 id,
                 job_key: job_key.into(),
                 fire_at: Utc::now(),
+                scheduled_for: Utc::now(),
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,
@@ -607,6 +671,305 @@ mod tests {
         assert!(matches!(outcome, ProcessedOutcome::Dropped { .. }));
     }
 
+    /// Store test double: delegates every call to an inner store but fails
+    /// `create_execution` once armed. Lets tests drive the
+    /// retry-persist-failure path without a real database error.
+    mod failing_store {
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        use chrono::{DateTime, Utc};
+        use croniq_store::models::*;
+        use croniq_store::traits::*;
+        use uuid::Uuid;
+
+        use crate::store::DynStore;
+
+        pub struct FailingCreateStore {
+            pub inner: DynStore,
+            pub fail_create: AtomicBool,
+        }
+
+        impl FailingCreateStore {
+            pub fn arm(&self) {
+                self.fail_create.store(true, Ordering::SeqCst);
+            }
+        }
+
+        macro_rules! delegate {
+            ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)+) => {
+                $(fn $name(&self, $($arg: $ty),*) -> Result<$ret, StoreError> {
+                    self.inner.$name($($arg),*)
+                })+
+            };
+        }
+
+        impl JobStore for FailingCreateStore {
+            delegate! {
+                get_job_state(job_key: &str) -> Option<JobState>;
+                upsert_job_state(state: &JobState) -> ();
+                list_job_states() -> Vec<JobState>;
+                delete_job_state(job_key: &str) -> ();
+            }
+        }
+
+        impl ExecutionStore for FailingCreateStore {
+            fn create_execution(&self, execution: &Execution) -> Result<(), StoreError> {
+                if self.fail_create.load(Ordering::SeqCst) {
+                    return Err(StoreError::Database(
+                        "injected create_execution failure".into(),
+                    ));
+                }
+                self.inner.create_execution(execution)
+            }
+            delegate! {
+                create_execution_and_advance_job_state(execution: &Execution, job_state: &JobState) -> ();
+                get_execution(id: Uuid) -> Option<Execution>;
+                claim_execution(id: Uuid, runner_id: &str, now: DateTime<Utc>) -> Execution;
+                complete_execution(id: Uuid, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> ();
+                find_queued_executions(capabilities: &[String], limit: u32) -> Vec<Execution>;
+                list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
+                find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
+                requeue_abandoned(runner_id: &str, now: DateTime<Utc>) -> Vec<Uuid>;
+                cancel_execution(id: Uuid, now: DateTime<Utc>) -> ();
+                count_by_state() -> HashMap<ExecutionState, u64>;
+                count_executions_in_states(job_key: &str, states: &[ExecutionState]) -> u64;
+                job_execution_metrics() -> Vec<JobExecutionMetrics>;
+                prune_executions_older_than(cutoff: DateTime<Utc>, limit: u32) -> u64;
+                prune_executions_keep_last(job_key: &str, keep_last: u32, limit: u32) -> u64;
+            }
+        }
+
+        impl RunnerStore for FailingCreateStore {
+            delegate! {
+                upsert_runner(runner: &Runner) -> ();
+                get_runner(runner_id: &str) -> Option<Runner>;
+                list_runners() -> Vec<Runner>;
+                remove_runner(runner_id: &str) -> ();
+                update_poll(runner_id: &str, inflight: &[Uuid], now: DateTime<Utc>) -> ();
+            }
+        }
+
+        impl DeadLetterStore for FailingCreateStore {
+            delegate! {
+                add_dead_letter(dl: &DeadLetter) -> ();
+                complete_as_dead(execution_id: Uuid, duration_ms: Option<i64>, error: Option<&str>, dead_letter: &DeadLetter, now: DateTime<Utc>) -> ();
+                replay_dead_letter(dead_letter_id: Uuid, execution: &Execution) -> ();
+                get_dead_letter(id: Uuid) -> Option<DeadLetter>;
+                list_dead_letters(filter: &DeadLetterFilter) -> Vec<DeadLetter>;
+                remove_dead_letter(id: Uuid) -> ();
+                remove_dead_letters(ids: &[Uuid]) -> u64;
+                clear_dead_letters(job_key: Option<&str>) -> u64;
+                purge_expired(now: DateTime<Utc>) -> u64;
+            }
+        }
+
+        impl AuthStore for FailingCreateStore {
+            delegate! {
+                create_client(client: &ApiClient) -> ();
+                get_client(client_id: &str) -> Option<ApiClient>;
+                list_clients() -> Vec<ApiClient>;
+                delete_client(client_id: &str) -> ();
+                create_api_key(key: &ApiKey) -> ();
+                find_api_key_by_hash(key_hash: &str) -> Option<ApiKey>;
+                revoke_api_key(key_id: &str, now: DateTime<Utc>) -> ();
+                list_api_keys(client_id: &str) -> Vec<ApiKey>;
+                get_credentials(username: &str) -> Option<PasswordCredential>;
+                upsert_credentials(cred: &PasswordCredential) -> ();
+                create_refresh_token(token: &RefreshToken) -> ();
+                validate_refresh_token(token_hash: &str) -> Option<RefreshToken>;
+                revoke_refresh_token(token_hash: &str, now: DateTime<Utc>) -> ();
+                users_create(user: &User) -> ();
+                users_get_by_id(user_id: &str) -> Option<User>;
+                users_get_by_username(username: &str) -> Option<User>;
+                users_list() -> Vec<User>;
+                users_update(user: &User) -> ();
+                users_delete(user_id: &str) -> ();
+                users_set_last_login(user_id: &str, at: DateTime<Utc>) -> ();
+                users_count_active_admins() -> u64;
+                invitations_create(invite: &Invitation) -> ();
+                invitations_get(invitation_id: &str) -> Option<Invitation>;
+                invitations_get_by_token_hash(token_hash: &str) -> Option<Invitation>;
+                invitations_list() -> Vec<Invitation>;
+                invitations_mark_accepted(invitation_id: &str, at: DateTime<Utc>) -> ();
+                invitations_revoke(invitation_id: &str, at: DateTime<Utc>) -> ();
+                password_resets_create(reset: &PasswordReset) -> ();
+                password_resets_get_by_token_hash(token_hash: &str) -> Option<PasswordReset>;
+                password_resets_mark_used(reset_id: &str, at: DateTime<Utc>) -> ();
+                totp_upsert(secret: &TotpSecret) -> ();
+                totp_get(user_id: &str) -> Option<TotpSecret>;
+                totp_set_enabled(user_id: &str, enabled: bool, confirmed_at: Option<DateTime<Utc>>) -> ();
+                totp_delete(user_id: &str) -> ();
+                recovery_codes_replace_all(user_id: &str, codes: &[RecoveryCode]) -> ();
+                recovery_codes_find_unused(user_id: &str, code_hash: &str) -> Option<RecoveryCode>;
+                recovery_codes_mark_used(code_id: &str, at: DateTime<Utc>) -> ();
+                recovery_codes_count_unused(user_id: &str) -> u64;
+                pat_create(pat: &PersonalAccessToken) -> ();
+                pat_find_by_hash(token_hash: &str) -> Option<PersonalAccessToken>;
+                pat_list(user_id: &str) -> Vec<PersonalAccessToken>;
+                pat_revoke(token_id: &str, at: DateTime<Utc>) -> ();
+                pat_touch_last_used(token_id: &str, at: DateTime<Utc>) -> ();
+                oidc_link(identity: &OidcIdentity) -> ();
+                oidc_get_by_subject(provider: &str, subject: &str) -> Option<OidcIdentity>;
+                oidc_touch_last_login(provider: &str, subject: &str, at: DateTime<Utc>) -> ();
+                oidc_pending_create(pending: &OidcPendingLogin) -> ();
+                oidc_pending_take(state: &str) -> Option<OidcPendingLogin>;
+                oidc_pending_purge_expired(now: DateTime<Utc>) -> u64;
+                audit_log(event: &AuditEvent) -> ();
+                audit_list(filter: &AuditFilter) -> Vec<AuditEvent>;
+            }
+        }
+
+        impl JobDefinitionStore for FailingCreateStore {
+            delegate! {
+                create_job_definition(job: &JobDefinition) -> ();
+                get_job_definition(job_key: &str) -> Option<JobDefinition>;
+                list_job_definitions() -> Vec<JobDefinition>;
+                delete_job_definition(job_key: &str) -> ();
+            }
+        }
+
+        impl TriggerDefinitionStore for FailingCreateStore {
+            delegate! {
+                create_trigger(trigger: &TriggerDefinition) -> ();
+                get_trigger(trigger_id: &str) -> Option<TriggerDefinition>;
+                list_triggers(job_key: Option<&str>) -> Vec<TriggerDefinition>;
+                delete_trigger(trigger_id: &str) -> ();
+                update_trigger(trigger: &TriggerDefinition) -> bool;
+            }
+        }
+
+        impl CalendarDefinitionStore for FailingCreateStore {
+            delegate! {
+                create_calendar(cal: &CalendarDefinition) -> ();
+                get_calendar(calendar_id: &str) -> Option<CalendarDefinition>;
+                list_calendars() -> Vec<CalendarDefinition>;
+                delete_calendar(calendar_id: &str) -> ();
+            }
+        }
+
+        impl DslAdoptionStore for FailingCreateStore {
+            delegate! {
+                insert_adoption(adoption: &DslAdoption) -> ();
+                delete_adoption(resource_type: &str, resource_key: &str) -> bool;
+                is_adopted(resource_type: &str, resource_key: &str) -> bool;
+                list_adoptions(resource_type: &str) -> Vec<DslAdoption>;
+            }
+        }
+
+        impl ExecutionLogStore for FailingCreateStore {
+            delegate! {
+                append_log(entry: &ExecutionLogEntry) -> ();
+                append_logs_batch(entries: &[ExecutionLogEntry]) -> ();
+                read_logs(execution_id: Uuid, limit: u32) -> Vec<ExecutionLogEntry>;
+            }
+        }
+
+        impl AlertStore for FailingCreateStore {
+            delegate! {
+                record_alert_delivery(delivery: &AlertDelivery) -> ();
+                list_alert_deliveries(filter: &AlertDeliveryFilter) -> Vec<AlertDelivery>;
+                get_alert_delivery(delivery_id: &str) -> Option<AlertDelivery>;
+                last_alert_fire_at(rule_name: &str, job_key: &str) -> Option<DateTime<Utc>>;
+                upsert_alert_rule_override(ov: &AlertRuleOverride) -> ();
+                get_alert_rule_override(rule_name: &str) -> Option<AlertRuleOverride>;
+                list_alert_rule_overrides() -> Vec<AlertRuleOverride>;
+                delete_alert_rule_override(rule_name: &str) -> bool;
+                delete_expired_alert_rule_overrides(now: DateTime<Utc>) -> Vec<String>;
+                prune_alert_rule_overrides(valid_rule_names: &[String]) -> Vec<String>;
+            }
+        }
+
+        impl MaintenanceStore for FailingCreateStore {
+            delegate! {
+                get_maintenance() -> MaintenanceState;
+                set_maintenance(state: &MaintenanceState) -> ();
+            }
+        }
+
+        impl croniq_store::traits::Store for FailingCreateStore {}
+    }
+
+    fn make_failing_store() -> (Arc<failing_store::FailingCreateStore>, DynStore) {
+        let failing = Arc::new(failing_store::FailingCreateStore {
+            inner: make_store(),
+            fail_create: std::sync::atomic::AtomicBool::new(false),
+        });
+        let store: DynStore = failing.clone();
+        (failing, store)
+    }
+
+    #[tokio::test]
+    async fn retry_persist_failure_skips_enqueue_and_dead_letters() {
+        use croniq_store::models::DeadLetterFilter;
+
+        let (failing, store) = make_failing_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+        failing.arm();
+
+        let processor = CompletionProcessor::new(
+            vec![make_job("test:job", 3)],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        // Retries remained, but the retry row could not be persisted → the
+        // chain terminates as dead-lettered instead of retrying.
+        assert!(
+            matches!(outcome, ProcessedOutcome::DeadLettered { ref reason } if reason.contains("could not be persisted")),
+            "expected DeadLettered, got {outcome:?}"
+        );
+
+        // No ghost work item: a runner must never claim an execution_id
+        // without a backing row.
+        assert_eq!(runner.queue.read().await.len(), 0);
+
+        // The original execution is terminal and the dead letter replayable.
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Dead);
+        let dls = store
+            .list_dead_letters(&DeadLetterFilter::default())
+            .unwrap();
+        assert_eq!(dls.len(), 1);
+        assert_eq!(dls[0].execution_id, exec_id);
+        // Default 30d retention stamps an expiry (None is reserved for
+        // retention 0 = keep forever).
+        assert!(dls[0].expires_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn retry_persist_failure_with_dead_letter_disabled_drops() {
+        let (failing, store) = make_failing_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+        failing.arm();
+
+        let mut job = make_job("test:job", 3);
+        job.dead_letter.enabled = false;
+
+        let processor =
+            CompletionProcessor::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        assert!(
+            matches!(outcome, ProcessedOutcome::Dropped { .. }),
+            "expected Dropped, got {outcome:?}"
+        );
+        assert_eq!(runner.queue.read().await.len(), 0);
+
+        // The failed attempt itself is still recorded.
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Failed);
+    }
+
     #[tokio::test]
     async fn api_job_without_dsl_entry_uses_store_fallback() {
         let store = make_store();
@@ -626,6 +989,9 @@ mod tests {
                 timeout: Some("1m".into()),
                 max_retries: Some(1), // one attempt → dead-letter on first failure
                 dead_letter_enabled: Some(true),
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();

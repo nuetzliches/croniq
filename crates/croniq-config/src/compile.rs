@@ -172,9 +172,10 @@ impl Default for McpConfig {
     }
 }
 
-/// Server-wide opt-in policy flags. Default state is restrictive — every
-/// flag must be set explicitly in the Croniqfile to take effect.
-#[derive(Debug, Clone, Default, Serialize)]
+/// Server-wide policy flags. Most flags are restrictive-by-default and must
+/// be opted into explicitly; the exception is `strict_calendars`, which
+/// defaults to `true` (fail closed) — see its doc comment.
+#[derive(Debug, Clone, Serialize)]
 pub struct PolicyConfig {
     /// When `true`, mutating an API endpoint on a DSL-managed resource (job,
     /// schedule, calendar) is allowed via the explicit `/adopt` action: the
@@ -185,6 +186,29 @@ pub struct PolicyConfig {
     /// future per-resource block (`dsl_adopt_on_mutate { calendars true; jobs false }`)
     /// can be added without breaking existing files.
     pub dsl_adopt_on_mutate: bool,
+
+    /// When `true` (the default), a job whose `calendar` reference does not
+    /// resolve at load time — the referenced calendar failed to compile, or
+    /// no calendar with that name is defined — is loaded **paused** with a
+    /// surfaced error instead of firing un-gated. A calendar gate is a safety
+    /// constraint, so failing open (firing anyway) is the dangerous reading of
+    /// an ambiguous config (issue #361).
+    ///
+    /// Set `policy { strict_calendars false }` to restore the legacy
+    /// warn-and-skip behavior (the job fires without its gate). This escape
+    /// hatch is temporary and slated for removal in a future release.
+    pub strict_calendars: bool,
+}
+
+impl Default for PolicyConfig {
+    fn default() -> Self {
+        Self {
+            dsl_adopt_on_mutate: false,
+            // Fail closed: an unresolved calendar gate pauses the job rather
+            // than silently un-gating it (issue #361).
+            strict_calendars: true,
+        }
+    }
 }
 
 // ─── Alerts (issue #140) ───────────────────────────────────────────
@@ -532,6 +556,10 @@ pub struct DeadLetterConfig {
     pub enabled: bool,
     pub retention: Option<String>,
     pub operator_hint: Option<String>,
+    /// Opt-in staleness guard for replay: reject replaying a dead letter
+    /// whose original `scheduled_for` is older than this duration (unless
+    /// forced). `None` = always allow (the default) — see issue tracker.
+    pub replay_max_age: Option<String>,
 }
 
 impl Default for DeadLetterConfig {
@@ -540,6 +568,7 @@ impl Default for DeadLetterConfig {
             enabled: true,
             retention: Some("30d".into()),
             operator_hint: None,
+            replay_max_age: None,
         }
     }
 }
@@ -832,11 +861,23 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
             }
             Item::Policy(p) => {
                 for d in &p.directives {
-                    if d.key.value.as_str() == "dsl_adopt_on_mutate"
-                        && let Some(a) = d.args.first()
-                    {
-                        policy.dsl_adopt_on_mutate =
-                            matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                    match d.key.value.as_str() {
+                        "dsl_adopt_on_mutate" => {
+                            if let Some(a) = d.args.first() {
+                                policy.dsl_adopt_on_mutate =
+                                    matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                            }
+                        }
+                        "strict_calendars" => {
+                            // Uses `parse_bool` (unlike the flag above) so an
+                            // explicit `false` turns the default-on flag off.
+                            if let Some(a) = d.args.first()
+                                && let Some(b) = parse_bool(a.value.as_str())
+                            {
+                                policy.strict_calendars = b;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1535,6 +1576,7 @@ fn compile_dead_letter_block(
                 }
                 "retention" => cfg.retention = first_arg(d, vars),
                 "operator_hint" => cfg.operator_hint = first_arg(d, vars),
+                "replay_max_age" => cfg.replay_max_age = first_arg(d, vars),
                 _ => {}
             }
         }
@@ -1589,6 +1631,31 @@ mod tests {
         assert_eq!(cfg.jobs.len(), 1);
         assert_eq!(cfg.jobs[0].key, "etl:sync");
         assert_eq!(cfg.jobs[0].schedule_summary, "every 15 minutes");
+    }
+
+    #[test]
+    fn strict_calendars_defaults_true() {
+        // No policy block → fail closed by default (issue #361).
+        let ast = Parser::parse("job a:b { every 1 hours }").unwrap();
+        assert!(compile(&ast).policy.strict_calendars);
+    }
+
+    #[test]
+    fn strict_calendars_explicit_false() {
+        let ast = Parser::parse("policy { strict_calendars false }").unwrap();
+        assert!(!compile(&ast).policy.strict_calendars);
+    }
+
+    #[test]
+    fn strict_calendars_accepts_bool_synonyms() {
+        for v in ["true", "yes", "on", "1"] {
+            let ast = Parser::parse(&format!("policy {{ strict_calendars {v} }}")).unwrap();
+            assert!(compile(&ast).policy.strict_calendars, "value {v}");
+        }
+        for v in ["false", "no", "off", "0"] {
+            let ast = Parser::parse(&format!("policy {{ strict_calendars {v} }}")).unwrap();
+            assert!(!compile(&ast).policy.strict_calendars, "value {v}");
+        }
     }
 
     #[test]
@@ -1776,6 +1843,60 @@ mod tests {
             Some("check db")
         );
         assert!(cfg.jobs[0].dead_letter.enabled);
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_parses() {
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { replay_max_age 7d } }"#)
+                .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("7d")
+        );
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_defaults_to_none() {
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { retention 30d } }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].dead_letter.replay_max_age.is_none());
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_inherits_from_defaults() {
+        // Field-merge: a job that sets only operator_hint still inherits the
+        // fleet-wide replay_max_age from defaults {}.
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { replay_max_age 14d } }
+            job x:y { every 5 minutes; dead_letter { operator_hint "check db" } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("14d")
+        );
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_job_overrides_defaults() {
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { replay_max_age 14d } }
+            job x:y { every 5 minutes; dead_letter { replay_max_age 2d } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("2d")
+        );
     }
 
     #[test]

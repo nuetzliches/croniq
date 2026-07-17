@@ -5,6 +5,16 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ExecutionContext.scheduled_for`** exposes the trigger's original logical
+  fire time (`datetime | None`), stable across retries and dead-letter replays.
+  Use it for time-relative job logic (e.g. the month a report covers) instead of
+  `datetime.now()`. `None` when the server predates the field — the SDK never
+  falls back to the queue fire time.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added

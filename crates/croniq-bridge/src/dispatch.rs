@@ -19,16 +19,22 @@ use crate::policy::{dead_letter_to_policy, retry_config_to_policy, timeout_to_po
 /// generating it (e.g. a UUID from `croniq-store`).
 ///
 /// `attempt` is 1 for the first execution, 2 for the first retry, and so on.
+///
+/// `scheduled_for` is the trigger's original logical fire time; for a fresh
+/// scheduler fire it equals `fire_at`, but callers replaying or restoring
+/// drifted rows pass the pinned original.
 pub fn job_to_work_item(
     job: &JobConfig,
     execution_id: impl Into<String>,
     fire_at: DateTime<Utc>,
+    scheduled_for: DateTime<Utc>,
     attempt: u32,
 ) -> WorkItem {
     WorkItem {
         execution_id: execution_id.into(),
         job_key: job.key.clone(),
         fire_at,
+        scheduled_for,
         attempt,
         require: job.runner.require.clone(),
         prefer: job.runner.prefer.clone(),
@@ -109,7 +115,7 @@ mod tests {
     #[test]
     fn work_item_has_correct_key() {
         let job = base_job();
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert_eq!(item.job_key, "billing:invoice");
         assert_eq!(item.execution_id, "exec-1");
     }
@@ -117,15 +123,24 @@ mod tests {
     #[test]
     fn work_item_carries_attempt_number() {
         let job = base_job();
-        assert_eq!(job_to_work_item(&job, "exec-1", Utc::now(), 1).attempt, 1);
-        assert_eq!(job_to_work_item(&job, "exec-2", Utc::now(), 2).attempt, 2);
-        assert_eq!(job_to_work_item(&job, "exec-3", Utc::now(), 5).attempt, 5);
+        assert_eq!(
+            job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1).attempt,
+            1
+        );
+        assert_eq!(
+            job_to_work_item(&job, "exec-2", Utc::now(), Utc::now(), 2).attempt,
+            2
+        );
+        assert_eq!(
+            job_to_work_item(&job, "exec-3", Utc::now(), Utc::now(), 5).attempt,
+            5
+        );
     }
 
     #[test]
     fn work_item_propagates_timeout() {
         let job = base_job();
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert_eq!(item.timeout, "15m");
     }
 
@@ -133,7 +148,7 @@ mod tests {
     fn work_item_default_timeout_when_none() {
         let mut job = base_job();
         job.timeout = None;
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert_eq!(item.timeout, "5m");
     }
 
@@ -143,7 +158,7 @@ mod tests {
         job.runner.require = vec!["billing".into(), "eu-central".into()];
         job.runner.prefer = vec!["priority".into()];
 
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert_eq!(item.require, vec!["billing", "eu-central"]);
         assert_eq!(item.prefer, vec!["priority"]);
     }
@@ -152,8 +167,18 @@ mod tests {
     fn work_item_fire_at_preserved() {
         let job = base_job();
         let now = Utc::now();
-        let item = job_to_work_item(&job, "exec-1", now, 1);
+        let item = job_to_work_item(&job, "exec-1", now, now, 1);
         assert_eq!(item.fire_at, now);
+    }
+
+    #[test]
+    fn work_item_carries_scheduled_for_distinct_from_fire_at() {
+        let job = base_job();
+        let fire_at = Utc::now();
+        let scheduled_for = fire_at - chrono::Duration::days(30);
+        let item = job_to_work_item(&job, "exec-1", fire_at, scheduled_for, 1);
+        assert_eq!(item.fire_at, fire_at);
+        assert_eq!(item.scheduled_for, scheduled_for);
     }
 
     #[test]
@@ -162,7 +187,7 @@ mod tests {
         job.metadata.insert("month".into(), "2026-03".into());
         job.metadata.insert("env".into(), "prod".into());
 
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert_eq!(item.metadata["month"], "2026-03");
         assert_eq!(item.metadata["env"], "prod");
     }
@@ -170,7 +195,7 @@ mod tests {
     #[test]
     fn work_item_empty_metadata_is_empty_object() {
         let job = base_job();
-        let item = job_to_work_item(&job, "exec-1", Utc::now(), 1);
+        let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert!(item.metadata.as_object().unwrap().is_empty());
     }
 

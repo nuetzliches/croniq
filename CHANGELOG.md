@@ -6,6 +6,74 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Dead-letter policy for API-registered jobs** (closing the documented v1 gap
+  from the stale-replay guard). `job_definitions` gains
+  `dead_letter_retention`, `dead_letter_operator_hint`, and
+  `dead_letter_replay_max_age` (migration 023, all NULL = system default —
+  matching the migration-004 pattern for `dead_letter_enabled`), so jobs
+  created via `POST /v1/jobs`, `POST /v1/jobs/register`, or the MCP
+  `create_job`/`update_job` tools carry the same `dead_letter { … }` policy a
+  Croniqfile job declares. The replay endpoint's stale-replay guard
+  (`409 stale_replay` unless `force: true`) now applies to API jobs with a
+  configured `replay_max_age`; previously it only ever fired for DSL jobs. The
+  UI's New/Edit Job dialogs expose the three fields under the dead-letter
+  toggle, and the job detail page shows the retention and replay-guard values.
+
+- **Executions carry their original logical fire time (`scheduled_for`)**. Jobs
+  whose logic is coupled to their scheduled time (e.g. a monthly report deriving
+  the period from "the fire moment − 1 month") previously had no reliable signal:
+  `fire_at` was reset to `now + backoff` on every retry and to `now` on
+  dead-letter replay, so a run that landed late computed against the wrong
+  instant. A new `scheduled_for` timestamp is stamped at the trigger's logical
+  fire time and carried unchanged through the entire retry chain and across
+  dead-letter replay (`fire_at` keeps its "when this row becomes due" meaning).
+  It is persisted (migration 022, backfilled from `fire_at`), returned on the
+  `Execution` and `DeadLetter` API objects, and delivered to runners on the
+  work-poll assignment (`scheduled_for`, `null` when the server predates the
+  field — runners must not fall back to `fire_at`). Manual triggers set it to
+  the trigger moment.
+- **Stale-replay guard for dead letters (`dead_letter { replay_max_age … }`)**.
+  Opt-in: when set, replaying a dead letter whose original `scheduled_for` is
+  older than the given duration is refused with `409 stale_replay` (a structured
+  body carrying `scheduled_for`, `age_seconds`, and `replay_max_age`) unless the
+  request passes `force: true`. Guards against re-running a time-coupled job
+  (e.g. a monthly invoice) against the wrong period long after it dead-lettered.
+  Applies to `POST /v1/dead-letters/{id}/replay` and the MCP `dlq_retry` tool
+  (which gains a `force` flag). No policy set → replay is always allowed (the
+  UI still surfaces the age). The in-browser DSL generator emits the field.
+- The Dead Letters page now shows each letter's **original scheduled time**, and
+  a stale replay prompts a confirm dialog ("originally scheduled X ago — replay
+  anyway?") that retries with `force`.
+- **All six runner SDKs expose `scheduled_for` on the handler context** (Rust,
+  TypeScript `scheduledFor`, Python `scheduled_for`, Go `ScheduledFor`, Java
+  `scheduledFor()`, .NET `ScheduledFor`). Handlers can now read the trigger's
+  logical fire time — stable across retries and replay — instead of wall-clock
+  now, which is what makes a time-coupled job (e.g. a monthly report) correct
+  after a late or replayed run. Absent (older server) surfaces as
+  `null`/`None`/zero, never a silent fall back to the queue fire time.
+
+### Changed
+
+- **A job whose `calendar` gate does not resolve now fails closed** (issue #361).
+  Previously, if a referenced calendar failed to compile — or was not defined —
+  the loader dropped it with a `WARN` and the job fired **un-gated**, on exactly
+  the days it was configured to skip; both startup and hot-reload reported
+  healthy. Such a job is now loaded **paused** with a surfaced reason (an `ERROR`
+  log, a `config_error` field on `GET /v1/jobs/states`, a
+  `croniq_config_calendar_faults` metric, and a distinct badge in the UI), so it
+  cannot fire without its gate. Fixing the calendar and reloading re-arms the job
+  automatically. **This changes behavior on upgrade** for deployments that
+  currently boot with a broken-but-referenced calendar. To restore the old
+  warn-and-skip behavior, set `policy { strict_calendars false }` in the
+  Croniqfile — this escape hatch is temporary and will be removed in a future
+  release.
+- **Dead-letter replay now reuses the job's configured timeout** instead of a
+  hard-coded `5m`, and falls back to the job's `runner { require/prefer }` when
+  the dead letter's metadata doesn't carry them. Replay also emits a
+  `dead_letter.replayed` audit event.
+
 ## [0.27.0] - 2026-07-17
 
 ### Added

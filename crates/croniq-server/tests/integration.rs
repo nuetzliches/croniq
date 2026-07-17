@@ -387,6 +387,7 @@ async fn bulk_delete_all_clears_dead_letter_queue() {
                 execution_id: uuid::Uuid::new_v4(),
                 job_key: "reports:weekly".into(),
                 fire_at: Utc::now(),
+                scheduled_for: Utc::now(),
                 attempt: 1,
                 error: "boom".into(),
                 dead_reason: "timeout".into(),

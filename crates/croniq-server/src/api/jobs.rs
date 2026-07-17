@@ -71,6 +71,12 @@ pub struct CreateJobRequest {
     pub timeout: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration ("14d"); None → system default (30d).
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard ("7d"); None → replays always allowed.
+    pub dead_letter_replay_max_age: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -133,6 +139,12 @@ pub struct JobScheduleState {
     /// execution history — otherwise indistinguishable from a broken job
     /// (issue #263). Defaults to `queued` for store-managed jobs.
     pub execution_mode: ExecutionMode,
+    /// Set when the job is `paused` because its `calendar` reference did not
+    /// resolve at load time (issue #361) — the calendar failed to compile or
+    /// is not defined. Distinguishes a fail-closed pause from a manual one so
+    /// the UI can badge it as a config error. `None` for healthy jobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_error: Option<String>,
 }
 
 /// `GET /v1/jobs/states` — per-job scheduling liveness from `job_states`.
@@ -169,12 +181,14 @@ pub async fn handle_list_states(
             std::collections::HashMap::new()
         };
 
+    let faults = state.config_faults.read().unwrap();
     let out = states
         .into_iter()
         .map(|s| {
             let overdue =
                 s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
             let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
+            let config_error = faults.get(&s.job_key).cloned();
             JobScheduleState {
                 job_key: s.job_key,
                 status: s.status,
@@ -183,9 +197,11 @@ pub async fn handle_list_states(
                 fire_count: s.fire_count,
                 overdue,
                 execution_mode,
+                config_error,
             }
         })
         .collect();
+    drop(faults);
     Ok(Json(out))
 }
 
@@ -257,6 +273,9 @@ pub async fn handle_create(
         timeout: req.timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        dead_letter_retention: req.dead_letter_retention,
+        dead_letter_operator_hint: req.dead_letter_operator_hint,
+        dead_letter_replay_max_age: req.dead_letter_replay_max_age,
         tags,
     };
     store
@@ -311,6 +330,15 @@ pub async fn handle_update(
     }
     if let Some(v) = obj.get("dead_letter_enabled") {
         job.dead_letter_enabled = v.as_bool();
+    }
+    if let Some(v) = obj.get("dead_letter_retention") {
+        job.dead_letter_retention = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("dead_letter_operator_hint") {
+        job.dead_letter_operator_hint = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("dead_letter_replay_max_age") {
+        job.dead_letter_replay_max_age = v.as_str().map(|s| s.to_string());
     }
     if let Some(v) = obj.get("tags") {
         let mut out: Vec<String> = Vec::new();
@@ -427,6 +455,12 @@ pub struct RegisterJobRequest {
     pub description: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration ("14d"); None → system default (30d).
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard ("7d"); None → replays always allowed.
+    pub dead_letter_replay_max_age: Option<String>,
     /// Optional calendar **name** that gates execution (matches a row in
     /// `calendar_definitions.name`). The runtime resolves this to a
     /// compiled calendar at scheduler attach time.
@@ -487,6 +521,9 @@ pub async fn handle_register(
         timeout: req.timeout.clone(),
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        dead_letter_retention: req.dead_letter_retention.clone(),
+        dead_letter_operator_hint: req.dead_letter_operator_hint.clone(),
+        dead_letter_replay_max_age: req.dead_letter_replay_max_age.clone(),
         tags: Vec::new(),
     };
     store
@@ -894,6 +931,9 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();
@@ -907,6 +947,43 @@ mod tests {
         let keys: Vec<&str> = arr.iter().map(|j| j["job_key"].as_str().unwrap()).collect();
         assert!(keys.contains(&"api:job"));
         assert!(keys.contains(&"dsl:only"));
+    }
+
+    #[tokio::test]
+    async fn job_states_surfaces_config_error() {
+        use croniq_store::models::{JobState, JobStatus};
+        let store = make_store();
+        store
+            .upsert_job_state(&JobState {
+                job_key: "ops:tick".into(),
+                next_fire_at: None,
+                last_fired_at: None,
+                fire_count: 0,
+                status: JobStatus::Paused,
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        let state = make_state(vec![], store);
+        state
+            .config_faults
+            .write()
+            .unwrap()
+            .insert("ops:tick".into(), "calendar 'biz' failed to compile".into());
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .expect("job_states row present");
+        assert!(
+            row["config_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to compile")
+        );
     }
 
     #[tokio::test]
@@ -1050,6 +1127,9 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();

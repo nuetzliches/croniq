@@ -152,7 +152,7 @@ impl ExecutionStore for SqliteStore {
     fn get_execution(&self, id: Uuid) -> Result<Option<Execution>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = ?1")
+            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE id = ?1")
             .map_err(map_err)?;
 
         stmt.query_row(params![id.to_string()], row_to_execution)
@@ -224,7 +224,7 @@ impl ExecutionStore for SqliteStore {
             limit * 4
         };
         let mut stmt = conn
-            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
+            .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
             .map_err(map_err)?;
 
         let rows = stmt
@@ -255,7 +255,7 @@ impl ExecutionStore for SqliteStore {
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE 1=1",
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -309,7 +309,7 @@ impl ExecutionStore for SqliteStore {
         // since/until filters in list_executions).
         let mut stmt = conn
             .prepare(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
                  FROM executions
                  WHERE job_key = ?1 AND idempotency_key = ?2
                    AND (state IN ('queued', 'claimed') OR created_at >= ?3)
@@ -655,10 +655,34 @@ impl DeadLetterStore for SqliteStore {
         Ok(())
     }
 
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        let affected = tx
+            .execute(
+                "DELETE FROM dead_letters WHERE id = ?1",
+                params![dead_letter_id.to_string()],
+            )
+            .map_err(map_err)?;
+        if affected == 0 {
+            // Dropping the uncommitted transaction rolls it back.
+            return Err(StoreError::NotFound(format!(
+                "dead letter {dead_letter_id}"
+            )));
+        }
+        insert_execution_with(&tx, execution)?;
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE id = ?1")
+            .prepare("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE id = ?1")
             .map_err(map_err)?;
 
         stmt.query_row(params![id.to_string()], row_to_dead_letter)
@@ -669,7 +693,7 @@ impl DeadLetterStore for SqliteStore {
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE 1=1",
+            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE 1=1",
         );
 
         if let Some(ref jk) = filter.job_key {
@@ -1649,6 +1673,9 @@ fn map_job_def_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobDefinition> {
         max_retries: max_retries.map(|n| n as u32),
         dead_letter_enabled: dead_letter_enabled.map(|n| n != 0),
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
+        dead_letter_retention: row.get(11)?,
+        dead_letter_operator_hint: row.get(12)?,
+        dead_letter_replay_max_age: row.get(13)?,
     })
 }
 
@@ -1660,8 +1687,9 @@ impl JobDefinitionStore for SqliteStore {
         conn.execute(
             "INSERT INTO job_definitions
                 (job_key, description, assigned_runner_id, is_active, metadata,
-                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                 dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(job_key) DO UPDATE SET
                 description=excluded.description,
                 assigned_runner_id=excluded.assigned_runner_id,
@@ -1671,7 +1699,10 @@ impl JobDefinitionStore for SqliteStore {
                 timeout=excluded.timeout,
                 max_retries=excluded.max_retries,
                 dead_letter_enabled=excluded.dead_letter_enabled,
-                tags=excluded.tags",
+                tags=excluded.tags,
+                dead_letter_retention=excluded.dead_letter_retention,
+                dead_letter_operator_hint=excluded.dead_letter_operator_hint,
+                dead_letter_replay_max_age=excluded.dead_letter_replay_max_age",
             params![
                 job.job_key,
                 job.description,
@@ -1684,6 +1715,9 @@ impl JobDefinitionStore for SqliteStore {
                 job.max_retries,
                 job.dead_letter_enabled,
                 tags,
+                job.dead_letter_retention,
+                job.dead_letter_operator_hint,
+                job.dead_letter_replay_max_age,
             ],
         )
         .map_err(map_err)?;
@@ -1694,7 +1728,8 @@ impl JobDefinitionStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.prepare(
             "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                    dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
              FROM job_definitions WHERE job_key = ?1",
         )
         .map_err(map_err)?
@@ -1708,7 +1743,8 @@ impl JobDefinitionStore for SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                    dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
              FROM job_definitions ORDER BY job_key",
             )
             .map_err(map_err)?;
@@ -2330,10 +2366,14 @@ impl Store for SqliteStore {}
 fn row_to_execution(row: &rusqlite::Row<'_>) -> Result<Execution, rusqlite::Error> {
     let id_str: String = row.get(0)?;
     let metadata_str: String = row.get(12)?;
+    let fire_at = sql_to_dt(&row.get::<_, String>(2)?);
     Ok(Execution {
         id: Uuid::parse_str(&id_str).unwrap(),
         job_key: row.get(1)?,
-        fire_at: sql_to_dt(&row.get::<_, String>(2)?),
+        fire_at,
+        // NULL for rows written before migration 022 (or by an older binary
+        // running against a migrated DB) — fall back to fire_at.
+        scheduled_for: sql_to_opt_dt(row.get(15)?).unwrap_or(fire_at),
         attempt: row.get::<_, u32>(3)?,
         state: parse_execution_state(&row.get::<_, String>(4)?),
         runner_id: row.get(5)?,
@@ -2367,11 +2407,14 @@ fn row_to_dead_letter(row: &rusqlite::Row<'_>) -> Result<DeadLetter, rusqlite::E
     let id_str: String = row.get(0)?;
     let exec_id_str: String = row.get(1)?;
     let metadata_str: String = row.get(7)?;
+    let fire_at = sql_to_dt(&row.get::<_, String>(3)?);
     Ok(DeadLetter {
         id: Uuid::parse_str(&id_str).unwrap(),
         execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
         job_key: row.get(2)?,
-        fire_at: sql_to_dt(&row.get::<_, String>(3)?),
+        fire_at,
+        // NULL for rows written before migration 022 — fall back to fire_at.
+        scheduled_for: sql_to_opt_dt(row.get(10)?).unwrap_or(fire_at),
         attempt: row.get::<_, u32>(4)?,
         error: row.get(5)?,
         dead_reason: row.get(6)?,
@@ -2449,8 +2492,8 @@ fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusq
 fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Result<(), StoreError> {
     let metadata = serde_json::to_string(&exec.metadata).unwrap_or_default();
     conn.execute(
-        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             exec.id.to_string(),
             exec.job_key,
@@ -2467,6 +2510,7 @@ fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Resul
             metadata,
             dt_to_sql(&exec.created_at),
             exec.idempotency_key,
+            dt_to_sql(&exec.scheduled_for),
         ],
     )
     .map_err(map_err)?;
@@ -2498,8 +2542,8 @@ fn update_to_dead_with(
 fn insert_dead_letter_with(conn: &rusqlite::Connection, dl: &DeadLetter) -> Result<(), StoreError> {
     let metadata = serde_json::to_string(&dl.metadata).unwrap();
     conn.execute(
-        "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             dl.id.to_string(),
             dl.execution_id.to_string(),
@@ -2511,6 +2555,7 @@ fn insert_dead_letter_with(conn: &rusqlite::Connection, dl: &DeadLetter) -> Resu
             metadata,
             dt_to_sql(&dl.created_at),
             opt_dt_to_sql(&dl.expires_at),
+            dt_to_sql(&dl.scheduled_for),
         ],
     )
     .map_err(map_err)?;
