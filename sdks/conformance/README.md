@@ -152,6 +152,17 @@ Subset-match with one wildcard symbol:
 This keeps cases readable. Cases that need JSONPath-style expressiveness
 should propose an extension before reaching for ad-hoc string matching.
 
+### Scope: wire only, not handler context
+
+The suite asserts the HTTP requests a runner produces — it has no way to look
+inside a handler invocation. Optional response fields such as
+`scheduled_for` on a work assignment are therefore exercised in two halves:
+case `02` sends the field (the SDK must accept it without error), while cases
+that omit it (e.g. `03`, `05`) pin mixed-version tolerance against older
+servers. Whether the value actually reaches the handler context — and that a
+missing field surfaces as null/None rather than falling back to `fire_at` —
+is asserted in each SDK's own unit tests.
+
 ## Trigger (producer) cases
 
 Cases in `cases-trigger/` pin the **producer** side — a trigger client
