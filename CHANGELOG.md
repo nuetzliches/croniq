@@ -78,6 +78,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`weekday`/`weekend` aliases now work in weekly calendar rules**
+  ([#356](https://github.com/nuetzliches/croniq/issues/356)). `croniq fmt` and
+  the cron→DSL converter emit the group aliases and `croniq validate` accepted
+  them, but the scheduler's calendar compiler did not — a formatted Croniqfile
+  failed to load its calendar, and the jobs bound to it lost their gate. The
+  parser, the scheduler compiler, and validation now share one argument parser
+  (`croniq_config::calendar_args`), so they cannot diverge again;
+  `croniq validate` catches bad window/monthly/annual arguments offline, and
+  `POST`/`PUT /v1/calendars` rejects rules the loader can't compile. Cosmetic:
+  API payloads of DSL-defined calendars show the expanded day names instead of
+  the literal alias.
 - **Dead-letter replay is atomic.** The replay execution insert and the
   dead-letter removal now happen in a single store transaction. Previously a
   failure between the two separate writes left a `queued` execution that was
