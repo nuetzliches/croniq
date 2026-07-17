@@ -690,6 +690,91 @@ fn dead_letter_list_and_remove() {
 }
 
 #[test]
+fn dead_letter_remove_many_by_ids() {
+    let store = create_memory_store().unwrap();
+
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        let id = Uuid::new_v4();
+        store
+            .add_dead_letter(&DeadLetter {
+                id,
+                execution_id: Uuid::new_v4(),
+                job_key: "etl:sync".into(),
+                fire_at: now(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "timeout".into(),
+                metadata: HashMap::new(),
+                created_at: now(),
+                expires_at: None,
+            })
+            .unwrap();
+        ids.push(id);
+    }
+
+    // Empty slice is a no-op.
+    assert_eq!(store.remove_dead_letters(&[]).unwrap(), 0);
+
+    // Delete two of the four; an unknown id is skipped, not an error.
+    let deleted = store
+        .remove_dead_letters(&[ids[0], ids[1], Uuid::new_v4()])
+        .unwrap();
+    assert_eq!(deleted, 2);
+    assert_eq!(
+        store
+            .list_dead_letters(&DeadLetterFilter::default())
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn dead_letter_clear_all_and_by_job_key() {
+    let store = create_memory_store().unwrap();
+
+    let add = |job_key: &str| {
+        store
+            .add_dead_letter(&DeadLetter {
+                id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                job_key: job_key.into(),
+                fire_at: now(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "timeout".into(),
+                metadata: HashMap::new(),
+                created_at: now(),
+                expires_at: None,
+            })
+            .unwrap();
+    };
+    add("a:one");
+    add("a:one");
+    add("b:two");
+
+    // Scoped clear removes only the matching job_key.
+    assert_eq!(store.clear_dead_letters(Some("a:one")).unwrap(), 2);
+    assert_eq!(
+        store
+            .list_dead_letters(&DeadLetterFilter::default())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Unscoped clear empties the queue.
+    assert_eq!(store.clear_dead_letters(None).unwrap(), 1);
+    assert!(
+        store
+            .list_dead_letters(&DeadLetterFilter::default())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
     let store = create_memory_store().unwrap();
 

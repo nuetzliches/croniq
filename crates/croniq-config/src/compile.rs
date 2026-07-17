@@ -708,10 +708,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         },
                         DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
                             "retry" => {
-                                default_retry = compile_retry_block(block, &vars);
+                                default_retry = compile_retry_block(block, &vars, default_retry);
                             }
                             "dead_letter" => {
-                                default_dead_letter = compile_dead_letter_block(block, &vars);
+                                default_dead_letter =
+                                    compile_dead_letter_block(block, &vars, default_dead_letter);
                             }
                             _ => {}
                         },
@@ -1318,8 +1319,8 @@ fn compile_job(
                         // compile to a bare placement-constraint block.
                     }
                 },
-                "retry" => retry = compile_retry_block(block, vars),
-                "dead_letter" => dead_letter = compile_dead_letter_block(block, vars),
+                "retry" => retry = compile_retry_block(block, vars, retry),
+                "dead_letter" => dead_letter = compile_dead_letter_block(block, vars, dead_letter),
                 "metadata" => {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner
@@ -1468,23 +1469,33 @@ fn compile_runner_exec_block(
     }
 }
 
-fn compile_retry_block(block: &NamedBlock, vars: &HashMap<String, String>) -> RetryConfig {
-    let strategy = block
-        .qualifier
-        .as_ref()
-        .map(|q| q.value.clone())
-        .unwrap_or_else(|| "exponential".into());
-
-    let mut cfg = RetryConfig {
-        strategy,
-        ..Default::default()
-    };
+/// Compile a `retry [strategy] { … }` block, layering the directives it
+/// names on top of `base` — the inherited value. The strategy qualifier
+/// overrides the inherited strategy only when present, so `retry { … }`
+/// with no qualifier keeps the inherited strategy. Fields the block does
+/// not mention keep their inherited value — the same field-merge
+/// inheritance as `dead_letter` and the scalar directives (issue #348).
+fn compile_retry_block(
+    block: &NamedBlock,
+    vars: &HashMap<String, String>,
+    base: RetryConfig,
+) -> RetryConfig {
+    let mut cfg = base;
+    if let Some(q) = block.qualifier.as_ref() {
+        cfg.strategy = q.value.clone();
+    }
 
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
             let val = first_arg(d, vars).unwrap_or_default();
             match d.key.value.as_str() {
-                "max_attempts" => cfg.max_attempts = val.parse().unwrap_or(3),
+                // On a parse failure keep the inherited count rather than
+                // resetting to the built-in default (field-merge intent).
+                "max_attempts" => {
+                    if let Ok(n) = val.parse() {
+                        cfg.max_attempts = n;
+                    }
+                }
                 "base" => cfg.base = Some(val),
                 "cap" => cfg.cap = Some(val),
                 "delay" => cfg.delay = Some(val),
@@ -1497,14 +1508,31 @@ fn compile_retry_block(block: &NamedBlock, vars: &HashMap<String, String>) -> Re
     cfg
 }
 
+/// Compile a `dead_letter { … }` block, layering the directives it names
+/// on top of `base` — the inherited value (`defaults.dead_letter` for a
+/// job, the running `defaults {}` accumulator otherwise). Fields the block
+/// does not mention keep their inherited value, so a job block overrides
+/// only what it sets — consistent with how the scalar directives
+/// (`timeout`, `timezone`) already inherit field-by-field (issue #348).
 fn compile_dead_letter_block(
     block: &NamedBlock,
     vars: &HashMap<String, String>,
+    base: DeadLetterConfig,
 ) -> DeadLetterConfig {
-    let mut cfg = DeadLetterConfig::default();
+    let mut cfg = base;
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
             match d.key.value.as_str() {
+                // An unrecognised value keeps the inherited flag rather than
+                // silently flipping to `false` — otherwise a typo would
+                // defeat a `defaults { dead_letter { enabled false } }`.
+                "enabled" => {
+                    if let Some(v) = first_arg(d, vars)
+                        && let Some(b) = parse_bool(&v)
+                    {
+                        cfg.enabled = b;
+                    }
+                }
                 "retention" => cfg.retention = first_arg(d, vars),
                 "operator_hint" => cfg.operator_hint = first_arg(d, vars),
                 _ => {}
@@ -1669,6 +1697,130 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timeout.as_deref(), Some("10m"));
+    }
+
+    // ── dead_letter `enabled` + block field-merge (issue #348) ────────────────
+
+    #[test]
+    fn dead_letter_enabled_false_parses() {
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { enabled false } }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            !cfg.jobs[0].dead_letter.enabled,
+            "`dead_letter {{ enabled false }}` must turn dead-lettering off"
+        );
+    }
+
+    #[test]
+    fn dead_letter_enabled_unknown_value_keeps_inherited() {
+        // Default is enabled; an unrecognised value must not silently flip it.
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { enabled maybe } }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].dead_letter.enabled);
+    }
+
+    #[test]
+    fn defaults_dead_letter_enabled_false_is_inherited() {
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { enabled false } }
+            job x:y { every 5 minutes }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            !cfg.jobs[0].dead_letter.enabled,
+            "a job with no dead_letter block must inherit the defaults `enabled false`"
+        );
+    }
+
+    #[test]
+    fn job_dead_letter_block_merges_over_defaults_enabled() {
+        // The sharp case from #348: a job that sets only `retention` must
+        // keep the inherited `enabled false` rather than resetting it to the
+        // built-in `true`.
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { enabled false } }
+            job x:y { every 5 minutes; dead_letter { retention 7d } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            !cfg.jobs[0].dead_letter.enabled,
+            "field-merge: a job dead_letter block must not reset inherited `enabled`"
+        );
+        assert_eq!(cfg.jobs[0].dead_letter.retention.as_deref(), Some("7d"));
+    }
+
+    #[test]
+    fn defaults_dead_letter_retention_survives_job_operator_hint() {
+        // Pre-existing footgun fixed by the field-merge: setting a job's
+        // operator_hint no longer silently reverts retention to the built-in
+        // 30d default.
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { retention 60d } }
+            job x:y { every 5 minutes; dead_letter { operator_hint "check db" } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].dead_letter.retention.as_deref(), Some("60d"));
+        assert_eq!(
+            cfg.jobs[0].dead_letter.operator_hint.as_deref(),
+            Some("check db")
+        );
+        assert!(cfg.jobs[0].dead_letter.enabled);
+    }
+
+    #[test]
+    fn job_retry_block_merges_over_defaults() {
+        // Same field-merge for retry: the job block overrides only what it
+        // names. A missing strategy qualifier keeps the inherited strategy;
+        // an explicit one overrides it, while unnamed fields still inherit.
+        let ast = Parser::parse(
+            r#"
+            defaults { retry exponential { max_attempts 5; base 2s } }
+            job keep:strategy   { every 5 minutes; retry { cap 90s } }
+            job switch:strategy { every 5 minutes; retry fixed { delay 3s } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+
+        let keep = cfg.jobs.iter().find(|j| j.key == "keep:strategy").unwrap();
+        assert_eq!(
+            keep.retry.strategy, "exponential",
+            "no qualifier keeps inherited strategy"
+        );
+        assert_eq!(keep.retry.max_attempts, 5, "unnamed field inherits");
+        assert_eq!(
+            keep.retry.base.as_deref(),
+            Some("2s"),
+            "unnamed field inherits"
+        );
+        assert_eq!(
+            keep.retry.cap.as_deref(),
+            Some("90s"),
+            "named field overrides"
+        );
+
+        let switch = cfg
+            .jobs
+            .iter()
+            .find(|j| j.key == "switch:strategy")
+            .unwrap();
+        assert_eq!(
+            switch.retry.strategy, "fixed",
+            "qualifier overrides strategy"
+        );
+        assert_eq!(switch.retry.max_attempts, 5, "other fields still inherit");
+        assert_eq!(switch.retry.delay.as_deref(), Some("3s"));
     }
 
     #[test]

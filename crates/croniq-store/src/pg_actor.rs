@@ -378,6 +378,16 @@ impl DeadLetterStore for PgStoreHandle {
         self.call(move |s| s.remove_dead_letter(id))
     }
 
+    fn remove_dead_letters(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        let ids = ids.to_vec();
+        self.call(move |s| s.remove_dead_letters(&ids))
+    }
+
+    fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let job_key = job_key.map(str::to_owned);
+        self.call(move |s| s.clear_dead_letters(job_key.as_deref()))
+    }
+
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
         self.call(move |s| s.purge_expired(now))
     }

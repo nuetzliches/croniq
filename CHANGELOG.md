@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Turn dead-lettering off from the Croniqfile**
+  ([#348](https://github.com/nuetzliches/croniq/issues/348)). The execution
+  engine already honored a disabled dead-letter policy end-to-end, but the DSL
+  had no way to express it — `dead_letter { }` only understood `retention` and
+  `operator_hint`, so dead-lettering was effectively always on (30d).
+  `dead_letter { enabled false }` now drops an execution that exhausts its
+  retries instead of queuing it for triage; usable per job or as a global
+  `defaults { dead_letter { enabled false } }` ("off by default, opt in for the
+  jobs that actually get triaged"). The in-browser DSL generator emits the
+  block, and the job create/edit dialogs gain a "dead-lettering enabled" toggle.
+- **Bulk-delete for dead letters**. New `POST /v1/dead-letters/bulk-delete`
+  (`dead-letters:write`) removes many at once — an explicit `ids` list, or
+  `all: true` (optionally scoped to a `job_key`) to clear the queue — returning
+  the number deleted. The Dead Letters page gains a "Clear all" action.
+
+### Changed
+
+- **`defaults { }` `retry` / `dead_letter` blocks now field-merge instead of
+  replacing** ([#348](https://github.com/nuetzliches/croniq/issues/348)).
+  Previously a job that declared its own `retry` or `dead_letter` block was
+  re-parsed from the built-in defaults, silently discarding the `defaults { }`
+  values (e.g. a job setting only `operator_hint` reverted `retention` to 30d).
+  A job block now overrides only the fields it names and inherits the rest from
+  `defaults { }` — consistent with how scalar directives (`timeout`, `timezone`)
+  already inherit; a `retry` block with no strategy qualifier keeps the
+  inherited strategy. Review any config that relied on the old
+  reset-to-default behavior.
+
 ## [0.26.0] - 2026-07-16
 
 ### Added

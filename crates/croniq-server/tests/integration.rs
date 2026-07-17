@@ -369,6 +369,51 @@ async fn exhausted_retries_dead_lettered() {
     assert_eq!(dls[0].job_key, "reports:weekly");
 }
 
+/// `POST /v1/dead-letters/bulk-delete { all: true }` clears the queue
+/// end-to-end through the real router → handler → store (issue #348).
+/// Also proves the new static route coexists with `/v1/dead-letters/{id}`
+/// without a matchit conflict at router construction.
+#[tokio::test]
+async fn bulk_delete_all_clears_dead_letter_queue() {
+    // `store_backed_router` wires ServerState.store (the shared TestServer
+    // harness leaves it None), which the endpoint reads.
+    let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
+
+    // Seed two dead letters.
+    for _ in 0..2 {
+        store
+            .add_dead_letter(&croniq_store::models::DeadLetter {
+                id: uuid::Uuid::new_v4(),
+                execution_id: uuid::Uuid::new_v4(),
+                job_key: "reports:weekly".into(),
+                fire_at: Utc::now(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "timeout".into(),
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+
+    let resp = post_json(
+        store_backed_router(Arc::clone(&store)),
+        "/v1/dead-letters/bulk-delete",
+        serde_json::json!({ "all": true }),
+    )
+    .await;
+    assert_eq!(resp["deleted"].as_u64(), Some(2), "resp: {resp}");
+
+    assert!(
+        store
+            .list_dead_letters(&croniq_store::models::DeadLetterFilter::default())
+            .unwrap()
+            .is_empty(),
+        "bulk-delete all should empty the queue"
+    );
+}
+
 /// Capability routing: a job requiring a capability is only dispatched to
 /// runners that possess it.
 #[tokio::test]

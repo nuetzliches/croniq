@@ -460,6 +460,11 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs/{job_key}/unadopt", post(jobs::handle_unadopt))
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
+        // Static segment — matchit routes it ahead of the `{id}` param below.
+        .route(
+            "/v1/dead-letters/bulk-delete",
+            post(dead_letters::handle_bulk_delete),
+        )
         .route(
             "/v1/dead-letters/{id}",
             get(dead_letters::handle_get).delete(dead_letters::handle_delete),

@@ -198,6 +198,14 @@ defaults {
   retry exponential { max_attempts 3; base 2s; cap 30s }
   timeout 5m
 
+  # Dead-letter: when retries are exhausted the execution is kept in the
+  # dead-letter queue for triage (for `retention`). `enabled false` drops
+  # it instead — set it here for "off by default, opt in per job".
+  # NOTE: a job's own retry / dead_letter block overrides only the fields
+  # it names; anything it omits falls back to this defaults block
+  # (field-merge — the same way scalar directives like timeout inherit).
+  dead_letter { enabled true; retention 30d }
+
   # Execution mode: "queued" (default) persists every execution to DB,
   # enabling retries, dead-letter, and restart recovery.
   # "ephemeral" skips persistence — ideal for high-frequency heartbeat jobs.
@@ -500,7 +508,7 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | Runners | `GET /v1/runners`, `GET /v1/runners/stream` (SSE), `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
 | Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs`, `POST /v1/executions/{id}/cancel` |
-| Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay` |
+| Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay`, `POST .../bulk-delete` |
 | Calendars | `GET/POST /v1/calendars`, `GET/DELETE /v1/calendars/{id}` |
 | Live Console | `GET /v1/events/stream` (SSE — server tracing events) |
 | Dashboard | `GET /v1/dashboard/forecast` |

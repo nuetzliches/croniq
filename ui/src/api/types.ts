@@ -118,6 +118,10 @@ export interface DeadLetter {
   expires_at: string | null
 }
 
+export interface BulkDeleteResponse {
+  deleted: number
+}
+
 export interface ExecutionLogEntry {
   id: string
   execution_id: string

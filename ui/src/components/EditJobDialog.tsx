@@ -17,6 +17,7 @@ interface EditForm {
   description: string
   timeout: string
   tags: string
+  dead_letter_enabled: boolean
 }
 
 const inputCls =
@@ -39,6 +40,8 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
         description: job.description ?? '',
         timeout: job.timeout ?? '',
         tags: (job.tags ?? []).join(', '),
+        // null (never set) ⇒ the server default, which is enabled.
+        dead_letter_enabled: job.dead_letter_enabled ?? true,
       })
     }
   }, [open, job, reset])
@@ -57,6 +60,7 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
       description: data.description.trim() === '' ? null : data.description,
       timeout: data.timeout.trim() === '' ? null : data.timeout,
       tags,
+      dead_letter_enabled: data.dead_letter_enabled,
     })
     onOpenChange(false)
   }
@@ -115,6 +119,15 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
               />
               <p className="text-[11px] text-muted-foreground mt-1">
                 Comma-separated free-form tags for filtering. Convention: <code>key=value</code>. Not routing-relevant.
+              </p>
+            </div>
+            <div>
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input type="checkbox" {...register('dead_letter_enabled')} className="h-3.5 w-3.5" />
+                Dead-lettering enabled
+              </label>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                When on, an execution that exhausts its retries is kept in the dead-letter queue for triage. Turn off to drop permanently-failed executions instead.
               </p>
             </div>
             {updateJob.error && (

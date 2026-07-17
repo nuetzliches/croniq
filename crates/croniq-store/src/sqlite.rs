@@ -4,7 +4,7 @@ use crate::migrations;
 use crate::models::*;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, params_from_iter};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -694,6 +694,32 @@ impl DeadLetterStore for SqliteStore {
         )
         .map_err(map_err)?;
         Ok(())
+    }
+
+    fn remove_dead_letters(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("DELETE FROM dead_letters WHERE id IN ({placeholders})");
+        let affected = conn
+            .execute(&sql, params_from_iter(ids.iter().map(|id| id.to_string())))
+            .map_err(map_err)?;
+        Ok(affected as u64)
+    }
+
+    fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = match job_key {
+            Some(jk) => conn
+                .execute("DELETE FROM dead_letters WHERE job_key = ?1", params![jk])
+                .map_err(map_err)?,
+            None => conn
+                .execute("DELETE FROM dead_letters", [])
+                .map_err(map_err)?,
+        };
+        Ok(affected as u64)
     }
 
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {

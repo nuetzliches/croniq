@@ -998,6 +998,36 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/DeadLetter" }
 
+  /v1/dead-letters/bulk-delete:
+    post:
+      summary: Bulk-delete dead letters
+      description: |
+        Remove many dead letters at once. Provide either an explicit `ids`
+        list, or `all: true` (optionally scoped to a single `job_key`) to clear
+        the queue. Returns the number of rows deleted. Requires the
+        `dead-letters:write` scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+                all: { type: boolean }
+                job_key: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        "400": { description: Neither ids nor all provided, or a malformed id }
+
   /v1/dead-letters/{id}:
     get:
       summary: Get dead letter details
