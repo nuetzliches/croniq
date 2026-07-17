@@ -21,6 +21,7 @@ fn make_execution(job_key: &str, fire_at: chrono::DateTime<Utc>) -> Execution {
         id: Uuid::new_v4(),
         job_key: job_key.to_string(),
         fire_at,
+        scheduled_for: fire_at,
         attempt: 1,
         state: ExecutionState::Queued,
         runner_id: None,
@@ -214,6 +215,21 @@ fn execution_create_and_get() {
     assert_eq!(loaded.id, exec.id);
     assert_eq!(loaded.job_key, "billing:invoice");
     assert_eq!(loaded.state, ExecutionState::Queued);
+}
+
+#[test]
+fn execution_scheduled_for_survives_round_trip_distinct_from_fire_at() {
+    // The retry/replay case: fire_at has drifted to "now" but scheduled_for
+    // stays pinned to the original logical fire time.
+    let store = create_memory_store().unwrap();
+    let mut exec = make_execution("billing:report", utc(2026, 6, 8, 0, 5));
+    exec.scheduled_for = utc(2026, 6, 1, 6, 0);
+
+    store.create_execution(&exec).unwrap();
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+
+    assert_eq!(loaded.fire_at, utc(2026, 6, 8, 0, 5));
+    assert_eq!(loaded.scheduled_for, utc(2026, 6, 1, 6, 0));
 }
 
 #[test]
@@ -637,6 +653,7 @@ fn dead_letter_add_and_get() {
         execution_id: Uuid::new_v4(),
         job_key: "billing:invoice".into(),
         fire_at: utc(2026, 3, 29, 2, 0),
+        scheduled_for: utc(2026, 3, 29, 2, 0),
         attempt: 5,
         error: "max retries exhausted".into(),
         dead_reason: "retry_exhausted".into(),
@@ -664,6 +681,7 @@ fn dead_letter_list_and_remove() {
                 execution_id: Uuid::new_v4(),
                 job_key: "etl:sync".into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 3,
                 error: "timeout".into(),
                 dead_reason: "timeout".into(),
@@ -702,6 +720,7 @@ fn dead_letter_remove_many_by_ids() {
                 execution_id: Uuid::new_v4(),
                 job_key: "etl:sync".into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 1,
                 error: "boom".into(),
                 dead_reason: "timeout".into(),
@@ -741,6 +760,7 @@ fn dead_letter_clear_all_and_by_job_key() {
                 execution_id: Uuid::new_v4(),
                 job_key: job_key.into(),
                 fire_at: now(),
+                scheduled_for: now(),
                 attempt: 1,
                 error: "boom".into(),
                 dead_reason: "timeout".into(),
@@ -786,6 +806,7 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
         execution_id: exec.id,
         job_key: exec.job_key.clone(),
         fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
         attempt: 3,
         error: "connection refused".into(),
         dead_reason: "exhausted after 3 attempts: connection refused".into(),
@@ -813,6 +834,7 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
     assert_eq!(stored.execution_id, exec.id);
     assert_eq!(stored.attempt, 3);
     assert_eq!(stored.expires_at, dl.expires_at);
+    assert_eq!(stored.scheduled_for, dl.scheduled_for);
 }
 
 #[test]
@@ -830,6 +852,7 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
             execution_id: Uuid::new_v4(),
             job_key: "other:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "x".into(),
             dead_reason: "x".into(),
@@ -844,6 +867,7 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
         execution_id: exec.id,
         job_key: exec.job_key.clone(),
         fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
         attempt: 3,
         error: "boom".into(),
         dead_reason: "exhausted".into(),
@@ -879,6 +903,7 @@ fn dead_letter_purge_expired() {
             execution_id: Uuid::new_v4(),
             job_key: "a:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "err".into(),
             dead_reason: "reason".into(),
@@ -895,6 +920,7 @@ fn dead_letter_purge_expired() {
             execution_id: Uuid::new_v4(),
             job_key: "b:job".into(),
             fire_at: now(),
+            scheduled_for: now(),
             attempt: 1,
             error: "err".into(),
             dead_reason: "reason".into(),

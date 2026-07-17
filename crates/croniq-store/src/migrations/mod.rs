@@ -61,6 +61,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "021_execution_retention_indexes",
         include_str!("021_execution_retention_indexes.sql"),
     ),
+    ("022_scheduled_for", include_str!("022_scheduled_for.sql")),
 ];
 
 /// Run all pending migrations.
@@ -350,6 +351,75 @@ mod tests {
             )
             .unwrap();
         assert_eq!(idx, 1, "dedup index must be created");
+    }
+
+    #[test]
+    fn migration_022_backfills_scheduled_for_from_fire_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Apply everything up to (and including) the previous migration so the
+        // executions / dead_letters tables exist in their pre-022 shape.
+        apply_through(&conn, "021_execution_retention_indexes").unwrap();
+
+        // Seed a pre-migration execution and dead-letter (no scheduled_for yet).
+        conn.execute(
+            "INSERT INTO executions (id, job_key, fire_at, attempt, state, metadata, created_at)
+             VALUES (?1, 'billing:report', '2026-06-01T06:00:00Z', 2, 'dead', '{}', '2026-06-08T00:00:00Z')",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at)
+             VALUES (?1, ?2, 'billing:report', '2026-06-01T06:00:00Z', 2, 'boom', 'exhausted', '{}', '2026-06-08T00:00:30Z')",
+            [
+                "11111111-1111-1111-1111-111111111111",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        )
+        .unwrap();
+
+        // Apply 022 in isolation.
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "022_scheduled_for")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // Backfill copies fire_at into the new column for both tables.
+        let exec_sched: String = conn
+            .query_row(
+                "SELECT scheduled_for FROM executions WHERE id = ?1",
+                ["00000000-0000-0000-0000-000000000001"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exec_sched, "2026-06-01T06:00:00Z");
+        let dl_sched: String = conn
+            .query_row(
+                "SELECT scheduled_for FROM dead_letters WHERE id = ?1",
+                ["11111111-1111-1111-1111-111111111111"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dl_sched, "2026-06-01T06:00:00Z");
+
+        // New rows can persist a scheduled_for distinct from fire_at (the
+        // retry/replay case where fire_at has drifted but the logical time
+        // stays pinned to the original schedule).
+        conn.execute(
+            "INSERT INTO executions (id, job_key, fire_at, scheduled_for, attempt, state, metadata, created_at)
+             VALUES (?1, 'billing:report', '2026-06-08T00:05:00Z', '2026-06-01T06:00:00Z', 3, 'queued', '{}', '2026-06-08T00:05:00Z')",
+            ["00000000-0000-0000-0000-000000000002"],
+        )
+        .unwrap();
+        let (fire, sched): (String, String) = conn
+            .query_row(
+                "SELECT fire_at, scheduled_for FROM executions WHERE id = ?1",
+                ["00000000-0000-0000-0000-000000000002"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fire, "2026-06-08T00:05:00Z");
+        assert_eq!(sched, "2026-06-01T06:00:00Z");
     }
 
     #[test]

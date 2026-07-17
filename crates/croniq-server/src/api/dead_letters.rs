@@ -175,6 +175,10 @@ pub async fn handle_replay(
         id: new_id,
         job_key: dl.job_key.clone(),
         fire_at: now,
+        // Preserve the original logical fire time so a time-coupled job
+        // replayed weeks later still computes against the intended instant,
+        // not wall-clock now.
+        scheduled_for: dl.scheduled_for,
         attempt: next_attempt,
         state: ExecutionState::Queued,
         runner_id: None,
@@ -201,6 +205,7 @@ pub async fn handle_replay(
         execution_id: new_id.to_string(),
         job_key: dl.job_key,
         fire_at: now,
+        scheduled_for: dl.scheduled_for,
         attempt: next_attempt,
         require: dl
             .metadata

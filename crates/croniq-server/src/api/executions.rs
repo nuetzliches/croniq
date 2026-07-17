@@ -145,6 +145,7 @@ mod tests {
                 id,
                 job_key: "test:job".into(),
                 fire_at: now,
+                scheduled_for: now,
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,

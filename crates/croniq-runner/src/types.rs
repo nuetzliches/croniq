@@ -85,6 +85,9 @@ pub struct WorkItem {
     pub execution_id: String,
     pub job_key: String,
     pub fire_at: DateTime<Utc>,
+    /// The trigger's original logical fire time — constant across the retry
+    /// chain and replay, while `fire_at` tracks queue due time.
+    pub scheduled_for: DateTime<Utc>,
     /// Which attempt this is (1 = first, 2 = first retry, …).
     pub attempt: u32,
     /// Runner must possess ALL of these capabilities.
@@ -129,6 +132,12 @@ pub struct WorkAssignment {
     pub execution_id: String,
     pub job_key: String,
     pub fire_at: DateTime<Utc>,
+    /// The trigger's original logical fire time. `Option` + `serde(default)`
+    /// so a runner deserializing a poll response from an older server (which
+    /// never emits it) sees `None` rather than failing — no silent fallback
+    /// to `fire_at`, which would reintroduce the wrong-logical-time bug.
+    #[serde(default)]
+    pub scheduled_for: Option<DateTime<Utc>>,
     /// Which attempt this is (1 = first, 2 = first retry, …).
     pub attempt: u32,
     pub metadata: serde_json::Value,
@@ -141,6 +150,7 @@ impl From<WorkItem> for WorkAssignment {
             execution_id: w.execution_id,
             job_key: w.job_key,
             fire_at: w.fire_at,
+            scheduled_for: Some(w.scheduled_for),
             attempt: w.attempt,
             metadata: w.metadata,
             timeout: w.timeout,
@@ -309,10 +319,12 @@ mod tests {
 
     #[test]
     fn work_assignment_from_item() {
+        let scheduled_for = Utc::now() - chrono::Duration::days(7);
         let item = WorkItem {
             execution_id: "exec-1".into(),
             job_key: "billing:invoice".into(),
             fire_at: Utc::now(),
+            scheduled_for,
             attempt: 3,
             require: vec!["billing".into()],
             prefer: vec!["eu-central".into()],
@@ -323,5 +335,24 @@ mod tests {
         assert_eq!(assignment.execution_id, "exec-1");
         assert_eq!(assignment.timeout, "15m");
         assert_eq!(assignment.attempt, 3);
+        // The From conversion wraps the always-present WorkItem field into the
+        // Option the wire type carries.
+        assert_eq!(assignment.scheduled_for, Some(scheduled_for));
+    }
+
+    #[test]
+    fn work_assignment_deserializes_without_scheduled_for() {
+        // A poll response from an older server that never emits the field must
+        // deserialize to None, not fail (serde default) — no silent fallback.
+        let json = serde_json::json!({
+            "execution_id": "exec-1",
+            "job_key": "billing:invoice",
+            "fire_at": "2026-06-01T06:00:00Z",
+            "attempt": 1,
+            "metadata": {},
+            "timeout": "5m"
+        });
+        let wa: WorkAssignment = serde_json::from_value(json).unwrap();
+        assert_eq!(wa.scheduled_for, None);
     }
 }

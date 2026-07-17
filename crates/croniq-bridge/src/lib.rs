@@ -37,7 +37,8 @@
 //! let config = compile(&ast);
 //!
 //! let job = &config.jobs[0];
-//! let item = job_to_work_item(job, "exec-001", Utc::now(), 1);
+//! let fire_at = Utc::now();
+//! let item = job_to_work_item(job, "exec-001", fire_at, fire_at, 1);
 //! let policy = job_to_execution_policy(job);
 //!
 //! assert_eq!(item.job_key, "billing:invoice");

@@ -107,6 +107,7 @@ components:
         id: { type: string, format: uuid }
         job_key: { type: string }
         fire_at: { type: string, format: date-time }
+        scheduled_for: { type: string, format: date-time, description: "Original logical fire time of the trigger; constant across the retry chain and dead-letter replay (fire_at is reset on retry/replay). For manual triggers this is the trigger moment." }
         attempt: { type: integer }
         state: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
         runner_id: { type: string, nullable: true }
@@ -123,12 +124,25 @@ components:
         execution_id: { type: string, format: uuid }
         job_key: { type: string }
         fire_at: { type: string, format: date-time }
+        scheduled_for: { type: string, format: date-time, description: "Original logical fire time, carried unchanged through the retry chain. Anchors the stale-replay guard." }
         attempt: { type: integer }
         error: { type: string }
         dead_reason: { type: string }
         metadata: { type: object }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time, nullable: true }
+
+    WorkAssignment:
+      type: object
+      description: A single unit of work delivered to a runner in a poll response.
+      properties:
+        execution_id: { type: string, format: uuid }
+        job_key: { type: string }
+        fire_at: { type: string, format: date-time, description: "When this execution row became due (reset to now on retry/replay)." }
+        scheduled_for: { type: string, format: date-time, nullable: true, description: "Original logical fire time of the trigger, constant across retries and replay. Null when the server predates this field — runners must not fall back to fire_at." }
+        attempt: { type: integer, description: "1 = first attempt, 2 = first retry, …" }
+        metadata: { type: object }
+        timeout: { type: string }
 
     CalendarDefinition:
       type: object
@@ -1409,7 +1423,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  work: { type: array }
+                  work:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkAssignment" }
                   cancel:
                     type: array
                     items: { type: string, format: uuid }

@@ -85,6 +85,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("019_trigger_idempotency", PG_MIGRATION_019),
     ("020_maintenance", PG_MIGRATION_020),
     ("021_execution_retention_indexes", PG_MIGRATION_021),
+    ("022_scheduled_for", PG_MIGRATION_022),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -171,6 +172,16 @@ CREATE INDEX IF NOT EXISTS idx_executions_completed_at
 CREATE INDEX IF NOT EXISTS idx_executions_job_key_completed_at
     ON executions(job_key, completed_at)
     WHERE completed_at IS NOT NULL;
+"#;
+
+// Logical fire time carried unchanged through the retry chain and replay
+// (fire_at is reset on retry/replay). Nullable; row mappers fall back to
+// fire_at. Mirrors migrations/022_scheduled_for.sql.
+const PG_MIGRATION_022: &str = r#"
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
+UPDATE executions SET scheduled_for = fire_at WHERE scheduled_for IS NULL;
+ALTER TABLE dead_letters ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
+UPDATE dead_letters SET scheduled_for = fire_at WHERE scheduled_for IS NULL;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -583,7 +594,7 @@ impl ExecutionStore for PgStore {
         let mut client = self.client.lock().unwrap();
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE id = $1",
                 &[&id],
             )
             .map_err(map_err)?;
@@ -613,7 +624,7 @@ impl ExecutionStore for PgStore {
 
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE id = $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE id = $1",
                 &[&id],
             )
             .map_err(map_err)?;
@@ -655,7 +666,7 @@ impl ExecutionStore for PgStore {
         };
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
                 &[&(fetch_limit as i64)],
             )
             .map_err(map_err)?;
@@ -683,7 +694,7 @@ impl ExecutionStore for PgStore {
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let mut client = self.client.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key FROM executions WHERE true",
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE true",
         );
         let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
@@ -735,7 +746,7 @@ impl ExecutionStore for PgStore {
         let mut client = self.client.lock().unwrap();
         let rows = client
             .query(
-                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
                  FROM executions
                  WHERE job_key = $1 AND idempotency_key = $2
                    AND (state IN ('queued', 'claimed') OR created_at >= $3)
@@ -1052,6 +1063,7 @@ impl DeadLetterStore for PgStore {
                     &metadata,
                     &dl.created_at,
                     &dl.expires_at,
+                    &dl.scheduled_for,
                 ],
             )
             .map_err(map_err)?;
@@ -1089,6 +1101,7 @@ impl DeadLetterStore for PgStore {
                 &metadata,
                 &dead_letter.created_at,
                 &dead_letter.expires_at,
+                &dead_letter.scheduled_for,
             ],
         )
         .map_err(map_err)?;
@@ -1100,7 +1113,7 @@ impl DeadLetterStore for PgStore {
         let mut client = self.client.lock().unwrap();
         let rows = client
             .query(
-                "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE id = $1",
+                "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE id = $1",
                 &[&id],
             )
             .map_err(map_err)?;
@@ -1111,7 +1124,7 @@ impl DeadLetterStore for PgStore {
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
         let mut client = self.client.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE true",
+            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE true",
         );
         let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
@@ -2636,10 +2649,13 @@ impl Store for PgStore {}
 
 fn row_to_execution(row: &postgres::Row) -> Execution {
     let metadata_json: serde_json::Value = row.get(12);
+    let fire_at = row.get(2);
     Execution {
         id: row.get(0),
         job_key: row.get(1),
-        fire_at: row.get(2),
+        fire_at,
+        // NULL for rows written before migration 022 — fall back to fire_at.
+        scheduled_for: row.get::<_, Option<_>>(15).unwrap_or(fire_at),
         attempt: row.get::<_, i32>(3) as u32,
         state: parse_execution_state(&row.get::<_, String>(4)),
         runner_id: row.get(5),
@@ -2671,11 +2687,14 @@ fn row_to_runner(row: &postgres::Row) -> Runner {
 
 fn row_to_dead_letter(row: &postgres::Row) -> DeadLetter {
     let metadata_json: serde_json::Value = row.get(7);
+    let fire_at = row.get(3);
     DeadLetter {
         id: row.get(0),
         execution_id: row.get(1),
         job_key: row.get(2),
-        fire_at: row.get(3),
+        fire_at,
+        // NULL for rows written before migration 022 — fall back to fire_at.
+        scheduled_for: row.get::<_, Option<_>>(10).unwrap_or(fire_at),
         attempt: row.get::<_, i32>(4) as u32,
         error: row.get(5),
         dead_reason: row.get(6),
@@ -2959,6 +2978,7 @@ fn pg_insert_execution(client: &mut postgres::Client, exec: &Execution) -> Resul
                 &metadata,
                 &exec.created_at,
                 &exec.idempotency_key,
+                &exec.scheduled_for,
             ],
         )
         .map_err(map_err)?;
@@ -2988,6 +3008,7 @@ fn pg_insert_execution_tx(
             &metadata,
             &exec.created_at,
             &exec.idempotency_key,
+            &exec.scheduled_for,
         ],
     )
     .map_err(map_err)?;
@@ -3014,11 +3035,11 @@ fn pg_upsert_job_state_tx(
     Ok(())
 }
 
-const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)";
+const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
 
-const PG_INSERT_DEAD_LETTER_SQL: &str = "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+const PG_INSERT_DEAD_LETTER_SQL: &str = "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
 
 const PG_UPSERT_JOB_STATE_SQL: &str =
     "INSERT INTO job_states (job_key, next_fire_at, last_fired_at, fire_count, status, updated_at)

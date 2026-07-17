@@ -296,6 +296,10 @@ impl CompletionProcessor {
                     id: retry_id,
                     job_key: execution.job_key.clone(),
                     fire_at: retry_fire_at,
+                    // Carry the original logical fire time forward: fire_at
+                    // drifts to now+backoff on each retry, scheduled_for stays
+                    // pinned so time-coupled job logic sees the same instant.
+                    scheduled_for: execution.scheduled_for,
                     attempt: next_attempt,
                     state: ExecutionState::Queued,
                     runner_id: None,
@@ -322,6 +326,7 @@ impl CompletionProcessor {
                     execution_id: retry_id.to_string(),
                     job_key: execution.job_key.clone(),
                     fire_at: retry_fire_at,
+                    scheduled_for: execution.scheduled_for,
                     attempt: next_attempt,
                     require: job.runner.require.clone(),
                     prefer: job.runner.prefer.clone(),
@@ -362,6 +367,7 @@ impl CompletionProcessor {
                     execution_id: exec_uuid,
                     job_key: execution.job_key.clone(),
                     fire_at: execution.fire_at,
+                    scheduled_for: execution.scheduled_for,
                     attempt: execution.attempt,
                     error: event.error.clone().unwrap_or_default(),
                     dead_reason,
@@ -492,6 +498,7 @@ mod tests {
                 id,
                 job_key: job_key.into(),
                 fire_at: Utc::now(),
+                scheduled_for: Utc::now(),
                 attempt: 1,
                 state: ExecutionState::Queued,
                 runner_id: None,

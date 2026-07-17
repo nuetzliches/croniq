@@ -44,6 +44,11 @@ pub struct Execution {
     pub id: Uuid,
     pub job_key: String,
     pub fire_at: DateTime<Utc>,
+    /// The trigger's original logical fire time. Invariant: constant across
+    /// the whole retry chain and across dead-letter replay, while `fire_at`
+    /// tracks when *this* execution row becomes due (retries: now + backoff,
+    /// replays: now). Manual triggers set it to the trigger moment.
+    pub scheduled_for: DateTime<Utc>,
     pub attempt: u32,
     pub state: ExecutionState,
 
@@ -137,6 +142,10 @@ pub struct DeadLetter {
     pub execution_id: Uuid,
     pub job_key: String,
     pub fire_at: DateTime<Utc>,
+    /// Logical fire time of the original trigger, carried unchanged through
+    /// the retry chain (see [`Execution::scheduled_for`]). Anchors the
+    /// stale-replay guard.
+    pub scheduled_for: DateTime<Utc>,
     pub attempt: u32,
     pub error: String,
     pub dead_reason: String,
