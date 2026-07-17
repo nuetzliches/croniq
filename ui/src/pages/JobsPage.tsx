@@ -891,9 +891,9 @@ function OverviewTab({
                   <td>
                     <StatusPill state={e.state} />
                   </td>
-                  <td className="mono dim" style={{ fontSize: 11.5 }}>
+                  <td className="mono dim ellipsis" style={{ fontSize: 11.5, maxWidth: 160 }}>
                     {e.runner_id ? (
-                      <RunnerLink runnerId={e.runner_id}>{e.runner_id.slice(-8)}</RunnerLink>
+                      <RunnerLink runnerId={e.runner_id} />
                     ) : (
                       '—'
                     )}
@@ -956,9 +956,7 @@ function OverviewTab({
               label="Assigned runner"
               value={
                 job.assigned_runner_id ? (
-                  <RunnerLink runnerId={job.assigned_runner_id} className="mono">
-                    {job.assigned_runner_id.slice(-8)}
-                  </RunnerLink>
+                  <RunnerLink runnerId={job.assigned_runner_id} className="mono" />
                 ) : (
                   <span className="dim">any</span>
                 )
@@ -1077,9 +1075,9 @@ function ExecutionsTab({
               <td>
                 <StatusPill state={e.state} />
               </td>
-              <td className="mono dim" style={{ fontSize: 11.5 }}>
+              <td className="mono dim ellipsis" style={{ fontSize: 11.5, maxWidth: 160 }}>
                 {e.runner_id ? (
-                  <RunnerLink runnerId={e.runner_id}>{e.runner_id.slice(-8)}</RunnerLink>
+                  <RunnerLink runnerId={e.runner_id} />
                 ) : (
                   '—'
                 )}
