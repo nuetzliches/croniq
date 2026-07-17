@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-07-18
 
 - **`ExecutionContext.scheduledFor`** exposes the trigger's original logical fire time (`Date | null`), stable across retries and dead-letter replays. Use it for time-relative job logic (e.g. the month a report covers) instead of `new Date()`. `null` when the server predates the field — the SDK never falls back to the queue fire time.
 
