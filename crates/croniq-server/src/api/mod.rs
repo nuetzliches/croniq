@@ -1242,7 +1242,12 @@ async fn handle_trigger(
             created_at: now,
         };
         if let Err(e) = store.create_execution(&execution) {
-            tracing::error!(job_key = %req.job_key, error = %e, "failed to persist triggered execution");
+            // Enqueueing anyway would hand a runner an execution_id with no
+            // backing row: the CompletionProcessor could never record its
+            // outcome and the run would vanish without history. Reject the
+            // trigger instead; the caller can retry.
+            tracing::error!(job_key = %req.job_key, error = %e, "failed to persist triggered execution — trigger rejected");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
