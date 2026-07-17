@@ -4,6 +4,14 @@ description: |
   are empty. The noop handler completes immediately. The runner must ack with
   status=success carrying the original execution_id and attempt.
 
+  The assignment carries the optional scheduled_for field with a value that
+  differs from fire_at (as in a replayed/late execution). The SDK must accept
+  it without error — that the value reaches the handler context is asserted in
+  each SDK's own unit tests, since this suite only observes the wire. Cases
+  that omit scheduled_for (e.g. 03, 05) double as the mixed-version tolerance
+  check: an older server never sends it and the context must surface
+  null/None, never a fire_at fallback.
+
 runner_config:
   capabilities: ["billing"]
   max_inflight: 1
@@ -26,6 +34,7 @@ server_script:
           - execution_id: "exec-001"
             job_key: "billing:invoice"
             fire_at: "2026-05-23T10:00:00Z"
+            scheduled_for: "2026-05-23T09:30:00Z"
             attempt: 1
             metadata: {}
             timeout: "1m"
