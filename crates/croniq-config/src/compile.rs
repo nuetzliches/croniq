@@ -392,7 +392,6 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Serialize)]
 pub struct PullApiConfig {
     pub listen: String,
-    pub auth: Option<String>,
     pub lease_ttl: String,
     /// Dedup window for `POST /v1/trigger` idempotency keys (issue #279).
     /// A repeat trigger carrying the same `(job_key, idempotency_key)`
@@ -657,7 +656,6 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
             Item::PullApi(p) => {
                 let mut cfg = PullApiConfig {
                     listen: ":9443".into(),
-                    auth: None,
                     lease_ttl: "60s".into(),
                     trigger_dedup_window: "10m".into(),
                 };
@@ -667,15 +665,6 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             if let Some(v) = first_arg(d, &vars) {
                                 cfg.listen = v;
                             }
-                        }
-                        "auth" => {
-                            cfg.auth = Some(
-                                d.args
-                                    .iter()
-                                    .map(|a| resolve_str(a, &vars))
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
-                            );
                         }
                         "lease_ttl" => {
                             if let Some(v) = first_arg(d, &vars) {

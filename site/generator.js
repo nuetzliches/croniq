@@ -1029,7 +1029,6 @@ const CONFIG_SCHEMA = {
   ],
   pull_api: [
     { key: 'listen', label: 'Listen address', placeholder: ':4000' },
-    { key: 'auth', label: 'Auth', multi: true, placeholder: 'token {env.CRONIQ_JWT_SECRET}' },
     { key: 'lease_ttl', label: 'Lease TTL', placeholder: '60s' },
     { key: 'trigger_dedup_window', label: 'Trigger dedup window', placeholder: '10m' },
   ],
