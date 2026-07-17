@@ -1026,14 +1026,21 @@ impl CroniqMcp {
             created_at: now,
         };
 
+        // Single transaction: a failure leaves neither an orphaned `queued`
+        // execution nor a still-replayable dead letter. NotFound means a
+        // concurrent retry consumed the dead letter after our read above.
         store
-            .create_execution(&execution)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        // Remove from dead-letter queue.
-        store
-            .remove_dead_letter(dl_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .replay_dead_letter(dl_id, &execution)
+            .map_err(|e| match e {
+                croniq_store::traits::StoreError::NotFound(_) => McpError::invalid_params(
+                    format!(
+                        "Dead letter '{}' not found (already replayed?)",
+                        p.dead_letter_id
+                    ),
+                    None,
+                ),
+                e => McpError::internal_error(e.to_string(), None),
+            })?;
 
         // Look up job config for require/prefer/timeout
         let job = self.jobs.get(&dl.job_key);

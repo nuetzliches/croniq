@@ -1109,6 +1109,27 @@ impl DeadLetterStore for PgStore {
         Ok(())
     }
 
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let mut tx = client.transaction().map_err(map_err)?;
+        let affected = tx
+            .execute("DELETE FROM dead_letters WHERE id = $1", &[&dead_letter_id])
+            .map_err(map_err)?;
+        if affected == 0 {
+            // Dropping the uncommitted transaction rolls it back.
+            return Err(StoreError::NotFound(format!(
+                "dead letter {dead_letter_id}"
+            )));
+        }
+        pg_insert_execution_tx(&mut tx, execution)?;
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
         let mut client = self.client.lock().unwrap();
         let rows = client

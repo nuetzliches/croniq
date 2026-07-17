@@ -12,6 +12,7 @@ use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_runner::WorkItem;
 use croniq_store::models::{DeadLetter, DeadLetterFilter, Execution, ExecutionState};
+use croniq_store::traits::StoreError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -285,12 +286,16 @@ pub async fn handle_replay(
         created_at: now,
     };
 
+    // Single transaction: a failure leaves neither an orphaned `queued`
+    // execution (which would never be enqueued as a work item) nor a
+    // still-replayable dead letter. NotFound means a concurrent replay
+    // consumed the dead letter between our read and this write.
     store
-        .create_execution(&execution)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    store
-        .remove_dead_letter(dl_uuid)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .replay_dead_letter(dl_uuid, &execution)
+        .map_err(|e| match e {
+            StoreError::NotFound(_) => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
 
     // require/prefer: prefer the values captured in the dead letter's metadata,
     // fall back to the job's current runner config, then empty.

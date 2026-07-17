@@ -365,6 +365,15 @@ impl DeadLetterStore for PgStoreHandle {
         })
     }
 
+    fn replay_dead_letter(
+        &self,
+        dead_letter_id: Uuid,
+        execution: &Execution,
+    ) -> Result<(), StoreError> {
+        let execution = execution.clone();
+        self.call(move |s| s.replay_dead_letter(dead_letter_id, &execution))
+    }
+
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
         self.call(move |s| s.get_dead_letter(id))
     }
