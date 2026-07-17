@@ -105,6 +105,7 @@ impl Harness {
         let task_dsl = Arc::clone(&dsl_jobs_shared);
         let task_dsl_cals = Arc::clone(&dsl_calendars_shared);
         let task_policy = Arc::clone(&state.policy_dsl_adopt_on_mutate);
+        let task_faults = Arc::clone(&state.config_faults);
         let task_counters = Arc::clone(&state.reload_counters);
 
         let _scheduler_task = tokio::spawn(async move {
@@ -123,6 +124,7 @@ impl Harness {
                                     &task_dsl_cals,
                                     &task_policy,
                                     &task_snapshot,
+                                    &task_faults,
                                 ).await;
                                 task_counters.inc_success();
                             }

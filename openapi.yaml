@@ -510,6 +510,15 @@ components:
             `queued` (persisted executions) or `ephemeral` (fire-and-forget,
             no execution rows). Explains why an `ephemeral` job legitimately
             shows no execution history. Defaults to `queued`.
+        config_error:
+          type: string
+          description: >
+            Present when the job is `paused` because its `calendar` reference
+            did not resolve at load time (issue #361) — the calendar failed to
+            compile or is not defined. Distinguishes a fail-closed pause from a
+            manual one. Omitted for healthy jobs. Set `policy { strict_calendars
+            false }` in the Croniqfile to restore the legacy behavior (the job
+            fires without its gate) instead of being paused.
 
     Diagnostic:
       type: object

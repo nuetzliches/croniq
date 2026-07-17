@@ -100,6 +100,13 @@ pub struct LoadedConfig {
     pub runtime: RuntimeConfig,
     /// One trigger per job that has an active schedule.
     pub triggers: HashMap<String, Trigger>,
+    /// Jobs whose `calendar` reference did not resolve at load time (the
+    /// calendar failed to compile, or no calendar with that name is defined).
+    /// Keyed by job key, value is a human-readable reason. Under the default
+    /// `strict_calendars` policy these jobs are loaded **paused** (fail closed,
+    /// issue #361); the map is surfaced through `ServerState.config_faults`.
+    /// Empty when `policy { strict_calendars false }` restores legacy behavior.
+    pub calendar_faults: HashMap<String, String>,
 }
 
 /// Load a Croniqfile from a file path, resolving `import` directives recursively.
@@ -170,22 +177,31 @@ pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
 fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<LoadedConfig, LoadError> {
     let now = Utc::now();
 
-    // Build calendars from compiled config
-    let calendars: HashMap<String, Calendar> = runtime
-        .calendars
-        .iter()
-        .filter_map(|cfg| {
-            match Calendar::from_config(cfg) {
-                Ok(cal) => Some((cfg.name.clone(), cal)),
-                Err(e) => {
-                    tracing::warn!(calendar = %cfg.name, error = %e, "failed to compile calendar — skipping");
-                    None
-                }
+    let strict_calendars = runtime.policy.strict_calendars;
+
+    // Build calendars from compiled config. Calendars that fail to compile are
+    // dropped from `calendars` but remembered in `calendar_errors` so a job
+    // that references one can be failed closed (paused) instead of silently
+    // un-gated (issue #361).
+    let mut calendars: HashMap<String, Calendar> = HashMap::new();
+    let mut calendar_errors: HashMap<String, String> = HashMap::new();
+    for cfg in &runtime.calendars {
+        match Calendar::from_config(cfg) {
+            Ok(cal) => {
+                calendars.insert(cfg.name.clone(), cal);
             }
-        })
-        .collect();
+            Err(e) => {
+                // A referenced-but-broken calendar is escalated to ERROR at the
+                // point of reference below; log the compile failure itself at
+                // WARN here (an unreferenced broken calendar stays a warning).
+                tracing::warn!(calendar = %cfg.name, error = %e, "failed to compile calendar — skipping");
+                calendar_errors.insert(cfg.name.clone(), e.to_string());
+            }
+        }
+    }
 
     let mut triggers = HashMap::new();
+    let mut calendar_faults: HashMap<String, String> = HashMap::new();
 
     // Match AST jobs to compiled jobs to extract the ScheduleKind
     let ast_jobs: Vec<&croniq_config::ast::JobBlock> = ast
@@ -226,11 +242,42 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         // Misfire policy: default FireNow (never skip a billing run)
         let misfire = MisfirePolicy::FireNow;
 
-        // Resolve calendar reference
-        let calendar = job_cfg
-            .calendar
-            .as_deref()
-            .and_then(|name| calendars.get(name).cloned());
+        // Resolve calendar reference. A reference that does not resolve (the
+        // calendar failed to compile, or is not defined) is a fault: under the
+        // default `strict_calendars` policy the job is failed closed (paused)
+        // rather than fired without its gate (issue #361).
+        let mut calendar_fault: Option<String> = None;
+        let calendar = match job_cfg.calendar.as_deref() {
+            None => None,
+            Some(name) => match calendars.get(name) {
+                Some(cal) => Some(cal.clone()),
+                None => {
+                    let reason = match calendar_errors.get(name) {
+                        Some(err) => {
+                            format!("calendar '{name}' failed to compile: {err}")
+                        }
+                        None => format!("calendar '{name}' is not defined"),
+                    };
+                    if strict_calendars {
+                        tracing::error!(
+                            job = %job_cfg.key,
+                            calendar = %name,
+                            reason = %reason,
+                            "job paused: referenced calendar did not resolve (strict_calendars)"
+                        );
+                        calendar_fault = Some(reason);
+                    } else {
+                        tracing::warn!(
+                            job = %job_cfg.key,
+                            calendar = %name,
+                            reason = %reason,
+                            "job loaded without its calendar gate (strict_calendars disabled)"
+                        );
+                    }
+                    None
+                }
+            },
+        };
 
         // Parse time window constraint (e.g. "08:00..18:00")
         let window = job_cfg.window.as_deref().and_then(TimeWindow::parse);
@@ -247,7 +294,7 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
                 .map(|dt| dt.with_timezone(&Utc))
         });
 
-        let trigger = Trigger::with_bounds(
+        let mut trigger = Trigger::with_bounds(
             job_cfg.key.clone(),
             schedule,
             tz,
@@ -259,10 +306,23 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             now,
         );
 
+        // Fail closed: a job with an unresolved calendar reference is paused so
+        // it cannot fire un-gated. `Trigger::evaluate` gates on `state == Armed`,
+        // so pausing suppresses firing regardless of `next_fire_at`. Triggers are
+        // rebuilt on every load, so fixing the calendar self-heals on reload.
+        if let Some(reason) = calendar_fault {
+            trigger.pause();
+            calendar_faults.insert(job_cfg.key.clone(), reason);
+        }
+
         triggers.insert(job_cfg.key.clone(), trigger);
     }
 
-    Ok(LoadedConfig { runtime, triggers })
+    Ok(LoadedConfig {
+        runtime,
+        triggers,
+        calendar_faults,
+    })
 }
 
 /// Restore persisted trigger state after a restart (or hot-reload).
@@ -750,6 +810,79 @@ mod tests {
         let cfg = load_str(src).unwrap();
         let trigger = &cfg.triggers["reports:monthly"];
         assert_eq!(trigger.state, TriggerState::Paused);
+    }
+
+    #[test]
+    fn calendar_compile_failure_pauses_job_strict_default() {
+        // `funday` is not a valid weekday; it parses and compiles at the config
+        // layer but fails `Calendar::from_config` at runtime (issue #361).
+        let src = r#"
+            calendar biz { include weekly funday }
+            job ops:tick {
+                every 1 minutes { calendar biz }
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        let trigger = &cfg.triggers["ops:tick"];
+        // Fail closed: paused, not armed, so it cannot fire un-gated.
+        assert_eq!(trigger.state, TriggerState::Paused);
+        assert!(trigger.calendar.is_none());
+        assert!(trigger.evaluate(Utc::now()).is_none());
+        let reason = cfg.calendar_faults.get("ops:tick").expect("fault recorded");
+        assert!(reason.contains("failed to compile"), "reason: {reason}");
+    }
+
+    #[test]
+    fn undefined_calendar_ref_pauses_job_strict_default() {
+        let src = r#"
+            job ops:tick {
+                every 1 minutes { calendar nonexistent }
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        let trigger = &cfg.triggers["ops:tick"];
+        assert_eq!(trigger.state, TriggerState::Paused);
+        let reason = cfg.calendar_faults.get("ops:tick").expect("fault recorded");
+        assert!(reason.contains("not defined"), "reason: {reason}");
+    }
+
+    #[test]
+    fn strict_calendars_false_keeps_legacy_ungated_behavior() {
+        let src = r#"
+            policy { strict_calendars false }
+            calendar biz { include weekly funday }
+            job ops:tick {
+                every 1 minutes { calendar biz }
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        let trigger = &cfg.triggers["ops:tick"];
+        // Legacy behavior: armed, calendar dropped (un-gated), no fault.
+        assert_ne!(trigger.state, TriggerState::Paused);
+        assert!(trigger.calendar.is_none());
+        assert!(cfg.calendar_faults.is_empty());
+    }
+
+    #[test]
+    fn fixing_calendar_rearms_job_on_reload() {
+        let broken = r#"
+            calendar biz { include weekly funday }
+            job ops:tick { every 1 minutes { calendar biz } }
+        "#;
+        assert_eq!(
+            load_str(broken).unwrap().triggers["ops:tick"].state,
+            TriggerState::Paused
+        );
+
+        let fixed = r#"
+            calendar biz { include weekly monday }
+            job ops:tick { every 1 minutes { calendar biz } }
+        "#;
+        let cfg = load_str(fixed).unwrap();
+        let trigger = &cfg.triggers["ops:tick"];
+        assert!(trigger.calendar.is_some());
+        assert!(cfg.calendar_faults.is_empty());
+        assert_ne!(trigger.state, TriggerState::Paused);
     }
 
     #[test]
