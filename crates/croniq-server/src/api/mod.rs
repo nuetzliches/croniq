@@ -174,6 +174,13 @@ pub struct ServerState {
     /// truth) so the scheduler tick and the work-poll can check it cheaply
     /// every cycle; the PUT handler updates both the store and this cache.
     pub maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
+    /// Jobs paused at load time because their `calendar` reference did not
+    /// resolve (issue #361), keyed by job key with a human-readable reason.
+    /// Populated on boot and on every hot-reload from
+    /// `loader::LoadedConfig::calendar_faults`; surfaced as `config_error` on
+    /// `GET /v1/jobs/states` and counted by `croniq_config_calendar_faults`.
+    /// Empty under `policy { strict_calendars false }`.
+    pub config_faults: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
 impl ServerState {
@@ -194,6 +201,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -227,6 +235,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -259,6 +268,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1628,6 +1638,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1805,6 +1816,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1880,6 +1892,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,
@@ -1962,6 +1975,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
             oidc: None,

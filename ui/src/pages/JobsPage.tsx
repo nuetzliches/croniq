@@ -121,6 +121,12 @@ export function JobsPage() {
     return m
   }, [jobStates.data])
 
+  const configErrorByJob = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const s of jobStates.data ?? []) if (s.config_error) m[s.job_key] = s.config_error
+    return m
+  }, [jobStates.data])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (jobs.data ?? []).filter((j) => {
@@ -243,6 +249,7 @@ export function JobsPage() {
                 execs={execsByJob[j.job_key] ?? []}
                 overdue={overdueByJob[j.job_key] ?? false}
                 ephemeral={ephemeralByJob[j.job_key] ?? false}
+                configError={configErrorByJob[j.job_key]}
                 onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
               />
             ))
@@ -275,6 +282,7 @@ function JobRow({
   execs,
   overdue,
   ephemeral,
+  configError,
   onClick,
 }: {
   job: JobDefinition
@@ -282,6 +290,7 @@ function JobRow({
   execs: Execution[]
   overdue: boolean
   ephemeral: boolean
+  configError?: string
   onClick: () => void
 }) {
   const recent = execs.slice(0, 14)
@@ -308,6 +317,13 @@ function JobRow({
         <span className="key ellipsis" style={{ minWidth: 0, flex: 1 }}>
           {job.job_key}
         </span>
+        {configError ? (
+          <StatusPill
+            state="config error"
+            tone="error"
+            title={`Paused — ${configError}`}
+          />
+        ) : null}
         {overdue ? (
           <StatusPill
             state="overdue"
@@ -520,6 +536,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
         <JobDetailHeader
           job={j}
           dslManaged={dslManaged}
+          configError={scheduleState?.config_error}
           triggerPending={triggerJob.isPending}
           adoptPending={adoptJob.isPending}
           unadoptPending={unadoptJob.isPending}
@@ -593,6 +610,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
 function JobDetailHeader({
   job,
   dslManaged,
+  configError,
   triggerPending,
   adoptPending,
   unadoptPending,
@@ -605,6 +623,7 @@ function JobDetailHeader({
 }: {
   job: JobDefinition
   dslManaged: boolean
+  configError?: string
   triggerPending: boolean
   adoptPending: boolean
   unadoptPending: boolean
@@ -646,6 +665,9 @@ function JobDetailHeader({
             {job.job_key}
           </h1>
           <StatusPill state={job.is_active ? 'active' : 'disabled'} />
+          {configError ? (
+            <StatusPill state="config error" tone="error" title={`Paused — ${configError}`} />
+          ) : null}
           {dslManaged ? (
             <span className="pill outline" style={{ fontFamily: 'var(--font-mono-app)' }}>
               DSL

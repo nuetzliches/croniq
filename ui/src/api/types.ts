@@ -64,6 +64,10 @@ export interface JobScheduleState {
   /// `queued` (persisted executions) or `ephemeral` (no execution history by
   /// design). Older servers omit this — treat `undefined` as `queued`.
   execution_mode?: ExecutionMode
+  /// Set when the job is `paused` because its calendar reference didn't resolve
+  /// at load time (issue #361). Distinguishes a fail-closed pause from a manual
+  /// one; the value is a human-readable reason. Absent for healthy jobs.
+  config_error?: string
 }
 
 export interface TriggerDefinition {

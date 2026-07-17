@@ -43,6 +43,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A job whose `calendar` gate does not resolve now fails closed** (issue #361).
+  Previously, if a referenced calendar failed to compile — or was not defined —
+  the loader dropped it with a `WARN` and the job fired **un-gated**, on exactly
+  the days it was configured to skip; both startup and hot-reload reported
+  healthy. Such a job is now loaded **paused** with a surfaced reason (an `ERROR`
+  log, a `config_error` field on `GET /v1/jobs/states`, a
+  `croniq_config_calendar_faults` metric, and a distinct badge in the UI), so it
+  cannot fire without its gate. Fixing the calendar and reloading re-arms the job
+  automatically. **This changes behavior on upgrade** for deployments that
+  currently boot with a broken-but-referenced calendar. To restore the old
+  warn-and-skip behavior, set `policy { strict_calendars false }` in the
+  Croniqfile — this escape hatch is temporary and will be removed in a future
+  release.
 - **Dead-letter replay now reuses the job's configured timeout** instead of a
   hard-coded `5m`, and falls back to the job's `runner { require/prefer }` when
   the dead letter's metadata doesn't carry them. Replay also emits a

@@ -133,6 +133,12 @@ pub struct JobScheduleState {
     /// execution history — otherwise indistinguishable from a broken job
     /// (issue #263). Defaults to `queued` for store-managed jobs.
     pub execution_mode: ExecutionMode,
+    /// Set when the job is `paused` because its `calendar` reference did not
+    /// resolve at load time (issue #361) — the calendar failed to compile or
+    /// is not defined. Distinguishes a fail-closed pause from a manual one so
+    /// the UI can badge it as a config error. `None` for healthy jobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_error: Option<String>,
 }
 
 /// `GET /v1/jobs/states` — per-job scheduling liveness from `job_states`.
@@ -169,12 +175,14 @@ pub async fn handle_list_states(
             std::collections::HashMap::new()
         };
 
+    let faults = state.config_faults.read().unwrap();
     let out = states
         .into_iter()
         .map(|s| {
             let overdue =
                 s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
             let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
+            let config_error = faults.get(&s.job_key).cloned();
             JobScheduleState {
                 job_key: s.job_key,
                 status: s.status,
@@ -183,9 +191,11 @@ pub async fn handle_list_states(
                 fire_count: s.fire_count,
                 overdue,
                 execution_mode,
+                config_error,
             }
         })
         .collect();
+    drop(faults);
     Ok(Json(out))
 }
 
@@ -907,6 +917,43 @@ mod tests {
         let keys: Vec<&str> = arr.iter().map(|j| j["job_key"].as_str().unwrap()).collect();
         assert!(keys.contains(&"api:job"));
         assert!(keys.contains(&"dsl:only"));
+    }
+
+    #[tokio::test]
+    async fn job_states_surfaces_config_error() {
+        use croniq_store::models::{JobState, JobStatus};
+        let store = make_store();
+        store
+            .upsert_job_state(&JobState {
+                job_key: "ops:tick".into(),
+                next_fire_at: None,
+                last_fired_at: None,
+                fire_count: 0,
+                status: JobStatus::Paused,
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        let state = make_state(vec![], store);
+        state
+            .config_faults
+            .write()
+            .unwrap()
+            .insert("ops:tick".into(), "calendar 'biz' failed to compile".into());
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .expect("job_states row present");
+        assert!(
+            row["config_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to compile")
+        );
     }
 
     #[tokio::test]

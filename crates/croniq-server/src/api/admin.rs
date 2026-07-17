@@ -101,6 +101,7 @@ pub async fn handle_reload_config(
         &dsl_calendars,
         &state.policy_dsl_adopt_on_mutate,
         &triggers,
+        &state.config_faults,
     )
     .await
     {

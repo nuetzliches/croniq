@@ -59,6 +59,11 @@ pub struct ReloadPlan {
     pub merged_jobs: Vec<JobConfig>,
     /// Merged triggers: DSL + API-registered (DSL wins on conflict).
     pub merged_triggers: HashMap<String, Trigger>,
+    /// Jobs paused because their `calendar` reference did not resolve in the
+    /// new file (issue #361). Apply replaces `ServerState.config_faults` with
+    /// this so the fault set tracks the live config. Empty under
+    /// `policy { strict_calendars false }`.
+    pub calendar_faults: HashMap<String, String>,
     /// Summary of the difference vs. the running state.
     pub diff: ReloadDiff,
 }
@@ -224,12 +229,21 @@ pub async fn build_plan(
         .filter(|c| !adopted_calendars.contains(&c.name))
         .collect();
 
+    // Keep only faults for jobs that survived into the merged plan (an adopted
+    // job's DSL trigger is dropped, so its fault is moot).
+    let calendar_faults: HashMap<String, String> = loaded
+        .calendar_faults
+        .into_iter()
+        .filter(|(k, _)| merged_triggers.contains_key(k))
+        .collect();
+
     Ok(ReloadPlan {
         dsl_jobs,
         dsl_calendars,
         policy_dsl_adopt_on_mutate: loaded.runtime.policy.dsl_adopt_on_mutate,
         merged_jobs,
         merged_triggers,
+        calendar_faults,
         diff,
     })
 }
@@ -262,11 +276,13 @@ pub async fn apply_plan(
     dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
     policy_dsl_adopt: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
+    config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) -> Result<(), ApplyError> {
     let post_triggers = plan.merged_triggers.clone();
     let post_dsl = plan.dsl_jobs;
     let post_dsl_cals = plan.dsl_calendars;
     let post_policy = plan.policy_dsl_adopt_on_mutate;
+    let post_faults = plan.calendar_faults;
 
     let (ack_tx, ack_rx) = oneshot::channel();
     scheduler_tx
@@ -283,6 +299,7 @@ pub async fn apply_plan(
     *dsl_calendars_shared.write().await = post_dsl_cals;
     policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
+    *config_faults.write().unwrap() = post_faults;
     Ok(())
 }
 
@@ -298,14 +315,17 @@ pub async fn apply_plan_direct(
     dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
     policy_dsl_adopt: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
+    config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) {
     let post_triggers = plan.merged_triggers.clone();
     let post_policy = plan.policy_dsl_adopt_on_mutate;
+    let post_faults = plan.calendar_faults;
     scheduler.reload(plan.merged_triggers, plan.merged_jobs);
     *dsl_jobs_shared.write().await = plan.dsl_jobs;
     *dsl_calendars_shared.write().await = plan.dsl_calendars;
     policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
+    *config_faults.write().unwrap() = post_faults;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -636,5 +656,36 @@ mod tests {
             .await
             .unwrap();
         assert!(plan.policy_dsl_adopt_on_mutate);
+    }
+
+    #[tokio::test]
+    async fn reload_with_broken_calendar_pauses_job_not_ungated() {
+        // A previously-armed job whose calendar becomes broken on reload must
+        // fail closed (paused), not keep firing without its gate (issue #361).
+        let (cur_tr, cur_dsl) = state_from(
+            "calendar biz { include weekly monday }\njob a:b { every 1 minutes { calendar biz } }",
+        )
+        .await;
+        assert_ne!(
+            cur_tr.read().await["a:b"].state,
+            croniq_scheduler::trigger::TriggerState::Paused
+        );
+
+        let store = empty_store();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "calendar biz { include weekly funday }\njob a:b { every 1 minutes { calendar biz } }\n",
+        )
+        .unwrap();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            plan.merged_triggers["a:b"].state,
+            croniq_scheduler::trigger::TriggerState::Paused
+        );
+        assert!(plan.calendar_faults.contains_key("a:b"));
     }
 }
