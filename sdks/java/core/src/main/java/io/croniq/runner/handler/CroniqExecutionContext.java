@@ -2,6 +2,7 @@ package io.croniq.runner.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 
@@ -21,6 +22,15 @@ public interface CroniqExecutionContext {
 
     /** Job key (e.g., {@code "billing:invoice"}). */
     String jobKey();
+
+    /**
+     * The trigger's original logical fire time — stable across retries and
+     * dead-letter replays. Use this (not {@link Instant#now()}) for
+     * time-relative job logic like "the month being reported". {@code null}
+     * when the server predates the field; the SDK never falls back to the
+     * queue fire time.
+     */
+    Instant scheduledFor();
 
     /** 1-based attempt counter. */
     int attempt();

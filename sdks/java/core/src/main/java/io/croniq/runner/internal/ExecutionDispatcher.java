@@ -91,6 +91,7 @@ public final class ExecutionDispatcher {
             var ctx = new ExecutionContextImpl(
                     work.executionId(),
                     work.jobKey(),
+                    parseScheduledFor(work.scheduledFor()),
                     work.attempt(),
                     work.metadata(),
                     timeout,
@@ -222,6 +223,23 @@ public final class ExecutionDispatcher {
             return HumanDuration.parse(value);
         } catch (IllegalArgumentException e) {
             return Duration.ZERO;
+        }
+    }
+
+    /**
+     * Parse the server's {@code scheduled_for} (RFC 3339) into an Instant.
+     * Returns {@code null} when the field is absent (older server) or
+     * unparseable — never falls back to fire_at, which would reintroduce the
+     * wrong-logical-time bug.
+     */
+    static java.time.Instant parseScheduledFor(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.Instant.parse(value);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
         }
     }
 }

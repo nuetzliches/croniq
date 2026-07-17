@@ -18,3 +18,14 @@ export function parseTimeoutMs(raw: string | undefined | null): number | undefin
     default: return undefined;
   }
 }
+
+/**
+ * Parse the server's `scheduled_for` (RFC 3339) into a Date. Returns null when
+ * the field is absent (older server) or unparseable — never falls back to the
+ * queue fire time, which would reintroduce the wrong-logical-time bug.
+ */
+export function parseScheduledFor(raw: string | undefined | null): Date | null {
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}

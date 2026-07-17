@@ -73,6 +73,36 @@ def test_work_assignment_metadata_dict() -> None:
     assert wa.metadata["nested"]["k"] == 1
 
 
+def test_work_assignment_scheduled_for_present() -> None:
+    wa = WorkAssignment.model_validate(
+        {
+            "execution_id": "e",
+            "job_key": "billing:report",
+            "fire_at": "2026-06-08T00:05:00Z",
+            "scheduled_for": "2026-06-01T06:00:00Z",
+            "attempt": 3,
+            "metadata": {},
+            "timeout": "15m",
+        }
+    )
+    assert wa.scheduled_for == "2026-06-01T06:00:00Z"
+
+
+def test_work_assignment_scheduled_for_absent_is_none() -> None:
+    # A poll response from an older server that never emits the field.
+    wa = WorkAssignment.model_validate(
+        {
+            "execution_id": "e",
+            "job_key": "j",
+            "fire_at": "2026-05-23T10:00:00Z",
+            "attempt": 1,
+            "metadata": {},
+            "timeout": "5m",
+        }
+    )
+    assert wa.scheduled_for is None
+
+
 def test_ack_request_omits_optional_fields() -> None:
     ack = AckRequest(runner_id="r", execution_id="e", status="success", attempt=1)
     dumped = ack.model_dump(mode="json", exclude_none=True)

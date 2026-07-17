@@ -47,6 +47,7 @@ internal sealed class ExecutionDispatcher(
         var executionId = assignment.ExecutionId;
         var jobKey = assignment.JobKey;
         var attempt = assignment.Attempt;
+        var scheduledFor = ParseScheduledFor(assignment.ScheduledFor);
         var executionTimeout = ParseTimeout(assignment.Timeout) ?? TimeSpan.FromMinutes(5);
         var handlerLogger = loggerFactory.CreateLogger($"CroniqJob.{jobKey}");
 
@@ -68,7 +69,7 @@ internal sealed class ExecutionDispatcher(
             client.PushEventsAsync(executionId, [enrichment.Enrich(ev)], ct);
 
         var ctx = new CroniqExecutionContext(
-            executionId, jobKey, attempt, assignment.Metadata, executionTimeout,
+            executionId, jobKey, scheduledFor, attempt, assignment.Metadata, executionTimeout,
             runnerId, runnerTags, executionCts.Token, handlerLogger, lazyWriter, pushEventInline);
 
         using var activity = CroniqInstrumentation.ActivitySource.StartActivity(
@@ -244,5 +245,26 @@ internal sealed class ExecutionDispatcher(
             'd' => TimeSpan.FromDays(value),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// Parse the server's <c>scheduled_for</c> (RFC 3339) into a
+    /// <see cref="DateTimeOffset"/>. Returns <c>null</c> when the field is
+    /// absent (older server) or unparseable — never falls back to fire_at,
+    /// which would reintroduce the wrong-logical-time bug.
+    /// </summary>
+    internal static DateTimeOffset? ParseScheduledFor(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        return DateTimeOffset.TryParse(
+            raw,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind,
+            out var value)
+            ? value
+            : null;
     }
 }

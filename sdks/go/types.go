@@ -21,12 +21,15 @@ type PollResponse struct {
 // WorkAssignment describes a single execution the server has handed to
 // this runner.
 type WorkAssignment struct {
-	ExecutionID string          `json:"execution_id"`
-	JobKey      string          `json:"job_key"`
-	FireAt      string          `json:"fire_at"`
-	Attempt     int             `json:"attempt"`
-	Metadata    json.RawMessage `json:"metadata"`
-	Timeout     string          `json:"timeout"`
+	ExecutionID string `json:"execution_id"`
+	JobKey      string `json:"job_key"`
+	FireAt      string `json:"fire_at"`
+	// ScheduledFor is the original logical fire time (RFC 3339). Empty when
+	// the server predates the field — consumers must not fall back to FireAt.
+	ScheduledFor string          `json:"scheduled_for"`
+	Attempt      int             `json:"attempt"`
+	Metadata     json.RawMessage `json:"metadata"`
+	Timeout      string          `json:"timeout"`
 }
 
 // AckRequest is the body sent to POST /v1/work/ack.

@@ -24,6 +24,7 @@ public sealed class CroniqExecutionContext
     internal CroniqExecutionContext(
         string executionId,
         string jobKey,
+        DateTimeOffset? scheduledFor,
         int attempt,
         JsonElement metadata,
         TimeSpan timeout,
@@ -36,6 +37,7 @@ public sealed class CroniqExecutionContext
     {
         ExecutionId = executionId;
         JobKey = jobKey;
+        ScheduledFor = scheduledFor;
         Attempt = attempt;
         Metadata = metadata;
         Timeout = timeout;
@@ -52,6 +54,15 @@ public sealed class CroniqExecutionContext
 
     /// <summary>Job key, e.g. <c>billing:invoice-generate</c>.</summary>
     public string JobKey { get; }
+
+    /// <summary>
+    /// The trigger's original logical fire time — stable across retries and
+    /// dead-letter replays. Use this (not <see cref="DateTimeOffset.UtcNow"/>)
+    /// for time-relative job logic like "the month being reported".
+    /// <c>null</c> when the server predates the field; the SDK never falls
+    /// back to the queue fire time.
+    /// </summary>
+    public DateTimeOffset? ScheduledFor { get; }
 
     /// <summary>1-based attempt counter (incremented on each retry).</summary>
     public int Attempt { get; }

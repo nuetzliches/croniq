@@ -55,6 +55,10 @@ pub struct WorkAssignment {
     pub execution_id: String,
     pub job_key: String,
     pub fire_at: String,
+    /// Original logical fire time (RFC 3339). `None` when the server predates
+    /// the field — the SDK must not fall back to `fire_at`.
+    #[serde(default)]
+    pub scheduled_for: Option<String>,
     pub attempt: u32,
     pub metadata: serde_json::Value,
     pub timeout: String,
@@ -227,4 +231,39 @@ pub struct RegisterJobRequest {
     #[serde(default)]
     pub capabilities: Vec<String>,
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_assignment_parses_scheduled_for() {
+        let json = serde_json::json!({
+            "execution_id": "e1",
+            "job_key": "billing:report",
+            "fire_at": "2026-06-08T00:05:00Z",
+            "scheduled_for": "2026-06-01T06:00:00Z",
+            "attempt": 3,
+            "metadata": {},
+            "timeout": "15m"
+        });
+        let wa: WorkAssignment = serde_json::from_value(json).unwrap();
+        assert_eq!(wa.scheduled_for.as_deref(), Some("2026-06-01T06:00:00Z"));
+    }
+
+    #[test]
+    fn work_assignment_scheduled_for_absent_is_none() {
+        // A poll response from an older server that never emits the field.
+        let json = serde_json::json!({
+            "execution_id": "e1",
+            "job_key": "billing:report",
+            "fire_at": "2026-06-08T00:05:00Z",
+            "attempt": 1,
+            "metadata": {},
+            "timeout": "5m"
+        });
+        let wa: WorkAssignment = serde_json::from_value(json).unwrap();
+        assert!(wa.scheduled_for.is_none());
+    }
 }

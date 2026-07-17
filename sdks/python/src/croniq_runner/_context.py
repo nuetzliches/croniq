@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from croniq_runner._log_writer import LogLevel, LogWriter, _Enrichment
@@ -39,6 +39,21 @@ def _parse_timeout(raw: str | None, default: timedelta = timedelta(minutes=5)) -
     return default
 
 
+def _parse_scheduled_for(raw: str | None) -> datetime | None:
+    """Parse the server's ``scheduled_for`` (RFC 3339) into a datetime.
+
+    Returns ``None`` when the field is absent (older server) or unparseable —
+    never falls back to fire_at, which would reintroduce the wrong-logical-time
+    bug. Accepts a trailing ``Z`` (mapped to ``+00:00``) for older Pythons.
+    """
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 class ExecutionContext:
     """Context handed to a job handler for one execution.
 
@@ -54,6 +69,7 @@ class ExecutionContext:
         *,
         execution_id: str,
         job_key: str,
+        scheduled_for: datetime | None,
         attempt: int,
         metadata: dict[str, Any],
         timeout: timedelta,
@@ -65,6 +81,11 @@ class ExecutionContext:
     ) -> None:
         self.execution_id = execution_id
         self.job_key = job_key
+        #: The trigger's original logical fire time — stable across retries and
+        #: dead-letter replays. Use this (not ``datetime.now()``) for
+        #: time-relative job logic like "the month being reported". ``None``
+        #: when the server predates the field; never falls back to fire_at.
+        self.scheduled_for = scheduled_for
         self.attempt = attempt
         self.metadata = metadata
         self.timeout = timeout
