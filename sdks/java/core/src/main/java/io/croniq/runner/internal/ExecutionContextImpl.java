@@ -5,6 +5,7 @@ import io.croniq.runner.handler.CroniqCancellation;
 import io.croniq.runner.handler.CroniqExecutionContext;
 import io.croniq.runner.handler.CroniqLogWriter;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
 
     private final String executionId;
     private final String jobKey;
+    private final Instant scheduledFor;
     private final int attempt;
     private final JsonNode metadata;
     private final Duration timeout;
@@ -30,6 +32,7 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
     ExecutionContextImpl(
             String executionId,
             String jobKey,
+            Instant scheduledFor,
             int attempt,
             JsonNode metadata,
             Duration timeout,
@@ -39,6 +42,7 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
             CroniqLogWriter logWriter) {
         this.executionId = executionId;
         this.jobKey = jobKey;
+        this.scheduledFor = scheduledFor;
         this.attempt = attempt;
         this.metadata = metadata;
         this.timeout = timeout;
@@ -59,6 +63,11 @@ final class ExecutionContextImpl implements CroniqExecutionContext {
     @Override
     public String jobKey() {
         return jobKey;
+    }
+
+    @Override
+    public Instant scheduledFor() {
+        return scheduledFor;
     }
 
     @Override

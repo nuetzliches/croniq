@@ -14,7 +14,11 @@ from typing import Any
 import httpx
 
 from croniq_runner._client import CroniqClient
-from croniq_runner._context import ExecutionContext, _parse_timeout
+from croniq_runner._context import (
+    ExecutionContext,
+    _parse_scheduled_for,
+    _parse_timeout,
+)
 from croniq_runner._errors import HandlerError, NoHandlerRegisteredError
 from croniq_runner._identity import resolve_runner_id
 from croniq_runner._options import RunnerOptions
@@ -245,6 +249,7 @@ class Runner:
         ctx = ExecutionContext(
             execution_id=execution_id,
             job_key=job_key,
+            scheduled_for=_parse_scheduled_for(assignment.scheduled_for),
             attempt=attempt,
             metadata=assignment.metadata,
             timeout=timeout,

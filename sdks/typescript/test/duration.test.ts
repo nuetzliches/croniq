@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseTimeoutMs } from '../src/duration.js';
+import { parseScheduledFor, parseTimeoutMs } from '../src/duration.js';
 
 describe('parseTimeoutMs', () => {
   it('parses seconds', () => {
@@ -36,5 +36,22 @@ describe('parseTimeoutMs', () => {
 
   it('rejects malformed numbers', () => {
     expect(parseTimeoutMs('abcm')).toBeUndefined();
+  });
+});
+
+describe('parseScheduledFor', () => {
+  it('parses an RFC 3339 timestamp', () => {
+    const d = parseScheduledFor('2026-06-01T06:00:00Z');
+    expect(d).toBeInstanceOf(Date);
+    expect(d?.toISOString()).toBe('2026-06-01T06:00:00.000Z');
+  });
+
+  it('returns null when absent (older server)', () => {
+    expect(parseScheduledFor(undefined)).toBeNull();
+    expect(parseScheduledFor(null)).toBeNull();
+  });
+
+  it('returns null on unparseable input rather than an Invalid Date', () => {
+    expect(parseScheduledFor('not-a-date')).toBeNull();
   });
 });

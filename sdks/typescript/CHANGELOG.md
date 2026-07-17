@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`ExecutionContext.scheduledFor`** exposes the trigger's original logical fire time (`Date | null`), stable across retries and dead-letter replays. Use it for time-relative job logic (e.g. the month a report covers) instead of `new Date()`. `null` when the server predates the field — the SDK never falls back to the queue fire time.
+
 ## 0.2.0 - 2026-07-15
 
 - First-class producer **trigger client** ([#284](https://github.com/nuetzliches/croniq/issues/284), parity with the .NET SDK [#277](https://github.com/nuetzliches/croniq/issues/277)): `createTriggerClient(...)` / `CroniqTriggerClient.trigger(jobKey, { metadata, require, prefer, timeout, idempotencyKey })` wraps `POST /v1/trigger` and returns `{ executionId, queued, deduplicated }`. Independent of the runner and carries its own `jobs:trigger`-scoped credentials. Unset optionals are omitted from the body; `idempotency_key` drives server-side dedup ([#279](https://github.com/nuetzliches/croniq/issues/279)) with a missing `deduplicated` flag parsed as `false`. A `429` per-job queue-overflow ([#299](https://github.com/nuetzliches/croniq/issues/299)) surfaces as `QueueOverflowError` (subclass of `HttpError`, with `retryAfterMs`); other non-2xx surface as `HttpError`.

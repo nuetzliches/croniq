@@ -6,6 +6,16 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — logical fire time
+
+- **`CroniqExecutionContext.scheduledFor()`** exposes the trigger's original
+  logical fire time (`java.time.Instant`), stable across retries and dead-letter
+  replays. Use it for time-relative job logic (e.g. the month a report covers)
+  instead of `Instant.now()`. `null` when the server predates the field — the
+  SDK never falls back to the queue fire time.
+- **Breaking (source):** the `WorkAssignment` record gains a `scheduledFor`
+  component; test doubles that construct it positionally must add the argument.
+
 ### Added — trigger (producer) client, [#285](https://github.com/nuetzliches/croniq/issues/285)
 
 - `io.croniq.runner.CroniqTriggerClient` — producer-side client wrapping

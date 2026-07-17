@@ -309,14 +309,15 @@ func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGrou
 	r.inflightMu.Unlock()
 
 	ec := &ExecutionContext{
-		ExecutionID: a.ExecutionID,
-		JobKey:      a.JobKey,
-		Attempt:     a.Attempt,
-		Metadata:    a.Metadata,
-		Timeout:     a.Timeout,
-		RunnerID:    r.opts.RunnerID,
-		RunnerTags:  append([]string(nil), r.opts.Tags...),
-		client:      r.client,
+		ExecutionID:  a.ExecutionID,
+		JobKey:       a.JobKey,
+		ScheduledFor: parseScheduledFor(a.ScheduledFor),
+		Attempt:      a.Attempt,
+		Metadata:     a.Metadata,
+		Timeout:      a.Timeout,
+		RunnerID:     r.opts.RunnerID,
+		RunnerTags:   append([]string(nil), r.opts.Tags...),
+		client:       r.client,
 	}
 
 	go func() {

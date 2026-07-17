@@ -10,6 +10,13 @@ export interface ExecutionContext {
   readonly executionId: string;
   /** Job key, e.g. `billing:invoice`. */
   readonly jobKey: string;
+  /**
+   * The trigger's original logical fire time — stable across retries and
+   * dead-letter replays. Use this (not `new Date()`) for time-relative job
+   * logic like "the month being reported". `null` when the server predates
+   * the field; the SDK never falls back to the queue fire time.
+   */
+  readonly scheduledFor: Date | null;
   /** 1-based attempt counter, incremented on each retry. */
   readonly attempt: number;
   /**
@@ -52,6 +59,7 @@ export interface ExecutionContext {
 export interface ExecutionContextInput {
   executionId: string;
   jobKey: string;
+  scheduledFor: Date | null;
   attempt: number;
   metadata: unknown;
   timeoutMs: number;
@@ -68,6 +76,7 @@ export interface ExecutionContextInput {
 export class ExecutionContextImpl implements ExecutionContext {
   readonly executionId: string;
   readonly jobKey: string;
+  readonly scheduledFor: Date | null;
   readonly attempt: number;
   readonly metadata: unknown;
   readonly timeoutMs: number;
@@ -85,6 +94,7 @@ export class ExecutionContextImpl implements ExecutionContext {
   constructor(input: ExecutionContextInput) {
     this.executionId = input.executionId;
     this.jobKey = input.jobKey;
+    this.scheduledFor = input.scheduledFor;
     this.attempt = input.attempt;
     this.metadata = input.metadata;
     this.timeoutMs = input.timeoutMs;

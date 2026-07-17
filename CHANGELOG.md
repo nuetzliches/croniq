@@ -33,6 +33,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Dead Letters page now shows each letter's **original scheduled time**, and
   a stale replay prompts a confirm dialog ("originally scheduled X ago — replay
   anyway?") that retries with `force`.
+- **All six runner SDKs expose `scheduled_for` on the handler context** (Rust,
+  TypeScript `scheduledFor`, Python `scheduled_for`, Go `ScheduledFor`, Java
+  `scheduledFor()`, .NET `ScheduledFor`). Handlers can now read the trigger's
+  logical fire time — stable across retries and replay — instead of wall-clock
+  now, which is what makes a time-coupled job (e.g. a monthly report) correct
+  after a late or replayed run. Absent (older server) surfaces as
+  `null`/`None`/zero, never a silent fall back to the queue fire time.
 
 ### Changed
 
