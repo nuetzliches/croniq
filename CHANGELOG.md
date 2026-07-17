@@ -21,6 +21,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   work-poll assignment (`scheduled_for`, `null` when the server predates the
   field — runners must not fall back to `fire_at`). Manual triggers set it to
   the trigger moment.
+- **Stale-replay guard for dead letters (`dead_letter { replay_max_age … }`)**.
+  Opt-in: when set, replaying a dead letter whose original `scheduled_for` is
+  older than the given duration is refused with `409 stale_replay` (a structured
+  body carrying `scheduled_for`, `age_seconds`, and `replay_max_age`) unless the
+  request passes `force: true`. Guards against re-running a time-coupled job
+  (e.g. a monthly invoice) against the wrong period long after it dead-lettered.
+  Applies to `POST /v1/dead-letters/{id}/replay` and the MCP `dlq_retry` tool
+  (which gains a `force` flag). No policy set → replay is always allowed (the
+  UI still surfaces the age). The in-browser DSL generator emits the field.
+- The Dead Letters page now shows each letter's **original scheduled time**, and
+  a stale replay prompts a confirm dialog ("originally scheduled X ago — replay
+  anyway?") that retries with `force`.
+
+### Changed
+
+- **Dead-letter replay now reuses the job's configured timeout** instead of a
+  hard-coded `5m`, and falls back to the job's `runner { require/prefer }` when
+  the dead letter's metadata doesn't carry them. Replay also emits a
+  `dead_letter.replayed` audit event.
 
 ## [0.27.0] - 2026-07-17
 

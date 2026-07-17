@@ -532,6 +532,10 @@ pub struct DeadLetterConfig {
     pub enabled: bool,
     pub retention: Option<String>,
     pub operator_hint: Option<String>,
+    /// Opt-in staleness guard for replay: reject replaying a dead letter
+    /// whose original `scheduled_for` is older than this duration (unless
+    /// forced). `None` = always allow (the default) — see issue tracker.
+    pub replay_max_age: Option<String>,
 }
 
 impl Default for DeadLetterConfig {
@@ -540,6 +544,7 @@ impl Default for DeadLetterConfig {
             enabled: true,
             retention: Some("30d".into()),
             operator_hint: None,
+            replay_max_age: None,
         }
     }
 }
@@ -1535,6 +1540,7 @@ fn compile_dead_letter_block(
                 }
                 "retention" => cfg.retention = first_arg(d, vars),
                 "operator_hint" => cfg.operator_hint = first_arg(d, vars),
+                "replay_max_age" => cfg.replay_max_age = first_arg(d, vars),
                 _ => {}
             }
         }
@@ -1776,6 +1782,60 @@ mod tests {
             Some("check db")
         );
         assert!(cfg.jobs[0].dead_letter.enabled);
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_parses() {
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { replay_max_age 7d } }"#)
+                .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("7d")
+        );
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_defaults_to_none() {
+        let ast =
+            Parser::parse(r#"job x:y { every 5 minutes; dead_letter { retention 30d } }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].dead_letter.replay_max_age.is_none());
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_inherits_from_defaults() {
+        // Field-merge: a job that sets only operator_hint still inherits the
+        // fleet-wide replay_max_age from defaults {}.
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { replay_max_age 14d } }
+            job x:y { every 5 minutes; dead_letter { operator_hint "check db" } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("14d")
+        );
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_job_overrides_defaults() {
+        let ast = Parser::parse(
+            r#"
+            defaults { dead_letter { replay_max_age 14d } }
+            job x:y { every 5 minutes; dead_letter { replay_max_age 2d } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(
+            cfg.jobs[0].dead_letter.replay_max_age.as_deref(),
+            Some("2d")
+        );
     }
 
     #[test]

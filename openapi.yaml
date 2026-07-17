@@ -1058,6 +1058,25 @@ paths:
   /v1/dead-letters/{id}/replay:
     post:
       summary: Replay a dead letter as a new execution
+      description: |
+        Requeues the dead letter as a fresh execution, preserving the original
+        `scheduled_for` (logical fire time). Requires `dead-letters:write`.
+
+        Honours the opt-in stale-replay guard: if the job declares
+        `dead_letter { replay_max_age … }` and the dead letter's `scheduled_for`
+        is older than that, the replay is refused with `409 stale_replay` unless
+        the request body passes `force: true`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  default: false
+                  description: Override the stale-replay guard.
       responses:
         "200":
           content:
@@ -1067,6 +1086,19 @@ paths:
                 properties:
                   execution_id: { type: string }
                   attempt: { type: integer }
+                  scheduled_for: { type: string, format: date-time }
+        "409":
+          description: Replay refused by the stale-replay guard (retry with `force: true`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [stale_replay] }
+                  message: { type: string }
+                  scheduled_for: { type: string, format: date-time }
+                  age_seconds: { type: integer }
+                  replay_max_age: { type: string }
 
   /v1/alerts/config:
     get:

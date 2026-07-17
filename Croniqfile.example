@@ -119,7 +119,12 @@ job billing:invoice-generate {
   runner { require billing; prefer eu-central }
   retry exponential { max_attempts 5; base 5s; cap 2m; jitter 0.3 }
   timeout 15m
-  dead_letter { retention 60d; operator_hint "Billing-DB pruefen" }
+  # replay_max_age: opt-in staleness guard. This job's output is coupled to
+  # its scheduled month, so replaying a dead letter more than 7 days after its
+  # original scheduled_for is refused (409) unless the operator forces it — a
+  # month-late replay would otherwise bill the wrong period. Handlers read the
+  # logical time from the execution's scheduled_for, not wall-clock now.
+  dead_letter { retention 60d; replay_max_age 7d; operator_hint "Billing-DB pruefen" }
   metadata { team billing; priority high }
 }
 

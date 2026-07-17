@@ -8,6 +8,23 @@ import { useAuthStore } from '@/auth/store'
 // build time only when UI and API live on different origins.
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
+/**
+ * Error thrown by API helpers on a non-OK response. Carries the HTTP status
+ * and the parsed JSON body (when the response was JSON) so callers can branch
+ * on structured errors (e.g. the 409 stale-replay guard). The `message` keeps
+ * the historical `"<status>: <text>"` format so existing toasts don't regress.
+ */
+export class ApiError extends Error {
+  status: number
+  body?: unknown
+  constructor(status: number, rawBody: string, body?: unknown) {
+    super(`${status}: ${rawBody}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = useAuthStore.getState().token
   const res = await fetch(`${BASE}${path}`, {
@@ -23,8 +40,14 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     throw new Error('Unauthorized')
   }
   if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`${res.status}: ${body}`)
+    const raw = await res.text()
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      parsed = undefined
+    }
+    throw new ApiError(res.status, raw, parsed)
   }
   // 204 No Content + 205 Reset Content carry no body — calling res.json()
   // would throw "Unexpected end of JSON input". Caller's <T> is typically
