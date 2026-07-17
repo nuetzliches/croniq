@@ -5,13 +5,7 @@ import { LogsPanel } from '@/components/LogsPanel'
 import { JobLink, RunnerLink } from '@/components/entity-links'
 import { RelativeTime } from '@/components/ui/relative-time'
 import type { Execution } from '@/api/types'
-import { formatDate } from '@/lib/utils'
-
-/** True when the row's due time diverged from the trigger's logical fire
- *  time — i.e. this execution is a retry (now+backoff) or a replay (now). */
-export function isRescheduled(e: Pick<Execution, 'fire_at' | 'scheduled_for'>): boolean {
-  return new Date(e.fire_at).getTime() !== new Date(e.scheduled_for).getTime()
-}
+import { formatDate, isRescheduled } from '@/lib/utils'
 
 export function ExecutionDetail({ execution }: { execution: Execution }) {
   return (

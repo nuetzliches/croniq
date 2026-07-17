@@ -6,9 +6,9 @@ import type { Execution } from '@/api/types'
 import { StatusPill } from '@/components/primitives'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Activity, Ban, History, X, MousePointerClick } from 'lucide-react'
-import { shortId, formatDate } from '@/lib/utils'
+import { shortId, formatDate, isRescheduled } from '@/lib/utils'
 import { RelativeTime } from '@/components/ui/relative-time'
-import { ExecutionDetail, isRescheduled } from '@/components/ExecutionDetail'
+import { ExecutionDetail } from '@/components/ExecutionDetail'
 import { JobLink, RunnerLink } from '@/components/entity-links'
 
 const STATES = ['', 'queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
