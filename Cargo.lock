@@ -727,6 +727,7 @@ dependencies = [
  "chrono",
  "croniq-auth",
  "croniq-config",
+ "croniq-execution",
  "croniq-runner",
  "croniq-scheduler",
  "croniq-store",

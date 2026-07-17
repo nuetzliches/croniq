@@ -379,7 +379,8 @@ export function useBulkDeleteDeadLetters() {
 export function useReplayDeadLetter() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiPost<T.ReplayResponse>(`/v1/dead-letters/${id}/replay`, {}),
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) =>
+      apiPost<T.ReplayResponse>(`/v1/dead-letters/${id}/replay`, force ? { force: true } : {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['dead-letters'] }); qc.invalidateQueries({ queryKey: ['executions'] }) },
     meta: { action: 'Replay dead letter' },
   })

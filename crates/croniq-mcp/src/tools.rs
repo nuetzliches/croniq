@@ -189,6 +189,11 @@ fn default_list_limit() -> u32 {
 pub struct DlqRetryParams {
     /// The dead-letter ID to retry (UUID string).
     pub dead_letter_id: String,
+    /// Override the stale-replay guard (`dead_letter { replay_max_age … }`).
+    /// Without this, retrying a dead letter whose original schedule is older
+    /// than the job's `replay_max_age` is refused.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -973,8 +978,30 @@ impl CroniqMcp {
                 )
             })?;
 
-        let new_id = Uuid::new_v4();
         let now = Utc::now();
+
+        // Stale-replay guard (opt-in via `dead_letter { replay_max_age … }`),
+        // mirroring the HTTP replay endpoint. Anchored on the dead letter's
+        // original scheduled_for — the drift that breaks time-coupled jobs.
+        if !p.force
+            && let Some(job) = self.jobs.get(&dl.job_key)
+            && let Some(max_age_str) = job.dead_letter.replay_max_age.as_ref()
+            && let Some(max_age) = croniq_execution::retry::parse_duration(max_age_str)
+        {
+            let age = now - dl.scheduled_for;
+            if age > chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX) {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "Dead letter '{}' was originally scheduled {} days ago; job declares replay_max_age {max_age_str}. Pass force:true to retry anyway.",
+                        p.dead_letter_id,
+                        age.num_days()
+                    ),
+                    None,
+                ));
+            }
+        }
+
+        let new_id = Uuid::new_v4();
         let next_attempt = dl.attempt + 1;
 
         // Create a fresh execution for the retry.
@@ -2031,6 +2058,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2050,6 +2078,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2062,6 +2091,7 @@ mod tests {
         let err = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: Uuid::new_v4().to_string(),
+                force: false,
             }))
             .await;
         assert!(err.is_err());
@@ -2097,6 +2127,7 @@ mod tests {
         let result = server
             .dlq_retry(Parameters(DlqRetryParams {
                 dead_letter_id: dl_id.to_string(),
+                force: false,
             }))
             .await
             .unwrap();

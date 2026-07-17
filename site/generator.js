@@ -1073,6 +1073,7 @@ const CONFIG_SCHEMA = {
     ] },
     { sub: 'dead_letter', label: 'Dead letter', fields: [
       { key: 'retention', label: 'Retention', placeholder: '30d' },
+      { key: 'replay_max_age', label: 'Replay max age', placeholder: '7d' },
       { key: 'operator_hint', label: 'Operator hint' },
     ] },
   ],

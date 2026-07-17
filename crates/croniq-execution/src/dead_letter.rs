@@ -13,6 +13,9 @@ pub struct DeadLetterPolicy {
     pub retention: Duration,
     /// Human-readable hint for the operator on how to resolve.
     pub operator_hint: Option<String>,
+    /// Opt-in staleness guard: reject replaying a dead letter whose original
+    /// `scheduled_for` is older than this (unless forced). `None` = no guard.
+    pub replay_max_age: Option<Duration>,
 }
 
 impl Default for DeadLetterPolicy {
@@ -21,6 +24,7 @@ impl Default for DeadLetterPolicy {
             enabled: true,
             retention: Duration::from_secs(30 * 86400), // 30 days
             operator_hint: None,
+            replay_max_age: None,
         }
     }
 }
@@ -31,6 +35,7 @@ impl DeadLetterPolicy {
             enabled: false,
             retention: Duration::ZERO,
             operator_hint: None,
+            replay_max_age: None,
         }
     }
 
@@ -43,6 +48,13 @@ impl DeadLetterPolicy {
 
     pub fn with_hint(mut self, hint: &str) -> Self {
         self.operator_hint = Some(hint.to_string());
+        self
+    }
+
+    /// Set the replay staleness guard from a duration string (e.g. `"7d"`).
+    /// A string that fails to parse leaves the guard unset.
+    pub fn with_replay_max_age(mut self, max_age: &str) -> Self {
+        self.replay_max_age = parse_duration(max_age);
         self
     }
 
@@ -99,5 +111,22 @@ mod tests {
             policy.operator_hint.as_deref(),
             Some("Check DB connectivity")
         );
+    }
+
+    #[test]
+    fn replay_max_age_default_none() {
+        assert!(DeadLetterPolicy::default().replay_max_age.is_none());
+    }
+
+    #[test]
+    fn with_replay_max_age_parses() {
+        let policy = DeadLetterPolicy::default().with_replay_max_age("7d");
+        assert_eq!(policy.replay_max_age, Some(Duration::from_secs(7 * 86400)));
+    }
+
+    #[test]
+    fn with_replay_max_age_invalid_stays_none() {
+        let policy = DeadLetterPolicy::default().with_replay_max_age("not-a-duration");
+        assert!(policy.replay_max_age.is_none());
     }
 }

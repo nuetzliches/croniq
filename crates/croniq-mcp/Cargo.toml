@@ -14,6 +14,7 @@ croniq-runner = { path = "../croniq-runner" }
 croniq-store = { path = "../croniq-store" }
 croniq-config = { path = "../croniq-config" }
 croniq-scheduler = { path = "../croniq-scheduler" }
+croniq-execution = { path = "../croniq-execution" }
 rmcp = { version = "~1.5", features = [
     "server",
     "macros",

@@ -109,6 +109,9 @@ pub fn dead_letter_to_policy(cfg: &DeadLetterConfig) -> DeadLetterPolicy {
     if let Some(hint) = &cfg.operator_hint {
         policy = policy.with_hint(hint);
     }
+    if let Some(max_age) = &cfg.replay_max_age {
+        policy = policy.with_replay_max_age(max_age);
+    }
 
     policy
 }
@@ -285,6 +288,7 @@ mod tests {
             enabled: false,
             retention: Some("30d".into()),
             operator_hint: None,
+            replay_max_age: None,
         };
         let policy = dead_letter_to_policy(&cfg);
         assert!(!policy.enabled);
@@ -296,6 +300,7 @@ mod tests {
             enabled: true,
             retention: Some("7d".into()),
             operator_hint: Some("Check the billing queue".into()),
+            replay_max_age: None,
         };
         let policy = dead_letter_to_policy(&cfg);
         assert!(policy.enabled);
@@ -321,10 +326,29 @@ mod tests {
             enabled: true,
             retention: None, // omitted → default 30 days
             operator_hint: None,
+            replay_max_age: None,
         };
         let policy = dead_letter_to_policy(&cfg);
         assert!(policy.enabled);
         // No explicit retention → inherits DeadLetterPolicy::default() = 30 days
         assert_eq!(policy.retention, Duration::from_secs(30 * 24 * 3600));
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_maps_into_policy() {
+        let cfg = DeadLetterConfig {
+            enabled: true,
+            retention: Some("30d".into()),
+            operator_hint: None,
+            replay_max_age: Some("7d".into()),
+        };
+        let policy = dead_letter_to_policy(&cfg);
+        assert_eq!(policy.replay_max_age, Some(Duration::from_secs(7 * 86400)));
+    }
+
+    #[test]
+    fn dead_letter_replay_max_age_none_by_default() {
+        let policy = dead_letter_to_policy(&DeadLetterConfig::default());
+        assert!(policy.replay_max_age.is_none());
     }
 }
