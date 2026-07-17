@@ -532,6 +532,9 @@ fn job_definitions(store: &PgStore, s: &str) {
             max_retries: Some(4),
             dead_letter_enabled: Some(false),
             tags: vec!["env=prod".into()],
+            dead_letter_retention: Some("14d".into()),
+            dead_letter_operator_hint: Some("check upstream feed".into()),
+            dead_letter_replay_max_age: Some("7d".into()),
         })
         .unwrap();
 
@@ -543,6 +546,12 @@ fn job_definitions(store: &PgStore, s: &str) {
     assert_eq!(got.max_retries, Some(4));
     assert_eq!(got.dead_letter_enabled, Some(false));
     assert_eq!(got.tags, vec!["env=prod"]);
+    assert_eq!(got.dead_letter_retention.as_deref(), Some("14d"));
+    assert_eq!(
+        got.dead_letter_operator_hint.as_deref(),
+        Some("check upstream feed")
+    );
+    assert_eq!(got.dead_letter_replay_max_age.as_deref(), Some("7d"));
     assert!(
         store
             .list_job_definitions()

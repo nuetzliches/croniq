@@ -78,6 +78,9 @@ export function useCreateJob() {
       timeout?: string | null
       max_retries?: number | null
       dead_letter_enabled?: boolean | null
+      dead_letter_retention?: string | null
+      dead_letter_operator_hint?: string | null
+      dead_letter_replay_max_age?: string | null
       tags?: string[]
     }) => apiPost<T.JobDefinition>('/v1/jobs', data),
     onSuccess: () => {
@@ -107,6 +110,9 @@ export function useUpdateJob() {
       timeout?: string | null
       max_retries?: number | null
       dead_letter_enabled?: boolean | null
+      dead_letter_retention?: string | null
+      dead_letter_operator_hint?: string | null
+      dead_letter_replay_max_age?: string | null
       tags?: string[]
     }) => apiPut<T.JobDefinition>(`/v1/jobs/${job_key}`, patch),
     onSuccess: (_data, vars) => {

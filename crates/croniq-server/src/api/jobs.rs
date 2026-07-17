@@ -71,6 +71,12 @@ pub struct CreateJobRequest {
     pub timeout: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration ("14d"); None → system default (30d).
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard ("7d"); None → replays always allowed.
+    pub dead_letter_replay_max_age: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -267,6 +273,9 @@ pub async fn handle_create(
         timeout: req.timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        dead_letter_retention: req.dead_letter_retention,
+        dead_letter_operator_hint: req.dead_letter_operator_hint,
+        dead_letter_replay_max_age: req.dead_letter_replay_max_age,
         tags,
     };
     store
@@ -321,6 +330,15 @@ pub async fn handle_update(
     }
     if let Some(v) = obj.get("dead_letter_enabled") {
         job.dead_letter_enabled = v.as_bool();
+    }
+    if let Some(v) = obj.get("dead_letter_retention") {
+        job.dead_letter_retention = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("dead_letter_operator_hint") {
+        job.dead_letter_operator_hint = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("dead_letter_replay_max_age") {
+        job.dead_letter_replay_max_age = v.as_str().map(|s| s.to_string());
     }
     if let Some(v) = obj.get("tags") {
         let mut out: Vec<String> = Vec::new();
@@ -437,6 +455,12 @@ pub struct RegisterJobRequest {
     pub description: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration ("14d"); None → system default (30d).
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard ("7d"); None → replays always allowed.
+    pub dead_letter_replay_max_age: Option<String>,
     /// Optional calendar **name** that gates execution (matches a row in
     /// `calendar_definitions.name`). The runtime resolves this to a
     /// compiled calendar at scheduler attach time.
@@ -497,6 +521,9 @@ pub async fn handle_register(
         timeout: req.timeout.clone(),
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        dead_letter_retention: req.dead_letter_retention.clone(),
+        dead_letter_operator_hint: req.dead_letter_operator_hint.clone(),
+        dead_letter_replay_max_age: req.dead_letter_replay_max_age.clone(),
         tags: Vec::new(),
     };
     store
@@ -904,6 +931,9 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();
@@ -1097,6 +1127,9 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();

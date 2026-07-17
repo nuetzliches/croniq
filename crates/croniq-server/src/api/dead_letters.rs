@@ -525,6 +525,75 @@ mod tests {
         );
     }
 
+    /// Build a store-persisted `JobDefinition` (an API-registered job, no
+    /// Croniqfile entry) with an optional `dead_letter_replay_max_age` and
+    /// run it through the same `job_config_from_job_def` fallback the replay
+    /// handler uses — the guard must work for API jobs, not just DSL ones.
+    fn api_job_with_replay_max_age(v: Option<&str>) -> JobConfig {
+        let now = ts("2026-01-01T00:00:00Z");
+        let def = croniq_store::models::JobDefinition {
+            job_key: "api:report".into(),
+            description: None,
+            assigned_runner_id: None,
+            is_active: true,
+            metadata: Default::default(),
+            created_at: now,
+            updated_at: now,
+            timeout: None,
+            max_retries: None,
+            dead_letter_enabled: None,
+            dead_letter_retention: None,
+            dead_letter_operator_hint: None,
+            dead_letter_replay_max_age: v.map(str::to_string),
+            tags: vec![],
+        };
+        crate::loader::job_config_from_job_def(&def)
+    }
+
+    #[test]
+    fn api_job_beyond_window_rejects_replay() {
+        let job = api_job_with_replay_max_age(Some("7d"));
+        // 10 days old > 7d window — same 409 shape as the DSL path.
+        let err = stale_replay_check(
+            Some(&job),
+            ts("2026-06-01T00:00:00Z"),
+            ts("2026-06-11T00:00:00Z"),
+            false,
+        )
+        .expect("should reject");
+        assert_eq!(err.error, "stale_replay");
+        assert_eq!(err.replay_max_age, "7d");
+    }
+
+    #[test]
+    fn api_job_force_bypasses_guard() {
+        let job = api_job_with_replay_max_age(Some("7d"));
+        assert!(
+            stale_replay_check(
+                Some(&job),
+                ts("2026-06-01T00:00:00Z"),
+                ts("2026-06-30T00:00:00Z"),
+                true
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn api_job_without_guard_allows_stale_replay() {
+        // NULL column = guard not configured — the pre-023 behaviour.
+        let job = api_job_with_replay_max_age(None);
+        assert!(
+            stale_replay_check(
+                Some(&job),
+                ts("2026-01-01T00:00:00Z"),
+                ts("2027-01-01T00:00:00Z"),
+                false
+            )
+            .is_none()
+        );
+    }
+
     #[test]
     fn humanize_age_units() {
         assert_eq!(humanize_age(34 * 86400), "34d");

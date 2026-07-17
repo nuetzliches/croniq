@@ -62,6 +62,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("021_execution_retention_indexes.sql"),
     ),
     ("022_scheduled_for", include_str!("022_scheduled_for.sql")),
+    (
+        "023_dead_letter_policy",
+        include_str!("023_dead_letter_policy.sql"),
+    ),
 ];
 
 /// Run all pending migrations.

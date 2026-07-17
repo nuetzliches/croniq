@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Dead-letter policy for API-registered jobs** (closing the documented v1 gap
+  from the stale-replay guard). `job_definitions` gains
+  `dead_letter_retention`, `dead_letter_operator_hint`, and
+  `dead_letter_replay_max_age` (migration 023, all NULL = system default —
+  matching the migration-004 pattern for `dead_letter_enabled`), so jobs
+  created via `POST /v1/jobs`, `POST /v1/jobs/register`, or the MCP
+  `create_job`/`update_job` tools carry the same `dead_letter { … }` policy a
+  Croniqfile job declares. The replay endpoint's stale-replay guard
+  (`409 stale_replay` unless `force: true`) now applies to API jobs with a
+  configured `replay_max_age`; previously it only ever fired for DSL jobs. The
+  UI's New/Edit Job dialogs expose the three fields under the dead-letter
+  toggle, and the job detail page shows the retention and replay-guard values.
+
 - **Executions carry their original logical fire time (`scheduled_for`)**. Jobs
   whose logic is coupled to their scheduled time (e.g. a monthly report deriving
   the period from "the fire moment − 1 month") previously had no reliable signal:

@@ -18,6 +18,9 @@ interface EditForm {
   timeout: string
   tags: string
   dead_letter_enabled: boolean
+  dead_letter_retention: string
+  dead_letter_operator_hint: string
+  dead_letter_replay_max_age: string
 }
 
 const inputCls =
@@ -29,7 +32,8 @@ const inputCls =
 /// 409 in the inline error for safety.
 export function EditJobDialog({ job, open, onOpenChange }: Props) {
   const updateJob = useUpdateJob()
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<EditForm>()
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<EditForm>()
+  const deadLetterOn = watch('dead_letter_enabled')
 
   // Re-seed the form when the dialog opens with a (possibly different)
   // job. `useForm`'s defaultValues only apply at mount, so RHF needs an
@@ -42,6 +46,9 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
         tags: (job.tags ?? []).join(', '),
         // null (never set) ⇒ the server default, which is enabled.
         dead_letter_enabled: job.dead_letter_enabled ?? true,
+        dead_letter_retention: job.dead_letter_retention ?? '',
+        dead_letter_operator_hint: job.dead_letter_operator_hint ?? '',
+        dead_letter_replay_max_age: job.dead_letter_replay_max_age ?? '',
       })
     }
   }, [open, job, reset])
@@ -61,6 +68,12 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
       timeout: data.timeout.trim() === '' ? null : data.timeout,
       tags,
       dead_letter_enabled: data.dead_letter_enabled,
+      dead_letter_retention:
+        data.dead_letter_retention.trim() === '' ? null : data.dead_letter_retention.trim(),
+      dead_letter_operator_hint:
+        data.dead_letter_operator_hint.trim() === '' ? null : data.dead_letter_operator_hint,
+      dead_letter_replay_max_age:
+        data.dead_letter_replay_max_age.trim() === '' ? null : data.dead_letter_replay_max_age.trim(),
     })
     onOpenChange(false)
   }
@@ -130,6 +143,48 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
                 When on, an execution that exhausts its retries is kept in the dead-letter queue for triage. Turn off to drop permanently-failed executions instead.
               </p>
             </div>
+            {deadLetterOn && (
+              <div className="space-y-3 border-l-2 border-border pl-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">
+                      Retention
+                    </label>
+                    <input
+                      {...register('dead_letter_retention')}
+                      placeholder="e.g. 30d, 0 = forever"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">
+                      Replay max age
+                    </label>
+                    <input
+                      {...register('dead_letter_replay_max_age')}
+                      placeholder="e.g. 7d"
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Replay max age is an opt-in guard: replaying a dead letter originally scheduled longer ago than this is rejected unless forced. Empty for no guard; retention empty for the server default (30d).
+                </p>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">
+                    Operator hint
+                  </label>
+                  <input
+                    {...register('dead_letter_operator_hint')}
+                    placeholder="e.g. Re-run the nightly export before replaying"
+                    className={inputCls}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Free-form triage note shown alongside this job's dead letters.
+                  </p>
+                </div>
+              </div>
+            )}
             {updateJob.error && (
               <p className="text-xs text-destructive flex items-center gap-1">
                 <AlertCircle className="h-3.5 w-3.5" />

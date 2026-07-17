@@ -86,6 +86,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("020_maintenance", PG_MIGRATION_020),
     ("021_execution_retention_indexes", PG_MIGRATION_021),
     ("022_scheduled_for", PG_MIGRATION_022),
+    ("023_dead_letter_policy", PG_MIGRATION_023),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -182,6 +183,15 @@ ALTER TABLE executions ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
 UPDATE executions SET scheduled_for = fire_at WHERE scheduled_for IS NULL;
 ALTER TABLE dead_letters ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
 UPDATE dead_letters SET scheduled_for = fire_at WHERE scheduled_for IS NULL;
+"#;
+
+// Per-job dead-letter policy for API-registered jobs (parity with the DSL
+// `dead_letter { … }` block). NULL = system default (retention 30d, no hint,
+// no stale-replay guard). Mirrors migrations/023_dead_letter_policy.sql.
+const PG_MIGRATION_023: &str = r#"
+ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_retention      TEXT;
+ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_operator_hint  TEXT;
+ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_replay_max_age TEXT;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -2042,8 +2052,9 @@ impl JobDefinitionStore for PgStore {
         db.execute(
             "INSERT INTO job_definitions
                 (job_key, description, assigned_runner_id, is_active, metadata,
-                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                 dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT(job_key) DO UPDATE SET
                 description=EXCLUDED.description,
                 assigned_runner_id=EXCLUDED.assigned_runner_id,
@@ -2053,7 +2064,10 @@ impl JobDefinitionStore for PgStore {
                 timeout=EXCLUDED.timeout,
                 max_retries=EXCLUDED.max_retries,
                 dead_letter_enabled=EXCLUDED.dead_letter_enabled,
-                tags=EXCLUDED.tags",
+                tags=EXCLUDED.tags,
+                dead_letter_retention=EXCLUDED.dead_letter_retention,
+                dead_letter_operator_hint=EXCLUDED.dead_letter_operator_hint,
+                dead_letter_replay_max_age=EXCLUDED.dead_letter_replay_max_age",
             &[
                 &job.job_key,
                 &job.description,
@@ -2066,6 +2080,9 @@ impl JobDefinitionStore for PgStore {
                 &max_retries,
                 &job.dead_letter_enabled,
                 &tags,
+                &job.dead_letter_retention,
+                &job.dead_letter_operator_hint,
+                &job.dead_letter_replay_max_age,
             ],
         )
         .map_err(map_err)?;
@@ -2077,7 +2094,8 @@ impl JobDefinitionStore for PgStore {
         let rows = db
             .query(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                        created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                        created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                        dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
                  FROM job_definitions WHERE job_key = $1",
                 &[&job_key],
             )
@@ -2090,7 +2108,8 @@ impl JobDefinitionStore for PgStore {
         let rows = db
             .query(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                        created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                        created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                        dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
                  FROM job_definitions ORDER BY job_key",
                 &[],
             )
@@ -2826,6 +2845,9 @@ fn row_to_job_def(row: &postgres::Row) -> JobDefinition {
         max_retries: row.get::<_, Option<i32>>(8).map(|n| n as u32),
         dead_letter_enabled: row.get(9),
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
+        dead_letter_retention: row.get(11),
+        dead_letter_operator_hint: row.get(12),
+        dead_letter_replay_max_age: row.get(13),
     }
 }
 
