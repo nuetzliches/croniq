@@ -38,7 +38,7 @@ function CapacityRing({ inflight, max, size = 52 }: { inflight: number; max: num
 }
 
 const statusVariant = (s: string) =>
-  s === 'Online' ? 'ok' : s === 'Stale' ? 'warn' : 'err'
+  s === 'online' ? 'ok' : s === 'stale' ? 'warn' : 'err'
 
 export function RunnersPage() {
   const { data: runners, isConnected } = useRunnersStream()
