@@ -72,6 +72,7 @@ mod tests {
             execution_id: "exec-1".into(),
             job_key: "test:job".into(),
             fire_at: Utc::now(),
+            scheduled_for: Utc::now(),
             attempt: 1,
             require: require.into_iter().map(String::from).collect(),
             prefer: prefer.into_iter().map(String::from).collect(),

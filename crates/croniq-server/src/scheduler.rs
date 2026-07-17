@@ -383,6 +383,8 @@ impl SchedulerLoop {
                     id: execution_id,
                     job_key: job.key.clone(),
                     fire_at,
+                    // Fresh scheduler fire: logical time equals the fire time.
+                    scheduled_for: fire_at,
                     attempt: 1,
                     state: ExecutionState::Queued,
                     runner_id: None,
@@ -432,7 +434,7 @@ impl SchedulerLoop {
             //    back into this trace instead of starting an orphan
             //    root span. No-op when the `otlp` feature is off or no
             //    valid OTel context is in scope.
-            let mut item = job_to_work_item(job, &exec_id_str, fire_at, 1);
+            let mut item = job_to_work_item(job, &exec_id_str, fire_at, fire_at, 1);
             crate::trace_propagation::inject_into_metadata(&mut item.metadata);
             if is_ephemeral {
                 // Keep only the latest fire: drop any earlier, still-unclaimed

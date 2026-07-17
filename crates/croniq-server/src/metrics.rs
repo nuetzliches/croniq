@@ -470,6 +470,7 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             job_key: "etl:sync".into(),
             fire_at: Utc::now(),
+            scheduled_for: Utc::now(),
             attempt: 1,
             state: ExecutionState::Queued,
             runner_id: None,

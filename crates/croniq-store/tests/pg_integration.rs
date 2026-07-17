@@ -696,6 +696,7 @@ fn seed_execution(
             id,
             job_key: job_key.to_string(),
             fire_at: ts(),
+            scheduled_for: ts(),
             attempt: 1,
             state: ExecutionState::Queued,
             runner_id: None,

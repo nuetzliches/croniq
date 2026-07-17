@@ -431,8 +431,13 @@ pub async fn restore_queued_executions(
                 for (i, exec) in execs.iter().enumerate() {
                     if i == 0 {
                         // Restore the latest
-                        let item =
-                            job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                        let item = job_to_work_item(
+                            job,
+                            exec.id.to_string(),
+                            exec.fire_at,
+                            exec.scheduled_for,
+                            exec.attempt,
+                        );
                         runner_state.queue.write().await.enqueue(item);
                         restored += 1;
                     } else {
@@ -452,8 +457,13 @@ pub async fn restore_queued_executions(
             CatchUpPolicy::All => {
                 // Restore all (current behaviour).
                 for exec in &execs {
-                    let item =
-                        job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                    let item = job_to_work_item(
+                        job,
+                        exec.id.to_string(),
+                        exec.fire_at,
+                        exec.scheduled_for,
+                        exec.attempt,
+                    );
                     runner_state.queue.write().await.enqueue(item);
                     restored += 1;
                 }

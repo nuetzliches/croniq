@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Executions carry their original logical fire time (`scheduled_for`)**. Jobs
+  whose logic is coupled to their scheduled time (e.g. a monthly report deriving
+  the period from "the fire moment − 1 month") previously had no reliable signal:
+  `fire_at` was reset to `now + backoff` on every retry and to `now` on
+  dead-letter replay, so a run that landed late computed against the wrong
+  instant. A new `scheduled_for` timestamp is stamped at the trigger's logical
+  fire time and carried unchanged through the entire retry chain and across
+  dead-letter replay (`fire_at` keeps its "when this row becomes due" meaning).
+  It is persisted (migration 022, backfilled from `fire_at`), returned on the
+  `Execution` and `DeadLetter` API objects, and delivered to runners on the
+  work-poll assignment (`scheduled_for`, `null` when the server predates the
+  field — runners must not fall back to `fire_at`). Manual triggers set it to
+  the trigger moment.
+
 ## [0.27.0] - 2026-07-17
 
 ### Added
