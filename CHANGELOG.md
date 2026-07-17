@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-17
+
 ### Added
 
 - **Turn dead-lettering off from the Croniqfile**
