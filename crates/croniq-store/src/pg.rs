@@ -1134,6 +1134,30 @@ impl DeadLetterStore for PgStore {
         Ok(rows.iter().map(row_to_dead_letter).collect())
     }
 
+    fn remove_dead_letters(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut client = self.client.lock().unwrap();
+        let affected = client
+            .execute("DELETE FROM dead_letters WHERE id = ANY($1)", &[&ids])
+            .map_err(map_err)?;
+        Ok(affected)
+    }
+
+    fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let affected = match job_key {
+            Some(jk) => client
+                .execute("DELETE FROM dead_letters WHERE job_key = $1", &[&jk])
+                .map_err(map_err)?,
+            None => client
+                .execute("DELETE FROM dead_letters", &[])
+                .map_err(map_err)?,
+        };
+        Ok(affected)
+    }
+
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
         let mut client = self.client.lock().unwrap();
         client

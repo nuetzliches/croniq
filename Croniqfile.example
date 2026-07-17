@@ -89,7 +89,12 @@ defaults {
   timezone {vars.default_tz}
   retry exponential { max_attempts 3; base 2s; cap 30s; jitter 0.25 }
   timeout 5m
-  dead_letter { retention 30d }
+  # dead_letter: `enabled false` turns dead-lettering off — an execution that
+  # exhausts its retries is dropped instead of queued for triage. Use
+  # `defaults { dead_letter { enabled false } }` for "off by default, opt in
+  # per job". A job's own retry/dead_letter block overrides only the fields it
+  # names; anything it omits falls back to this defaults block (field-merge).
+  dead_letter { enabled true; retention 30d }
 }
 
 # --- Kalender ---

@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { TriangleAlert, RotateCcw, Trash2, MailX, CheckCircle2, MousePointerClick } from 'lucide-react'
-import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter, useJob } from '@/api/hooks'
+import { useDeadLetters, useDeleteDeadLetter, useBulkDeleteDeadLetters, useDeadLetter, useReplayDeadLetter, useJob } from '@/api/hooks'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -148,6 +148,7 @@ function DeadLetterDetail({
 export function DeadLettersPage() {
   const { data: items, isLoading } = useDeadLetters()
   const deleteDL = useDeleteDeadLetter()
+  const bulkDelete = useBulkDeleteDeadLetters()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const { id: routeId } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -179,6 +180,22 @@ export function DeadLettersPage() {
     }
   }
 
+  async function handleClearAll() {
+    const count = items?.length ?? 0
+    if (count === 0) return
+    const ok = await confirm({
+      title: `Delete all ${count} dead letters?`,
+      description:
+        'Every pending dead letter will be removed permanently. The jobs themselves are unaffected. This cannot be undone.',
+      confirmLabel: 'Delete all',
+      destructive: true,
+    })
+    if (ok) {
+      await bulkDelete.mutateAsync({ all: true })
+      setSelectedId(null)
+    }
+  }
+
   const selectedDL = items?.find((i) => i.id === selectedId) ?? null
 
   return (
@@ -190,6 +207,15 @@ export function DeadLettersPage() {
             <span className="mono dim" style={{ fontSize: 12 }}>
               {items?.length ?? 0} pending
             </span>
+            <button
+              type="button"
+              className="btn sm ghost"
+              onClick={handleClearAll}
+              disabled={(items?.length ?? 0) === 0 || bulkDelete.isPending}
+              title="Delete all dead letters"
+            >
+              {bulkDelete.isPending ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 size={13} />} Clear all
+            </button>
           </div>
           {lastReplay && (
             <div

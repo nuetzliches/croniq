@@ -85,6 +85,63 @@ pub async fn handle_delete(
     }
 }
 
+#[derive(Deserialize, Default)]
+pub struct BulkDeleteRequest {
+    /// Explicit dead-letter ids to delete. Takes precedence over `all`
+    /// when non-empty.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Delete every pending dead letter (optionally scoped to `job_key`).
+    #[serde(default)]
+    pub all: bool,
+    /// Restrict an `all` delete to a single `job_key`. Ignored when `ids`
+    /// is provided.
+    #[serde(default)]
+    pub job_key: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BulkDeleteResponse {
+    pub deleted: u64,
+}
+
+/// `POST /v1/dead-letters/bulk-delete` — remove many dead letters at once:
+/// either an explicit `ids` list, or (with `all: true`) the whole queue,
+/// optionally scoped to a single `job_key`. Returns the number deleted.
+pub async fn handle_bulk_delete(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    Json(req): Json<BulkDeleteRequest>,
+) -> Result<Json<BulkDeleteResponse>, StatusCode> {
+    require_scope(&ctx, Scope::DEAD_LETTERS_WRITE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let deleted = if !req.ids.is_empty() {
+        let ids = req
+            .ids
+            .iter()
+            .map(|s| Uuid::parse_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        store
+            .remove_dead_letters(&ids)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else if req.all {
+        store
+            .clear_dead_letters(req.job_key.as_deref())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        // Neither an id list nor an explicit `all` flag — refuse rather
+        // than silently deleting nothing (or, worse, the whole queue).
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
+    Ok(Json(BulkDeleteResponse { deleted }))
+}
+
 #[derive(Serialize)]
 pub struct ReplayResponse {
     pub execution_id: String,

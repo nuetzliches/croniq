@@ -211,6 +211,14 @@ pub trait DeadLetterStore {
     /// Remove a dead letter (after retry or purge).
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError>;
 
+    /// Bulk-remove dead letters by id. Returns the number of rows deleted.
+    /// Ids that don't exist are skipped; an empty slice is a no-op (`Ok(0)`).
+    fn remove_dead_letters(&self, ids: &[Uuid]) -> Result<u64, StoreError>;
+
+    /// Clear dead letters wholesale, optionally scoped to a single `job_key`.
+    /// `None` empties the entire queue. Returns the number of rows deleted.
+    fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError>;
+
     /// Purge expired dead letters.
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
 }

@@ -297,6 +297,20 @@ pub struct RetryPayload {
     pub delay: Option<String>,
 }
 
+/// Dead-letter config from the form. All fields optional — omitted ones
+/// are left out of the emitted block, so the compiler's inherited defaults
+/// (or a `defaults {}` block) fill them in. `enabled: Some(false)` turns
+/// dead-lettering off (issue #348).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct DeadLetterPayload {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub retention: Option<String>,
+    #[serde(default)]
+    pub operator_hint: Option<String>,
+}
+
 /// Structured job-level options mirroring the form. Every field is
 /// optional — a default `JobOptions` yields a schedule-only job block.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -307,6 +321,8 @@ pub struct JobOptions {
     pub timeout: Option<String>,
     #[serde(default)]
     pub retry: Option<RetryPayload>,
+    #[serde(default)]
+    pub dead_letter: Option<DeadLetterPayload>,
     #[serde(default)]
     pub runner_require: Vec<String>,
     #[serde(default)]
@@ -446,6 +462,9 @@ fn format_job_block_inner(
     if let Some(line) = retry_loose_line(o.retry.as_ref()) {
         lines.push(format!("  {line}"));
     }
+    if let Some(line) = dead_letter_loose_line(o.dead_letter.as_ref()) {
+        lines.push(format!("  {line}"));
+    }
     if let Some(line) = runner_loose_line(&o.runner_require, &o.runner_prefer) {
         lines.push(format!("  {line}"));
     }
@@ -580,6 +599,29 @@ fn retry_loose_line(r: Option<&RetryPayload>) -> Option<String> {
         return None;
     }
     Some(format!("retry {strat} {{ {} }}", inner.join("; ")))
+}
+
+/// `dead_letter { enabled …; retention …; operator_hint "…" }` — only the
+/// fields the form set, `None` if none. `enabled` emits the bare
+/// `true`/`false` the compiler's `parse_bool` accepts; `operator_hint` is
+/// quoted (free text). Fields left out inherit the compiler's defaults /
+/// a `defaults {}` block via the field-merge in compile.rs (issue #348).
+fn dead_letter_loose_line(dl: Option<&DeadLetterPayload>) -> Option<String> {
+    let dl = dl?;
+    let mut inner: Vec<String> = Vec::new();
+    if let Some(enabled) = dl.enabled {
+        inner.push(format!("enabled {enabled}"));
+    }
+    if let Some(r) = opt_str(&dl.retention) {
+        inner.push(format!("retention {r}"));
+    }
+    if let Some(h) = opt_str(&dl.operator_hint) {
+        inner.push(format!("operator_hint \"{}\"", escape_dquote(h)));
+    }
+    if inner.is_empty() {
+        return None;
+    }
+    Some(format!("dead_letter {{ {} }}", inner.join("; ")))
 }
 
 /// `runner { require …; prefer … }` from the capability lists, or
@@ -1494,6 +1536,46 @@ mod tests {
         let out2 = format_job_block_inner(&interval5(), "a:b", &o2).unwrap();
         assert!(out2.contains("max_concurrent 3"), "{out2}");
         Parser::parse(&out2).unwrap();
+    }
+
+    #[test]
+    fn job_block_dead_letter_enabled_false() {
+        let o = JobOptions {
+            dead_letter: Some(DeadLetterPayload {
+                enabled: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:sweep", &o).unwrap();
+        assert!(out.contains("dead_letter { enabled false }"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_dead_letter_full() {
+        let o = JobOptions {
+            dead_letter: Some(DeadLetterPayload {
+                enabled: Some(true),
+                retention: Some("60d".into()),
+                operator_hint: Some("check billing db".into()),
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
+        assert!(
+            out.contains(
+                "dead_letter { enabled true; retention 60d; operator_hint \"check billing db\" }"
+            ),
+            "{out}"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_no_dead_letter_omits_block() {
+        let out = format_job_block_inner(&interval5(), "a:b", &JobOptions::default()).unwrap();
+        assert!(!out.contains("dead_letter"), "{out}");
     }
 
     #[test]

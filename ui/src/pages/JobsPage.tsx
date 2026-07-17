@@ -1256,6 +1256,7 @@ function renderDsl(job: JobDefinition, schedules: TriggerDefinition[]): string {
     `  tags        = ${tags}`,
     `  timeout     = "${timeout}"`,
     ...(job.max_retries != null ? [`  max_retries = ${job.max_retries}`] : []),
+    ...(job.dead_letter_enabled === false ? [`  dead_letter { enabled = false }`] : []),
     ...(sched
       ? [
           ``,

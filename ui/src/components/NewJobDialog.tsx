@@ -17,6 +17,7 @@ interface NewJobForm {
   description: string
   timeout: string
   tags: string
+  dead_letter_enabled: boolean
 }
 
 const inputCls =
@@ -44,7 +45,7 @@ export function NewJobDialog({ open, onOpenChange }: Props) {
   // stale error clears on the next submit.
   useEffect(() => {
     if (open) {
-      reset({ job_key: '', description: '', timeout: '', tags: '' })
+      reset({ job_key: '', description: '', timeout: '', tags: '', dead_letter_enabled: true })
     }
   }, [open, reset])
 
@@ -58,6 +59,7 @@ export function NewJobDialog({ open, onOpenChange }: Props) {
       description: data.description.trim() === '' ? null : data.description,
       timeout: data.timeout.trim() === '' ? null : data.timeout,
       tags,
+      dead_letter_enabled: data.dead_letter_enabled,
     })
     onOpenChange(false)
     navigate(`/jobs/${encodeURIComponent(job.job_key)}`)
@@ -136,6 +138,15 @@ export function NewJobDialog({ open, onOpenChange }: Props) {
               />
               <p className="text-[11px] text-muted-foreground mt-1">
                 Comma-separated free-form tags for filtering. Convention: <code>key=value</code>.
+              </p>
+            </div>
+            <div>
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input type="checkbox" {...register('dead_letter_enabled')} className="h-3.5 w-3.5" />
+                Dead-lettering enabled
+              </label>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                When on, an execution that exhausts its retries is kept in the dead-letter queue for triage. Turn off to drop permanently-failed executions instead.
               </p>
             </div>
             {createJob.error && (

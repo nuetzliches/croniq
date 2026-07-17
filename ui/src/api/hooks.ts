@@ -365,6 +365,17 @@ export function useDeleteDeadLetter() {
     meta: { action: 'Delete dead letter' },
   })
 }
+// Bulk delete: either an explicit `ids` list, or `all: true` (optionally
+// scoped to a `job_key`) to clear the queue. Returns `{ deleted }`.
+export function useBulkDeleteDeadLetters() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids?: string[]; all?: boolean; job_key?: string }) =>
+      apiPost<T.BulkDeleteResponse>('/v1/dead-letters/bulk-delete', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dead-letters'] }),
+    meta: { action: 'Delete dead letters' },
+  })
+}
 export function useReplayDeadLetter() {
   const qc = useQueryClient()
   return useMutation({
