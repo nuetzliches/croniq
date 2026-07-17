@@ -363,9 +363,6 @@ impl CompletionProcessor {
                             format!("retry attempt {next_attempt} could not be persisted: {e}");
                         let mut dead_lettered = false;
                         if policy.dead_letter.enabled {
-                            let expires_at = now
-                                + chrono::Duration::from_std(policy.dead_letter.retention)
-                                    .unwrap_or_else(|_| chrono::Duration::zero());
                             let dl = DeadLetter {
                                 id: Uuid::new_v4(),
                                 execution_id: exec_uuid,
@@ -377,7 +374,10 @@ impl CompletionProcessor {
                                 dead_reason: reason.clone(),
                                 metadata: execution.metadata.clone(),
                                 created_at: now,
-                                expires_at: Some(expires_at),
+                                // The helper yields None for retention 0
+                                // ("keep forever"), matching purge_expired's
+                                // NULL semantics.
+                                expires_at: policy.dead_letter.expires_at(now),
                             };
                             match self.store.complete_as_dead(
                                 exec_uuid,
@@ -936,6 +936,9 @@ mod tests {
             .unwrap();
         assert_eq!(dls.len(), 1);
         assert_eq!(dls[0].execution_id, exec_id);
+        // Default 30d retention stamps an expiry (None is reserved for
+        // retention 0 = keep forever).
+        assert!(dls[0].expires_at.is_some());
     }
 
     #[tokio::test]
