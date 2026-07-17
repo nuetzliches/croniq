@@ -128,6 +128,9 @@ mod tests {
             timeout: None,
             max_retries: None,
             dead_letter_enabled: None,
+            dead_letter_retention: None,
+            dead_letter_operator_hint: None,
+            dead_letter_replay_max_age: None,
             tags: tags.iter().map(|s| s.to_string()).collect(),
         }
     }

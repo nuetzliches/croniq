@@ -464,6 +464,20 @@ pub struct JobDefinition {
     /// Whether failed-and-exhausted executions are sent to the dead-letter queue.
     /// None → system default (true).
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration string (e.g. "30d", "0" = keep forever).
+    /// None → system default ("30d"). Mirrors the DSL `dead_letter { retention }`.
+    #[serde(default)]
+    pub dead_letter_retention: Option<String>,
+    /// Free-form triage hint surfaced alongside this job's dead letters.
+    /// None → no hint. Mirrors the DSL `dead_letter { operator_hint }`.
+    #[serde(default)]
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard: replaying a dead letter whose original
+    /// `scheduled_for` is older than this duration (e.g. "7d") is rejected
+    /// with 409 unless forced. None → replays always allowed. Mirrors the
+    /// DSL `dead_letter { replay_max_age }`.
+    #[serde(default)]
+    pub dead_letter_replay_max_age: Option<String>,
     /// Free-form tags for filtering and grouping in the UI. NOT routing-relevant
     /// (use runner capabilities for routing). Convention: `key=value` strings.
     #[serde(default)]

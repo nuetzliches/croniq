@@ -1673,6 +1673,9 @@ fn map_job_def_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobDefinition> {
         max_retries: max_retries.map(|n| n as u32),
         dead_letter_enabled: dead_letter_enabled.map(|n| n != 0),
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
+        dead_letter_retention: row.get(11)?,
+        dead_letter_operator_hint: row.get(12)?,
+        dead_letter_replay_max_age: row.get(13)?,
     })
 }
 
@@ -1684,8 +1687,9 @@ impl JobDefinitionStore for SqliteStore {
         conn.execute(
             "INSERT INTO job_definitions
                 (job_key, description, assigned_runner_id, is_active, metadata,
-                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                 dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(job_key) DO UPDATE SET
                 description=excluded.description,
                 assigned_runner_id=excluded.assigned_runner_id,
@@ -1695,7 +1699,10 @@ impl JobDefinitionStore for SqliteStore {
                 timeout=excluded.timeout,
                 max_retries=excluded.max_retries,
                 dead_letter_enabled=excluded.dead_letter_enabled,
-                tags=excluded.tags",
+                tags=excluded.tags,
+                dead_letter_retention=excluded.dead_letter_retention,
+                dead_letter_operator_hint=excluded.dead_letter_operator_hint,
+                dead_letter_replay_max_age=excluded.dead_letter_replay_max_age",
             params![
                 job.job_key,
                 job.description,
@@ -1708,6 +1715,9 @@ impl JobDefinitionStore for SqliteStore {
                 job.max_retries,
                 job.dead_letter_enabled,
                 tags,
+                job.dead_letter_retention,
+                job.dead_letter_operator_hint,
+                job.dead_letter_replay_max_age,
             ],
         )
         .map_err(map_err)?;
@@ -1718,7 +1728,8 @@ impl JobDefinitionStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.prepare(
             "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                    dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
              FROM job_definitions WHERE job_key = ?1",
         )
         .map_err(map_err)?
@@ -1732,7 +1743,8 @@ impl JobDefinitionStore for SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
-                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
+                    dead_letter_retention, dead_letter_operator_hint, dead_letter_replay_max_age
              FROM job_definitions ORDER BY job_key",
             )
             .map_err(map_err)?;

@@ -76,6 +76,13 @@ components:
         metadata: { type: object, additionalProperties: { type: string } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        timeout: { type: string, nullable: true, description: "Execution timeout (\"5m\", \"30s\"). Null = system default (5m)." }
+        max_retries: { type: integer, nullable: true, description: "Retry budget before dead-lettering. Null = system default (3)." }
+        dead_letter_enabled: { type: boolean, nullable: true, description: "Keep permanently-failed executions in the dead-letter queue. Null = system default (true)." }
+        dead_letter_retention: { type: string, nullable: true, description: "Dead-letter retention duration (\"14d\", \"0\" = keep forever). Null = system default (30d)." }
+        dead_letter_operator_hint: { type: string, nullable: true, description: "Free-form triage hint surfaced with this job's dead letters." }
+        dead_letter_replay_max_age: { type: string, nullable: true, description: "Opt-in stale-replay guard (\"7d\"): replaying a dead letter whose original scheduled_for is older is rejected with 409 unless forced. Null = replays always allowed." }
+        tags: { type: array, items: { type: string }, description: "Free-form filter tags (convention key=value). Not routing-relevant." }
 
     TriggerDefinition:
       type: object
@@ -670,6 +677,13 @@ paths:
                 description: { type: string }
                 assigned_runner_id: { type: string }
                 metadata: { type: object }
+                timeout: { type: string }
+                max_retries: { type: integer }
+                dead_letter_enabled: { type: boolean }
+                dead_letter_retention: { type: string, description: "Dead-letter retention (\"14d\"). Omit for the system default (30d)." }
+                dead_letter_operator_hint: { type: string, description: "Triage hint surfaced with this job's dead letters." }
+                dead_letter_replay_max_age: { type: string, description: "Opt-in stale-replay guard (\"7d\"). Omit to always allow replays." }
+                tags: { type: array, items: { type: string } }
       responses:
         "201":
           content:
@@ -689,6 +703,44 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
+    put:
+      summary: Update a job's mutable metadata
+      description: |
+        Patch semantics on the policy fields: a missing key leaves the stored
+        value untouched, an explicit `null` clears it back to the system
+        default. Identity (`job_key`) and lifecycle (`is_active`) stay on
+        their dedicated endpoints; schedules are owned by `/v1/schedules`.
+        DSL-managed jobs return 409 (`error: dsl_managed`).
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string, nullable: true }
+                timeout: { type: string, nullable: true }
+                max_retries: { type: integer, nullable: true }
+                dead_letter_enabled: { type: boolean, nullable: true }
+                dead_letter_retention: { type: string, nullable: true, description: "Dead-letter retention (\"14d\"). Null clears to the system default (30d)." }
+                dead_letter_operator_hint: { type: string, nullable: true, description: "Triage hint surfaced with this job's dead letters." }
+                dead_letter_replay_max_age: { type: string, nullable: true, description: "Opt-in stale-replay guard (\"7d\"). Null disables the guard." }
+                tags: { type: array, items: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobDefinition" }
+        "404": { description: Unknown job }
+        "409":
+          description: DSL-managed job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
     delete:
       summary: Delete a job and its triggers
       parameters:
@@ -1634,6 +1686,12 @@ paths:
                 runner_id: { type: string }
                 capabilities: { type: array, items: { type: string } }
                 description: { type: string }
+                max_retries: { type: integer }
+                dead_letter_enabled: { type: boolean }
+                dead_letter_retention: { type: string, description: "Dead-letter retention (\"14d\"). Omit for the system default (30d)." }
+                dead_letter_operator_hint: { type: string, description: "Triage hint surfaced with this job's dead letters." }
+                dead_letter_replay_max_age: { type: string, description: "Opt-in stale-replay guard (\"7d\"). Omit to always allow replays." }
+                calendar: { type: string, description: "Calendar name gating execution." }
       responses:
         "201":
           description: Job created

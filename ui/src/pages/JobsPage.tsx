@@ -1013,6 +1013,25 @@ function OverviewTab({
                 <StatusPill state={job.dead_letter_enabled ? 'enabled' : 'disabled'} />
               }
             />
+            {job.dead_letter_retention ? (
+              <DetailRow
+                label="DLQ retention"
+                value={<span className="mono">{job.dead_letter_retention}</span>}
+              />
+            ) : null}
+            {job.dead_letter_replay_max_age ? (
+              <DetailRow
+                label="Replay max age"
+                value={
+                  <span
+                    className="mono"
+                    title="Stale-replay guard — replaying a dead letter originally scheduled longer ago than this is rejected unless forced"
+                  >
+                    {job.dead_letter_replay_max_age}
+                  </span>
+                }
+              />
+            ) : null}
           </div>
         </section>
 

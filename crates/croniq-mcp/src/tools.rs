@@ -216,6 +216,18 @@ pub struct UpdateJobParams {
     /// Toggle dead-letter persistence. Omit to leave unchanged.
     #[serde(default)]
     pub dead_letter_enabled: Option<bool>,
+
+    /// New dead-letter retention (e.g. `"14d"`). Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_retention: Option<String>,
+
+    /// New operator triage hint. Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_operator_hint: Option<String>,
+
+    /// New stale-replay guard (e.g. `"7d"`). Omit to leave unchanged.
+    #[serde(default)]
+    pub dead_letter_replay_max_age: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -324,6 +336,15 @@ pub struct CreateJobParams {
     /// Toggle dead-letter persistence on permanent failure.
     #[serde(default)]
     pub dead_letter_enabled: Option<bool>,
+    /// Dead-letter retention duration (e.g. `"14d"`); missing = system default (30d).
+    #[serde(default)]
+    pub dead_letter_retention: Option<String>,
+    /// Triage hint surfaced with this job's dead letters.
+    #[serde(default)]
+    pub dead_letter_operator_hint: Option<String>,
+    /// Opt-in stale-replay guard (e.g. `"7d"`); missing = replays always allowed.
+    #[serde(default)]
+    pub dead_letter_replay_max_age: Option<String>,
     /// Free-form tags for filtering (e.g. `["env=prod", "team=ops"]`).
     /// Not routing-relevant — runner capabilities handle routing.
     #[serde(default)]
@@ -943,6 +964,15 @@ impl CroniqMcp {
         if let Some(dle) = p.dead_letter_enabled {
             job.dead_letter_enabled = Some(dle);
         }
+        if let Some(r) = p.dead_letter_retention {
+            job.dead_letter_retention = Some(r);
+        }
+        if let Some(h) = p.dead_letter_operator_hint {
+            job.dead_letter_operator_hint = Some(h);
+        }
+        if let Some(a) = p.dead_letter_replay_max_age {
+            job.dead_letter_replay_max_age = Some(a);
+        }
         job.updated_at = Utc::now();
 
         store
@@ -1342,6 +1372,9 @@ impl CroniqMcp {
                 timeout: cfg.timeout.clone(),
                 max_retries: None,
                 dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: cfg.tags.clone(),
             };
             return serde_json::to_string_pretty(&synth)
@@ -1384,6 +1417,9 @@ impl CroniqMcp {
             timeout: p.timeout,
             max_retries: p.max_retries,
             dead_letter_enabled: p.dead_letter_enabled,
+            dead_letter_retention: p.dead_letter_retention,
+            dead_letter_operator_hint: p.dead_letter_operator_hint,
+            dead_letter_replay_max_age: p.dead_letter_replay_max_age,
             tags: p.tags.unwrap_or_default(),
         };
         store

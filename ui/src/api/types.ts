@@ -35,6 +35,11 @@ export interface JobDefinition {
   timeout: string | null
   max_retries: number | null
   dead_letter_enabled: boolean | null
+  // Dead-letter policy (parity with the DSL `dead_letter { … }` block).
+  // null = system default (retention 30d, no hint, no stale-replay guard).
+  dead_letter_retention: string | null
+  dead_letter_operator_hint: string | null
+  dead_letter_replay_max_age: string | null
   tags: string[]
 }
 

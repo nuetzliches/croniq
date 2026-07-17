@@ -2150,3 +2150,56 @@ fn idempotency_key_round_trips_through_store() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].idempotency_key.as_deref(), Some("evt-7"));
 }
+
+// ─── JobDefinitionStore ───
+
+#[test]
+fn job_definition_dead_letter_policy_round_trips() {
+    let store = create_memory_store().unwrap();
+
+    let job = JobDefinition {
+        job_key: "billing:invoice".into(),
+        description: Some("invoices".into()),
+        assigned_runner_id: None,
+        is_active: true,
+        metadata: HashMap::new(),
+        created_at: now(),
+        updated_at: now(),
+        timeout: Some("10m".into()),
+        max_retries: Some(2),
+        dead_letter_enabled: Some(true),
+        tags: vec!["env=prod".into()],
+        dead_letter_retention: Some("14d".into()),
+        dead_letter_operator_hint: Some("re-run the export first".into()),
+        dead_letter_replay_max_age: Some("7d".into()),
+    };
+    store.create_job_definition(&job).unwrap();
+
+    let loaded = store
+        .get_job_definition("billing:invoice")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.dead_letter_retention.as_deref(), Some("14d"));
+    assert_eq!(
+        loaded.dead_letter_operator_hint.as_deref(),
+        Some("re-run the export first")
+    );
+    assert_eq!(loaded.dead_letter_replay_max_age.as_deref(), Some("7d"));
+
+    // NULL (unset) means "system default" and must round-trip as None —
+    // the upsert overwrites the previously stored values.
+    let cleared = JobDefinition {
+        dead_letter_retention: None,
+        dead_letter_operator_hint: None,
+        dead_letter_replay_max_age: None,
+        ..job
+    };
+    store.create_job_definition(&cleared).unwrap();
+    let loaded = store
+        .get_job_definition("billing:invoice")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.dead_letter_retention, None);
+    assert_eq!(loaded.dead_letter_operator_hint, None);
+    assert_eq!(loaded.dead_letter_replay_max_age, None);
+}

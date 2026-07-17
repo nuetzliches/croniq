@@ -615,7 +615,11 @@ pub fn job_config_from_definition(
             .or_else(|| Some("5m".into())),
         dead_letter: DeadLetterConfig {
             enabled: job_def.and_then(|j| j.dead_letter_enabled).unwrap_or(true),
-            ..DeadLetterConfig::default()
+            retention: job_def
+                .and_then(|j| j.dead_letter_retention.clone())
+                .or_else(|| DeadLetterConfig::default().retention),
+            operator_hint: job_def.and_then(|j| j.dead_letter_operator_hint.clone()),
+            replay_max_age: job_def.and_then(|j| j.dead_letter_replay_max_age.clone()),
         },
         metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
         execution_mode: ExecutionMode::default(),
@@ -635,8 +639,10 @@ pub fn job_config_from_definition(
 
 /// Build a minimal `JobConfig` from a store-persisted `JobDefinition` alone —
 /// used as a fallback when an API-registered job has no Croniqfile entry.
-/// Policy fields (`timeout`, `max_retries`, `dead_letter_enabled`) are read
-/// from the `JobDefinition`; everything else uses safe defaults.
+/// Policy fields (`timeout`, `max_retries`, `dead_letter_enabled` and the
+/// `dead_letter_*` policy columns, incl. the stale-replay guard
+/// `dead_letter_replay_max_age`) are read from the `JobDefinition`;
+/// everything else uses safe defaults.
 pub fn job_config_from_job_def(
     job_def: &croniq_store::models::JobDefinition,
 ) -> croniq_config::compile::JobConfig {
@@ -672,7 +678,12 @@ pub fn job_config_from_job_def(
         timeout: job_def.timeout.clone().or_else(|| Some("5m".into())),
         dead_letter: DeadLetterConfig {
             enabled: job_def.dead_letter_enabled.unwrap_or(true),
-            ..DeadLetterConfig::default()
+            retention: job_def
+                .dead_letter_retention
+                .clone()
+                .or_else(|| DeadLetterConfig::default().retention),
+            operator_hint: job_def.dead_letter_operator_hint.clone(),
+            replay_max_age: job_def.dead_letter_replay_max_age.clone(),
         },
         metadata: job_def.metadata.clone(),
         execution_mode: ExecutionMode::default(),
@@ -711,6 +722,9 @@ pub fn synth_job_def_from_dsl(
         max_retries: Some(cfg.retry.max_attempts),
         dead_letter_enabled: Some(cfg.dead_letter.enabled),
         tags: cfg.tags.clone(),
+        dead_letter_retention: cfg.dead_letter.retention.clone(),
+        dead_letter_operator_hint: cfg.dead_letter.operator_hint.clone(),
+        dead_letter_replay_max_age: cfg.dead_letter.replay_max_age.clone(),
     }
 }
 

@@ -989,6 +989,9 @@ mod tests {
                 timeout: Some("1m".into()),
                 max_retries: Some(1), // one attempt → dead-letter on first failure
                 dead_letter_enabled: Some(true),
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
                 tags: vec![],
             })
             .unwrap();
