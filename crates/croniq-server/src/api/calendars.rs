@@ -99,16 +99,28 @@ pub struct ValidationError {
 }
 
 /// Validate free-form calendar rules by wrapping them in a dummy calendar
-/// block and running the Croniqfile parser. Returns a human-readable error
-/// message on failure.
+/// block and running the Croniqfile parser plus semantic validation.
+/// Returns a human-readable error message on failure.
+///
+/// Semantic validation uses the same `calendar_args` checks as the
+/// scheduler's compile step, so the API can no longer store rules the
+/// loader would reject (#356).
 fn validate_rules(rules: &str) -> Result<(), String> {
     if rules.trim().is_empty() {
         return Ok(());
     }
     let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
-    Parser::parse(&source)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let ast = Parser::parse(&source).map_err(|e| e.to_string())?;
+    let errors: Vec<String> = croniq_config::validate::validate(&ast)
+        .into_iter()
+        .filter(|d| d.severity == croniq_config::validate::Severity::Error)
+        .map(|d| d.message)
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// `GET /v1/calendars` — returns the union of API-persisted and
@@ -661,4 +673,26 @@ pub async fn handle_unadopt(
         })?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_rules;
+
+    #[test]
+    fn validate_rules_accepts_compilable_rules() {
+        assert!(validate_rules("").is_ok());
+        assert!(validate_rules("include weekly weekday").is_ok());
+        assert!(validate_rules("include weekly Mon..Fri\nexclude annual 12-25").is_ok());
+        assert!(validate_rules("include window \"08:00\"..\"18:00\"").is_ok());
+    }
+
+    #[test]
+    fn validate_rules_rejects_uncompilable_rules() {
+        // #356: rules the loader would reject must not be storable.
+        let err = validate_rules("include weekly funday").unwrap_err();
+        assert!(err.contains("unknown weekday: funday"), "got: {err}");
+        let err = validate_rules("include window \"25:00\"..\"26:00\"").unwrap_err();
+        assert!(err.contains("invalid time: 25:00"), "got: {err}");
+    }
 }

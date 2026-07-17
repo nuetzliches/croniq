@@ -578,7 +578,23 @@ impl Parser {
                     }
                 }
             } else {
-                args.push(first);
+                // `weekly` group aliases (`weekday`/`weekend`) expand to
+                // individual day tokens, same as ranges above — the
+                // runtime compiler wants concrete day names (#356).
+                // Placeholders stay verbatim for compile-time resolution.
+                match Weekday::parse_group(&first.value) {
+                    Some(group) if rule_type_lower == "weekly" && !first.is_placeholder => {
+                        for day in group {
+                            args.push(StringValue {
+                                value: day.as_str().to_string(),
+                                quoted: false,
+                                is_placeholder: false,
+                                span: first.span,
+                            });
+                        }
+                    }
+                    _ => args.push(first),
+                }
             }
             if matches!(self.peek().kind, TokenKind::Semicolon | TokenKind::Newline) {
                 self.advance();
@@ -834,23 +850,12 @@ impl Parser {
         // `weekday..Fri` would be ambiguous and is rejected.
         while self.is_day_name(self.peek().text()) {
             let tok = self.peek().clone();
-            let text_lower = tok.text().to_ascii_lowercase();
-            match text_lower.as_str() {
-                "weekday" => {
-                    days.extend([
-                        Weekday::Monday,
-                        Weekday::Tuesday,
-                        Weekday::Wednesday,
-                        Weekday::Thursday,
-                        Weekday::Friday,
-                    ]);
+            match Weekday::parse_group(tok.text()) {
+                Some(group) => {
+                    days.extend(group.iter().copied());
                     self.advance();
                 }
-                "weekend" => {
-                    days.extend([Weekday::Saturday, Weekday::Sunday]);
-                    self.advance();
-                }
-                _ => {
+                None => {
                     let start_day = Weekday::parse(tok.text()).expect("is_day_name guarded");
                     self.advance();
                     if self.peek().kind == TokenKind::DotDot {
@@ -968,8 +973,7 @@ impl Parser {
         // expand to multiple days, so a 3-letter form would be
         // ambiguous (`wee`?). Specific weekdays accept the canonical
         // full name plus the 3-letter abbreviation, case-insensitive.
-        let lower = s.to_ascii_lowercase();
-        matches!(lower.as_str(), "weekday" | "weekend") || Weekday::parse(s).is_some()
+        Weekday::parse_token(s).is_some()
     }
 
     fn is_ordinal(&self, s: &str) -> bool {
@@ -1549,6 +1553,113 @@ mod tests {
             .unwrap();
         let values: Vec<&str> = rule.args.iter().map(|a| a.value.as_str()).collect();
         assert_eq!(values, vec!["08:00", "18:00"]);
+    }
+
+    fn weekly_rule_args(src: &str) -> Vec<String> {
+        let ast = Parser::parse(src).unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!("expected calendar")
+        };
+        c.rules
+            .iter()
+            .find(|r| r.rule_type.value == "weekly")
+            .expect("weekly rule")
+            .args
+            .iter()
+            .map(|a| a.value.clone())
+            .collect()
+    }
+
+    #[test]
+    fn parse_calendar_weekly_weekday_alias_expands() {
+        // #356: `fmt` and the cron converter emit the `weekday` alias;
+        // it must expand to concrete days like ranges do, or the
+        // runtime compiler rejects the calendar.
+        assert_eq!(
+            weekly_rule_args("calendar biz { include weekly weekday }"),
+            vec!["monday", "tuesday", "wednesday", "thursday", "friday"]
+        );
+
+        // Every expanded arg carries the alias token's span.
+        let ast = Parser::parse("calendar biz { include weekly weekday }").unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "weekly")
+            .unwrap();
+        assert!(rule.args.iter().all(|a| a.span == rule.args[0].span));
+    }
+
+    #[test]
+    fn parse_calendar_weekly_weekend_alias_expands() {
+        assert_eq!(
+            weekly_rule_args("calendar biz { include weekly weekend }"),
+            vec!["saturday", "sunday"]
+        );
+    }
+
+    #[test]
+    fn parse_calendar_weekly_quoted_alias_expands() {
+        // Quoted form, consistent with the quoted range path.
+        assert_eq!(
+            weekly_rule_args(r#"calendar biz { include weekly "weekday" }"#),
+            vec!["monday", "tuesday", "wednesday", "thursday", "friday"]
+        );
+    }
+
+    #[test]
+    fn parse_calendar_weekly_placeholder_not_expanded() {
+        // Placeholders resolve at compile time — the parser must not
+        // touch them (the runtime compiler expands aliases itself).
+        let ast = Parser::parse("calendar biz { include weekly {vars.days} }").unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "weekly")
+            .unwrap();
+        assert_eq!(rule.args.len(), 1);
+        assert!(rule.args[0].is_placeholder);
+        assert_eq!(rule.args[0].value, "vars.days");
+    }
+
+    #[test]
+    fn parse_calendar_alias_only_for_weekly() {
+        // No cross-rule expansion: `monthly weekday` is nonsense and
+        // stays verbatim for the runtime compiler to reject.
+        let ast = Parser::parse("calendar biz { include monthly weekday }").unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "monthly")
+            .unwrap();
+        let values: Vec<&str> = rule.args.iter().map(|a| a.value.as_str()).collect();
+        assert_eq!(values, vec!["weekday"]);
+    }
+
+    #[test]
+    fn parse_schedule_weekday_alias_expands() {
+        // Regression guard for the parse_schedule_weekdays refactor.
+        let ast =
+            Parser::parse("job a:b {\n  every weekday at 09:00\n  runner { require default }\n}")
+                .unwrap();
+        let Item::Job(ref job) = ast.items[0] else {
+            panic!("expected job")
+        };
+        let ScheduleKind::Weekdays { ref days, .. } = job.schedule.as_ref().unwrap().kind else {
+            panic!("expected weekdays schedule")
+        };
+        assert_eq!(days.len(), 5);
+        assert_eq!(days[0], Weekday::Monday);
+        assert_eq!(days[4], Weekday::Friday);
     }
 
     #[test]

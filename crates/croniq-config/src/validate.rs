@@ -1,6 +1,7 @@
 //! Semantic validation of a parsed Croniqfile AST.
 
 use crate::ast::*;
+use crate::calendar_args;
 use miette::SourceSpan;
 use std::collections::HashSet;
 
@@ -160,34 +161,97 @@ fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
     // Timezone is expected but not strictly required (inherits from defaults)
     let _ = has_timezone;
 
+    // Rule arguments are checked with the same `calendar_args` parsers the
+    // scheduler's compile step uses, so `validate` errors exactly where the
+    // loader would reject the calendar (#356). Severity rule: Error ⇔ the
+    // loader rejects the rule; Warning ⇔ the loader accepts it but the
+    // argument can never match / is silently ignored. Placeholder args
+    // resolve at compile time and are skipped.
     for rule in &cal.rules {
         match rule.rule_type.value.as_str() {
             "weekly" => {
                 for arg in &rule.args {
-                    if Weekday::parse(&arg.value).is_none()
-                        && arg.value != "weekday"
-                        && arg.value != "weekend"
-                    {
+                    if arg.is_placeholder {
+                        continue;
+                    }
+                    if let Err(msg) = calendar_args::parse_weekly_arg(&arg.value) {
                         diags.push(Diagnostic {
                             severity: Severity::Error,
-                            message: format!("invalid day name '{}'", arg.value),
+                            message: msg,
                             span: arg.span.into(),
                         });
                     }
                 }
             }
             "window" => {
-                // Expect exactly 2 time args or 1 range arg
                 if rule.args.is_empty() {
                     diags.push(Diagnostic {
                         severity: Severity::Error,
                         message: "window rule requires start and end times".into(),
                         span: rule.span.into(),
                     });
+                } else if rule.args.iter().all(|a| !a.is_placeholder) {
+                    let values: Vec<String> = rule.args.iter().map(|a| a.value.clone()).collect();
+                    if let Err(msg) = calendar_args::parse_window_args(&values) {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: msg,
+                            span: rule.span.into(),
+                        });
+                    }
                 }
             }
-            "annual" | "yearly" | "monthly" => {
-                // Date format validation could go here
+            "monthly" => {
+                for arg in &rule.args {
+                    if arg.is_placeholder {
+                        continue;
+                    }
+                    match calendar_args::parse_monthly_arg(&arg.value) {
+                        Err(msg) => diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: msg,
+                            span: arg.span.into(),
+                        }),
+                        Ok(day) if !(1..=31).contains(&day) => diags.push(Diagnostic {
+                            severity: Severity::Warning,
+                            message: format!("day {day} can never match (valid days are 1–31)"),
+                            span: arg.span.into(),
+                        }),
+                        Ok(_) => {}
+                    }
+                }
+            }
+            "annual" | "yearly" => {
+                for arg in &rule.args {
+                    if arg.is_placeholder {
+                        continue;
+                    }
+                    match calendar_args::parse_annual_arg(&arg.value) {
+                        Err(msg) => diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: msg,
+                            span: arg.span.into(),
+                        }),
+                        Ok(calendar_args::AnnualArg::Ignored) => diags.push(Diagnostic {
+                            severity: Severity::Warning,
+                            message: format!(
+                                "argument '{}' is ignored by the scheduler — expected MM-DD or YYYY-MM-DD",
+                                arg.value
+                            ),
+                            span: arg.span.into(),
+                        }),
+                        Ok(calendar_args::AnnualArg::MonthDay(month, day))
+                            if !(1..=12).contains(&month) || !(1..=31).contains(&day) =>
+                        {
+                            diags.push(Diagnostic {
+                                severity: Severity::Warning,
+                                message: format!("date {} can never match", arg.value),
+                                span: arg.span.into(),
+                            });
+                        }
+                        Ok(_) => {}
+                    }
+                }
             }
             "timezone" => {
                 // timezone is handled specially
@@ -578,6 +642,143 @@ mod tests {
             .filter(|d| d.severity == Severity::Error)
             .collect();
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    }
+
+    fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+        diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect()
+    }
+
+    fn warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+        diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect()
+    }
+
+    #[test]
+    fn calendar_weekly_alias_no_errors() {
+        // #356: `weekday`/`weekend` are first-class — validate must
+        // agree with the loader, which now compiles them.
+        let diags = validate_src(
+            r#"
+            calendar biz { include weekly weekday }
+            calendar off { include weekly weekend }
+        "#,
+        );
+        assert!(errors(&diags).is_empty(), "unexpected: {diags:?}");
+    }
+
+    #[test]
+    fn calendar_weekly_bad_day_errors() {
+        let diags = validate_src("calendar biz { include weekly funday }");
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message == "unknown weekday: funday"),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_window_bad_time_errors() {
+        let diags = validate_src(r#"calendar biz { include window "25:00".."26:00" }"#);
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message == "invalid time: 25:00"),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_window_valid_ok() {
+        let diags = validate_src(r#"calendar biz { include window "08:00".."18:00" }"#);
+        assert!(errors(&diags).is_empty(), "unexpected: {diags:?}");
+    }
+
+    #[test]
+    fn calendar_monthly_non_numeric_errors() {
+        let diags = validate_src("calendar biz { include monthly foo }");
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message == "invalid day: foo"),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_monthly_out_of_range_warns() {
+        // The loader accepts `monthly 45` (the rule is inert), so this
+        // must stay a Warning — validate may not be stricter.
+        let diags = validate_src("calendar biz { include monthly 45 }");
+        assert!(errors(&diags).is_empty(), "unexpected errors: {diags:?}");
+        assert!(
+            warnings(&diags)
+                .iter()
+                .any(|d| d.message.contains("can never match")),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_annual_bad_format_errors() {
+        let diags = validate_src(
+            r#"
+            calendar biz {
+                exclude annual notadate
+                exclude annual 2026-02-30
+            }
+        "#,
+        );
+        let errs = errors(&diags);
+        assert!(
+            errs.iter()
+                .any(|d| d.message.contains("invalid annual date format"))
+        );
+        assert!(errs.iter().any(|d| d.message == "invalid date: 2026-02-30"));
+    }
+
+    #[test]
+    fn calendar_annual_implausible_warns() {
+        // `13-45` parses at load time and simply never matches.
+        let diags = validate_src("calendar biz { exclude annual 13-45 }");
+        assert!(errors(&diags).is_empty(), "unexpected errors: {diags:?}");
+        assert!(
+            warnings(&diags)
+                .iter()
+                .any(|d| d.message == "date 13-45 can never match"),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_annual_ignored_arg_warns() {
+        // Len-5 args with too many dashes are silently skipped by the
+        // loader — surface that as a Warning, not an Error.
+        let diags = validate_src("calendar biz { exclude annual 1-2-3 }");
+        assert!(errors(&diags).is_empty(), "unexpected errors: {diags:?}");
+        assert!(
+            warnings(&diags)
+                .iter()
+                .any(|d| d.message.contains("is ignored by the scheduler")),
+            "got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_weekly_placeholder_skipped() {
+        // Placeholders resolve at compile time — no diagnostics.
+        let diags = validate_src(
+            r#"
+            vars { days "weekday" }
+            calendar biz { include weekly {vars.days} }
+        "#,
+        );
+        assert!(errors(&diags).is_empty(), "unexpected: {diags:?}");
     }
 
     #[test]
