@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-18
+
 ### Added
 
 - **Dead-letter policy for API-registered jobs** (closing the documented v1 gap
@@ -73,6 +75,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hard-coded `5m`, and falls back to the job's `runner { require/prefer }` when
   the dead letter's metadata doesn't carry them. Replay also emits a
   `dead_letter.replayed` audit event.
+
+### Fixed
+
+- **Dead-letter replay is atomic.** The replay execution insert and the
+  dead-letter removal now happen in a single store transaction. Previously a
+  failure between the two separate writes left a `queued` execution that was
+  never handed to a runner (it only ran after a restart catch-up) while the
+  dead letter stayed replayable — replaying it again duplicated the run. Two
+  concurrent replays of the same dead letter can no longer both succeed (the
+  loser gets a `404`).
+- **A failed execution-row persist no longer enqueues ghost work.** The retry
+  path (and `POST /v1/trigger`) enqueued the work item even when writing the
+  execution row failed, handing a runner an `execution_id` with no backing
+  row — status updates and the final completion targeted a nonexistent
+  execution and the run vanished without history. A retry whose row cannot be
+  persisted now terminates the chain into a replayable dead letter (when
+  dead-lettering is enabled) so it stays operator-visible; a trigger rejects
+  with `500` so the caller can retry.
+- **`dead_letter { retention 0 }` now actually keeps dead letters forever.**
+  The pipeline stamped `expires_at = now`, so the very next purge sweep deleted
+  the row — the opposite of the documented "no TTL" semantics. Zero retention
+  now persists a `NULL expires_at`, which the sweep deliberately skips.
 
 ## [0.27.0] - 2026-07-17
 
