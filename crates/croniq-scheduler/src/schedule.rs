@@ -288,7 +288,7 @@ fn resolve_local(tz: &Tz, naive: chrono::NaiveDateTime) -> Option<chrono::DateTi
     }
 }
 
-fn ast_weekday_to_chrono(day: &AstWeekday) -> chrono::Weekday {
+pub(crate) fn ast_weekday_to_chrono(day: &AstWeekday) -> chrono::Weekday {
     match day {
         AstWeekday::Monday => chrono::Weekday::Mon,
         AstWeekday::Tuesday => chrono::Weekday::Tue,

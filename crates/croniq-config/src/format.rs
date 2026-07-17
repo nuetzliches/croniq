@@ -619,6 +619,23 @@ job etl:sync {
     }
 
     #[test]
+    fn calendar_weekly_alias_round_trip_idempotent() {
+        // #356: the parser now expands `weekday` to five days, the
+        // formatter re-collapses them — the alias must survive fmt
+        // stably in both directions.
+        for alias in ["weekday", "weekend"] {
+            let src = format!("calendar biz {{ include weekly {alias} }}");
+            let once = format(&Parser::parse(&src).unwrap());
+            assert!(
+                once.contains(&format!("include weekly {alias}")),
+                "got:\n{once}"
+            );
+            let twice = format(&Parser::parse(&once).unwrap());
+            assert_eq!(once, twice);
+        }
+    }
+
+    #[test]
     fn calendar_weekly_three_days_collapses_to_range() {
         let src = "calendar biz { include weekly Mon Tue Wed }";
         let ast = Parser::parse(src).unwrap();
