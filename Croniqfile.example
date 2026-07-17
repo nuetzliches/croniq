@@ -94,6 +94,10 @@ defaults {
   # `defaults { dead_letter { enabled false } }` for "off by default, opt in
   # per job". A job's own retry/dead_letter block overrides only the fields it
   # names; anything it omits falls back to this defaults block (field-merge).
+  # `retention 0` keeps dead letters forever: the auto-purge sweep skips them,
+  # so they only leave the queue when you delete them (UI bulk-delete or the
+  # /v1/dead-letters API). Rows backfilled by an upgrade (migration 009)
+  # behave the same way — no TTL was guessed for them.
   dead_letter { enabled true; retention 30d }
 }
 

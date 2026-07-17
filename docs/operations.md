@@ -317,6 +317,14 @@ is stamped with an `expires_at = created_at + retention` at write time; the
 sweep deletes rows past their `expires_at`. Set `retention 0` (or
 `dead_letter { enabled false }`) to disable.
 
+Rows without an `expires_at` are **never auto-purged** — deliberately so. That
+covers `retention 0` rows and the one-time cohort backfilled by migration 009
+(orphaned `dead` executions from before the #104 fix), where stamping a
+retention retroactively would have silently deleted triage data nobody chose a
+TTL for. If such rows have piled up, clear them explicitly: bulk-delete in the
+Dead Letters UI, `DELETE /v1/dead-letters/{id}`, or
+`POST /v1/dead-letters/bulk-delete` (optionally scoped to a `job_key`).
+
 ### Terminal executions (issue #344)
 
 Non-`ephemeral` executions are persisted for run history and would otherwise
