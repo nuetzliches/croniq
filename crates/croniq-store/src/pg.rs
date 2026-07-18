@@ -277,7 +277,11 @@ CREATE TABLE IF NOT EXISTS calendar_definitions (
     calendar_id  TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     timezone     TEXT,
-    rules        TEXT NOT NULL DEFAULT '[]',
+    -- Line-separated Croniqfile DSL text (one include/exclude directive per
+    -- line), not JSON. The default is unused — every INSERT supplies rules
+    -- explicitly — but '' is the only valid empty DSL; '[]' was a leftover
+    -- from when rules were a JSON array.
+    rules        TEXT NOT NULL DEFAULT '',
     managed_by   TEXT NOT NULL DEFAULT 'api',
     created_at   TIMESTAMPTZ NOT NULL,
     updated_at   TIMESTAMPTZ NOT NULL
