@@ -168,12 +168,13 @@ impl RunnerRegistry {
         self.runners.values()
     }
 
-    /// Runners whose status matches `filter` at the given instant.
+    /// Runners whose status matches `filter` at the given instant, using the
+    /// default 120 s dead-threshold.
+    #[deprecated(
+        note = "hardcodes a 120 s dead-threshold; use `by_status_with_ttl` with the configured `lease_ttl_secs` so status matches the watchdog's assessment"
+    )]
     pub fn by_status(&self, status: RunnerStatus, now: DateTime<Utc>) -> Vec<&Runner> {
-        self.runners
-            .values()
-            .filter(|r| r.status_at(now) == status)
-            .collect()
+        self.by_status_with_ttl(status, now, DEFAULT_DEAD_THRESHOLD_SECS)
     }
 
     /// Like `by_status` but with a custom dead threshold in seconds.
@@ -189,10 +190,13 @@ impl RunnerRegistry {
             .collect()
     }
 
-    /// Runner IDs that are considered dead. Their inflight work should be
-    /// reassigned by the scheduler.
+    /// Runner IDs that are considered dead (default 120 s dead-threshold).
+    /// Their inflight work should be reassigned by the scheduler.
+    #[deprecated(
+        note = "hardcodes a 120 s dead-threshold; use `by_status_with_ttl(RunnerStatus::Dead, …)` with the configured `lease_ttl_secs`"
+    )]
     pub fn dead_ids(&self, now: DateTime<Utc>) -> Vec<String> {
-        self.by_status(RunnerStatus::Dead, now)
+        self.by_status_with_ttl(RunnerStatus::Dead, now, DEFAULT_DEAD_THRESHOLD_SECS)
             .into_iter()
             .map(|r| r.runner_id.clone())
             .collect()
@@ -354,13 +358,47 @@ mod tests {
             },
         );
 
-        let online = reg.by_status(RunnerStatus::Online, now());
-        let dead = reg.by_status(RunnerStatus::Dead, now());
+        let online = reg.by_status_with_ttl(RunnerStatus::Online, now(), 120);
+        let dead = reg.by_status_with_ttl(RunnerStatus::Dead, now(), 120);
 
         assert_eq!(online.len(), 1);
         assert_eq!(online[0].runner_id, "online");
         assert_eq!(dead.len(), 1);
         assert_eq!(dead[0].runner_id, "dead");
+    }
+
+    #[test]
+    fn by_status_with_ttl_uses_configured_threshold() {
+        // lease_ttl 300: a runner last seen 200 s ago is Stale (150 ≤ 200 < 300),
+        // while the 120 s default would classify it as Dead.
+        let mut reg = RunnerRegistry::new();
+        reg.runners.insert(
+            "lagging".into(),
+            Runner {
+                runner_id: "lagging".into(),
+                capabilities: vec![],
+                max_inflight: 1,
+                last_poll_at: now() - Duration::seconds(200),
+                inflight: vec![],
+                instance_id: None,
+                deposed_instance_id: None,
+                tags: vec![],
+            },
+        );
+
+        assert_eq!(
+            reg.by_status_with_ttl(RunnerStatus::Stale, now(), 300)
+                .len(),
+            1
+        );
+        assert!(
+            reg.by_status_with_ttl(RunnerStatus::Dead, now(), 300)
+                .is_empty()
+        );
+        assert_eq!(
+            reg.by_status_with_ttl(RunnerStatus::Dead, now(), 120).len(),
+            1
+        );
     }
 
     #[test]
@@ -529,6 +567,7 @@ mod tests {
             },
         );
 
+        #[allow(deprecated)]
         let ids = reg.dead_ids(now());
         assert_eq!(ids, vec!["zombie"]);
     }

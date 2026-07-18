@@ -44,7 +44,7 @@ pub async fn handle_runner_stream(
                             // ("Online"), which broke case-sensitive consumers like the
                             // dashboard "runners online" KPI once the stream feeds the
                             // shared ['runners'] cache app-wide.
-                            "status": r.status_at(now),
+                            "status": r.status_at_with_ttl(now, state.runner.lease_ttl_secs),
                             "capabilities": r.capabilities,
                             "tags": r.tags,
                             "inflight": r.inflight.len(),

@@ -578,7 +578,7 @@ impl CroniqMcp {
             .all()
             .map(|r| RunnerSummary {
                 runner_id: &r.runner_id,
-                status: match r.status_at(now) {
+                status: match r.status_at_with_ttl(now, self.state.lease_ttl_secs) {
                     RunnerStatus::Online => "online",
                     RunnerStatus::Stale => "stale",
                     RunnerStatus::Dead => "dead",
@@ -620,7 +620,7 @@ impl CroniqMcp {
 
                 let detail = RunnerDetail {
                     runner_id: &r.runner_id,
-                    status: match r.status_at(now) {
+                    status: match r.status_at_with_ttl(now, self.state.lease_ttl_secs) {
                         RunnerStatus::Online => "online",
                         RunnerStatus::Stale => "stale",
                         RunnerStatus::Dead => "dead",
@@ -678,9 +678,15 @@ impl CroniqMcp {
 
         let report = StatusReport {
             queued: queue.len(),
-            runners_online: reg.by_status(RunnerStatus::Online, now).len(),
-            runners_stale: reg.by_status(RunnerStatus::Stale, now).len(),
-            runners_dead: reg.by_status(RunnerStatus::Dead, now).len(),
+            runners_online: reg
+                .by_status_with_ttl(RunnerStatus::Online, now, self.state.lease_ttl_secs)
+                .len(),
+            runners_stale: reg
+                .by_status_with_ttl(RunnerStatus::Stale, now, self.state.lease_ttl_secs)
+                .len(),
+            runners_dead: reg
+                .by_status_with_ttl(RunnerStatus::Dead, now, self.state.lease_ttl_secs)
+                .len(),
             items,
         };
 

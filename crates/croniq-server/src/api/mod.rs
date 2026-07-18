@@ -1039,7 +1039,7 @@ async fn handle_list_runners(
         .all()
         .map(|r| RunnerSummary {
             runner_id: r.runner_id.clone(),
-            status: r.status_at(now),
+            status: r.status_at_with_ttl(now, state.runner.lease_ttl_secs),
             capabilities: r.capabilities.clone(),
             max_inflight: r.max_inflight,
             inflight: r.inflight.len(),
@@ -1358,9 +1358,15 @@ async fn handle_health(State(state): State<Arc<ServerState>>) -> Json<HealthResp
 
     Json(HealthResponse {
         status: "ok".into(),
-        runners_online: reg.by_status(RunnerStatus::Online, now).len(),
-        runners_stale: reg.by_status(RunnerStatus::Stale, now).len(),
-        runners_dead: reg.by_status(RunnerStatus::Dead, now).len(),
+        runners_online: reg
+            .by_status_with_ttl(RunnerStatus::Online, now, state.runner.lease_ttl_secs)
+            .len(),
+        runners_stale: reg
+            .by_status_with_ttl(RunnerStatus::Stale, now, state.runner.lease_ttl_secs)
+            .len(),
+        runners_dead: reg
+            .by_status_with_ttl(RunnerStatus::Dead, now, state.runner.lease_ttl_secs)
+            .len(),
         queued: queue.len(),
     })
 }
@@ -1586,6 +1592,34 @@ mod tests {
         let resp = get_json(app, "/health").await;
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["queued"], 0);
+    }
+
+    #[tokio::test]
+    async fn runner_status_uses_configured_lease_ttl() {
+        // With `pull_api.lease_ttl 300s` a runner that last polled 150 s ago
+        // is Stale (stale threshold = ttl/2), not Dead. The API and health
+        // counters must agree with the watchdog's TTL-based assessment
+        // instead of the old hardcoded 120 s default, which would have
+        // reported this runner as dead while the watchdog still treated it
+        // as alive.
+        let runner = AppState::with_lease_ttl(300);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::new(runner, tx);
+
+        {
+            let mut reg = state.runner.registry.write().await;
+            let _ = reg.register_or_update("r1", vec![], 1, vec![], None, vec![]);
+            reg.get_mut("r1").unwrap().last_poll_at = Utc::now() - chrono::Duration::seconds(150);
+        }
+
+        let runners = get_json(server_router(Arc::clone(&state)), "/v1/runners").await;
+        assert_eq!(runners[0]["runner_id"], "r1");
+        assert_eq!(runners[0]["status"], "stale");
+
+        let health = get_json(server_router(Arc::clone(&state)), "/health").await;
+        assert_eq!(health["runners_stale"], 1);
+        assert_eq!(health["runners_dead"], 0);
+        assert_eq!(health["runners_online"], 0);
     }
 
     #[tokio::test]

@@ -29,14 +29,19 @@ pub struct Runner {
 }
 
 /// Liveness status derived from how recently a runner polled.
+///
+/// Thresholds are relative to the configured dead-threshold (the server's
+/// `pull_api.lease_ttl`, default 120 s); the stale threshold is half of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunnerStatus {
-    /// Polled within the last 30 seconds.
+    /// Polled within the last half dead-threshold (default: 60 s).
     Online,
-    /// Last poll was 30 s – 2 min ago. Still considered alive but lagging.
+    /// Last poll is older than half the dead-threshold but younger than the
+    /// full one. Still considered alive but lagging.
     Stale,
-    /// No poll for > 2 minutes. Inflight work should be reassigned.
+    /// No poll for at least the dead-threshold. Inflight work should be
+    /// reassigned.
     Dead,
 }
 
@@ -55,7 +60,10 @@ impl Runner {
     }
 
     /// Derive the current liveness status relative to `now`.
-    /// Uses default thresholds: online < 30s, stale < 120s, dead >= 120s.
+    /// Uses default thresholds: online < 60s, stale < 120s, dead >= 120s.
+    #[deprecated(
+        note = "hardcodes a 120 s dead-threshold; use `status_at_with_ttl` with the configured `lease_ttl_secs` so status matches the watchdog's assessment"
+    )]
     pub fn status_at(&self, now: DateTime<Utc>) -> RunnerStatus {
         self.status_at_with_ttl(now, 120)
     }
@@ -291,7 +299,7 @@ mod tests {
     #[test]
     fn runner_status_online() {
         let r = Runner::new("r1", vec!["billing".into()], 3);
-        assert_eq!(r.status_at(Utc::now()), RunnerStatus::Online);
+        assert_eq!(r.status_at_with_ttl(Utc::now(), 120), RunnerStatus::Online);
     }
 
     #[test]
@@ -301,7 +309,7 @@ mod tests {
             last_poll_at: Utc::now() - Duration::seconds(60),
             ..Runner::new("r1", vec![], 3)
         };
-        assert_eq!(r.status_at(Utc::now()), RunnerStatus::Stale);
+        assert_eq!(r.status_at_with_ttl(Utc::now(), 120), RunnerStatus::Stale);
     }
 
     #[test]
@@ -311,7 +319,31 @@ mod tests {
             last_poll_at: Utc::now() - Duration::seconds(200),
             ..Runner::new("r1", vec![], 3)
         };
-        assert_eq!(r.status_at(Utc::now()), RunnerStatus::Dead);
+        assert_eq!(r.status_at_with_ttl(Utc::now(), 120), RunnerStatus::Dead);
+    }
+
+    #[test]
+    fn runner_status_respects_custom_ttl() {
+        // With lease_ttl 300 the stale threshold is 150: a runner that last
+        // polled 150 s ago is Stale, not Dead — the hardcoded 120 s default
+        // would have called it Dead (the UI-vs-watchdog mismatch this guards).
+        use chrono::Duration;
+        let r = Runner {
+            last_poll_at: Utc::now() - Duration::seconds(150),
+            ..Runner::new("r1", vec![], 3)
+        };
+        let now = Utc::now();
+        assert_eq!(r.status_at_with_ttl(now, 300), RunnerStatus::Stale);
+
+        // Same runner, shorter TTL: past the dead-threshold.
+        assert_eq!(r.status_at_with_ttl(now, 120), RunnerStatus::Dead);
+
+        // Fresh enough for the larger TTL to still count as online.
+        let fresh = Runner {
+            last_poll_at: Utc::now() - Duration::seconds(100),
+            ..Runner::new("r2", vec![], 3)
+        };
+        assert_eq!(fresh.status_at_with_ttl(now, 300), RunnerStatus::Online);
     }
 
     #[test]
