@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Singleton jobs no longer deadlock on claims orphaned by a fast runner
+  restart ([#374](https://github.com/nuetzliches/croniq/issues/374)).** A
+  `claimed` execution whose runner process died without going *Dead* in the
+  registry (fast redeploy re-registering the same `runner_id` within the
+  lease TTL, or a server restart wiping the in-memory registry) was never
+  reclaimed by any sweep. For a `singleton` / `max_concurrent` job that one
+  stale row saturated the concurrency slot forever: every new fire piled up
+  to `max_queue_depth` and the job logged `skipping execution — queue
+  overflow` indefinitely. Two changes close this:
+  - **Stale-claim reaper** in the watchdog sweep: `claimed` executions whose
+    claim age exceeds the job `timeout` (default `5m`) plus a grace window
+    (`max(2 × lease_ttl_secs, 120 s)`, i.e. 4 minutes on defaults) are
+    flipped back to `queued` (same attempt — an orphaned claim is an infra
+    fault and must not burn retry budget or dead-letter a healthy job) and
+    re-enqueued, independent of runner liveness. Claims a live runner still
+    reports inflight are exempt, so a slow-but-alive handler is never
+    double-run. Each reap logs a warning and records an
+    `execution.stale_claim_requeued` audit event. Runs after the SLA sweep,
+    so a stuck claim still fires its `job_sla_missed` alert before recovery.
+  - **Immediate takeover on runner restart**: a new `instance_id` polling
+    under an existing `runner_id` now takes the identity over (and the old
+    session's claims are requeued) without waiting for the old entry to
+    cross the dead threshold — a fresh instance id from the same persisted
+    runner id *is* the restart signal. The duplicate-deployment protection
+    from #190 is preserved by fencing: the deposed instance id keeps getting
+    `409 Conflict` (→ the SDKs' #134 conflict-streak bail-out), so two live
+    processes sharing a `runner_id` converge to a last-writer-wins winner
+    instead of endlessly evicting each other. Operators running rolling
+    deploys with overlap should prefer stop-before-start or distinct
+    `runner_id`s — the draining old instance's in-flight claims are requeued
+    at takeover and may run twice.
+
+  The previously documented workaround (stop the runner for longer than
+  `lease_ttl` so the dead-runner sweep fires) is obsolete; wedged jobs now
+  self-heal within one watchdog sweep after `timeout + grace`.
+
 ## [0.28.0] - 2026-07-18
 
 ### Added

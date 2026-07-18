@@ -1527,7 +1527,12 @@ paths:
                       from the per-runner cancel queue populated by
                       `POST /v1/executions/{id}/cancel`. See endpoint
                       description for delivery semantics.
-        "409": { description: Runner instance conflict }
+        "409":
+          description: |
+            Runner instance conflict — this instance was deposed by a newer
+            instance registering under the same runner_id. The deposed
+            instance should back off and eventually exit (runner SDKs treat
+            a streak of poll conflicts as fatal).
 
   /v1/work/ack:
     post:

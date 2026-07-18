@@ -16,6 +16,12 @@ pub struct Runner {
     pub inflight: Vec<String>,
     /// Unique instance ID — detects when a different process registers with the same runner_id.
     pub instance_id: Option<String>,
+    /// Instance ID deposed by the most recent takeover (issue #374).
+    /// Further polls from this ID are fenced out with a conflict so a
+    /// duplicate deployment converges to one winner instead of the two
+    /// processes endlessly taking the runner_id over from each other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposed_instance_id: Option<String>,
     /// Free-form tags for filtering/grouping. NOT routing-relevant — runner
     /// capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
@@ -43,6 +49,7 @@ impl Runner {
             last_poll_at: Utc::now(),
             inflight: Vec::new(),
             instance_id: None,
+            deposed_instance_id: None,
             tags: Vec::new(),
         }
     }

@@ -63,13 +63,14 @@ impl RunnerRegistry {
         )
     }
 
-    /// Like [`Self::register_or_update`] but lets the caller specify the
-    /// dead-threshold used for stale-instance takeover. When a new
-    /// `instance_id` arrives for an existing `runner_id` and the existing
-    /// entry's `last_poll_at` is older than `dead_threshold_secs`, the old
-    /// session is evicted inline and the new one accepted — without this,
-    /// the new instance is locked out until the watchdog sweep runs
-    /// (up to ~10 minutes; issue #190).
+    /// Like [`Self::register_or_update`]. A new `instance_id` arriving for
+    /// an existing `runner_id` evicts the old session inline and takes the
+    /// identity over regardless of the old entry's liveness (issues #190,
+    /// #374) — the caller must requeue the old session's claims on
+    /// [`RegisterOutcome::TookOver`]. Only the most recently deposed
+    /// instance is rejected with `Err` (fencing; see the instance guard
+    /// below). `_dead_threshold_secs` is kept for signature stability; the
+    /// takeover decision no longer depends on it.
     #[allow(clippy::too_many_arguments)]
     pub fn register_or_update_with_ttl(
         &mut self,
@@ -79,27 +80,35 @@ impl RunnerRegistry {
         inflight: Vec<String>,
         instance_id: Option<String>,
         tags: Vec<String>,
-        dead_threshold_secs: u64,
+        _dead_threshold_secs: u64,
     ) -> Result<RegisterOutcome, String> {
         let id = runner_id.into();
         let now = Utc::now();
         let mut took_over: Option<String> = None;
 
-        // Instance guard: a new instance_id arriving for an existing runner_id
-        // is either a real conflict (two processes racing for the same id) or
-        // a takeover (the old process died and a replacement is reconnecting).
-        // We disambiguate by checking liveness.
+        // Instance guard (issues #190, #374): a new instance_id arriving for
+        // an existing runner_id takes the identity over immediately — a
+        // fresh instance_id from the same persisted runner_id is the restart
+        // signal, and waiting for the old entry to go Dead strands its
+        // claimed executions for up to the dead threshold (or forever, when
+        // the new session keeps the id alive). The caller requeues the old
+        // session's claims on `TookOver`.
+        //
+        // Duplicate-deployment protection (the reason #190 kept a conflict
+        // path): the deposed instance_id is fenced — its further polls get
+        // a conflict, so two live processes sharing a runner_id converge to
+        // one winner (last writer) while the loser bails out per #134,
+        // instead of endlessly taking the id over from each other.
         if let Some(ref new_iid) = instance_id
             && let Some(existing) = self.runners.get(&id)
             && let Some(ref old_iid) = existing.instance_id
             && old_iid != new_iid
         {
-            if existing.status_at_with_ttl(now, dead_threshold_secs) == RunnerStatus::Dead {
-                took_over = Some(old_iid.clone());
-                self.runners.remove(&id);
-            } else {
+            if existing.deposed_instance_id.as_ref() == Some(new_iid) {
                 return Err(old_iid.clone());
             }
+            took_over = Some(old_iid.clone());
+            self.runners.remove(&id);
         }
 
         let outcome = match &took_over {
@@ -117,6 +126,7 @@ impl RunnerRegistry {
             last_poll_at: now,
             inflight: inflight.clone(),
             instance_id: instance_id.clone(),
+            deposed_instance_id: None,
             tags: tags.clone(),
         });
 
@@ -128,6 +138,13 @@ impl RunnerRegistry {
         runner.tags = tags;
         if instance_id.is_some() {
             runner.instance_id = instance_id;
+        }
+        // Fence the deposed instance so its next poll conflicts instead of
+        // re-taking the id (see instance guard above). Never cleared on
+        // plain updates: instance IDs are fresh UUIDs per process start, so
+        // a stale fence can never lock out a legitimate new session.
+        if took_over.is_some() {
+            runner.deposed_instance_id = took_over.clone();
         }
 
         Ok(outcome)
@@ -332,6 +349,7 @@ mod tests {
                 last_poll_at: now() - Duration::seconds(200),
                 inflight: vec![],
                 instance_id: None,
+                deposed_instance_id: None,
                 tags: vec![],
             },
         );
@@ -346,23 +364,105 @@ mod tests {
     }
 
     #[test]
-    fn fresh_instance_conflict_is_rejected() {
-        // Two processes racing for the same runner_id, both alive — the
-        // second one must be told to back off.
+    fn fresh_instance_takes_over_live_entry() {
+        // Issue #374: a fresh instance_id under the same runner_id is the
+        // restart signal — it must take over immediately (and the caller
+        // requeues the old session's claims), even while the old entry is
+        // still within the dead threshold.
         let mut reg = RunnerRegistry::new();
         let _ = reg
             .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
             .unwrap();
 
-        let err = reg
+        let outcome = reg
             .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            RegisterOutcome::TookOver {
+                previous_instance_id: "instance-A".into()
+            }
+        );
+        let r = reg.get("r1").unwrap();
+        assert_eq!(r.instance_id.as_deref(), Some("instance-B"));
+        // The loser is fenced out.
+        assert_eq!(r.deposed_instance_id.as_deref(), Some("instance-A"));
+    }
+
+    #[test]
+    fn deposed_instance_is_fenced_with_conflict() {
+        // Duplicate deployment: after B deposes A, A's next poll must NOT
+        // re-take the id (that would thrash) — it gets a conflict and its
+        // SDK bails out after the conflict streak (#134).
+        let mut reg = RunnerRegistry::new();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
+            .unwrap();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap();
+
+        let err = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
             .unwrap_err();
 
-        assert_eq!(err, "instance-A");
+        assert_eq!(err, "instance-B");
         assert_eq!(
             reg.get("r1").unwrap().instance_id.as_deref(),
+            Some("instance-B")
+        );
+    }
+
+    #[test]
+    fn winner_re_poll_preserves_fence() {
+        let mut reg = RunnerRegistry::new();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
+            .unwrap();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap();
+
+        // Winner keeps polling: plain Updated, fence untouched.
+        let outcome = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap();
+        assert_eq!(outcome, RegisterOutcome::Updated);
+        assert_eq!(
+            reg.get("r1").unwrap().deposed_instance_id.as_deref(),
             Some("instance-A")
         );
+    }
+
+    #[test]
+    fn third_instance_overwrites_fence() {
+        // Last-writer-wins: a genuinely new process (fresh UUID) always
+        // gets in; the fence only ever holds the most recently deposed id.
+        let mut reg = RunnerRegistry::new();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
+            .unwrap();
+        let _ = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-B".into()), vec![])
+            .unwrap();
+
+        let outcome = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-C".into()), vec![])
+            .unwrap();
+        assert_eq!(
+            outcome,
+            RegisterOutcome::TookOver {
+                previous_instance_id: "instance-B".into()
+            }
+        );
+        let r = reg.get("r1").unwrap();
+        assert_eq!(r.deposed_instance_id.as_deref(), Some("instance-B"));
+        // A is no longer fenced — as a fresh process it could register again.
+        let outcome = reg
+            .register_or_update("r1", vec![], 3, vec![], Some("instance-A".into()), vec![])
+            .unwrap();
+        assert!(matches!(outcome, RegisterOutcome::TookOver { .. }));
     }
 
     #[test]
@@ -381,6 +481,7 @@ mod tests {
                 last_poll_at: now() - Duration::seconds(600), // well past 120 s dead-threshold
                 inflight: vec!["exec-orphan".into()],
                 instance_id: Some("instance-old".into()),
+                deposed_instance_id: None,
                 tags: vec![],
             },
         );
@@ -423,6 +524,7 @@ mod tests {
                 last_poll_at: now() - Duration::seconds(300),
                 inflight: vec!["exec-1".into()],
                 instance_id: None,
+                deposed_instance_id: None,
                 tags: vec![],
             },
         );

@@ -305,6 +305,31 @@ Is this a permanent change to how the rule should behave?
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
 
+## Orphaned claims (issue #374)
+
+A `claimed` execution whose runner process vanished is recovered by two
+complementary mechanisms — no operator action needed:
+
+- **Runner restart (same `runner_id`, new `instance_id`)**: the first poll of
+  the new process takes the identity over and the old session's claims are
+  requeued immediately. The deposed instance id is fenced — if the old process
+  is actually still alive (duplicate deployment sharing one `runner_id`), its
+  polls get `409 Conflict` and the SDK exits after its conflict streak.
+  Consequence for rolling deploys with overlap: the draining old instance's
+  in-flight claims are requeued at takeover and may run twice — prefer
+  stop-before-start, or give each replica its own `runner_id`.
+- **Stale-claim reaper** (watchdog sweep, every 30 s): any execution still
+  `claimed` after the job `timeout` (default `5m`) plus a grace window of
+  `max(2 × lease_ttl, 120 s)` is requeued with the same attempt number,
+  regardless of runner liveness — this also catches claims orphaned across a
+  server restart. Claims that a live runner still reports inflight are exempt.
+  Each reap logs a `watchdog: requeued stale claimed execution` warning and an
+  `execution.stale_claim_requeued` audit event; recurring reaps for the same
+  job are the signal to investigate that runner's stability.
+
+A `singleton` job wedged by such an orphan therefore self-heals within one
+sweep after `timeout + grace` at the latest.
+
 ## Data retention
 
 The server's watchdog runs a housekeeping sweep every 30 s. Two sources of
