@@ -31,7 +31,12 @@ CREATE TABLE calendar_definitions (
     calendar_id  TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     timezone     TEXT,
-    rules        TEXT NOT NULL DEFAULT '[]',
+    -- Line-separated Croniqfile DSL text (one include/exclude directive per
+    -- line), not JSON. The default is unused — every INSERT supplies rules
+    -- explicitly — but '' is the only valid empty DSL; '[]' was a leftover
+    -- from when rules were a JSON array. Editing this applied migration only
+    -- affects fresh DBs; existing rows keep their real (explicit) values.
+    rules        TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
