@@ -731,6 +731,7 @@ mod tests {
                 list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
                 find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
                 requeue_abandoned(runner_id: &str, now: DateTime<Utc>) -> Vec<Uuid>;
+                requeue_if_claimed(id: Uuid, now: DateTime<Utc>) -> bool;
                 cancel_execution(id: Uuid, now: DateTime<Utc>) -> ();
                 count_by_state() -> HashMap<ExecutionState, u64>;
                 count_executions_in_states(job_key: &str, states: &[ExecutionState]) -> u64;

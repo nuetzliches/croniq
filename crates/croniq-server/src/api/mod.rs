@@ -667,11 +667,11 @@ async fn handle_poll(
             }),
         );
     }
-    // Update registry heartbeat. The `_with_ttl` variant lets us pass the
-    // configured `lease_ttl_secs` so that a new instance reconnecting under
-    // the same `runner_id` after the previous session went silent gets to
-    // take over inline instead of being rejected with 409 until the next
-    // watchdog sweep (issue #190).
+    // Update registry heartbeat. A new instance polling under an existing
+    // `runner_id` takes the identity over inline (issues #190, #374) — the
+    // old session's claims are requeued below. Only the most recently
+    // deposed instance is rejected with 409 (fencing), so a duplicate
+    // deployment converges to one winner instead of thrashing.
     let outcome = {
         let mut reg = state.runner.registry.write().await;
         match reg.register_or_update_with_ttl(
@@ -688,7 +688,7 @@ async fn handle_poll(
                 tracing::warn!(
                     runner_id = %req.runner_id,
                     conflicting_instance = %conflict,
-                    "runner instance conflict — another instance already registered"
+                    "runner instance conflict — this instance was deposed by a newer instance registering under the same runner_id"
                 );
                 return (
                     StatusCode::CONFLICT,
@@ -709,7 +709,7 @@ async fn handle_poll(
             runner_id = %req.runner_id,
             previous_instance = %previous_instance_id,
             new_instance = ?req.instance_id,
-            "runner reconnected under same id after previous session went dead — taking over"
+            "new runner instance registered under existing id — taking over previous session"
         );
         // Requeue any executions still claimed-in-store by this runner_id
         // on a background task so the poll request returns promptly. The
@@ -2698,5 +2698,140 @@ mod tests {
             Some("1"),
             "__max_concurrent must be present in the triggered WorkItem metadata"
         );
+    }
+
+    #[tokio::test]
+    async fn wedged_singleton_frees_after_stale_claim_reaper() {
+        // Issue #374: a single orphaned `claimed` row saturates a singleton's
+        // concurrency slot forever — no poll ever gets work for that job.
+        // The stale-claim reaper must free the slot and re-enqueue the
+        // orphan so the backlog drains.
+        use crate::loader::load_str;
+        use croniq_config::compile::MAX_CONCURRENT_METADATA_KEY;
+
+        let jobs = load_str(
+            r#"
+            job etl:sync {
+                every 1 hour
+                singleton
+                timeout 10m
+            }
+            "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+
+        let (state, store, _rx) = make_guard_state();
+
+        // Orphaned claim: grabbed an hour ago by a runner session that no
+        // longer exists (not registered, not polling).
+        let orphan_id = uuid::Uuid::new_v4();
+        let stale = Utc::now() - chrono::Duration::hours(1);
+        let mut metadata = HashMap::new();
+        metadata.insert(MAX_CONCURRENT_METADATA_KEY.to_string(), "1".to_string());
+        store
+            .create_execution(&Execution {
+                id: orphan_id,
+                job_key: "etl:sync".into(),
+                fire_at: stale,
+                scheduled_for: stale,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata,
+                created_at: stale,
+            })
+            .unwrap();
+        store
+            .claim_execution(orphan_id, "app-runner", stale)
+            .unwrap();
+
+        // A fresh queued execution of the same job, blocked by the orphan.
+        let queued_id = seed_guarded_execution(&state, &store, "etl:sync", 1).await;
+
+        // Reproduce the wedge: the orphaned claim occupies the only slot.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "wedged singleton must yield no work: {resp}"
+        );
+
+        // One watchdog sweep reaps the stale claim and re-enqueues it.
+        let watchdog =
+            crate::watchdog::WatchdogLoop::new(jobs, Arc::clone(&store), Arc::clone(&state.runner));
+        let result = watchdog.sweep(Utc::now()).await;
+        assert_eq!(result.stale_claims, vec![orphan_id]);
+        assert_eq!(
+            store.get_execution(orphan_id).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
+
+        // Slot freed: the next poll gets exactly one assignment — both the
+        // requeued orphan and the blocked item are queued now, but the
+        // singleton guard admits one at a time.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            1,
+            "freed singleton must yield exactly one assignment: {resp}"
+        );
+        let first_id: uuid::Uuid = work[0]["execution_id"].as_str().unwrap().parse().unwrap();
+
+        // Completing it drains the rest of the backlog on the next poll.
+        store
+            .complete_execution(
+                first_id,
+                ExecutionState::Completed,
+                Some(5),
+                None,
+                None,
+                Utc::now(),
+            )
+            .unwrap();
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(work.len(), 1, "backlog must drain after completion: {resp}");
+        let second_id: uuid::Uuid = work[0]["execution_id"].as_str().unwrap().parse().unwrap();
+        assert_ne!(first_id, second_id);
+        for id in [first_id, second_id] {
+            assert!(
+                id == orphan_id || id == queued_id,
+                "assignments must come from the seeded executions"
+            );
+        }
     }
 }

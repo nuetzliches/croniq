@@ -106,6 +106,14 @@ pub trait ExecutionStore {
         now: DateTime<Utc>,
     ) -> Result<Vec<Uuid>, StoreError>;
 
+    /// Flip a single execution back to `queued` (clearing `runner_id`,
+    /// `claimed_at`, `started_at`) — but only if it is still `claimed`.
+    ///
+    /// Backs the watchdog's stale-claim reaper (issue #374): the
+    /// compare-and-swap guard means a concurrent completion or cancel wins,
+    /// and `Ok(false)` tells the caller not to re-enqueue the work item.
+    fn requeue_if_claimed(&self, id: Uuid, now: DateTime<Utc>) -> Result<bool, StoreError>;
+
     /// Cancel an execution.
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError>;
 

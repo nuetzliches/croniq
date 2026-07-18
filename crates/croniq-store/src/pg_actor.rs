@@ -261,6 +261,10 @@ impl ExecutionStore for PgStoreHandle {
         self.call(move |s| s.requeue_abandoned(&runner_id, now))
     }
 
+    fn requeue_if_claimed(&self, id: Uuid, now: DateTime<Utc>) -> Result<bool, StoreError> {
+        self.call(move |s| s.requeue_if_claimed(id, now))
+    }
+
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
         self.call(move |s| s.cancel_execution(id, now))
     }
