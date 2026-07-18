@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Takeover audit trail + runner-identity-flapping detection
+  ([#374](https://github.com/nuetzliches/croniq/issues/374) follow-up).**
+  Every inline takeover (new `instance_id` under an existing `runner_id`)
+  now records a `runner.takeover` audit event alongside the existing
+  warning. On top of that the server detects takeover ping-pong: the #382
+  fencing converges a duplicate deployment to a stable winner only when the
+  fenced loser stays exited — under a container restart policy it restarts
+  with a fresh `instance_id`, re-takes the identity, and the two processes
+  evict each other forever (jobs keep running, so the churn is easy to
+  miss). Three or more takeovers of one `runner_id` within 10 minutes now
+  log a `runner identity flapping` warning and record a
+  `runner.identity_flapping` audit event, throttled to once per window
+  while the flapping lasts. Remedy stays the same: give each replica its
+  own `runner_id`. See the expanded "Orphaned claims" section in
+  `docs/operations.md`.
+
 ### Changed
 
 - Removed the vestigial `dead_threshold_secs` parameter from the runner

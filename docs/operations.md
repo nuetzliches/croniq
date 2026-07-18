@@ -312,12 +312,30 @@ complementary mechanisms — no operator action needed:
 
 - **Runner restart (same `runner_id`, new `instance_id`)**: the first poll of
   the new process takes the identity over and the old session's claims are
-  requeued immediately. The deposed instance id is fenced — if the old process
-  is actually still alive (duplicate deployment sharing one `runner_id`), its
-  polls get `409 Conflict` and the SDK exits after its conflict streak.
+  requeued immediately. Each takeover logs a warning and records a
+  `runner.takeover` audit event (target = the runner id). The deposed
+  instance id is fenced — if the old process is actually still alive
+  (duplicate deployment sharing one `runner_id`), its polls get
+  `409 Conflict` and the SDK exits after its conflict streak.
   Consequence for rolling deploys with overlap: the draining old instance's
   in-flight claims are requeued at takeover and may run twice — prefer
   stop-before-start, or give each replica its own `runner_id`.
+
+  **Identity flapping (duplicate deployment + restart policy)**: the fencing
+  above converges to a stable winner only when the fenced loser *stays*
+  exited. Under a container restart policy (`restart: always` & co.) the
+  loser comes back with a fresh `instance_id`, immediately takes the
+  identity over, fences the other process, which crashes out, restarts, and
+  takes over again — an endless alternating takeover ping-pong. Jobs keep
+  running, so this is easy to miss, but every switch requeues the loser's
+  claims (churn, possible double runs). The server detects it: **3 or more
+  takeovers of the same `runner_id` within 10 minutes** log a
+  `runner identity flapping` warning and record a `runner.identity_flapping`
+  audit event (throttled to once per window while the flapping lasts). If
+  you see either, two live deployments almost certainly share one
+  `runner_id` — give each replica its own `runner_id` (or stop one). A
+  steady stream of `runner.takeover` events with no matching deploys points
+  at the same root cause.
 - **Stale-claim reaper** (watchdog sweep, every 30 s): any execution still
   `claimed` after the job `timeout` (default `5m`) plus a grace window of
   `max(2 × lease_ttl, 120 s)` is requeued with the same attempt number,

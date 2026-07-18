@@ -680,7 +680,7 @@ async fn handle_poll(
     // old session's claims are requeued below. Only the most recently
     // deposed instance is rejected with 409 (fencing), so a duplicate
     // deployment converges to one winner instead of thrashing.
-    let outcome = {
+    let (outcome, flapping) = {
         let mut reg = state.runner.registry.write().await;
         match reg.register_or_update(
             &req.runner_id,
@@ -690,7 +690,13 @@ async fn handle_poll(
             req.instance_id.clone(),
             req.tags.clone(),
         ) {
-            Ok(outcome) => outcome,
+            Ok(outcome) => {
+                // Feed the flapping detector under the same lock so two
+                // racing takeover polls can't both miss the threshold.
+                let flapping = matches!(outcome, RegisterOutcome::TookOver { .. })
+                    && reg.record_takeover(&req.runner_id, Utc::now());
+                (outcome, flapping)
+            }
             Err(conflict) => {
                 tracing::warn!(
                     runner_id = %req.runner_id,
@@ -718,6 +724,39 @@ async fn handle_poll(
             new_instance = ?req.instance_id,
             "new runner instance registered under existing id — taking over previous session"
         );
+        if let Some(ref store) = state.store {
+            audit::record_event(
+                store,
+                "system",
+                None,
+                "runner.takeover",
+                "runner",
+                Some(&req.runner_id),
+            );
+        }
+        if flapping {
+            // ≥3 takeovers of this runner_id within 10 min: two live
+            // processes are almost certainly sharing the id (e.g. an
+            // accidental duplicate deployment whose fenced loser is
+            // restarted by a container restart policy with a fresh
+            // instance_id, re-taking the identity in a loop). Jobs keep
+            // running, but every switch requeues the loser's claims —
+            // warn once per window instead of per takeover.
+            tracing::warn!(
+                runner_id = %req.runner_id,
+                "runner identity flapping — repeated takeovers suggest multiple live processes share this runner_id; give each replica its own runner_id (see docs/operations.md, issue #374)"
+            );
+            if let Some(ref store) = state.store {
+                audit::record_event(
+                    store,
+                    "system",
+                    None,
+                    "runner.identity_flapping",
+                    "runner",
+                    Some(&req.runner_id),
+                );
+            }
+        }
         // Requeue any executions still claimed-in-store by this runner_id
         // on a background task so the poll request returns promptly. The
         // runner won't see the requeued items in *this* response (we polled
@@ -2936,5 +2975,71 @@ mod tests {
                 "assignments must come from the seeded executions"
             );
         }
+    }
+
+    // ─── Takeover audit + identity-flapping detection (issue #374 f-up) ─────
+
+    /// Poll `runner_id` as `instance_id` with `max_inflight: 0` so the
+    /// handler returns immediately (capacity 0 skips the long poll — the
+    /// store-backed test state uses the 30 s production timeout).
+    async fn poll_as(state: &Arc<ServerState>, instance_id: &str) -> u16 {
+        let (status, _) = post_json_status(
+            server_router(Arc::clone(state)),
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1",
+                "capabilities": [],
+                "max_inflight": 0,
+                "inflight": [],
+                "instance_id": instance_id
+            }),
+        )
+        .await;
+        status
+    }
+
+    fn audit_actions(
+        store: &crate::store::DynStore,
+        action: &str,
+    ) -> Vec<croniq_store::models::AuditEvent> {
+        store
+            .audit_list(&croniq_store::models::AuditFilter {
+                action: Some(action.into()),
+                ..Default::default()
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn takeover_records_audit_event() {
+        let (state, store) = make_store_state();
+
+        assert_eq!(poll_as(&state, "iid-A").await, 200);
+        assert_eq!(poll_as(&state, "iid-B").await, 200);
+
+        let events = audit_actions(&store, "runner.takeover");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor_type, "system");
+        assert_eq!(events[0].target_type, "runner");
+        assert_eq!(events[0].target_id.as_deref(), Some("r1"));
+
+        // A single takeover is an ordinary restart — no flapping event.
+        assert!(audit_actions(&store, "runner.identity_flapping").is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_takeovers_record_flapping_event_once() {
+        let (state, store) = make_store_state();
+
+        // iid-A registers; each later instance takes the identity over —
+        // four takeovers back-to-back, as in a restart-policy ping-pong.
+        for iid in ["iid-A", "iid-B", "iid-C", "iid-D", "iid-E"] {
+            assert_eq!(poll_as(&state, iid).await, 200);
+        }
+
+        assert_eq!(audit_actions(&store, "runner.takeover").len(), 4);
+        // Threshold (3 takeovers / 10 min) crossed at iid-D; iid-E's
+        // takeover falls in the throttle window and must not re-fire.
+        assert_eq!(audit_actions(&store, "runner.identity_flapping").len(), 1);
     }
 }
