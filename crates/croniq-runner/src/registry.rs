@@ -1,6 +1,6 @@
 //! Runner registry: tracks connected runners and their liveness.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 
@@ -12,6 +12,15 @@ use crate::types::{Runner, RunnerStatus};
 /// `by_status_with_ttl` instead. Instance takeover in `register_or_update`
 /// does not use a dead-threshold (issues #190, #374).
 const DEFAULT_DEAD_THRESHOLD_SECS: u64 = 120;
+
+/// Sliding window for identity-flapping detection (issue #374 follow-up):
+/// this many takeovers of the same `runner_id` within `FLAP_WINDOW_SECS`
+/// means two (or more) live processes are almost certainly sharing the id —
+/// each restart-loop iteration under a container restart policy produces a
+/// fresh `instance_id` that legitimately takes the identity over, so the
+/// per-takeover signal alone never reveals the ping-pong.
+const FLAP_WINDOW_SECS: i64 = 600;
+const FLAP_THRESHOLD: usize = 3;
 
 /// Result of a successful `register_or_update` call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +43,13 @@ pub enum RegisterOutcome {
 #[derive(Debug, Default)]
 pub struct RunnerRegistry {
     runners: HashMap<String, Runner>,
+    /// Recent takeover timestamps per `runner_id`, pruned to
+    /// `FLAP_WINDOW_SECS` on every insert. Keyed by runner_id (bounded by
+    /// fleet size), never by instance_id (unbounded under a restart loop).
+    takeover_history: HashMap<String, VecDeque<DateTime<Utc>>>,
+    /// Last time a flapping signal was raised per `runner_id` — throttles
+    /// `record_takeover` to one signal per window while the ping-pong lasts.
+    last_flap_signal: HashMap<String, DateTime<Utc>>,
 }
 
 impl RunnerRegistry {
@@ -123,6 +139,36 @@ impl RunnerRegistry {
         }
 
         Ok(outcome)
+    }
+
+    /// Record a takeover of `runner_id` at `now` and report whether this
+    /// crossed the identity-flapping threshold (≥ `FLAP_THRESHOLD` takeovers
+    /// within `FLAP_WINDOW_SECS`). Returns `true` at most once per window
+    /// per runner_id so the caller can warn/audit without spamming — while
+    /// the flapping persists, the signal re-fires once the window elapses.
+    pub fn record_takeover(&mut self, runner_id: &str, now: DateTime<Utc>) -> bool {
+        let window_start = now - chrono::Duration::seconds(FLAP_WINDOW_SECS);
+        let history = self
+            .takeover_history
+            .entry(runner_id.to_string())
+            .or_default();
+        history.push_back(now);
+        while history.front().is_some_and(|t| *t < window_start) {
+            history.pop_front();
+        }
+
+        if history.len() < FLAP_THRESHOLD {
+            return false;
+        }
+        let throttled = self
+            .last_flap_signal
+            .get(runner_id)
+            .is_some_and(|last| *last >= window_start);
+        if throttled {
+            return false;
+        }
+        self.last_flap_signal.insert(runner_id.to_string(), now);
+        true
     }
 
     /// Remove a runner from the registry.
@@ -543,5 +589,58 @@ mod tests {
         #[allow(deprecated)]
         let ids = reg.dead_ids(now());
         assert_eq!(ids, vec!["zombie"]);
+    }
+
+    // ─── Identity-flapping detection (issue #374 follow-up) ─────────────────
+
+    #[test]
+    fn flapping_signals_once_at_third_takeover_in_window() {
+        let mut reg = RunnerRegistry::new();
+        let t0 = now();
+        assert!(!reg.record_takeover("r1", t0));
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(60)));
+        // Third takeover within 10 min crosses the threshold.
+        assert!(reg.record_takeover("r1", t0 + Duration::seconds(120)));
+        // Further takeovers in the same window are throttled.
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(180)));
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(240)));
+    }
+
+    #[test]
+    fn flapping_resignals_after_throttle_window_elapses() {
+        let mut reg = RunnerRegistry::new();
+        let t0 = now();
+        for i in 0..2 {
+            assert!(!reg.record_takeover("r1", t0 + Duration::seconds(i * 60)));
+        }
+        assert!(reg.record_takeover("r1", t0 + Duration::seconds(120)));
+        // Ping-pong continues past the throttle window: signal fires again.
+        let later = t0 + Duration::seconds(700);
+        assert!(!reg.record_takeover("r1", later));
+        assert!(!reg.record_takeover("r1", later + Duration::seconds(60)));
+        assert!(reg.record_takeover("r1", later + Duration::seconds(120)));
+    }
+
+    #[test]
+    fn no_flapping_when_takeovers_are_spread_out() {
+        let mut reg = RunnerRegistry::new();
+        let t0 = now();
+        // Three takeovers, each more than a window apart — ordinary
+        // restarts, never flapping.
+        assert!(!reg.record_takeover("r1", t0));
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(700)));
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(1400)));
+    }
+
+    #[test]
+    fn flapping_is_tracked_per_runner_id() {
+        let mut reg = RunnerRegistry::new();
+        let t0 = now();
+        assert!(!reg.record_takeover("r1", t0));
+        assert!(!reg.record_takeover("r2", t0 + Duration::seconds(30)));
+        assert!(!reg.record_takeover("r1", t0 + Duration::seconds(60)));
+        assert!(!reg.record_takeover("r2", t0 + Duration::seconds(90)));
+        assert!(reg.record_takeover("r1", t0 + Duration::seconds(120)));
+        assert!(reg.record_takeover("r2", t0 + Duration::seconds(150)));
     }
 }
