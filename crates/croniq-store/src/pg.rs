@@ -796,6 +796,17 @@ impl ExecutionStore for PgStore {
         Ok(ids)
     }
 
+    fn requeue_if_claimed(&self, id: Uuid, _now: DateTime<Utc>) -> Result<bool, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let affected = client
+            .execute(
+                "UPDATE executions SET state = 'queued', runner_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1 AND state = 'claimed'",
+                &[&id],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
         let mut client = self.client.lock().unwrap();
         client

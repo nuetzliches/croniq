@@ -356,6 +356,17 @@ impl ExecutionStore for SqliteStore {
         Ok(ids)
     }
 
+    fn requeue_if_claimed(&self, id: Uuid, _now: DateTime<Utc>) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE executions SET state = 'queued', runner_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = ?1 AND state = 'claimed'",
+                params![id.to_string()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

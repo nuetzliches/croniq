@@ -385,6 +385,48 @@ fn requeue_abandoned() {
 }
 
 #[test]
+fn requeue_if_claimed_flips_only_claimed() {
+    let store = create_memory_store().unwrap();
+
+    // Claimed → requeued, runner/claim fields cleared.
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-a", now()).unwrap();
+    assert!(store.requeue_if_claimed(exec.id, now()).unwrap());
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(loaded.state, ExecutionState::Queued);
+    assert!(loaded.runner_id.is_none());
+    assert!(loaded.claimed_at.is_none());
+    assert!(loaded.started_at.is_none());
+
+    // Second call: no longer claimed → false.
+    assert!(!store.requeue_if_claimed(exec.id, now()).unwrap());
+
+    // Completed → false, state untouched.
+    let done = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&done).unwrap();
+    store.claim_execution(done.id, "runner-a", now()).unwrap();
+    store
+        .complete_execution(
+            done.id,
+            ExecutionState::Completed,
+            Some(5),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+    assert!(!store.requeue_if_claimed(done.id, now()).unwrap());
+    let loaded = store.get_execution(done.id).unwrap().unwrap();
+    assert_eq!(loaded.state, ExecutionState::Completed);
+
+    // Queued (never claimed) → false.
+    let fresh = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&fresh).unwrap();
+    assert!(!store.requeue_if_claimed(fresh.id, now()).unwrap());
+}
+
+#[test]
 fn cancel_execution() {
     let store = create_memory_store().unwrap();
     let exec = make_execution("etl:sync", utc(2026, 3, 29, 12, 0));

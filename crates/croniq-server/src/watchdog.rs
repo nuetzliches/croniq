@@ -15,6 +15,11 @@
 //!    `job_sla_missed` rules whose `expected_within` has elapsed,
 //!    deduped per (rule, execution_id) so a long-running job doesn't
 //!    re-alert every 30 s.
+//! 5. Stale-claim reaper (issue #374): requeue claimed executions whose
+//!    claim age exceeds the job `timeout` plus a grace window — the
+//!    liveness-independent safety net for claims orphaned by a fast
+//!    runner restart or a server restart. Runs after the SLA sweep so
+//!    stuck claims alert before they are recovered.
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -58,6 +63,11 @@ pub struct WatchdogResult {
     pub dead_runners: Vec<String>,
     /// Execution IDs that were requeued.
     pub requeued: Vec<uuid::Uuid>,
+    /// Execution IDs requeued by the stale-claim reaper (issue #374):
+    /// claims older than job `timeout` + grace, independent of runner
+    /// liveness. Kept separate from `requeued` (dead-runner sweep) so
+    /// operators and tests can tell the two recovery paths apart.
+    pub stale_claims: Vec<uuid::Uuid>,
     /// Execution IDs cancelled due to queue_ttl expiry.
     pub expired: Vec<uuid::Uuid>,
     /// `(rule_name, execution_id)` pairs whose SLA-miss alert fired in
@@ -113,43 +123,9 @@ where
 
     let mut enqueued = 0usize;
     for exec_id in &requeued_ids {
-        let execution = match store.get_execution(*exec_id) {
-            Ok(Some(e)) => e,
-            Ok(None) => {
-                tracing::warn!(id = %exec_id, "requeue_abandoned: execution not found in store");
-                continue;
-            }
-            Err(e) => {
-                tracing::error!(id = %exec_id, error = %e, "requeue_abandoned: store read error");
-                continue;
-            }
-        };
-
-        let job = match resolve_job_config(&execution.job_key) {
-            Some(c) => c,
-            None => {
-                tracing::warn!(
-                    job_key = %execution.job_key,
-                    "requeue_abandoned: job not in DSL or store — leaving queued for next sweep"
-                );
-                continue;
-            }
-        };
-
-        let item = WorkItem {
-            execution_id: exec_id.to_string(),
-            job_key: execution.job_key.clone(),
-            fire_at: execution.fire_at,
-            scheduled_for: execution.scheduled_for,
-            attempt: execution.attempt,
-            require: job.runner.require.clone(),
-            prefer: job.runner.prefer.clone(),
-            metadata: serde_json::json!(execution.metadata),
-            timeout: job.timeout.unwrap_or_else(|| "5m".into()),
-        };
-
-        runner.queue.write().await.enqueue(item);
-        enqueued += 1;
+        if enqueue_requeued_execution(store, runner, exec_id, &mut resolve_job_config).await {
+            enqueued += 1;
+        }
     }
 
     if enqueued > 0 {
@@ -157,6 +133,60 @@ where
     }
 
     requeued_ids
+}
+
+/// Load a freshly-requeued execution, rebuild its `WorkItem` and put it back
+/// on the in-memory work queue. Shared between the dead-runner requeue and
+/// the stale-claim reaper (issue #374). Returns whether an item was enqueued;
+/// the caller batches `work_notify.notify_waiters()`. Executions whose job
+/// config can't be resolved are skipped with a warn-level log — the store row
+/// is already `queued`, a later sweep picks it up again.
+async fn enqueue_requeued_execution<F>(
+    store: &DynStore,
+    runner: &Arc<AppState>,
+    exec_id: &uuid::Uuid,
+    resolve_job_config: &mut F,
+) -> bool
+where
+    F: FnMut(&str) -> Option<JobConfig>,
+{
+    let execution = match store.get_execution(*exec_id) {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            tracing::warn!(id = %exec_id, "requeue: execution not found in store");
+            return false;
+        }
+        Err(e) => {
+            tracing::error!(id = %exec_id, error = %e, "requeue: store read error");
+            return false;
+        }
+    };
+
+    let job = match resolve_job_config(&execution.job_key) {
+        Some(c) => c,
+        None => {
+            tracing::warn!(
+                job_key = %execution.job_key,
+                "requeue: job not in DSL or store — leaving queued for next sweep"
+            );
+            return false;
+        }
+    };
+
+    let item = WorkItem {
+        execution_id: exec_id.to_string(),
+        job_key: execution.job_key.clone(),
+        fire_at: execution.fire_at,
+        scheduled_for: execution.scheduled_for,
+        attempt: execution.attempt,
+        require: job.runner.require.clone(),
+        prefer: job.runner.prefer.clone(),
+        metadata: serde_json::json!(execution.metadata),
+        timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+    };
+
+    runner.queue.write().await.enqueue(item);
+    true
 }
 
 /// In-memory set of `(rule_name, execution_id)` pairs that have
@@ -412,7 +442,15 @@ impl WatchdogLoop {
             self.sweep_missed_fires(now, &mut result).await;
         }
 
-        // 7. Auto-clear expired operational overrides (issue #231). Same
+        // 7. Stale-claim reaper (issue #374): requeue claimed executions
+        //    whose claim age exceeds the job timeout + grace — independent
+        //    of runner liveness, so it also catches orphans the dead-runner
+        //    sweep can't see (fast runner restart, server restart). Runs
+        //    AFTER the SLA sweep so a stuck claim still fires its
+        //    `job_sla_missed` alert before the reaper makes it disappear.
+        self.sweep_stale_claims(now, &mut result).await;
+
+        // 8. Auto-clear expired operational overrides (issue #231). Same
         //    cadence as the SLA sweep — a "snooze 4h" evaporates without
         //    operator follow-up. Each cleared row gets an audit event.
         self.sweep_expired_overrides(now, &mut result);
@@ -645,6 +683,159 @@ impl WatchdogLoop {
                 .await;
                 result.sla_missed.push(key);
             }
+        }
+    }
+
+    /// Requeue `claimed` executions whose claim age exceeds the job's
+    /// `timeout` plus a grace window (issue #374).
+    ///
+    /// This is the liveness-INDEPENDENT safety net: the dead-runner sweep
+    /// only reclaims executions of runners whose registry entry went Dead,
+    /// which misses claims orphaned by a fast runner restart (same
+    /// `runner_id` keeps polling) and claims whose runner re-registered as
+    /// `New` after a server restart (the in-memory registry forgot it ever
+    /// held them).
+    ///
+    /// Grace rationale: a live, connected runner enforces `timeout` itself
+    /// and reports a failure — so anything still `claimed` well past
+    /// timeout + grace has, with high confidence, lost its runner. The
+    /// remaining risk (partitioned-but-running runner ⇒ duplicate run) is
+    /// the same at-least-once tradeoff the dead-runner requeue already
+    /// makes. Requeue keeps the SAME attempt: orphaning is an infra fault,
+    /// not a handler fault — frequent redeploys must not burn retry
+    /// attempts and dead-letter healthy jobs.
+    async fn sweep_stale_claims(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        let filter = ExecutionFilter {
+            state: Some(ExecutionState::Claimed),
+            limit: Some(500),
+            ..Default::default()
+        };
+        let claimed = match self.store.list_executions(&filter) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "watchdog: stale-claim sweep failed to list claimed executions"
+                );
+                return;
+            }
+        };
+        if claimed.is_empty() {
+            return;
+        }
+
+        let grace_secs = (2 * self.runner.lease_ttl_secs).max(120);
+
+        // Snapshot the inflight sets of all live (non-Dead) runners once.
+        // A claim that its runner still reports as inflight is being worked
+        // on (slow-but-alive handler) — reaping it would double-run a
+        // singleton. Orphans never show up here: a restarted session polls
+        // with an empty inflight list, and a vanished runner goes Dead.
+        let live_inflight: HashMap<String, HashSet<String>> = {
+            let reg = self.runner.registry.read().await;
+            reg.all()
+                .filter(|r| {
+                    r.status_at_with_ttl(now, self.runner.lease_ttl_secs) != RunnerStatus::Dead
+                })
+                .map(|r| {
+                    (
+                        r.runner_id.clone(),
+                        r.inflight.iter().cloned().collect::<HashSet<String>>(),
+                    )
+                })
+                .collect()
+        };
+
+        let mut reaped: Vec<(Option<String>, uuid::Uuid)> = Vec::new();
+        let mut enqueued = 0usize;
+        for execution in &claimed {
+            let age_basis = execution
+                .claimed_at
+                .or(execution.started_at)
+                .unwrap_or(execution.created_at);
+            // Default 5m — also on unresolvable config or unparsable
+            // timeout, matching the WorkItem-build default.
+            let timeout_secs = self
+                .resolve_job_config(&execution.job_key)
+                .and_then(|j| j.timeout)
+                .and_then(|t| croniq_execution::retry::parse_duration(&t))
+                .map_or(300, |d| d.as_secs());
+            let threshold_secs = timeout_secs + grace_secs;
+            let age = now.signed_duration_since(age_basis).num_seconds();
+            if age <= threshold_secs as i64 {
+                continue;
+            }
+
+            if let Some(rid) = execution.runner_id.as_deref()
+                && live_inflight
+                    .get(rid)
+                    .is_some_and(|inflight| inflight.contains(&execution.id.to_string()))
+            {
+                continue;
+            }
+
+            // CAS: a completion / cancel racing this sweep wins — then we
+            // must not re-enqueue.
+            match self.store.requeue_if_claimed(execution.id, now) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::error!(
+                        execution_id = %execution.id,
+                        error = %e,
+                        "watchdog: stale-claim requeue failed"
+                    );
+                    continue;
+                }
+            }
+
+            tracing::warn!(
+                job_key = %execution.job_key,
+                execution_id = %execution.id,
+                runner_id = execution.runner_id.as_deref().unwrap_or("<none>"),
+                age_secs = age,
+                threshold_secs,
+                "watchdog: requeued stale claimed execution — claim outlived job timeout + grace"
+            );
+            let id_str = execution.id.to_string();
+            crate::api::audit::record_event(
+                &self.store,
+                "system",
+                None,
+                "execution.stale_claim_requeued",
+                "execution",
+                Some(&id_str),
+            );
+
+            if enqueue_requeued_execution(&self.store, &self.runner, &execution.id, &mut |k| {
+                self.resolve_job_config(k)
+            })
+            .await
+            {
+                enqueued += 1;
+            }
+            result.stale_claims.push(execution.id);
+            reaped.push((execution.runner_id.clone(), execution.id));
+        }
+
+        if reaped.is_empty() {
+            return;
+        }
+
+        // Drop the reaped executions from their (possibly still registered)
+        // runner's inflight bookkeeping so registry capacity stats don't
+        // count them twice once the work is re-claimed.
+        {
+            let mut reg = self.runner.registry.write().await;
+            for (rid, id) in &reaped {
+                if let Some(rid) = rid {
+                    reg.release(rid, &id.to_string());
+                }
+            }
+        }
+
+        if enqueued > 0 {
+            self.runner.work_notify.notify_waiters();
         }
     }
 
@@ -1028,6 +1219,181 @@ mod tests {
 
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    // ─── #374 stale-claim reaper ───────────────────────────────────
+
+    #[tokio::test]
+    async fn stale_claim_reaper_requeues_orphan_without_registry_entry() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // Server-restart shape: the claim's runner_id has no registry entry
+        // at all, so the dead-runner sweep can never see it.
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "vanished-runner",
+            Utc::now() - ChronoDuration::hours(1),
+        );
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.dead_runners.is_empty());
+        assert!(result.requeued.is_empty());
+        assert_eq!(result.stale_claims, vec![exec_id]);
+
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+        assert!(exec.runner_id.is_none());
+        assert_eq!(exec.attempt, 1, "reaper must not burn a retry attempt");
+
+        let q = runner.queue.read().await;
+        assert_eq!(q.len(), 1);
+
+        // Reap leaves a forensic audit trail.
+        let events = store
+            .audit_list(&croniq_store::models::AuditFilter {
+                action: Some("execution.stale_claim_requeued".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_skips_fresh_claim() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // 5 min old — inside timeout (10m) + grace (240s).
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "vanished-runner",
+            Utc::now() - ChronoDuration::minutes(5),
+        );
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.stale_claims.is_empty());
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Claimed);
+        assert_eq!(runner.queue.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_skips_claim_reported_inflight_by_live_runner() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            Utc::now() - ChronoDuration::hours(1),
+        );
+
+        // Live runner still reports the execution inflight — a
+        // slow-but-alive handler must not be double-run.
+        {
+            let mut reg = runner.registry.write().await;
+            let _ = reg.register_or_update(
+                "app-runner",
+                vec!["billing".into()],
+                3,
+                vec![exec_id.to_string()],
+                None,
+                vec![],
+            );
+        }
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.stale_claims.is_empty());
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Claimed);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_reaps_orphan_of_live_runner_with_empty_inflight() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            Utc::now() - ChronoDuration::hours(1),
+        );
+
+        // The exact #374 shape: the runner restarted fast, keeps polling
+        // under the same runner_id (never Dead) but no longer knows about
+        // the claim — its inflight list is empty.
+        {
+            let mut reg = runner.registry.write().await;
+            let _ = reg.register_or_update(
+                "app-runner",
+                vec!["billing".into()],
+                3,
+                vec![],
+                None,
+                vec![],
+            );
+        }
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert_eq!(result.stale_claims, vec![exec_id]);
+        assert!(result.dead_runners.is_empty());
+
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+        assert_eq!(runner.queue.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_uses_default_timeout_when_unset() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // 10 min old claim, job without explicit timeout: default 5m +
+        // grace 240s = 540s threshold → reaped.
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "vanished-runner",
+            Utc::now() - ChronoDuration::minutes(10),
+        );
+
+        let mut job = make_job("test:job");
+        job.timeout = None;
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert_eq!(result.stale_claims, vec![exec_id]);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
     }
 
     // ─── #140 PR-4 SLA-miss sweep ──────────────────────────────────
