@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-18
+
 ### Fixed
 
 - **Singleton jobs no longer deadlock on claims orphaned by a fast runner
@@ -58,6 +60,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   letter, no failure alert. The poll dispatch path additionally drops work
   items whose store claim is refused instead of handing a runner an
   execution it can never legally complete.
+
+- **Store-queued executions can no longer strand outside the work queue
+  (#385).** A requeue that flipped a row to `queued` but couldn't rebuild its
+  work item (job config unresolvable at that moment) left the row invisible
+  forever — nothing re-reads store-queued rows after boot. A new
+  queued-reconcile watchdog sweep re-enqueues such rows, and cancels rows
+  whose job exists neither in the DSL nor as a stored definition (audit event
+  `execution.stranded_queued_cancelled`). `WorkQueue::enqueue` is now
+  idempotent per execution id, so concurrent producers can't double-dispatch.
+
+- **Watchdog sweeps list the oldest claims first (#384).** The SLA sweep and
+  the stale-claim reaper read claimed executions through a bounded query that
+  previously returned newest-first — with more than 500 concurrent claims the
+  oldest rows (exactly the hung/orphaned ones both sweeps target) fell
+  permanently outside the window. A dedicated `list_claimed_older_than` query
+  now returns oldest claim first, so overflow only defers the newest claims
+  to a later sweep.
+
+- **Runner status endpoints honor the configured `pull_api.lease_ttl`
+  (#383).** `GET /v1/runners`, the runners SSE stream, `/health`, `/metrics`,
+  and the MCP status tools derived Online/Stale/Dead from a hardcoded 120 s
+  dead-threshold, so with a non-default `lease_ttl` the displayed status
+  diverged from the watchdog's actual liveness assessment (e.g. UI "dead"
+  while the watchdog still treated the runner as alive). All of them now use
+  the configured TTL; the hardcoded helpers are deprecated.
 
 ### Removed
 
