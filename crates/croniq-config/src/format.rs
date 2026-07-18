@@ -460,11 +460,89 @@ pub fn format_calendar_rule_line(rule: &CalendarRule) -> String {
         // so the user still sees what they wrote and can fix the typo.
     }
 
+    // Special case `window`: the parser splits `"08:00".."18:00"` into
+    // two endpoint args (the runtime compiler re-splits on `..`), so
+    // re-join them with the range syntax instead of emitting two
+    // space-separated tokens.
+    if rule_type_lower == "window" && rule.args.len() == 2 {
+        s.push(' ');
+        s.push_str(&format_string_value(&rule.args[0]));
+        s.push_str("..");
+        s.push_str(&format_string_value(&rule.args[1]));
+        return s;
+    }
+
     for arg in &rule.args {
         s.push(' ');
         s.push_str(&format_string_value(arg));
     }
     s
+}
+
+/// Format a calendar rule given as loose, already-resolved parts —
+/// action (`"include"`/`"exclude"`), rule type, and plain-string args —
+/// as its canonical DSL line: build the loose source line, re-parse it
+/// wrapped in a synthetic calendar block, and re-emit it via
+/// [`format_calendar_rule_line`]. The output therefore matches `croniq
+/// fmt` (weekly collapses to `weekday`/`Mon..Fri`, window endpoints use
+/// the quoted range syntax, `timezone` stays a bare directive). Falls
+/// back to the loose line when it doesn't parse, so callers still
+/// surface what was written.
+///
+/// Shared by the server's DSL-calendar synthesizer
+/// (`dsl_calendar_rules_text`) and the WASM bridge's form-builder
+/// formatter.
+pub fn format_calendar_rule_parts(action: &str, rule_type: &str, args: &[String]) -> String {
+    let loose = loose_calendar_rule_line(action, rule_type, args);
+    reparse_calendar_rule_line(&loose).unwrap_or(loose)
+}
+
+/// Build the loose DSL line for one rule from resolved string parts.
+///
+/// `timezone` is emitted as the bare directive `timezone "<tz>"` — it
+/// is not an include/exclude rule, so the action is ignored. `window`
+/// endpoints are quoted so times like `08:00` survive the lexer
+/// unambiguously. Everything else is a space-joined
+/// `<action> <rule_type> <args…>`.
+fn loose_calendar_rule_line(action: &str, rule_type: &str, args: &[String]) -> String {
+    let rule_type_lower = rule_type.to_ascii_lowercase();
+
+    if rule_type_lower == "timezone" {
+        return match args.first() {
+            Some(tz) => format!("timezone \"{tz}\""),
+            None => "timezone".to_string(),
+        };
+    }
+
+    let action = if action == "exclude" {
+        "exclude"
+    } else {
+        "include"
+    };
+    let body = if args.is_empty() {
+        String::new()
+    } else if rule_type_lower == "window" && args.len() == 2 {
+        format!("\"{}\"..\"{}\"", args[0], args[1])
+    } else {
+        args.join(" ")
+    };
+    if body.is_empty() {
+        format!("{action} {rule_type}")
+    } else {
+        format!("{action} {rule_type} {body}")
+    }
+}
+
+/// Parse a single loose rule line (wrapped in a synthetic calendar) and
+/// re-emit it via the canonical formatter. `None` if it doesn't parse.
+fn reparse_calendar_rule_line(loose: &str) -> Option<String> {
+    let wrapped = format!("calendar preview {{\n{loose}\n}}\n");
+    let ast = crate::parser::Parser::parse(&wrapped).ok()?;
+    let rule = ast.items.iter().find_map(|i| match i {
+        Item::Calendar(c) => c.rules.first(),
+        _ => None,
+    })?;
+    Some(format_calendar_rule_line(rule))
 }
 
 fn format_string_value(val: &StringValue) -> String {
@@ -641,6 +719,59 @@ job etl:sync {
         let ast = Parser::parse(src).unwrap();
         let formatted = format(&ast);
         assert!(formatted.contains("include weekly Mon..Wed"));
+    }
+
+    #[test]
+    fn calendar_window_round_trips_with_range_syntax() {
+        let src = r#"calendar biz { include window "08:00".."18:00" }"#;
+        let formatted = format(&Parser::parse(src).unwrap());
+        assert!(
+            formatted.contains(r#"include window "08:00".."18:00""#),
+            "got:\n{formatted}"
+        );
+        // Idempotent and still parses.
+        let twice = format(&Parser::parse(&formatted).unwrap());
+        assert_eq!(formatted, twice);
+    }
+
+    #[test]
+    fn calendar_rule_parts_emit_canonical_lines() {
+        // The loose-parts shape used by the server's CalendarRuleConfig
+        // and the WASM bridge's CalendarRulePayload.
+        assert_eq!(
+            format_calendar_rule_parts("include", "window", &["08:00".into(), "18:00".into()]),
+            r#"include window "08:00".."18:00""#
+        );
+        assert_eq!(
+            format_calendar_rule_parts(
+                "include",
+                "weekly",
+                &[
+                    "monday".into(),
+                    "tuesday".into(),
+                    "wednesday".into(),
+                    "thursday".into(),
+                    "friday".into(),
+                ],
+            ),
+            "include weekly weekday"
+        );
+        assert_eq!(
+            format_calendar_rule_parts("exclude", "annual", &["12-25".into(), "12-26".into()]),
+            "exclude annual 12-25 12-26"
+        );
+        assert_eq!(
+            format_calendar_rule_parts("include", "timezone", &["Europe/Vienna".into()]),
+            r#"timezone "Europe/Vienna""#
+        );
+    }
+
+    #[test]
+    fn calendar_rule_parts_fall_back_verbatim_when_unparseable() {
+        // An embedded quote breaks the lexer — the loose line is
+        // returned as-is so the caller still sees what was written.
+        let line = format_calendar_rule_parts("include", "weekly", &["mon\"day".into()]);
+        assert_eq!(line, "include weekly mon\"day");
     }
 
     #[test]

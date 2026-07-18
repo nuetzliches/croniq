@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use croniq_config::ast::{IntervalUnit, MonthOrdinal, ScheduleKind, ScheduleNode, Weekday};
-use croniq_config::format::{format_calendar_rule_line, format_schedule_line};
+use croniq_config::format::{format_calendar_rule_parts, format_schedule_line};
 use croniq_config::parser::Parser;
 
 /// Install a panic hook that forwards Rust panics to `console.error`.
@@ -996,58 +996,8 @@ pub fn format_calendar_block(value: JsValue, name: &str) -> Result<String, JsVal
     format_calendar_block_inner(&rules, name).map_err(|e| JsValue::from_str(&e))
 }
 
-/// Build the loose DSL line for one rule from the form shape.
-///
-/// `timezone` is emitted as the bare directive `timezone "<tz>"` — it
-/// is not an include/exclude rule, so the action is ignored (this was
-/// the source of the `include timezone …` bug). `window` keeps its
-/// inline quoted `"HH:MM".."HH:MM"` endpoints. Everything else is a
-/// space-joined `<action> <rule_type> <args…>` that the parser and
-/// shared formatter then canonicalise.
-fn calendar_rule_to_loose_line(r: &CalendarRulePayload) -> String {
-    let rule_type_lower = r.rule_type.to_ascii_lowercase();
-
-    if rule_type_lower == "timezone" {
-        return match r.args.first() {
-            Some(tz) => format!("timezone \"{tz}\""),
-            None => "timezone".to_string(),
-        };
-    }
-
-    let action = if r.action == "exclude" {
-        "exclude"
-    } else {
-        "include"
-    };
-    let body = if r.args.is_empty() {
-        String::new()
-    } else if rule_type_lower == "window" && r.args.len() == 2 {
-        format!("\"{}\"..\"{}\"", r.args[0], r.args[1])
-    } else {
-        r.args.join(" ")
-    };
-    if body.is_empty() {
-        format!("{action} {}", r.rule_type)
-    } else {
-        format!("{action} {} {body}", r.rule_type)
-    }
-}
-
-/// Parse a single loose rule line (wrapped in a synthetic calendar) and
-/// re-emit it via the canonical formatter. `None` if it doesn't parse.
-fn canonical_calendar_rule_line(loose: &str) -> Option<String> {
-    let wrapped = format!("calendar preview {{\n{loose}\n}}\n");
-    let ast = Parser::parse(&wrapped).ok()?;
-    let rule = ast.items.iter().find_map(|i| match i {
-        croniq_config::ast::Item::Calendar(c) => c.rules.first(),
-        _ => None,
-    })?;
-    Some(format_calendar_rule_line(rule))
-}
-
 fn format_rule(r: &CalendarRulePayload) -> String {
-    let loose = calendar_rule_to_loose_line(r);
-    canonical_calendar_rule_line(&loose).unwrap_or(loose)
+    format_calendar_rule_parts(&r.action, &r.rule_type, &r.args)
 }
 
 fn format_calendar_block_inner(
@@ -1062,7 +1012,7 @@ fn format_calendar_block_inner(
     };
     let body: String = rules
         .iter()
-        .map(|r| format!("  {}", calendar_rule_to_loose_line(r)))
+        .map(|r| format!("  {}", format_rule(r)))
         .collect::<Vec<_>>()
         .join("\n");
     let src = format!("calendar {name} {{\n{body}\n}}\n");
