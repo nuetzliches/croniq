@@ -674,14 +674,13 @@ async fn handle_poll(
     // deployment converges to one winner instead of thrashing.
     let outcome = {
         let mut reg = state.runner.registry.write().await;
-        match reg.register_or_update_with_ttl(
+        match reg.register_or_update(
             &req.runner_id,
             req.capabilities.clone(),
             req.max_inflight,
             req.inflight.clone(),
             req.instance_id.clone(),
             req.tags.clone(),
-            state.runner.lease_ttl_secs,
         ) {
             Ok(outcome) => outcome,
             Err(conflict) => {

@@ -6,9 +6,11 @@ use chrono::{DateTime, Utc};
 
 use crate::types::{Runner, RunnerStatus};
 
-/// Default dead-threshold used by `register_or_update`. Matches the default
-/// `lease_ttl_secs` on `AppState` (see `api.rs`). Production code that knows
-/// the configured threshold should call `register_or_update_with_ttl`.
+/// Default dead-threshold used by the deprecated `by_status` / `dead_ids`
+/// status helpers. Matches the default `lease_ttl_secs` on `AppState` (see
+/// `api.rs`). Production code passes the configured threshold via
+/// `by_status_with_ttl` instead. Instance takeover in `register_or_update`
+/// does not use a dead-threshold (issues #190, #374).
 const DEFAULT_DEAD_THRESHOLD_SECS: u64 = 120;
 
 /// Result of a successful `register_or_update` call.
@@ -18,10 +20,10 @@ pub enum RegisterOutcome {
     New,
     /// Existing entry was refreshed (heartbeat/inflight/capabilities updated).
     Updated,
-    /// The previous instance was past the dead-threshold and has been replaced
-    /// by this new instance. The caller should treat any executions still
-    /// claimed by this `runner_id` in the persistent store as abandoned and
-    /// requeue them — otherwise they remain orphaned (issue #190).
+    /// A new `instance_id` arrived for this `runner_id` and replaced the
+    /// previous instance (issues #190, #374). The caller should treat any
+    /// executions still claimed by this `runner_id` in the persistent store
+    /// as abandoned and requeue them — otherwise they remain orphaned.
     TookOver { previous_instance_id: String },
 }
 
@@ -39,10 +41,13 @@ impl RunnerRegistry {
         Self::default()
     }
 
-    /// Register a runner or refresh its heartbeat. Uses a default 120 s
-    /// dead-threshold for stale-instance takeover (see issue #190).
-    /// Production paths that know the configured `lease_ttl_secs` should
-    /// call [`Self::register_or_update_with_ttl`] instead.
+    /// Register a runner or refresh its heartbeat. A new `instance_id`
+    /// arriving for an existing `runner_id` evicts the old session inline
+    /// and takes the identity over regardless of the old entry's liveness
+    /// (issues #190, #374) — the caller must requeue the old session's
+    /// claims on [`RegisterOutcome::TookOver`]. Only the most recently
+    /// deposed instance is rejected with `Err` (fencing; see the instance
+    /// guard below).
     pub fn register_or_update(
         &mut self,
         runner_id: impl Into<String>,
@@ -51,36 +56,6 @@ impl RunnerRegistry {
         inflight: Vec<String>,
         instance_id: Option<String>,
         tags: Vec<String>,
-    ) -> Result<RegisterOutcome, String> {
-        self.register_or_update_with_ttl(
-            runner_id,
-            capabilities,
-            max_inflight,
-            inflight,
-            instance_id,
-            tags,
-            DEFAULT_DEAD_THRESHOLD_SECS,
-        )
-    }
-
-    /// Like [`Self::register_or_update`]. A new `instance_id` arriving for
-    /// an existing `runner_id` evicts the old session inline and takes the
-    /// identity over regardless of the old entry's liveness (issues #190,
-    /// #374) — the caller must requeue the old session's claims on
-    /// [`RegisterOutcome::TookOver`]. Only the most recently deposed
-    /// instance is rejected with `Err` (fencing; see the instance guard
-    /// below). `_dead_threshold_secs` is kept for signature stability; the
-    /// takeover decision no longer depends on it.
-    #[allow(clippy::too_many_arguments)]
-    pub fn register_or_update_with_ttl(
-        &mut self,
-        runner_id: impl Into<String>,
-        capabilities: Vec<String>,
-        max_inflight: u32,
-        inflight: Vec<String>,
-        instance_id: Option<String>,
-        tags: Vec<String>,
-        _dead_threshold_secs: u64,
     ) -> Result<RegisterOutcome, String> {
         let id = runner_id.into();
         let now = Utc::now();
@@ -505,10 +480,9 @@ mod tests {
 
     #[test]
     fn stale_instance_is_evicted_on_takeover() {
-        // Issue #190: a new instance polling for an existing runner_id must
-        // not be locked out for the full watchdog sweep when the old session
-        // is past dead-threshold. The conflict path should evict the dead
-        // entry inline and accept the new instance.
+        // Issues #190, #374: a new instance polling for an existing
+        // runner_id evicts the old entry inline and takes the identity over
+        // regardless of the old entry's liveness.
         let mut reg = RunnerRegistry::new();
         reg.runners.insert(
             "r1".into(),
@@ -516,7 +490,7 @@ mod tests {
                 runner_id: "r1".into(),
                 capabilities: vec!["backup".into()],
                 max_inflight: 1,
-                last_poll_at: now() - Duration::seconds(600), // well past 120 s dead-threshold
+                last_poll_at: now() - Duration::seconds(600),
                 inflight: vec!["exec-orphan".into()],
                 instance_id: Some("instance-old".into()),
                 deposed_instance_id: None,
@@ -525,14 +499,13 @@ mod tests {
         );
 
         let outcome = reg
-            .register_or_update_with_ttl(
+            .register_or_update(
                 "r1",
                 vec!["backup".into()],
                 1,
                 vec![],
                 Some("instance-new".into()),
                 vec![],
-                120,
             )
             .unwrap();
 

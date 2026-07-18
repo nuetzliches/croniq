@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the vestigial `dead_threshold_secs` parameter from the runner
+  registry: `register_or_update_with_ttl` is merged into
+  `register_or_update`, since instance takeover no longer depends on a
+  dead-threshold (immediate takeover with deposed-instance fencing,
+  [#374](https://github.com/nuetzliches/croniq/issues/374)). Internal API
+  only; no behaviour change.
+
 ## [0.29.0] - 2026-07-18
 
 ### Fixed
