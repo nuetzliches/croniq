@@ -742,6 +742,7 @@ async fn main() -> Result<()> {
         tracing::info!(days = dur.num_days(), "execution retention enabled");
     }
 
+    let watchdog_counters = Arc::clone(&server_state.watchdog_counters);
     let _watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -749,6 +750,9 @@ async fn main() -> Result<()> {
             interval.tick().await;
             let now = chrono::Utc::now();
             let result = watchdog.sweep(now).await;
+            // Fold the sweep into the cumulative `croniq_watchdog_*` counters
+            // before the per-category logging below.
+            watchdog_counters.record(&result);
             if !result.dead_runners.is_empty() {
                 tracing::warn!(
                     dead = result.dead_runners.len(),

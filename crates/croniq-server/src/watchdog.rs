@@ -27,6 +27,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use crate::loader::job_config_from_job_def;
@@ -110,6 +111,64 @@ pub struct WatchdogResult {
     /// this sweep (issue #231). Each emits an `alerts.override.cleared`
     /// audit event.
     pub cleared_overrides: Vec<String>,
+}
+
+/// Cumulative process-lifetime counters for the watchdog's recovery actions,
+/// exposed as Prometheus counters on `/metrics` (same pattern as
+/// [`crate::reload::ReloadCounters`]). Their rates are an operator signal:
+/// frequent dead-runner/stale-claim requeues point at unstable runners,
+/// stranded cancels at jobs deleted with work still in flight.
+#[derive(Debug, Default)]
+pub struct WatchdogCounters {
+    /// Executions requeued from dead runners — by the watchdog sweep AND by
+    /// the inline-takeover path in the poll handler (both recover the same
+    /// "runner session gone" condition, so they share one series).
+    pub requeued_dead_runner: AtomicU64,
+    /// Executions requeued by the stale-claim reaper (issue #374).
+    pub requeued_stale_claim: AtomicU64,
+    /// Executions re-enqueued by the queued-reconcile sweep.
+    pub requeued_reconciled: AtomicU64,
+    /// Queued executions cancelled on `queue_ttl` expiry.
+    pub cancelled_queue_ttl: AtomicU64,
+    /// Stranded queued executions cancelled because their job is gone.
+    pub cancelled_stranded: AtomicU64,
+    /// `job_sla_missed` alerts fired (issue #140 PR-4).
+    pub sla_missed: AtomicU64,
+    /// `job_missed_fire` alerts fired (issue #250).
+    pub missed_fires: AtomicU64,
+}
+
+impl WatchdogCounters {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Fold one sweep's [`WatchdogResult`] into the cumulative counters.
+    pub fn record(&self, result: &WatchdogResult) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.requeued_dead_runner
+            .fetch_add(result.requeued.len() as u64, Relaxed);
+        self.requeued_stale_claim
+            .fetch_add(result.stale_claims.len() as u64, Relaxed);
+        self.requeued_reconciled
+            .fetch_add(result.reconciled.len() as u64, Relaxed);
+        self.cancelled_queue_ttl
+            .fetch_add(result.expired.len() as u64, Relaxed);
+        self.cancelled_stranded
+            .fetch_add(result.stranded_cancelled.len() as u64, Relaxed);
+        self.sla_missed
+            .fetch_add(result.sla_missed.len() as u64, Relaxed);
+        self.missed_fires
+            .fetch_add(result.missed_fires.len() as u64, Relaxed);
+    }
+
+    /// Count executions recovered by the inline-takeover requeue in the poll
+    /// handler — same condition as the sweep's dead-runner requeue, so it
+    /// feeds the same series.
+    pub fn add_dead_runner_requeued(&self, n: u64) {
+        self.requeued_dead_runner
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Requeue all executions still claimed by `runner_id` in the persistent

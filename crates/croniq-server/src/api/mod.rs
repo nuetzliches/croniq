@@ -57,6 +57,7 @@ use crate::oidc::SharedOidcProvider;
 use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
+use crate::watchdog::WatchdogCounters;
 use croniq_config::compile::{CalendarConfig, JobConfig};
 use croniq_store::models::{Execution, ExecutionFilter, ExecutionState, MaintenanceState};
 
@@ -118,6 +119,10 @@ pub struct ServerState {
     /// Counters for `croniq_config_reload_total`, incremented by both the
     /// file-watcher reload path and the admin reload endpoint.
     pub reload_counters: Arc<ReloadCounters>,
+    /// Cumulative counters for the watchdog's recovery actions
+    /// (`croniq_watchdog_*` metrics), incremented by the watchdog sweep task
+    /// in main.rs and by the inline-takeover requeue in the poll handler.
+    pub watchdog_counters: Arc<WatchdogCounters>,
     /// Outbound email sender — used for invitations and password resets.
     /// Defaults to `NoopSender` (logs but doesn't deliver); SMTP backend
     /// lands in PR-A6 behind the `smtp` cargo feature.
@@ -201,6 +206,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -235,6 +241,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -268,6 +275,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -722,6 +730,7 @@ async fn handle_poll(
         if let (Some(store), Some(dsl_jobs)) = (state.store.clone(), state.dsl_jobs.clone()) {
             let runner_state = Arc::clone(&state.runner);
             let runner_id = req.runner_id.clone();
+            let watchdog_counters = Arc::clone(&state.watchdog_counters);
             tokio::spawn(async move {
                 let now = Utc::now();
                 let store_clone = store.clone();
@@ -749,6 +758,7 @@ async fn handle_poll(
                 )
                 .await;
                 if !requeued.is_empty() {
+                    watchdog_counters.add_dead_runner_requeued(requeued.len() as u64);
                     tracing::info!(
                         runner_id = %runner_id,
                         count = requeued.len(),
@@ -773,6 +783,9 @@ async fn handle_poll(
             )
             .await;
             if !requeued.is_empty() {
+                state
+                    .watchdog_counters
+                    .add_dead_runner_requeued(requeued.len() as u64);
                 tracing::info!(
                     runner_id = %req.runner_id,
                     count = requeued.len(),
@@ -1699,6 +1712,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -1877,6 +1891,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -1953,6 +1968,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
@@ -2036,6 +2052,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
