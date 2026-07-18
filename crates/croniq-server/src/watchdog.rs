@@ -20,6 +20,10 @@
 //!    liveness-independent safety net for claims orphaned by a fast
 //!    runner restart or a server restart. Runs after the SLA sweep so
 //!    stuck claims alert before they are recovered.
+//! 6. Queued-reconcile sweep: re-enqueue store-`queued` rows missing
+//!    from the in-memory work queue (e.g. a requeue path flipped the row
+//!    but couldn't rebuild the WorkItem). Rows whose job no longer exists
+//!    anywhere are cancelled — nothing could ever dispatch them.
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -39,6 +43,11 @@ const PRUNE_BATCH: u32 = 5_000;
 /// doesn't monopolise the 30 s watchdog tick. Backlog beyond
 /// `PRUNE_BATCH * PRUNE_MAX_BATCHES` rows carries over to the next tick.
 const PRUNE_MAX_BATCHES: usize = 20;
+
+/// Max store-`queued` rows the reconcile sweep examines per tick. A larger
+/// stranded backlog drains across sweeps — rows stay `queued` until handled,
+/// and `find_queued_executions` returns oldest-due first.
+const RECONCILE_BATCH: u32 = 500;
 
 /// Counts from one [`WatchdogLoop::prune_executions`] pass (issue #344).
 #[derive(Debug, Clone, Copy, Default)]
@@ -70,6 +79,17 @@ pub struct WatchdogResult {
     pub stale_claims: Vec<uuid::Uuid>,
     /// Execution IDs cancelled due to queue_ttl expiry.
     pub expired: Vec<uuid::Uuid>,
+    /// Execution IDs re-enqueued by the queued-reconcile sweep: rows that
+    /// were `queued` in the store but missing from the in-memory work
+    /// queue (e.g. a requeue path flipped the row but couldn't rebuild
+    /// the WorkItem at the time). Without this sweep such rows would
+    /// strand until the next server restart — no other path re-reads
+    /// store-queued rows at runtime.
+    pub reconciled: Vec<uuid::Uuid>,
+    /// Stranded queued executions cancelled by the reconcile sweep
+    /// because their job exists neither in the DSL nor as a stored
+    /// JobDefinition — no sweep could ever rebuild their WorkItem.
+    pub stranded_cancelled: Vec<uuid::Uuid>,
     /// `(rule_name, execution_id)` pairs whose SLA-miss alert fired in
     /// this sweep (issue #140 PR-4). Useful for tests and a future
     /// metric; not exposed via any public API today.
@@ -94,7 +114,9 @@ pub struct WatchdogResult {
 /// `WorkItem`'s require/prefer/timeout fields. Returns the list of execution
 /// IDs that were marked queued (possibly empty). Executions whose job config
 /// can't be resolved are skipped with a warn-level log — the store row is
-/// still flipped to `queued`, the watchdog will pick it up again later.
+/// still flipped to `queued`, and the watchdog's queued-reconcile sweep
+/// ([`WatchdogLoop::reconcile_stranded_queued`]) later re-enqueues it or
+/// cancels it if the job is gone for good.
 pub async fn requeue_abandoned_for_runner<F>(
     store: &DynStore,
     runner: &Arc<AppState>,
@@ -136,11 +158,13 @@ where
 }
 
 /// Load a freshly-requeued execution, rebuild its `WorkItem` and put it back
-/// on the in-memory work queue. Shared between the dead-runner requeue and
-/// the stale-claim reaper (issue #374). Returns whether an item was enqueued;
-/// the caller batches `work_notify.notify_waiters()`. Executions whose job
-/// config can't be resolved are skipped with a warn-level log — the store row
-/// is already `queued`, a later sweep picks it up again.
+/// on the in-memory work queue. Shared between the dead-runner requeue, the
+/// stale-claim reaper (issue #374) and the queued-reconcile sweep. Returns
+/// whether an item was enqueued; the caller batches
+/// `work_notify.notify_waiters()`. Executions whose job config can't be
+/// resolved are skipped with a warn-level log — the store row is already
+/// `queued`, and [`WatchdogLoop::reconcile_stranded_queued`] retries it (or
+/// cancels it once the job is gone from both DSL and store) on a later sweep.
 async fn enqueue_requeued_execution<F>(
     store: &DynStore,
     runner: &Arc<AppState>,
@@ -162,12 +186,23 @@ where
         }
     };
 
+    // A completion or cancel may have raced the caller's requeue CAS and
+    // this read — never resurrect a WorkItem for a non-queued row.
+    if execution.state != ExecutionState::Queued {
+        tracing::debug!(
+            id = %exec_id,
+            state = ?execution.state,
+            "requeue: execution left queued state concurrently — not enqueuing"
+        );
+        return false;
+    }
+
     let job = match resolve_job_config(&execution.job_key) {
         Some(c) => c,
         None => {
             tracing::warn!(
                 job_key = %execution.job_key,
-                "requeue: job not in DSL or store — leaving queued for next sweep"
+                "requeue: job not in DSL or store — left queued; the reconcile sweep retries or cancels it"
             );
             return false;
         }
@@ -185,8 +220,7 @@ where
         timeout: job.timeout.unwrap_or_else(|| "5m".into()),
     };
 
-    runner.queue.write().await.enqueue(item);
-    true
+    runner.queue.write().await.enqueue(item)
 }
 
 /// In-memory set of `(rule_name, execution_id)` pairs that have
@@ -450,7 +484,14 @@ impl WatchdogLoop {
         //    `job_sla_missed` alert before the reaper makes it disappear.
         self.sweep_stale_claims(now, &mut result).await;
 
-        // 8. Auto-clear expired operational overrides (issue #231). Same
+        // 8. Queued-reconcile sweep: re-enqueue store-`queued` rows that
+        //    are missing from the in-memory work queue, and cancel rows
+        //    whose job no longer exists anywhere. Runs after the requeue
+        //    paths so anything they flipped-but-failed-to-enqueue this
+        //    sweep is picked up next sweep at the latest.
+        self.reconcile_stranded_queued(now, &mut result).await;
+
+        // 9. Auto-clear expired operational overrides (issue #231). Same
         //    cadence as the SLA sweep — a "snooze 4h" evaporates without
         //    operator follow-up. Each cleared row gets an audit event.
         self.sweep_expired_overrides(now, &mut result);
@@ -831,6 +872,124 @@ impl WatchdogLoop {
                 if let Some(rid) = rid {
                     reg.release(rid, &id.to_string());
                 }
+            }
+        }
+
+        if enqueued > 0 {
+            self.runner.work_notify.notify_waiters();
+        }
+    }
+
+    /// Re-enqueue store-`queued` executions that are missing from the
+    /// in-memory work queue, and cancel the ones that can never dispatch.
+    ///
+    /// The in-memory queue is the only source runners are served from
+    /// (`try_dequeue_for`); `find_queued_executions` is otherwise only read
+    /// at boot. So a store row that is `queued` but has no matching
+    /// WorkItem — e.g. a requeue path flipped the row but
+    /// `resolve_job_config` failed at that moment, or the boot restore
+    /// skipped it — would strand as "queued" forever. This sweep restores
+    /// the invariant store-queued ⇔ in-memory-queued.
+    ///
+    /// Rows whose job exists neither in the DSL map nor as a stored
+    /// JobDefinition (job deleted while work was in flight) are cancelled:
+    /// no future sweep could ever rebuild their WorkItem. A transient store
+    /// error while resolving is NOT treated as "job gone" — the row is left
+    /// for the next sweep.
+    ///
+    /// Races with concurrent enqueuers (scheduler fire between
+    /// create-row and enqueue, poll-handler inline takeover) are harmless:
+    /// `WorkQueue::enqueue` dedupes by execution_id, and the store-side
+    /// claim CAS is the final arbiter.
+    async fn reconcile_stranded_queued(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        let queued = match self.store.find_queued_executions(&[], RECONCILE_BATCH) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "watchdog: queued-reconcile sweep failed to list queued executions"
+                );
+                return;
+            }
+        };
+        if queued.is_empty() {
+            return;
+        }
+
+        // Snapshot the queue's execution IDs once. try_dequeue_for claims
+        // rows in the store before releasing the queue write lock, so by
+        // the time we get the read lock, anything dequeued-but-in-claiming
+        // is already `claimed` in the store and the per-row re-check inside
+        // enqueue_requeued_execution rejects it.
+        let in_queue: HashSet<String> = {
+            let q = self.runner.queue.read().await;
+            q.peek_n(q.len())
+                .iter()
+                .map(|item| item.execution_id.clone())
+                .collect()
+        };
+
+        let mut enqueued = 0usize;
+        for execution in &queued {
+            if in_queue.contains(&execution.id.to_string()) {
+                continue;
+            }
+
+            // Resolve inline (not via resolve_job_config) to tell "job is
+            // gone" (Ok(None) ⇒ cancel) apart from a transient store error
+            // (Err ⇒ retry next sweep).
+            let known = self.jobs.contains_key(&execution.job_key)
+                || match self.store.get_job_definition(&execution.job_key) {
+                    Ok(def) => def.is_some(),
+                    Err(e) => {
+                        tracing::error!(
+                            job_key = %execution.job_key,
+                            error = %e,
+                            "watchdog: queued-reconcile store error resolving job — skipping row"
+                        );
+                        continue;
+                    }
+                };
+
+            if !known {
+                if let Err(e) = self.store.cancel_execution(execution.id, now) {
+                    tracing::error!(
+                        execution_id = %execution.id,
+                        error = %e,
+                        "watchdog: failed to cancel stranded queued execution"
+                    );
+                    continue;
+                }
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    execution_id = %execution.id,
+                    "watchdog: cancelled stranded queued execution — job exists neither in DSL nor store"
+                );
+                let id_str = execution.id.to_string();
+                crate::api::audit::record_event(
+                    &self.store,
+                    "system",
+                    None,
+                    "execution.stranded_queued_cancelled",
+                    "execution",
+                    Some(&id_str),
+                );
+                result.stranded_cancelled.push(execution.id);
+                continue;
+            }
+
+            if enqueue_requeued_execution(&self.store, &self.runner, &execution.id, &mut |k| {
+                self.resolve_job_config(k)
+            })
+            .await
+            {
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    execution_id = %execution.id,
+                    "watchdog: re-enqueued stranded queued execution missing from in-memory queue"
+                );
+                result.reconciled.push(execution.id);
+                enqueued += 1;
             }
         }
 
@@ -1394,6 +1553,176 @@ mod tests {
         assert_eq!(result.stale_claims, vec![exec_id]);
         let exec = store.get_execution(exec_id).unwrap().unwrap();
         assert_eq!(exec.state, ExecutionState::Queued);
+    }
+
+    // ─── stranded-queued reconcile ─────────────────────────────────
+
+    /// Seed an execution left in `Queued` state with nothing in the
+    /// in-memory queue — the shape a failed requeue (or a skipped boot
+    /// restore) leaves behind.
+    fn seed_queued_at(store: &dyn ExecutionStore, job_key: &str, at: DateTime<Utc>) -> Uuid {
+        let id = Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: at,
+                scheduled_for: at,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: at,
+            })
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn reconcile_reenqueues_store_queued_row_missing_from_memory_queue() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_queued_at(&*store, "test:job", Utc::now() - ChronoDuration::minutes(5));
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert_eq!(result.reconciled, vec![exec_id]);
+        assert!(result.stranded_cancelled.is_empty());
+
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+        {
+            let q = runner.queue.read().await;
+            assert_eq!(q.len(), 1);
+            assert_eq!(q.peek().unwrap().execution_id, exec_id.to_string());
+        }
+
+        // Once the item is back in the queue, later sweeps are a no-op.
+        let again = watchdog.sweep(Utc::now()).await;
+        assert!(again.reconciled.is_empty());
+        assert_eq!(runner.queue.read().await.len(), 1, "no duplicate item");
+    }
+
+    #[tokio::test]
+    async fn reconcile_skips_rows_already_in_memory_queue() {
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_queued_at(&*store, "test:job", Utc::now() - ChronoDuration::minutes(5));
+        // The healthy shape: the WorkItem is already in the queue.
+        {
+            let mut q = runner.queue.write().await;
+            q.enqueue(WorkItem {
+                execution_id: exec_id.to_string(),
+                job_key: "test:job".into(),
+                fire_at: Utc::now(),
+                scheduled_for: Utc::now(),
+                attempt: 1,
+                require: vec!["billing".into()],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: "10m".into(),
+            });
+        }
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.reconciled.is_empty());
+        assert!(result.stranded_cancelled.is_empty());
+        assert_eq!(runner.queue.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_cancels_row_whose_job_is_gone() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // Job exists neither in the DSL map nor as a stored JobDefinition —
+        // a deleted job whose execution was stranded mid-requeue.
+        let exec_id = seed_queued_at(
+            &*store,
+            "ghost:job",
+            Utc::now() - ChronoDuration::minutes(5),
+        );
+
+        let watchdog = WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.reconciled.is_empty());
+        assert_eq!(result.stranded_cancelled, vec![exec_id]);
+
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Cancelled);
+        assert_eq!(runner.queue.read().await.len(), 0);
+
+        // The cancel leaves a forensic audit trail.
+        let events = store
+            .audit_list(&croniq_store::models::AuditFilter {
+                action: Some("execution.stranded_queued_cancelled".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_resolves_api_job_from_store_definition() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // API-registered job: not in the DSL map, but a JobDefinition
+        // exists in the store — must be re-enqueued, not cancelled.
+        let now = Utc::now();
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "api:job".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: now,
+                updated_at: now,
+                timeout: Some("2m".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+        let exec_id = seed_queued_at(&*store, "api:job", now - ChronoDuration::minutes(5));
+
+        let watchdog = WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.reconciled, vec![exec_id]);
+        assert!(result.stranded_cancelled.is_empty());
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
+        let q = runner.queue.read().await;
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.peek().unwrap().timeout, "2m");
     }
 
     // ─── #140 PR-4 SLA-miss sweep ──────────────────────────────────

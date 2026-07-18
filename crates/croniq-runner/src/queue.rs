@@ -29,9 +29,26 @@ impl WorkQueue {
     }
 
     /// Add a work item at the back of the queue.
-    pub fn enqueue(&mut self, item: WorkItem) {
+    ///
+    /// Idempotent per `execution_id`: if an item for the same execution is
+    /// already queued, the duplicate is dropped and `false` is returned.
+    /// A duplicate would double-dispatch the execution — the store-side
+    /// claim CAS rejects the second claim, but the poll handler has already
+    /// handed the assignment out by then. Concurrent producers (scheduler
+    /// fire, watchdog requeue/reconcile, poll-takeover) rely on this guard
+    /// instead of an ordering protocol. The linear scan is fine: the queue
+    /// is small in practice and enqueues are low-frequency.
+    pub fn enqueue(&mut self, item: WorkItem) -> bool {
+        if self
+            .items
+            .iter()
+            .any(|i| i.execution_id == item.execution_id)
+        {
+            return false;
+        }
         *self.per_job_count.entry(item.job_key.clone()).or_insert(0) += 1;
         self.items.push_back(item);
+        true
     }
 
     /// Remove and return the first item this runner can execute, based on
@@ -188,6 +205,23 @@ mod tests {
         assert!(result.is_some());
         assert_eq!(result.unwrap().execution_id, "exec-1");
         assert!(q.is_empty());
+    }
+
+    #[test]
+    fn enqueue_dedupes_by_execution_id() {
+        let mut q = WorkQueue::new();
+        assert!(q.enqueue(item("exec-1", vec![])));
+        assert!(
+            !q.enqueue(item("exec-1", vec![])),
+            "second enqueue of the same execution must be dropped"
+        );
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.count_for_job("job:exec-1"), 1);
+
+        // After the item leaves the queue, the id may be enqueued again.
+        assert!(q.dequeue_for(&[]).is_some());
+        assert!(q.enqueue(item("exec-1", vec![])));
+        assert_eq!(q.len(), 1);
     }
 
     #[test]
