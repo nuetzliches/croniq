@@ -30,6 +30,7 @@ import {
   useAdoptJob,
   useUnadoptJob,
   useDeleteSchedule,
+  useCalendars,
   useAuditEvents,
   useForecast,
   useAlertDeliveries,
@@ -48,7 +49,7 @@ import {
   BrandMark,
 } from '@/components/primitives'
 import type { ExecutionOutcome } from '@/components/primitives'
-import type { AuditEvent, ExecutionMode, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
+import type { AuditEvent, CalendarDefinition, ExecutionMode, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { EditJobDialog } from '@/components/EditJobDialog'
 import { NewJobDialog } from '@/components/NewJobDialog'
@@ -1256,7 +1257,11 @@ function DslTab({
   job: JobDefinition
   schedules: TriggerDefinition[]
 }) {
-  const dsl = useMemo(() => renderDsl(job, schedules), [job, schedules])
+  const calendars = useCalendars()
+  const dsl = useMemo(
+    () => renderDsl(job, schedules, calendars.data),
+    [job, schedules, calendars.data],
+  )
   return (
     <section className="card" style={{ padding: 0 }}>
       <div className="between" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -1284,13 +1289,20 @@ function DslTab({
   )
 }
 
-function renderDsl(job: JobDefinition, schedules: TriggerDefinition[]): string {
+function renderDsl(
+  job: JobDefinition,
+  schedules: TriggerDefinition[],
+  calendars: CalendarDefinition[] | undefined,
+): string {
   const tags = JSON.stringify(job.tags ?? [])
   const timeout = job.timeout ?? '5m'
   const sched = schedules[0]
+  const calendar = sched?.calendar ? calendars?.find((c) => c.name === sched.calendar) : undefined
+  // Only flag an unresolved reference once the calendar list has loaded.
+  const calendarMissing = Boolean(sched?.calendar && calendars && !calendar)
   return [
     `# ${job.job_key}`,
-    `# rendered from the live job + first attached schedule`,
+    `# rendered from the live job + first attached schedule${calendar ? ' + its calendar' : ''}`,
     ``,
     `job "${job.job_key}" {`,
     `  description = ${JSON.stringify(job.description ?? '')}`,
@@ -1303,13 +1315,29 @@ function renderDsl(job: JobDefinition, schedules: TriggerDefinition[]): string {
           ``,
           `  schedule {`,
           `    rule = ${JSON.stringify(sched.cron_expression ?? '')}`,
-          `    tz   = "${sched.timezone ?? 'UTC'}"`,
+          ...(sched.timezone ? [`    tz   = "${sched.timezone}"`] : []),
           ...(sched.calendar ? [`    calendar = "${sched.calendar}"`] : []),
           ...(sched.window ? [`    window   = "${sched.window}"`] : []),
           `  }`,
         ]
       : []),
     `}`,
+    ...(calendar
+      ? [
+          ``,
+          `calendar "${calendar.name}" {`,
+          ...(calendar.timezone ? [`  timezone "${calendar.timezone}"`] : []),
+          ...calendar.rules
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => `  ${line}`),
+          `}`,
+        ]
+      : []),
+    ...(calendarMissing
+      ? [``, `# calendar "${sched.calendar}" is referenced but could not be resolved`]
+      : []),
     ``,
   ].join('\n')
 }
