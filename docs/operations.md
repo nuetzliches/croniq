@@ -307,7 +307,7 @@ the Croniqfile, not an override.
 
 ## Orphaned claims (issue #374)
 
-A `claimed` execution whose runner process vanished is recovered by two
+A `claimed` execution whose runner process vanished is recovered by
 complementary mechanisms — no operator action needed:
 
 - **Runner restart (same `runner_id`, new `instance_id`)**: the first poll of
@@ -326,6 +326,18 @@ complementary mechanisms — no operator action needed:
   Each reap logs a `watchdog: requeued stale claimed execution` warning and an
   `execution.stale_claim_requeued` audit event; recurring reaps for the same
   job are the signal to investigate that runner's stability.
+- **Queued-reconcile sweep** (same watchdog cadence): a row that is `queued`
+  in the store but missing from the in-memory dispatch queue (e.g. a requeue
+  that could not be re-enqueued right away, or a server restart between store
+  write and dispatch) is re-enqueued. If the row's job no longer exists in
+  the DSL or the store, the execution is cancelled instead, with an
+  `execution.stranded_queued_cancelled` audit event.
+
+The claim sweeps list the **oldest claims first**, so with more than 500
+concurrent in-flight claims the overflow only defers the newest claims to a
+later sweep — the orphaned/SLA-breached claims the sweeps target are always
+inside the window (no starvation). The reconcile sweep likewise processes up
+to 500 rows per tick, oldest-due first; a larger backlog drains across ticks.
 
 A `singleton` job wedged by such an orphan therefore self-heals within one
 sweep after `timeout + grace` at the latest.

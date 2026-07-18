@@ -1,12 +1,15 @@
 name: "Poll returning 409 instance-conflict does not crash the runner"
 description: |
-  openapi.yaml documents /v1/work/poll returning 409 when another runner
-  instance is already registered with the same runner_id. The current
-  SDK behaviour is to treat it as a transient error and back off — same
-  as any non-2xx. That's debatable (an instance conflict is arguably
-  permanent and should bail with an actionable message) but it is the
-  observable contract today. This case pins that behaviour so a future
-  refactor of the poll error path can't silently regress it.
+  openapi.yaml documents /v1/work/poll returning 409 when this runner
+  instance has been deposed by a newer instance registering under the
+  same runner_id (fencing, issue #374): a new instance_id takes the
+  identity over immediately, and the deposed instance's further polls
+  get 409. The SDK treats a single 409 as a transient error and backs
+  off — same as any non-2xx — and only bails out after a streak of
+  consecutive conflicts (issue #134), which is the intended behaviour
+  for a fenced duplicate deployment. This case pins the below-threshold
+  retry so a future refactor of the poll error path can't silently
+  regress it.
 
   Server returns 409 on the first poll, 200/empty thereafter. The
   runner should: not throw out of RunAsync, retry after poll_retry_delay,
