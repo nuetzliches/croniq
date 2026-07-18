@@ -342,6 +342,21 @@ to 500 rows per tick, oldest-due first; a larger backlog drains across ticks.
 A `singleton` job wedged by such an orphan therefore self-heals within one
 sweep after `timeout + grace` at the latest.
 
+### Watchdog metrics
+
+The frequency of these recovery actions is the operator signal, so `/metrics`
+exposes them as cumulative Prometheus counters (process lifetime):
+
+- `croniq_watchdog_requeued_total{reason="dead_runner"|"stale_claim"|"reconciled"}`
+  — executions requeued by the dead-runner sweep + inline takeover, the
+  stale-claim reaper, and the queued-reconcile sweep respectively. A rising
+  `dead_runner`/`stale_claim` rate means unstable runners.
+- `croniq_watchdog_cancelled_total{reason="queue_ttl"|"stranded"}` — queued
+  executions cancelled on `queue_ttl` expiry, and stranded rows cancelled
+  because their job was deleted with work still in flight.
+- `croniq_watchdog_sla_missed_total` / `croniq_watchdog_missed_fires_total` —
+  `job_sla_missed` / `job_missed_fire` alerts fired by the sweep.
+
 ## Data retention
 
 The server's watchdog runs a housekeeping sweep every 30 s. Two sources of

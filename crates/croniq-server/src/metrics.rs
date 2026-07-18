@@ -50,6 +50,18 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     // A non-zero value means jobs are fail-closed and not firing on schedule.
     let calendar_faults = state.config_faults.read().map(|f| f.len()).unwrap_or(0);
 
+    // Watchdog recovery counters. Their rates are an operator signal:
+    // frequent dead_runner/stale_claim requeues mean unstable runners,
+    // stranded cancels mean jobs deleted with work still in flight.
+    let wd = &state.watchdog_counters;
+    let wd_requeued_dead = wd.requeued_dead_runner.load(Ordering::Relaxed);
+    let wd_requeued_stale = wd.requeued_stale_claim.load(Ordering::Relaxed);
+    let wd_requeued_reconciled = wd.requeued_reconciled.load(Ordering::Relaxed);
+    let wd_cancelled_ttl = wd.cancelled_queue_ttl.load(Ordering::Relaxed);
+    let wd_cancelled_stranded = wd.cancelled_stranded.load(Ordering::Relaxed);
+    let wd_sla_missed = wd.sla_missed.load(Ordering::Relaxed);
+    let wd_missed_fires = wd.missed_fires.load(Ordering::Relaxed);
+
     let mut body = format!(
         "# HELP croniq_runners_total Number of known runners by status.\n\
          # TYPE croniq_runners_total gauge\n\
@@ -66,7 +78,22 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          croniq_config_reload_total{{result=\"apply_error\"}} {reload_apply_err}\n\
          # HELP croniq_config_calendar_faults Jobs paused because a referenced calendar did not resolve.\n\
          # TYPE croniq_config_calendar_faults gauge\n\
-         croniq_config_calendar_faults {calendar_faults}\n"
+         croniq_config_calendar_faults {calendar_faults}\n\
+         # HELP croniq_watchdog_requeued_total Executions requeued by watchdog recovery paths, by reason.\n\
+         # TYPE croniq_watchdog_requeued_total counter\n\
+         croniq_watchdog_requeued_total{{reason=\"dead_runner\"}} {wd_requeued_dead}\n\
+         croniq_watchdog_requeued_total{{reason=\"stale_claim\"}} {wd_requeued_stale}\n\
+         croniq_watchdog_requeued_total{{reason=\"reconciled\"}} {wd_requeued_reconciled}\n\
+         # HELP croniq_watchdog_cancelled_total Executions cancelled by the watchdog, by reason.\n\
+         # TYPE croniq_watchdog_cancelled_total counter\n\
+         croniq_watchdog_cancelled_total{{reason=\"queue_ttl\"}} {wd_cancelled_ttl}\n\
+         croniq_watchdog_cancelled_total{{reason=\"stranded\"}} {wd_cancelled_stranded}\n\
+         # HELP croniq_watchdog_sla_missed_total SLA-miss alerts fired by the watchdog sweep.\n\
+         # TYPE croniq_watchdog_sla_missed_total counter\n\
+         croniq_watchdog_sla_missed_total {wd_sla_missed}\n\
+         # HELP croniq_watchdog_missed_fires_total Missed-fire alerts fired by the watchdog sweep.\n\
+         # TYPE croniq_watchdog_missed_fires_total counter\n\
+         croniq_watchdog_missed_fires_total {wd_missed_fires}\n"
     );
 
     // Scheduler liveness (issue #248). The scheduler updates the heartbeat
@@ -306,6 +333,108 @@ mod tests {
 
         assert!(body.contains("croniq_runners_total"));
         assert!(body.contains("croniq_queue_depth"));
+
+        // Watchdog counters are always emitted, starting at zero.
+        assert!(body.contains("# TYPE croniq_watchdog_requeued_total counter"));
+        assert!(body.contains("croniq_watchdog_requeued_total{reason=\"dead_runner\"} 0"));
+        assert!(body.contains("croniq_watchdog_cancelled_total{reason=\"queue_ttl\"} 0"));
+        assert!(body.contains("croniq_watchdog_sla_missed_total 0"));
+        assert!(body.contains("croniq_watchdog_missed_fires_total 0"));
+    }
+
+    #[tokio::test]
+    async fn metrics_reports_watchdog_counters_after_reaping_sweep() {
+        use crate::watchdog::WatchdogLoop;
+        use croniq_store::models::{Execution, ExecutionState};
+
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+
+        // Claim seeded an hour ago — far past the default timeout (5m) plus
+        // grace — whose runner_id has no registry entry (server-restart
+        // shape): the stale-claim reaper must requeue it.
+        let claimed_at = Utc::now() - chrono::Duration::hours(1);
+        let exec_id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id: exec_id,
+                job_key: "etl:sync".into(),
+                fire_at: claimed_at,
+                scheduled_for: claimed_at,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: std::collections::HashMap::new(),
+                created_at: claimed_at,
+            })
+            .unwrap();
+        store
+            .claim_execution(exec_id, "vanished-runner", claimed_at)
+            .unwrap();
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = ServerState::with_auth(Arc::clone(&runner), tx, None, Some(Arc::clone(&store)));
+
+        // Run one sweep the way the main.rs watchdog task does, folding the
+        // result into the shared counters.
+        let watchdog = WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+        assert_eq!(result.stale_claims, vec![exec_id]);
+        state.watchdog_counters.record(&result);
+
+        let app = metrics_router(Arc::clone(&state));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(body.contains("croniq_watchdog_requeued_total{reason=\"stale_claim\"} 1"));
+        assert!(body.contains("croniq_watchdog_requeued_total{reason=\"dead_runner\"} 0"));
+
+        // The inline-takeover path feeds the dead_runner series directly.
+        state.watchdog_counters.add_dead_runner_requeued(2);
+        let app = metrics_router(Arc::clone(&state));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("croniq_watchdog_requeued_total{reason=\"dead_runner\"} 2"));
     }
 
     #[tokio::test]
