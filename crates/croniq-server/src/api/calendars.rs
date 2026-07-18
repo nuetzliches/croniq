@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_config::compile::CalendarConfig;
+use croniq_config::format::format_calendar_rule_parts;
 use croniq_config::parser::Parser;
 use croniq_store::models::{CalendarDefinition, DslAdoption};
 use serde::{Deserialize, Serialize};
@@ -44,18 +45,16 @@ fn is_dsl_id(id: &str) -> bool {
 }
 
 /// Format a DSL `CalendarConfig` into the rule-text format that the
-/// Croniqfile parser accepts (one directive per line). Used by the
-/// synthesizer below, and re-used in Phase 2 for adoption.
+/// Croniqfile parser accepts (one directive per line). Each line is
+/// emitted via the canonical formatter shared with `croniq fmt` and the
+/// WASM form builder (weekly collapses to `weekday`/`Mon..Fri`, window
+/// endpoints use the quoted `".."` range syntax), so API responses show
+/// the same shape the CLI would write. Used by the synthesizer below,
+/// and re-used in Phase 2 for adoption.
 pub fn dsl_calendar_rules_text(cfg: &CalendarConfig) -> String {
     cfg.rules
         .iter()
-        .map(|r| {
-            if r.args.is_empty() {
-                format!("{} {}", r.kind, r.rule_type)
-            } else {
-                format!("{} {} {}", r.kind, r.rule_type, r.args.join(" "))
-            }
-        })
+        .map(|r| format_calendar_rule_parts(&r.kind, &r.rule_type, &r.args))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -677,7 +676,8 @@ pub async fn handle_unadopt(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_rules;
+    use super::{dsl_calendar_rules_text, validate_rules};
+    use croniq_config::compile::{CalendarConfig, CalendarRuleConfig};
 
     #[test]
     fn validate_rules_accepts_compilable_rules() {
@@ -694,5 +694,35 @@ mod tests {
         assert!(err.contains("unknown weekday: funday"), "got: {err}");
         let err = validate_rules("include window \"25:00\"..\"26:00\"").unwrap_err();
         assert!(err.contains("invalid time: 25:00"), "got: {err}");
+    }
+
+    #[test]
+    fn dsl_rules_text_is_canonical_and_reparses() {
+        let rule = |kind: &str, rule_type: &str, args: &[&str]| CalendarRuleConfig {
+            kind: kind.into(),
+            rule_type: rule_type.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+        };
+        let cfg = CalendarConfig {
+            name: "biz".into(),
+            timezone: Some("Europe/Vienna".into()),
+            rules: vec![
+                rule(
+                    "include",
+                    "weekly",
+                    &["monday", "tuesday", "wednesday", "thursday", "friday"],
+                ),
+                rule("include", "window", &["08:00", "18:00"]),
+                rule("exclude", "annual", &["12-25", "12-26"]),
+            ],
+        };
+        let text = dsl_calendar_rules_text(&cfg);
+        assert_eq!(
+            text,
+            "include weekly weekday\ninclude window \"08:00\"..\"18:00\"\nexclude annual 12-25 12-26"
+        );
+        // Round-trip: the synthesized text must pass the same
+        // validation gate as user-supplied API rules.
+        assert!(validate_rules(&text).is_ok());
     }
 }

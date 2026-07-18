@@ -512,7 +512,8 @@ pub struct CalendarDefinition {
     pub calendar_id: String,
     pub name: String,
     pub timezone: Option<String>,
-    /// JSON-encoded rules array.
+    /// Calendar rules as line-separated Croniqfile DSL text — one
+    /// `include`/`exclude` directive per line, not JSON.
     pub rules: String,
     /// Who manages this calendar: "dsl" (Croniqfile, synthesized at read time)
     /// or "api" (REST/UI, persisted). Mirrors `TriggerDefinition.managed_by`.

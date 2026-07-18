@@ -120,8 +120,10 @@ async fn dsl_calendar_appears_in_list_with_dsl_managed_by() {
     assert_eq!(cal["calendar_id"], "dsl:business-days");
     assert_eq!(cal["timezone"], "Europe/Vienna");
     let rules = cal["rules"].as_str().expect("rules string");
-    assert!(rules.contains("include weekly monday"));
-    assert!(rules.contains("exclude annual 12-25"));
+    // Rules are re-emitted in canonical `croniq fmt` form: the five
+    // spelled-out days collapse to the `weekday` alias.
+    assert!(rules.contains("include weekly weekday"), "got: {rules}");
+    assert!(rules.contains("exclude annual 12-25"), "got: {rules}");
 }
 
 #[tokio::test]
