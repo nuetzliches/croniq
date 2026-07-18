@@ -391,6 +391,54 @@ fn requeue_abandoned() {
 }
 
 #[test]
+fn list_claimed_older_than_oldest_first_bounded() {
+    let store = create_memory_store().unwrap();
+
+    // Seed claims out of age order so the test proves ORDER BY claimed_at,
+    // not insertion order.
+    let seed_claim = |claimed_at: chrono::DateTime<Utc>| -> Uuid {
+        let exec = make_execution("billing:invoice", claimed_at);
+        store.create_execution(&exec).unwrap();
+        store
+            .claim_execution(exec.id, "runner-a", claimed_at)
+            .unwrap();
+        exec.id
+    };
+    let mid = seed_claim(utc(2026, 3, 29, 10, 0));
+    let oldest = seed_claim(utc(2026, 3, 29, 8, 0));
+    let newest = seed_claim(utc(2026, 3, 29, 11, 30));
+
+    // Claimed after the cutoff — excluded.
+    seed_claim(utc(2026, 3, 29, 11, 55));
+
+    // Non-claimed states never appear, regardless of age.
+    let queued = make_execution("billing:invoice", utc(2026, 3, 29, 7, 0));
+    store.create_execution(&queued).unwrap();
+    let done = seed_claim(utc(2026, 3, 29, 7, 0));
+    store
+        .complete_execution(
+            done,
+            Some("runner-a"),
+            ExecutionState::Completed,
+            Some(5),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    let cutoff = utc(2026, 3, 29, 11, 45);
+    let listed = store.list_claimed_older_than(cutoff, 10).unwrap();
+    let ids: Vec<Uuid> = listed.iter().map(|e| e.id).collect();
+    assert_eq!(ids, vec![oldest, mid, newest], "oldest claim first");
+
+    // The limit truncates the NEW end — the oldest claims always survive.
+    let limited = store.list_claimed_older_than(cutoff, 2).unwrap();
+    let ids: Vec<Uuid> = limited.iter().map(|e| e.id).collect();
+    assert_eq!(ids, vec![oldest, mid]);
+}
+
+#[test]
 fn requeue_if_claimed_flips_only_claimed() {
     let store = create_memory_store().unwrap();
 
