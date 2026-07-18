@@ -1024,8 +1024,9 @@ mod tests {
                     created_at: at,
                 })
                 .unwrap();
+            store.claim_execution(id, "r-seed", at).unwrap();
             store
-                .complete_execution(id, state, Some(1), None, None, at)
+                .complete_execution(id, None, state, Some(1), None, None, at)
                 .unwrap();
             id
         };

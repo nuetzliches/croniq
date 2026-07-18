@@ -265,16 +265,19 @@ fn execution_complete_success() {
     store.create_execution(&exec).unwrap();
     store.claim_execution(exec.id, "runner-1", now()).unwrap();
 
-    store
-        .complete_execution(
-            exec.id,
-            ExecutionState::Completed,
-            Some(4500),
-            None,
-            None,
-            now(),
-        )
-        .unwrap();
+    assert!(
+        store
+            .complete_execution(
+                exec.id,
+                Some("runner-1"),
+                ExecutionState::Completed,
+                Some(4500),
+                None,
+                None,
+                now(),
+            )
+            .unwrap()
+    );
 
     let loaded = store.get_execution(exec.id).unwrap().unwrap();
     assert_eq!(loaded.state, ExecutionState::Completed);
@@ -288,16 +291,19 @@ fn execution_complete_failure() {
     store.create_execution(&exec).unwrap();
     store.claim_execution(exec.id, "runner-1", now()).unwrap();
 
-    store
-        .complete_execution(
-            exec.id,
-            ExecutionState::Failed,
-            Some(100),
-            Some("connection refused"),
-            None,
-            now(),
-        )
-        .unwrap();
+    assert!(
+        store
+            .complete_execution(
+                exec.id,
+                None,
+                ExecutionState::Failed,
+                Some(100),
+                Some("connection refused"),
+                None,
+                now(),
+            )
+            .unwrap()
+    );
 
     let loaded = store.get_execution(exec.id).unwrap().unwrap();
     assert_eq!(loaded.state, ExecutionState::Failed);
@@ -409,6 +415,7 @@ fn requeue_if_claimed_flips_only_claimed() {
     store
         .complete_execution(
             done.id,
+            None,
             ExecutionState::Completed,
             Some(5),
             None,
@@ -424,6 +431,171 @@ fn requeue_if_claimed_flips_only_claimed() {
     let fresh = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
     store.create_execution(&fresh).unwrap();
     assert!(!store.requeue_if_claimed(fresh.id, now()).unwrap());
+}
+
+#[test]
+fn complete_execution_ignores_late_completion_after_requeue() {
+    let store = create_memory_store().unwrap();
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-a", now()).unwrap();
+
+    // Watchdog decides runner-a's claim is stale and requeues the row.
+    assert!(store.requeue_if_claimed(exec.id, now()).unwrap());
+
+    // runner-a's completion arrives late → CAS miss, row untouched.
+    assert!(
+        !store
+            .complete_execution(
+                exec.id,
+                Some("runner-a"),
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                now(),
+            )
+            .unwrap()
+    );
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(loaded.state, ExecutionState::Queued);
+    assert!(loaded.completed_at.is_none());
+
+    // runner-b re-claims: runner-a's fenced completion still misses…
+    store.claim_execution(exec.id, "runner-b", now()).unwrap();
+    assert!(
+        !store
+            .complete_execution(
+                exec.id,
+                Some("runner-a"),
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                now(),
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(exec.id).unwrap().unwrap().state,
+        ExecutionState::Claimed
+    );
+
+    // …while the current owner's completion lands.
+    assert!(
+        store
+            .complete_execution(
+                exec.id,
+                Some("runner-b"),
+                ExecutionState::Completed,
+                Some(20),
+                None,
+                None,
+                now(),
+            )
+            .unwrap()
+    );
+    let loaded = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(loaded.state, ExecutionState::Completed);
+    assert_eq!(loaded.duration_ms, Some(20));
+}
+
+#[test]
+fn complete_as_dead_ignores_late_completion_after_requeue() {
+    let store = create_memory_store().unwrap();
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-a", now()).unwrap();
+    assert!(store.requeue_if_claimed(exec.id, now()).unwrap());
+
+    let dl = DeadLetter {
+        id: Uuid::new_v4(),
+        execution_id: exec.id,
+        job_key: exec.job_key.clone(),
+        fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
+        attempt: 1,
+        error: "boom".into(),
+        dead_reason: "exhausted".into(),
+        metadata: HashMap::new(),
+        created_at: now(),
+        expires_at: None,
+    };
+
+    // Late dead-lettering after the requeue: CAS miss, and crucially the
+    // dead-letter row must not be inserted either.
+    assert!(
+        !store
+            .complete_as_dead(
+                exec.id,
+                Some("runner-a"),
+                Some(50),
+                Some("boom"),
+                &dl,
+                now()
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(exec.id).unwrap().unwrap().state,
+        ExecutionState::Queued
+    );
+    assert!(store.get_dead_letter(dl.id).unwrap().is_none());
+}
+
+#[test]
+fn complete_as_dead_transitions_failed_row() {
+    // The completion processor falls back to dead-lettering an execution
+    // it just marked `failed` when the retry row cannot be persisted —
+    // `failed` is terminal, so the guard admits that transition.
+    let store = create_memory_store().unwrap();
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-a", now()).unwrap();
+    assert!(
+        store
+            .complete_execution(
+                exec.id,
+                Some("runner-a"),
+                ExecutionState::Failed,
+                Some(10),
+                Some("boom"),
+                None,
+                now(),
+            )
+            .unwrap()
+    );
+
+    let dl = DeadLetter {
+        id: Uuid::new_v4(),
+        execution_id: exec.id,
+        job_key: exec.job_key.clone(),
+        fire_at: exec.fire_at,
+        scheduled_for: exec.scheduled_for,
+        attempt: 1,
+        error: "boom".into(),
+        dead_reason: "retry could not be persisted".into(),
+        metadata: HashMap::new(),
+        created_at: now(),
+        expires_at: None,
+    };
+    assert!(
+        store
+            .complete_as_dead(
+                exec.id,
+                Some("runner-a"),
+                Some(10),
+                Some("boom"),
+                &dl,
+                now()
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(exec.id).unwrap().unwrap().state,
+        ExecutionState::Dead
+    );
+    assert!(store.get_dead_letter(dl.id).unwrap().is_some());
 }
 
 #[test]
@@ -474,6 +646,7 @@ fn count_executions_in_states_counts_per_job_and_state() {
     store
         .complete_execution(
             done.id,
+            None,
             ExecutionState::Completed,
             Some(100),
             None,
@@ -542,7 +715,7 @@ fn job_execution_metrics_aggregates_per_job() {
         store.create_execution(&exec).unwrap();
         store.claim_execution(exec.id, "r1", now()).unwrap();
         store
-            .complete_execution(exec.id, state, Some(dur_ms), None, None, now())
+            .complete_execution(exec.id, None, state, Some(dur_ms), None, None, now())
             .unwrap();
     };
     complete(4_500, ExecutionState::Completed);
@@ -560,6 +733,7 @@ fn job_execution_metrics_aggregates_per_job() {
     store
         .complete_execution(
             other.id,
+            None,
             ExecutionState::Completed,
             Some(50),
             None,
@@ -842,6 +1016,7 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
 
     let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
     store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-1", now()).unwrap();
 
     let dl = DeadLetter {
         id: Uuid::new_v4(),
@@ -857,9 +1032,18 @@ fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
         expires_at: Some(utc(2026, 4, 28, 12, 0)),
     };
 
-    store
-        .complete_as_dead(exec.id, Some(123), Some("connection refused"), &dl, now())
-        .unwrap();
+    assert!(
+        store
+            .complete_as_dead(
+                exec.id,
+                Some("runner-1"),
+                Some(123),
+                Some("connection refused"),
+                &dl,
+                now(),
+            )
+            .unwrap()
+    );
 
     // Execution row is now in `dead` state.
     let updated = store.get_execution(exec.id).unwrap().unwrap();
@@ -885,6 +1069,7 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
 
     let exec = make_execution("etl:sync", utc(2026, 3, 29, 2, 0));
     store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "runner-1", now()).unwrap();
 
     // Pre-seed a dead-letter row with a fixed ID so the second insert collides.
     let conflicting_id = Uuid::new_v4();
@@ -918,18 +1103,18 @@ fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
         expires_at: None,
     };
 
-    let res = store.complete_as_dead(exec.id, Some(50), Some("boom"), &dl, now());
+    let res = store.complete_as_dead(exec.id, None, Some(50), Some("boom"), &dl, now());
     assert!(
         res.is_err(),
         "expected complete_as_dead to fail on PK collision"
     );
 
-    // Execution must still be in its original Queued state — the UPDATE was
+    // Execution must still be in its original Claimed state — the UPDATE was
     // rolled back together with the failing INSERT.
     let untouched = store.get_execution(exec.id).unwrap().unwrap();
     assert_eq!(
         untouched.state,
-        ExecutionState::Queued,
+        ExecutionState::Claimed,
         "execution state changed despite failed dead-letter insert — atomicity broken"
     );
 }
@@ -1083,7 +1268,10 @@ fn complete_at(
 ) {
     store.create_execution(exec).unwrap();
     store
-        .complete_execution(exec.id, state, Some(1), None, None, completed_at)
+        .claim_execution(exec.id, "runner-1", completed_at)
+        .unwrap();
+    store
+        .complete_execution(exec.id, None, state, Some(1), None, None, completed_at)
         .unwrap();
 }
 
@@ -2070,6 +2258,7 @@ fn idempotency_key_finds_completed_execution_within_window() {
     store
         .complete_execution(
             exec.id,
+            None,
             ExecutionState::Completed,
             Some(100),
             None,
@@ -2099,6 +2288,7 @@ fn idempotency_key_ignores_completed_execution_outside_window() {
     store
         .complete_execution(
             exec.id,
+            None,
             ExecutionState::Completed,
             Some(100),
             None,

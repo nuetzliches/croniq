@@ -202,20 +202,24 @@ impl ExecutionStore for PgStoreHandle {
         self.call(move |s| s.claim_execution(id, &runner_id, now))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_execution(
         &self,
         id: Uuid,
+        runner_id: Option<&str>,
         state: ExecutionState,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
+        let runner_id = runner_id.map(str::to_owned);
         let error = error.map(str::to_owned);
         let dead_reason = dead_reason.map(str::to_owned);
         self.call(move |s| {
             s.complete_execution(
                 id,
+                runner_id.as_deref(),
                 state,
                 duration_ms,
                 error.as_deref(),
@@ -351,16 +355,19 @@ impl DeadLetterStore for PgStoreHandle {
     fn complete_as_dead(
         &self,
         execution_id: Uuid,
+        runner_id: Option<&str>,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
+        let runner_id = runner_id.map(str::to_owned);
         let error = error.map(str::to_owned);
         let dead_letter = dead_letter.clone();
         self.call(move |s| {
             s.complete_as_dead(
                 execution_id,
+                runner_id.as_deref(),
                 duration_ms,
                 error.as_deref(),
                 &dead_letter,

@@ -892,11 +892,38 @@ async fn try_dequeue_for(
     // guard check already sees these rows as claimed.
     if let Some(ref store) = state.store {
         let now = Utc::now();
-        for item in &items {
-            if let Ok(id) = uuid::Uuid::parse_str(&item.execution_id) {
-                let _ = store.claim_execution(id, runner_id, now);
+        items.retain(|item| {
+            let Ok(id) = uuid::Uuid::parse_str(&item.execution_id) else {
+                return true;
+            };
+            match store.claim_execution(id, runner_id, now) {
+                Ok(_) => true,
+                // The row is no longer `queued` — cancelled, completed, or
+                // claimed via another path. Handing the item out anyway
+                // would start a run whose completion the store's CAS guard
+                // then rejects (issue #374), so drop it instead.
+                Err(croniq_store::traits::StoreError::Conflict(_))
+                | Err(croniq_store::traits::StoreError::NotFound(_)) => {
+                    tracing::warn!(
+                        execution_id = %item.execution_id,
+                        job_key = %item.job_key,
+                        "work item dropped — execution is no longer queued in the store"
+                    );
+                    false
+                }
+                // Fail-open on infrastructure errors, matching the
+                // concurrency guard above: blocking all dispatch on a
+                // transient store error is worse than a rare extra run.
+                Err(e) => {
+                    tracing::warn!(
+                        execution_id = %item.execution_id,
+                        error = %e,
+                        "claim persist failed — dispatching anyway (fail-open)"
+                    );
+                    true
+                }
             }
-        }
+        });
     }
     drop(q);
 
@@ -2497,6 +2524,7 @@ mod tests {
         store
             .complete_execution(
                 uuid::Uuid::parse_str(&first_id).unwrap(),
+                None,
                 ExecutionState::Completed,
                 Some(10),
                 None,
@@ -2599,13 +2627,37 @@ mod tests {
 
         // …a blocked second execution of it at the FRONT of the queue…
         seed_guarded_execution(&state, &store, "etl:guarded", 1).await;
-        // …and an unguarded job queued BEHIND it.
+        // …and an unguarded job queued BEHIND it. Persist the row too:
+        // the dispatch path now claims each item in the store and drops
+        // any whose row is missing (issue #374), so a store-backed item
+        // is what a real poll would ever see here.
         let unguarded_id = uuid::Uuid::new_v4();
+        let now = Utc::now();
+        store
+            .create_execution(&Execution {
+                id: unguarded_id,
+                job_key: "etl:free".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
         state.runner.queue.write().await.enqueue(WorkItem {
             execution_id: unguarded_id.to_string(),
             job_key: "etl:free".into(),
-            fire_at: Utc::now(),
-            scheduled_for: Utc::now(),
+            fire_at: now,
+            scheduled_for: now,
             attempt: 1,
             require: vec![],
             prefer: vec![],
@@ -2807,6 +2859,7 @@ mod tests {
         store
             .complete_execution(
                 first_id,
+                None,
                 ExecutionState::Completed,
                 Some(5),
                 None,

@@ -496,6 +496,7 @@ mod tests {
         sqlite
             .complete_execution(
                 exec.id,
+                None,
                 ExecutionState::Completed,
                 Some(2500),
                 None,

@@ -59,6 +59,7 @@ fn pg_backend_exercises_all_traits() {
     calendar_definitions(&store, &s);
     execution_logs(&store);
     execution_retention(&store, &s);
+    execution_completion_cas(&store, &s);
     dsl_adoptions(&store, &s);
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
@@ -721,11 +722,118 @@ fn seed_execution(
         })
         .unwrap();
     if let Some((state, at)) = completed {
+        store.claim_execution(id, "r-seed", at).unwrap();
         store
-            .complete_execution(id, state, Some(1), None, None, at)
+            .complete_execution(id, None, state, Some(1), None, None, at)
             .unwrap();
     }
     id
+}
+
+/// Completion compare-and-swap (issue #374): a late completion after a
+/// watchdog requeue must not overwrite the row, and the runner fence must
+/// reject events from a runner that no longer owns the claim. Exercises the
+/// `$n::TEXT IS NULL OR runner_id = $n` bindings that only fail at runtime.
+fn execution_completion_cas(store: &PgStore, s: &str) {
+    let job = format!("cas-{s}");
+
+    // Requeued row: unfenced completion misses, row stays queued.
+    let id = seed_execution(store, &job, None);
+    store.claim_execution(id, "runner-a", ts()).unwrap();
+    assert!(store.requeue_if_claimed(id, ts()).unwrap());
+    assert!(
+        !store
+            .complete_execution(
+                id,
+                Some("runner-a"),
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                ts(),
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(id).unwrap().unwrap().state,
+        ExecutionState::Queued
+    );
+
+    // Re-claimed by another runner: the fence rejects the stale runner,
+    // the current owner completes (NULL fence path also covered below).
+    store.claim_execution(id, "runner-b", ts()).unwrap();
+    assert!(
+        !store
+            .complete_execution(
+                id,
+                Some("runner-a"),
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                ts(),
+            )
+            .unwrap()
+    );
+    assert!(
+        store
+            .complete_execution(
+                id,
+                None,
+                ExecutionState::Completed,
+                Some(20),
+                None,
+                None,
+                ts(),
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(id).unwrap().unwrap().state,
+        ExecutionState::Completed
+    );
+
+    // complete_as_dead on a requeued row: CAS miss writes neither the
+    // execution transition nor the dead-letter row.
+    let dead_id = seed_execution(store, &job, None);
+    store.claim_execution(dead_id, "runner-a", ts()).unwrap();
+    assert!(store.requeue_if_claimed(dead_id, ts()).unwrap());
+    let dl = DeadLetter {
+        id: Uuid::new_v4(),
+        execution_id: dead_id,
+        job_key: job.clone(),
+        fire_at: ts(),
+        scheduled_for: ts(),
+        attempt: 1,
+        error: "boom".into(),
+        dead_reason: "exhausted".into(),
+        metadata: HashMap::new(),
+        created_at: ts(),
+        expires_at: None,
+    };
+    assert!(
+        !store
+            .complete_as_dead(dead_id, Some("runner-a"), Some(5), Some("boom"), &dl, ts())
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(dead_id).unwrap().unwrap().state,
+        ExecutionState::Queued
+    );
+    assert!(store.get_dead_letter(dl.id).unwrap().is_none());
+
+    // Owned claim: complete_as_dead lands atomically.
+    store.claim_execution(dead_id, "runner-b", ts()).unwrap();
+    assert!(
+        store
+            .complete_as_dead(dead_id, Some("runner-b"), Some(5), Some("boom"), &dl, ts())
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_execution(dead_id).unwrap().unwrap().state,
+        ExecutionState::Dead
+    );
+    assert!(store.get_dead_letter(dl.id).unwrap().is_some());
 }
 
 /// Execution retention (issue #344): age sweep + per-job keep_last, Postgres.

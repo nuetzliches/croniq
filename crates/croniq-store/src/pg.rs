@@ -644,23 +644,25 @@ impl ExecutionStore for PgStore {
             .ok_or_else(|| StoreError::NotFound(format!("execution {id}")))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_execution(
         &self,
         id: Uuid,
+        runner_id: Option<&str>,
         state: ExecutionState,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let mut client = self.client.lock().unwrap();
-        client
+        let affected = client
             .execute(
-                "UPDATE executions SET state = $1, completed_at = $2, duration_ms = $3, error = $4, dead_reason = $5 WHERE id = $6",
-                &[&state_to_str(state), &now, &duration_ms, &error, &dead_reason, &id],
+                "UPDATE executions SET state = $1, completed_at = $2, duration_ms = $3, error = $4, dead_reason = $5 WHERE id = $6 AND state = 'claimed' AND ($7::TEXT IS NULL OR runner_id = $7)",
+                &[&state_to_str(state), &now, &duration_ms, &error, &dead_reason, &id, &runner_id],
             )
             .map_err(map_err)?;
-        Ok(())
+        Ok(affected > 0)
     }
 
     fn find_queued_executions(
@@ -1094,19 +1096,25 @@ impl DeadLetterStore for PgStore {
     fn complete_as_dead(
         &self,
         execution_id: Uuid,
+        runner_id: Option<&str>,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let mut client = self.client.lock().unwrap();
         let mut tx = client.transaction().map_err(map_err)?;
         let dead_reason = dead_letter.dead_reason.as_str();
-        tx.execute(
-            "UPDATE executions SET state = 'dead', completed_at = $1, duration_ms = $2, error = $3, dead_reason = $4 WHERE id = $5",
-            &[&now, &duration_ms, &error, &dead_reason, &execution_id],
+        let updated = tx.execute(
+            "UPDATE executions SET state = 'dead', completed_at = $1, duration_ms = $2, error = $3, dead_reason = $4 WHERE id = $5 AND state IN ('claimed', 'failed') AND ($6::TEXT IS NULL OR runner_id = $6)",
+            &[&now, &duration_ms, &error, &dead_reason, &execution_id, &runner_id],
         )
         .map_err(map_err)?;
+        if updated == 0 {
+            // Dropping the uncommitted transaction rolls it back — the
+            // dead-letter row must not exist for a run we didn't kill.
+            return Ok(false);
+        }
         let metadata = metadata_to_json(&dead_letter.metadata);
         let attempt = dead_letter.attempt as i32;
         tx.execute(
@@ -1127,7 +1135,7 @@ impl DeadLetterStore for PgStore {
         )
         .map_err(map_err)?;
         tx.commit().map_err(map_err)?;
-        Ok(())
+        Ok(true)
     }
 
     fn replay_dead_letter(

@@ -259,6 +259,7 @@ mod tests {
         store
             .complete_execution(
                 exec_id,
+                None,
                 ExecutionState::Completed,
                 Some(1234),
                 None,
