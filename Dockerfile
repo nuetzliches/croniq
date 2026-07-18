@@ -63,7 +63,7 @@ RUN npm ci || npm install
 COPY ui/ .
 
 # Drop the pre-built WASM bridge into ui/src/lib/wasm/ so the prebuild
-# hook (build-wasm.sh) sees fresh artefacts and skips the wasm-pack
+# hook (build-wasm.mjs) sees fresh artefacts and skips the wasm-pack
 # step. Without this the prebuild hook fails because wasm-pack isn't
 # installed in node:bookworm-slim.
 COPY --from=wasm-builder \

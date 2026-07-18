@@ -14,7 +14,7 @@ Bibliotheks-Mapping und Bewertung von drei Migrationsstrategien.
   `dist/`-Verzeichnis (`--ui-dir`, ServeDir + index.html-Fallback, `main.rs:764-769`).
   Der Cutover ist buchstäblich ein COPY-Pfad-Wechsel in der Dockerfile.
 - **Die WASM-Bridge** (`croniq-config-wasm`, DSL-Parser) und ihr Build-Vertrag
-  (`scripts/build-wasm.sh`, `predev`/`prebuild`-Hooks, Zielpfad `src/lib/wasm/`)
+  (`scripts/build-wasm.mjs`, `predev`/`prebuild`-Hooks, Zielpfad `src/lib/wasm/`)
   sind framework-frei und bleiben unverändert.
 - **Framework-freier Kern**: `api/types.ts` (416 LOC), `api/client.ts` (~95 %),
   `lib/croniq-dsl.ts`, `lib/env.ts`, `lib/utils.ts` portieren per Copy.
