@@ -103,4 +103,37 @@ describe('renderDsl', () => {
     expect(dsl).not.toContain('schedule {')
     expect(dsl).toContain('job "nightly-report" {')
   })
+
+  it('flags a disabled first schedule', () => {
+    const dsl = renderDsl(makeJob(), [makeSchedule({ enabled: false })], [])
+    expect(dsl).toContain('  # this schedule is currently disabled')
+    expect(dsl).toContain('  schedule {')
+  })
+
+  it('surfaces extra API-attached schedules as comments', () => {
+    const dsl = renderDsl(
+      makeJob(),
+      [
+        makeSchedule(),
+        makeSchedule({
+          trigger_id: 'trg-2',
+          cron_expression: '0 12 * * *',
+          timezone: 'Europe/Berlin',
+          calendar: 'de-holidays',
+        }),
+        makeSchedule({ trigger_id: 'trg-3', cron_expression: '0 18 * * *', enabled: false }),
+      ],
+      [],
+    )
+    expect(dsl).toContain('  # +2 more schedules attached via API (a job block holds a single schedule)')
+    expect(dsl).toContain('  #   rule "0 12 * * *" · tz Europe/Berlin · calendar de-holidays')
+    expect(dsl).toContain('  #   rule "0 18 * * *" · (disabled)')
+    // Only the first trigger renders as a real schedule block.
+    expect(dsl.match(/ {2}schedule \{/g)).toHaveLength(1)
+  })
+
+  it('does not add an extra-schedules comment for a single schedule', () => {
+    const dsl = renderDsl(makeJob(), [makeSchedule()], [])
+    expect(dsl).not.toContain('more schedule')
+  })
 })
