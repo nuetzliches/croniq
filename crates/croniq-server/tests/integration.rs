@@ -83,9 +83,16 @@ impl TestServer {
             Arc::clone(&store),
             Arc::clone(&runner),
         ));
-        // Use a short long-poll timeout so tests don't block for 30 seconds
-        // when the queue happens to be empty at poll time.
-        let state = ServerState::with_timeout(runner, tx, Duration::from_millis(50));
+        // Wire the store into ServerState so the poll path persists claims
+        // exactly as production does (main.rs passes Some(store)). Without
+        // it, `try_dequeue_for` skips the store claim and rows stay `queued`,
+        // which the completion CAS guard (#374) then rejects. A short
+        // long-poll timeout keeps empty-queue polls from blocking 30s.
+        let mut state = ServerState::with_auth(runner, tx, None, Some(Arc::clone(&store)));
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.long_poll_timeout = Duration::from_millis(50);
+        }
 
         Self {
             state,
