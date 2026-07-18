@@ -301,6 +301,33 @@ impl ExecutionStore for SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
+    fn list_claimed_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Execution>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // claimed_at is RFC 3339 text, which compares lexicographically in
+        // chronological order (same trick as the since/until filters in
+        // list_executions). NULL claimed_at sorts first in ASC, matching the
+        // trait contract.
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
+                 FROM executions
+                 WHERE state = 'claimed' AND (claimed_at IS NULL OR claimed_at <= ?1)
+                 ORDER BY claimed_at ASC
+                 LIMIT ?2",
+            )
+            .map_err(map_err)?;
+
+        let rows = stmt
+            .query_map(params![dt_to_sql(&cutoff), limit], row_to_execution)
+            .map_err(map_err)?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
     fn find_execution_by_idempotency_key(
         &self,
         job_key: &str,

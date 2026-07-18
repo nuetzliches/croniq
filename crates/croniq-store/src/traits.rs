@@ -97,6 +97,21 @@ pub trait ExecutionStore {
     /// List executions with optional filters.
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError>;
 
+    /// List `claimed` executions whose `claimed_at` is at or before `cutoff`,
+    /// oldest claim first, bounded by `limit`.
+    ///
+    /// Backs the watchdog's SLA sweep and stale-claim reaper: both target the
+    /// OLDEST claims, so a newest-first listing with a limit would permanently
+    /// hide exactly the rows they exist to catch once more than `limit`
+    /// executions are in flight. Rows with a NULL `claimed_at` (defensive —
+    /// `claim_execution` always sets it) sort first and are included
+    /// regardless of `cutoff`.
+    fn list_claimed_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Execution>, StoreError>;
+
     /// Find the most recent execution carrying the given trigger
     /// idempotency key for a job (issue #279). Matches when the execution
     /// is still in-flight (`queued` / `claimed`) OR was created at or after

@@ -243,6 +243,14 @@ impl ExecutionStore for PgStoreHandle {
         self.call(move |s| s.list_executions(&filter))
     }
 
+    fn list_claimed_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Execution>, StoreError> {
+        self.call(move |s| s.list_claimed_older_than(cutoff, limit))
+    }
+
     fn find_execution_by_idempotency_key(
         &self,
         job_key: &str,

@@ -34,7 +34,7 @@ use crate::store::DynStore;
 use chrono::{DateTime, Duration, Utc};
 use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
-use croniq_store::models::{ExecutionFilter, ExecutionState, JobStatus};
+use croniq_store::models::{ExecutionState, JobStatus};
 
 /// Max execution rows deleted per prune DELETE statement. Bounds SQLite's
 /// whole-DB write-lock hold time; a backlog drains across ticks/batches.
@@ -48,6 +48,13 @@ const PRUNE_MAX_BATCHES: usize = 20;
 /// stranded backlog drains across sweeps — rows stay `queued` until handled,
 /// and `find_queued_executions` returns oldest-due first.
 const RECONCILE_BATCH: u32 = 500;
+
+/// Max claimed executions examined per SLA / stale-claim sweep. The store
+/// query lists oldest claim first, so with more than this many concurrent
+/// claims the overflow only defers the NEWEST claims to a later sweep —
+/// the oldest (the SLA-breached / orphaned ones both sweeps target) are
+/// always inside the window.
+const CLAIM_SWEEP_LIMIT: u32 = 500;
 
 /// Counts from one [`WatchdogLoop::prune_executions`] pass (issue #344).
 #[derive(Debug, Clone, Copy, Default)]
@@ -275,6 +282,10 @@ pub struct WatchdogLoop {
     /// route to an `email` channel actually deliver instead of
     /// silently dropping. Defaults to `NoopSender` in tests.
     email_sender: Arc<dyn crate::email::EmailSender>,
+    /// Max claimed executions per SLA / stale-claim sweep query. Always
+    /// [`CLAIM_SWEEP_LIMIT`] in production; tests shrink it to exercise
+    /// the over-limit path without seeding hundreds of rows.
+    claim_sweep_limit: u32,
 }
 
 impl WatchdogLoop {
@@ -313,6 +324,7 @@ impl WatchdogLoop {
             sla_fired,
             missed_fired: Arc::new(Mutex::new(HashSet::new())),
             email_sender,
+            claim_sweep_limit: CLAIM_SWEEP_LIMIT,
         }
     }
 
@@ -635,17 +647,15 @@ impl WatchdogLoop {
     /// Dedup: each `(rule_name, execution_id)` pair fires at most
     /// once per process lifetime (see [`SlaFiredSet`]).
     async fn sweep_sla_missed(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
-        // List all currently claimed executions. The "since" filter
-        // is left wide-open because we want to find executions that
-        // have been claimed FOR A LONG TIME — the typical case is a
-        // job that started 30 minutes ago and is hung. A bounded
-        // limit keeps the sweep cheap on busy servers.
-        let filter = ExecutionFilter {
-            state: Some(ExecutionState::Claimed),
-            limit: Some(500),
-            ..Default::default()
-        };
-        let claimed = match self.store.list_executions(&filter) {
+        // List currently claimed executions, OLDEST claim first — the sweep
+        // is after executions that have been in flight FOR A LONG TIME, so
+        // when more than `claim_sweep_limit` claims exist, the bounded
+        // window must not cut off the old end (a newest-first listing would
+        // permanently hide exactly the hung executions this sweep targets).
+        let claimed = match self
+            .store
+            .list_claimed_older_than(now, self.claim_sweep_limit)
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(
@@ -746,12 +756,19 @@ impl WatchdogLoop {
     /// not a handler fault — frequent redeploys must not burn retry
     /// attempts and dead-letter healthy jobs.
     async fn sweep_stale_claims(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
-        let filter = ExecutionFilter {
-            state: Some(ExecutionState::Claimed),
-            limit: Some(500),
-            ..Default::default()
-        };
-        let claimed = match self.store.list_executions(&filter) {
+        let grace_secs = (2 * self.runner.lease_ttl_secs).max(120);
+
+        // Oldest claim first, pre-filtered to claims older than the grace
+        // window (every reap threshold is at least `timeout + grace`, so
+        // anything younger can't qualify). Oldest-first ordering matters
+        // once more than `claim_sweep_limit` claims are in flight: the
+        // orphans this reaper exists for are the OLDEST rows, which a
+        // newest-first listing would permanently push out of the window.
+        let cutoff = now - Duration::seconds(grace_secs as i64);
+        let claimed = match self
+            .store
+            .list_claimed_older_than(cutoff, self.claim_sweep_limit)
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(
@@ -764,8 +781,6 @@ impl WatchdogLoop {
         if claimed.is_empty() {
             return;
         }
-
-        let grace_secs = (2 * self.runner.lease_ttl_secs).max(120);
 
         // Snapshot the inflight sets of all live (non-Dead) runners once.
         // A claim that its runner still reports as inflight is being worked
@@ -1726,6 +1741,37 @@ mod tests {
         assert_eq!(q.peek().unwrap().timeout, "2m");
     }
 
+    #[tokio::test]
+    async fn stale_claim_reaper_reaps_oldest_when_claims_exceed_limit() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // Three stale orphans, sweep limit two: the OLDEST claims must be
+        // the ones inside the bounded window. With the previous
+        // newest-first listing the oldest orphan would sit permanently
+        // outside the limit and never be reaped.
+        let now = Utc::now();
+        let oldest = seed_claimed_at(&*store, "test:job", "gone", now - ChronoDuration::hours(3));
+        let mid = seed_claimed_at(&*store, "test:job", "gone", now - ChronoDuration::hours(2));
+        let newest = seed_claimed_at(&*store, "test:job", "gone", now - ChronoDuration::hours(1));
+
+        let mut watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        watchdog.claim_sweep_limit = 2;
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.stale_claims, vec![oldest, mid]);
+        // The newest stale claim is merely deferred to the next sweep,
+        // not lost.
+        let deferred = store.get_execution(newest).unwrap().unwrap();
+        assert_eq!(deferred.state, ExecutionState::Claimed);
+        let result2 = watchdog.sweep(now).await;
+        assert_eq!(result2.stale_claims, vec![newest]);
+    }
+
     // ─── #140 PR-4 SLA-miss sweep ──────────────────────────────────
 
     use croniq_config::compile::{ChannelConfig, ChannelKind, RuleConfig, RuleTrigger};
@@ -1916,6 +1962,42 @@ mod tests {
             .unwrap();
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].job_key, "billing:invoice");
+    }
+
+    #[tokio::test]
+    async fn sla_sweep_covers_oldest_claim_when_claims_exceed_limit() {
+        let store = make_store();
+        let now = Utc::now();
+
+        // Three in-flight executions past the window, sweep limit two: the
+        // bounded window must contain the OLDEST claims — the worst SLA
+        // breaches — not the newest.
+        let oldest = seed_claimed_at(
+            &*store,
+            "billing:a",
+            "runner-1",
+            now - ChronoDuration::minutes(40),
+        );
+        let mid = seed_claimed_at(
+            &*store,
+            "billing:b",
+            "runner-1",
+            now - ChronoDuration::minutes(30),
+        );
+        let _newest = seed_claimed_at(
+            &*store,
+            "billing:c",
+            "runner-1",
+            now - ChronoDuration::minutes(20),
+        );
+
+        let alerts = alerts_with_sla(vec![sla_rule("slow", "billing:*", "10m", "ops")]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        watchdog.claim_sweep_limit = 2;
+        let result = watchdog.sweep(now).await;
+
+        let alerted: Vec<Uuid> = result.sla_missed.iter().map(|(_, id)| *id).collect();
+        assert_eq!(alerted, vec![oldest, mid]);
     }
 
     #[tokio::test]

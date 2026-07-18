@@ -753,6 +753,26 @@ impl ExecutionStore for PgStore {
         Ok(rows.iter().map(row_to_execution).collect())
     }
 
+    fn list_claimed_older_than(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Execution>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query(
+                "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
+                 FROM executions
+                 WHERE state = 'claimed' AND (claimed_at IS NULL OR claimed_at <= $1)
+                 ORDER BY claimed_at ASC NULLS FIRST
+                 LIMIT $2",
+                &[&cutoff, &(limit as i64)],
+            )
+            .map_err(map_err)?;
+
+        Ok(rows.iter().map(row_to_execution).collect())
+    }
+
     fn find_execution_by_idempotency_key(
         &self,
         job_key: &str,
