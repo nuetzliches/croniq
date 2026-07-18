@@ -26,7 +26,9 @@ server {
 }
 
 pull_api {
-  auth token {env.CRONIQ_JWT_SECRET}
+  # Runner-token signing secret is resolved from CRONIQ_JWT_SECRET, or
+  # auto-generated into $DATA_DIR/jwt.secret on first boot. It is not
+  # configured here — never put a secret in the Croniqfile.
   lease_ttl 60s
   # Dedup window for POST /v1/trigger idempotency keys: a repeat trigger
   # carrying the same idempotency_key coalesces to the existing execution

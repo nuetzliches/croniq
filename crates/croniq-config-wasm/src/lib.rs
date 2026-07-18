@@ -1890,10 +1890,10 @@ mod tests {
             quote_if_needed("{env.CRONIQ_JWT_SECRET}"),
             "{env.CRONIQ_JWT_SECRET}"
         );
-        // pull_api auth with a placeholder token round-trips as a placeholder.
-        let dirs = vec![dir("auth", &["token", "{env.CRONIQ_JWT_SECRET}"])];
+        // A pull_api directive with a placeholder arg round-trips as a placeholder.
+        let dirs = vec![dir("listen", &["{env.CRONIQ_PULL_LISTEN}"])];
         let out = format_top_level_block_inner("pull_api", &dirs).unwrap();
-        assert!(out.contains("auth token {env.CRONIQ_JWT_SECRET}"), "{out}");
+        assert!(out.contains("listen {env.CRONIQ_PULL_LISTEN}"), "{out}");
         assert!(
             !out.contains("\"{env"),
             "placeholder must not be quoted: {out}"

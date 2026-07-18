@@ -215,11 +215,10 @@ fn seed_demo_mfa(
     // Encrypting the TOTP seed requires the same JWT secret the server
     // will load on its next boot. `ensure` creates `<data_dir>/jwt.secret`
     // if missing; the server's identical fallback path then reads the
-    // value we just persisted instead of generating its own. (Servers
-    // that set Croniqfile `pull_api.auth` or `CRONIQ_JWT_SECRET` win
-    // over the file — those overrides must agree with our environment
-    // at init time, otherwise the demo TOTP unwrap fails at login. This
-    // is acceptable for a demo-only flag.)
+    // value we just persisted instead of generating its own. (A server
+    // started with `CRONIQ_JWT_SECRET` set wins over the file — that
+    // override must agree with our environment at init time, otherwise
+    // the demo TOTP unwrap fails at login.)
     let jwt_secret =
         jwt_secret::ensure(data_dir).map_err(|e| miette!("Failed to obtain JWT secret: {e}"))?;
 

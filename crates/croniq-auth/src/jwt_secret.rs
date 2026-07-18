@@ -6,10 +6,9 @@
 //!   2. `<data_dir>/jwt.secret` (auto-created on first call if missing,
 //!      mode 0600 on Unix)
 //!
-//! The server additionally honours a Croniqfile `pull_api.auth`
-//! override, which only exists at server-config-load time and is not
-//! reachable from pre-server tools (CLI init). As long as `pull_api.auth`
-//! is not set, CLI-side encryption and server-side decryption agree.
+//! Both the server and pre-server tools (CLI init) resolve the secret
+//! through this function, so CLI-side TOTP encryption and server-side
+//! decryption always agree on the same value.
 
 use std::path::Path;
 use thiserror::Error;

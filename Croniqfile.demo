@@ -12,7 +12,10 @@ server {
 }
 
 pull_api {
-  auth none
+  # The JWT signing secret for runner tokens is taken from
+  # CRONIQ_JWT_SECRET, or auto-generated into $DATA_DIR/jwt.secret on
+  # first boot. Runners still need a seeded, scoped API key to connect
+  # (see `croniq init --api-key …`) — there is no anonymous work access.
   lease_ttl 60s
 }
 

@@ -538,7 +538,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | API keys | — | `api-keys:admin` |
 | Admin reload | — | `admin` |
 
-A 403 with no body is returned when the scope is missing. Auth-disabled mode (no `pull_api.auth` and no `CRONIQ_JWT_SECRET`) injects a synthetic admin context so unconfigured dev servers stay open — production must configure JWT or refuse to start.
+A 403 with no body is returned when the scope is missing. The server always resolves a JWT signing secret at boot — from `CRONIQ_JWT_SECRET`, or an auto-generated `$DATA_DIR/jwt.secret` — so scope enforcement is always on; there is no anonymous work access. (An open "synthetic admin" mode exists only when the server is embedded without any JWT config, as in the test harness.)
 
 ---
 

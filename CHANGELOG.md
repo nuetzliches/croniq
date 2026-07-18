@@ -59,6 +59,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   items whose store claim is refused instead of handing a runner an
   execution it can never legally complete.
 
+### Removed
+
+- **`pull_api { auth … }` directive** (#371). The directive was never an
+  "auth on/off" switch: its value was consumed verbatim as the JWT signing
+  secret, so `auth none` merely set the secret to the literal string `none`
+  while scope enforcement on `/v1/work/*` stayed on — a runner without a
+  seeded key still got `401`. Worse, it only applied at server boot: the CLI
+  (`croniq init`, TOTP at-rest encryption) never saw it, so setting it silently
+  diverged CLI-side encryption from server-side decryption. The JWT secret is
+  now resolved solely from `CRONIQ_JWT_SECRET` or an auto-generated
+  `$DATA_DIR/jwt.secret`, shared with the CLI via
+  `croniq_auth::jwt_secret::ensure`, so the two always agree. The directive is
+  dropped from `Croniqfile.demo` / `Croniqfile.example` and the config
+  generator; a lingering `auth …` line in an existing `pull_api` block is now
+  silently ignored. Never put a secret in the Croniqfile.
+
 ## [0.28.0] - 2026-07-18
 
 ### Added

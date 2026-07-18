@@ -202,27 +202,15 @@ async fn main() -> Result<()> {
     // Completion channel: HTTP complete → processor task
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
 
-    // Server state wrapping runner + completion channel + JWT auth
-    // JWT secret priority: Croniqfile pull_api.auth > CRONIQ_JWT_SECRET env > $DATA_DIR/jwt.secret (auto-created on first boot)
-    let jwt_secret = loaded.runtime.pull_api.as_ref()
-        .and_then(|p| p.auth.clone())
-        .or_else(|| std::env::var("CRONIQ_JWT_SECRET").ok())
-        .unwrap_or_else(|| {
-            let secret_path = cli.data_dir.join("jwt.secret");
-            if let Ok(s) = std::fs::read_to_string(&secret_path) {
-                let s = s.trim().to_string();
-                if !s.is_empty() {
-                    tracing::info!(path = %secret_path.display(), "JWT secret loaded from disk");
-                    return s;
-                }
-            }
-            let secret = uuid::Uuid::new_v4().to_string();
-            match write_secret_file(&secret_path, &secret) {
-                Ok(()) => tracing::info!(path = %secret_path.display(), "JWT secret generated and persisted"),
-                Err(e) => tracing::warn!(path = %secret_path.display(), error = %e, "could not persist JWT secret — runners will need new tokens after restart"),
-            }
-            secret
-        });
+    // Server state wrapping runner + completion channel + JWT auth.
+    // JWT secret resolution: CRONIQ_JWT_SECRET env > $DATA_DIR/jwt.secret
+    // (auto-created on first boot). Shared with the CLI via
+    // `croniq_auth::jwt_secret::ensure` so CLI-side TOTP encryption and
+    // server-side decryption always agree on the same secret.
+    let jwt_secret = croniq_auth::jwt_secret::ensure(&cli.data_dir).unwrap_or_else(|e| {
+        tracing::error!(error = %e, "could not resolve JWT secret");
+        std::process::exit(1);
+    });
     let jwt_config = Some(croniq_auth::jwt::JwtConfig {
         secret: jwt_secret,
         ..Default::default()
@@ -910,26 +898,6 @@ async fn shutdown_signal() {
     {
         ctrl_c.await.ok();
         tracing::info!("received SIGINT");
-    }
-}
-
-/// Write `content` to `path` with mode 0600 on Unix (world-unreadable).
-fn write_secret_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(content.as_bytes())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, content)
     }
 }
 
