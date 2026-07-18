@@ -262,6 +262,7 @@ jobs:
       - run: npm ci || npm install
       - run: npm run lint
       - run: npx tsc --noEmit
+      - run: npm run test
       - run: npm run build
       - name: Check wasm bundle size budget
         # Soft 250 KB gzipped ceiling — we ship at ~70 KB today, so this
