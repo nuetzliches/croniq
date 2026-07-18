@@ -44,6 +44,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `lease_ttl` so the dead-runner sweep fires) is obsolete; wedged jobs now
   self-heal within one watchdog sweep after `timeout + grace`.
 
+- **Late completions can no longer overwrite a requeued execution
+  ([#374](https://github.com/nuetzliches/croniq/issues/374) follow-up).**
+  `complete_execution` / `complete_as_dead` had no state guard: a completion
+  arriving after the watchdog requeued an orphaned claim (dead-runner sweep,
+  stale-claim reaper, or restart takeover) flipped the requeued — possibly
+  already re-claimed — row to `completed`/`failed`/`dead` anyway, clobbering
+  the re-run's result, dead-lettering a job another runner was healthily
+  re-running, and falsely freeing a singleton slot. Both store methods are
+  now compare-and-swap (only rows still `claimed`, and only for the runner
+  that reported the completion); a late completion is acknowledged but
+  ignored with a `late completion ignored` warning — no retry, no dead
+  letter, no failure alert. The poll dispatch path additionally drops work
+  items whose store claim is refused instead of handing a runner an
+  execution it can never legally complete.
+
 ## [0.28.0] - 2026-07-18
 
 ### Added

@@ -66,15 +66,25 @@ pub trait ExecutionStore {
     ) -> Result<Execution, StoreError>;
 
     /// Complete an execution (success, failure, or dead).
+    ///
+    /// Compare-and-swap: the transition only applies while the row is
+    /// still `claimed` — and, when `runner_id` is `Some`, still claimed
+    /// by that runner (fencing). `Ok(false)` means the guard missed and
+    /// the row was left untouched: the watchdog requeued the claim
+    /// (`requeue_abandoned` / [`Self::requeue_if_claimed`]) and another
+    /// runner may already be re-running it, so a late completion from
+    /// the original runner must not overwrite the row (issue #374).
+    #[allow(clippy::too_many_arguments)]
     fn complete_execution(
         &self,
         id: Uuid,
+        runner_id: Option<&str>,
         state: ExecutionState,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
+    ) -> Result<bool, StoreError>;
 
     /// Find the next queued execution matching runner capabilities.
     /// Returns executions ordered by fire_at (oldest first).
@@ -201,14 +211,25 @@ pub trait DeadLetterStore {
     /// executions table could end up with `state='dead'` rows that had no
     /// corresponding `dead_letters` row, leaving the Dead Letters UI page
     /// empty (#104).
+    ///
+    /// Compare-and-swap, mirroring [`ExecutionStore::complete_execution`]
+    /// (issue #374): the transition only applies while the row is still
+    /// `claimed` or `failed` — `failed` because the completion processor
+    /// falls back to dead-lettering an execution it just marked failed
+    /// when the retry row cannot be persisted; a `failed` row is terminal
+    /// and never re-enters rotation, so that transition is race-free.
+    /// When `runner_id` is `Some` the row must also still belong to that
+    /// runner. `Ok(false)` means the guard missed: nothing was written,
+    /// including the dead-letter row.
     fn complete_as_dead(
         &self,
         execution_id: Uuid,
+        runner_id: Option<&str>,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
+    ) -> Result<bool, StoreError>;
 
     /// Remove a dead letter AND persist its replay execution in a single
     /// transaction. Both writes commit together or both fail.

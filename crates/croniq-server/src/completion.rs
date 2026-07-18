@@ -61,6 +61,12 @@ pub enum ProcessedOutcome {
     Ephemeral,
     /// Execution ID not found in store (race or already handled).
     NotFound,
+    /// Late completion ignored (issue #374): the watchdog requeued the
+    /// claim before this completion arrived — the row is `queued` again
+    /// or already re-claimed by another runner — so the store's
+    /// compare-and-swap refused the write. No retry or dead-letter
+    /// lifecycle runs; the re-run owns the execution now.
+    Stale,
 }
 
 /// Processes completion events and updates the persistence layer.
@@ -230,16 +236,31 @@ impl CompletionProcessor {
             }
         };
 
+        // Fence completions on the reporting runner: after a watchdog
+        // requeue the row is queued again (or claimed by another runner),
+        // and the store-level compare-and-swap must reject this event.
+        let fence = Some(event.runner_id.as_str());
+
         // Cancellations bypass the retry policy entirely
         if event.status == CompletionStatus::Cancelled {
-            let _ = self.store.complete_execution(
+            match self.store.complete_execution(
                 exec_uuid,
+                fence,
                 ExecutionState::Cancelled,
                 Some(event.duration_ms as i64),
                 None,
                 None,
                 now,
-            );
+            ) {
+                // Expected on the common cancel path: the API handler
+                // already flipped the row to `cancelled` before pushing
+                // the cancel to the runner, so the CAS misses here.
+                Ok(false) => {
+                    tracing::debug!(id = %exec_uuid, "cancel completion on already-terminal row")
+                }
+                Ok(true) => {}
+                Err(e) => tracing::error!(id = %exec_uuid, error = %e, "store write error"),
+            }
             // The claimed → cancelled transition frees a per-job concurrency
             // slot (issue #278) — wake long-polling runners so a blocked
             // guarded item is re-evaluated promptly.
@@ -261,31 +282,65 @@ impl CompletionProcessor {
 
         let processed = match outcome {
             ExecutionOutcome::Success => {
-                let _ = self.store.complete_execution(
+                match self.store.complete_execution(
                     exec_uuid,
+                    fence,
                     ExecutionState::Completed,
                     Some(event.duration_ms as i64),
                     None,
                     None,
                     now,
-                );
-                tracing::info!(id = %exec_uuid, "execution completed successfully");
-                ProcessedOutcome::Completed
+                ) {
+                    Ok(true) => {
+                        tracing::info!(id = %exec_uuid, "execution completed successfully");
+                        ProcessedOutcome::Completed
+                    }
+                    Ok(false) => {
+                        tracing::warn!(
+                            id = %exec_uuid,
+                            runner_id = %event.runner_id,
+                            "late completion ignored — execution was requeued by the watchdog"
+                        );
+                        ProcessedOutcome::Stale
+                    }
+                    Err(e) => {
+                        tracing::error!(id = %exec_uuid, error = %e, "store write error");
+                        ProcessedOutcome::Completed
+                    }
+                }
             }
 
             ExecutionOutcome::Retry {
                 next_attempt,
                 delay,
             } => {
-                // Mark this attempt as failed
-                let _ = self.store.complete_execution(
+                // Mark this attempt as failed. A CAS miss means the
+                // watchdog already requeued this claim — the re-run owns
+                // the execution, so no retry must be spawned for the
+                // late event.
+                match self.store.complete_execution(
                     exec_uuid,
+                    fence,
                     ExecutionState::Failed,
                     Some(event.duration_ms as i64),
                     event.error.as_deref(),
                     None,
                     now,
-                );
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        tracing::warn!(
+                            id = %exec_uuid,
+                            runner_id = %event.runner_id,
+                            "late completion ignored — execution was requeued by the watchdog"
+                        );
+                        self.runner.work_notify.notify_waiters();
+                        return ProcessedOutcome::Stale;
+                    }
+                    Err(e) => {
+                        tracing::error!(id = %exec_uuid, error = %e, "store write error")
+                    }
+                }
 
                 // Create a new execution for the retry
                 let retry_fire_at =
@@ -381,12 +436,20 @@ impl CompletionProcessor {
                             };
                             match self.store.complete_as_dead(
                                 exec_uuid,
+                                fence,
                                 Some(event.duration_ms as i64),
                                 event.error.as_deref(),
                                 &dl,
                                 now,
                             ) {
-                                Ok(()) => dead_lettered = true,
+                                Ok(true) => dead_lettered = true,
+                                // We just marked the row failed ourselves,
+                                // so a CAS miss here means someone raced us
+                                // to a different terminal state — leave it.
+                                Ok(false) => tracing::warn!(
+                                    id = %exec_uuid,
+                                    "dead-letter fallback skipped — execution no longer owned by this completion"
+                                ),
                                 Err(e2) => tracing::error!(
                                     id = %exec_uuid,
                                     error = %e2,
@@ -433,42 +496,74 @@ impl CompletionProcessor {
                     expires_at,
                 };
 
-                if let Err(e) = self.store.complete_as_dead(
+                match self.store.complete_as_dead(
                     exec_uuid,
+                    fence,
                     Some(event.duration_ms as i64),
                     event.error.as_deref(),
                     &dl,
                     now,
                 ) {
-                    tracing::error!(
-                        id = %exec_uuid,
-                        error = %e,
-                        "failed to record dead-lettered execution — execution row may now be inconsistent with dead_letters table"
-                    );
+                    Ok(true) => {
+                        tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
+                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        ProcessedOutcome::DeadLettered { reason }
+                    }
+                    Ok(false) => {
+                        // The watchdog requeued this claim before the
+                        // completion arrived — the re-run owns the
+                        // execution, so neither the dead letter nor the
+                        // failure alert may fire for the late event.
+                        tracing::warn!(
+                            id = %exec_uuid,
+                            runner_id = %event.runner_id,
+                            "late completion ignored — execution was requeued by the watchdog"
+                        );
+                        ProcessedOutcome::Stale
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "failed to record dead-lettered execution — execution row may now be inconsistent with dead_letters table"
+                        );
+                        tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
+                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        ProcessedOutcome::DeadLettered { reason }
+                    }
                 }
-
-                tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                self.fire_alerts(&execution.job_key, &event, &reason).await;
-                ProcessedOutcome::DeadLettered { reason }
             }
 
             ExecutionOutcome::Dropped { reason } => {
-                let _ = self.store.complete_execution(
+                match self.store.complete_execution(
                     exec_uuid,
+                    fence,
                     ExecutionState::Failed,
                     Some(event.duration_ms as i64),
                     event.error.as_deref(),
                     Some(&reason),
                     now,
-                );
-                tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
-                self.fire_alerts(&execution.job_key, &event, &reason).await;
-                ProcessedOutcome::Dropped { reason }
+                ) {
+                    Ok(false) => {
+                        tracing::warn!(
+                            id = %exec_uuid,
+                            runner_id = %event.runner_id,
+                            "late completion ignored — execution was requeued by the watchdog"
+                        );
+                        ProcessedOutcome::Stale
+                    }
+                    Ok(true) | Err(_) => {
+                        tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
+                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        ProcessedOutcome::Dropped { reason }
+                    }
+                }
             }
 
             ExecutionOutcome::Cancelled => {
                 let _ = self.store.complete_execution(
                     exec_uuid,
+                    fence,
                     ExecutionState::Cancelled,
                     Some(event.duration_ms as i64),
                     None,
@@ -548,6 +643,9 @@ mod tests {
         AppState::new()
     }
 
+    /// Persist a queued execution and claim it for `runner-1` — the runner
+    /// every [`event`] reports as — so completions pass the store's
+    /// claimed-state CAS guard like a real dispatched execution would.
     fn seed_execution(store: &DynStore, job_key: &str) -> Uuid {
         let id = Uuid::new_v4();
         store
@@ -570,6 +668,7 @@ mod tests {
                 created_at: Utc::now(),
             })
             .unwrap();
+        store.claim_execution(id, "runner-1", Utc::now()).unwrap();
         id
     }
 
@@ -713,6 +812,7 @@ mod tests {
             }
         }
 
+        #[allow(clippy::too_many_arguments)] // delegated complete_execution
         impl ExecutionStore for FailingCreateStore {
             fn create_execution(&self, execution: &Execution) -> Result<(), StoreError> {
                 if self.fail_create.load(Ordering::SeqCst) {
@@ -726,7 +826,7 @@ mod tests {
                 create_execution_and_advance_job_state(execution: &Execution, job_state: &JobState) -> ();
                 get_execution(id: Uuid) -> Option<Execution>;
                 claim_execution(id: Uuid, runner_id: &str, now: DateTime<Utc>) -> Execution;
-                complete_execution(id: Uuid, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> ();
+                complete_execution(id: Uuid, runner_id: Option<&str>, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> bool;
                 find_queued_executions(capabilities: &[String], limit: u32) -> Vec<Execution>;
                 list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
                 find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
@@ -754,7 +854,7 @@ mod tests {
         impl DeadLetterStore for FailingCreateStore {
             delegate! {
                 add_dead_letter(dl: &DeadLetter) -> ();
-                complete_as_dead(execution_id: Uuid, duration_ms: Option<i64>, error: Option<&str>, dead_letter: &DeadLetter, now: DateTime<Utc>) -> ();
+                complete_as_dead(execution_id: Uuid, runner_id: Option<&str>, duration_ms: Option<i64>, error: Option<&str>, dead_letter: &DeadLetter, now: DateTime<Utc>) -> bool;
                 replay_dead_letter(dead_letter_id: Uuid, execution: &Execution) -> ();
                 get_dead_letter(id: Uuid) -> Option<DeadLetter>;
                 list_dead_letters(filter: &DeadLetterFilter) -> Vec<DeadLetter>;
@@ -1132,6 +1232,111 @@ mod tests {
         assert_eq!(outcome, ProcessedOutcome::Completed);
         let exec = store.get_execution(exec_id).unwrap().unwrap();
         assert_eq!(exec.state, ExecutionState::Cancelled);
+    }
+
+    // ─── Late completions after a watchdog requeue (issue #374) ─────
+
+    #[tokio::test]
+    async fn late_success_after_requeue_is_ignored() {
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+
+        // Watchdog requeues the stale claim before the completion arrives.
+        assert!(store.requeue_if_claimed(exec_id, Utc::now()).unwrap());
+
+        let processor =
+            CompletionProcessor::new(vec![make_job("test:job", 3)], Arc::clone(&store), runner);
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Success, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::Stale);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(
+            exec.state,
+            ExecutionState::Queued,
+            "re-run still owns the row"
+        );
+        assert!(exec.completed_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn late_failure_after_requeue_spawns_no_retry() {
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+        assert!(store.requeue_if_claimed(exec_id, Utc::now()).unwrap());
+
+        let processor = CompletionProcessor::new(
+            vec![make_job("test:job", 3)],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::Stale);
+        // No retry enqueued and no extra execution row created — the
+        // requeued original is the only pending work.
+        assert_eq!(runner.queue.read().await.len(), 0);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+    }
+
+    #[tokio::test]
+    async fn late_exhausted_failure_after_requeue_creates_no_dead_letter() {
+        use croniq_store::models::DeadLetterFilter;
+
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+        assert!(store.requeue_if_claimed(exec_id, Utc::now()).unwrap());
+
+        // Single attempt → the late failure would dead-letter if not fenced.
+        let processor =
+            CompletionProcessor::new(vec![make_job("test:job", 1)], Arc::clone(&store), runner);
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::Stale);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+        assert!(
+            store
+                .list_dead_letters(&DeadLetterFilter::default())
+                .unwrap()
+                .is_empty(),
+            "a late completion must not dead-letter the requeued execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_from_wrong_runner_is_ignored() {
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "test:job");
+
+        // Requeue + re-claim by another runner: the row is `claimed` again,
+        // so only the runner fence can reject the original runner's event.
+        assert!(store.requeue_if_claimed(exec_id, Utc::now()).unwrap());
+        store
+            .claim_execution(exec_id, "runner-2", Utc::now())
+            .unwrap();
+
+        let processor =
+            CompletionProcessor::new(vec![make_job("test:job", 3)], Arc::clone(&store), runner);
+        // event() reports runner-1 — not the current owner.
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Success, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::Stale);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Claimed);
+        assert_eq!(exec.runner_id.as_deref(), Some("runner-2"));
     }
 
     // ─── Alerts (issue #140) ────────────────────────────────────────

@@ -213,6 +213,7 @@ fn bench_complete_execution(c: &mut Criterion) {
                     store
                         .complete_execution(
                             id,
+                            None,
                             ExecutionState::Completed,
                             Some(500),
                             None,

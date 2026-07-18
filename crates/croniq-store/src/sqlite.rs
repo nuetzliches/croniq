@@ -185,29 +185,33 @@ impl ExecutionStore for SqliteStore {
             .ok_or_else(|| StoreError::NotFound(format!("execution {id}")))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_execution(
         &self,
         id: Uuid,
+        runner_id: Option<&str>,
         state: ExecutionState,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE executions SET state = ?1, completed_at = ?2, duration_ms = ?3, error = ?4, dead_reason = ?5 WHERE id = ?6",
-            params![
-                state_to_str(state),
-                dt_to_sql(&now),
-                duration_ms,
-                error,
-                dead_reason,
-                id.to_string(),
-            ],
-        )
-        .map_err(map_err)?;
-        Ok(())
+        let affected = conn
+            .execute(
+                "UPDATE executions SET state = ?1, completed_at = ?2, duration_ms = ?3, error = ?4, dead_reason = ?5 WHERE id = ?6 AND state = 'claimed' AND (?7 IS NULL OR runner_id = ?7)",
+                params![
+                    state_to_str(state),
+                    dt_to_sql(&now),
+                    duration_ms,
+                    error,
+                    dead_reason,
+                    id.to_string(),
+                    runner_id,
+                ],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
     }
 
     fn find_queued_executions(
@@ -646,24 +650,31 @@ impl DeadLetterStore for SqliteStore {
     fn complete_as_dead(
         &self,
         execution_id: Uuid,
+        runner_id: Option<&str>,
         duration_ms: Option<i64>,
         error: Option<&str>,
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(map_err)?;
-        update_to_dead_with(
+        let updated = update_to_dead_with(
             &tx,
             execution_id,
+            runner_id,
             duration_ms,
             error,
             Some(&dead_letter.dead_reason),
             now,
         )?;
+        if !updated {
+            // Dropping the uncommitted transaction rolls it back — the
+            // dead-letter row must not exist for a run we didn't kill.
+            return Ok(false);
+        }
         insert_dead_letter_with(&tx, dead_letter)?;
         tx.commit().map_err(map_err)?;
-        Ok(())
+        Ok(true)
     }
 
     fn replay_dead_letter(
@@ -2531,23 +2542,26 @@ fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Resul
 fn update_to_dead_with(
     conn: &rusqlite::Connection,
     id: Uuid,
+    runner_id: Option<&str>,
     duration_ms: Option<i64>,
     error: Option<&str>,
     dead_reason: Option<&str>,
     now: DateTime<Utc>,
-) -> Result<(), StoreError> {
-    conn.execute(
-        "UPDATE executions SET state = 'dead', completed_at = ?1, duration_ms = ?2, error = ?3, dead_reason = ?4 WHERE id = ?5",
-        params![
-            dt_to_sql(&now),
-            duration_ms,
-            error,
-            dead_reason,
-            id.to_string(),
-        ],
-    )
-    .map_err(map_err)?;
-    Ok(())
+) -> Result<bool, StoreError> {
+    let affected = conn
+        .execute(
+            "UPDATE executions SET state = 'dead', completed_at = ?1, duration_ms = ?2, error = ?3, dead_reason = ?4 WHERE id = ?5 AND state IN ('claimed', 'failed') AND (?6 IS NULL OR runner_id = ?6)",
+            params![
+                dt_to_sql(&now),
+                duration_ms,
+                error,
+                dead_reason,
+                id.to_string(),
+                runner_id,
+            ],
+        )
+        .map_err(map_err)?;
+    Ok(affected > 0)
 }
 
 fn insert_dead_letter_with(conn: &rusqlite::Connection, dl: &DeadLetter) -> Result<(), StoreError> {
