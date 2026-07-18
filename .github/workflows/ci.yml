@@ -238,7 +238,7 @@ jobs:
       # The UI build needs the wasm bridge from `crates/croniq-config-wasm`.
       # We install the toolchain + wasm-pack here rather than splitting it
       # into a separate matrix job so `npm run build`'s `prebuild` hook
-      # (`bash scripts/build-wasm.sh`) can produce `ui/src/lib/wasm/`
+      # (`node scripts/build-wasm.mjs`) can produce `ui/src/lib/wasm/`
       # in-place without needing an artefact upload step.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
