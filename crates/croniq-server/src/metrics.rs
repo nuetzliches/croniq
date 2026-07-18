@@ -33,9 +33,10 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     let reg = state.runner.registry.read().await;
     let queue = state.runner.queue.read().await;
 
-    let runners_online = reg.by_status(RunnerStatus::Online, now).len();
-    let runners_stale = reg.by_status(RunnerStatus::Stale, now).len();
-    let runners_dead = reg.by_status(RunnerStatus::Dead, now).len();
+    let ttl = state.runner.lease_ttl_secs;
+    let runners_online = reg.by_status_with_ttl(RunnerStatus::Online, now, ttl).len();
+    let runners_stale = reg.by_status_with_ttl(RunnerStatus::Stale, now, ttl).len();
+    let runners_dead = reg.by_status_with_ttl(RunnerStatus::Dead, now, ttl).len();
     let queue_depth = queue.len();
 
     let reload_success = state.reload_counters.success.load(Ordering::Relaxed);

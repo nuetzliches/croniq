@@ -234,9 +234,15 @@ pub async fn handle_health(State(state): State<Arc<AppState>>) -> Json<HealthRes
 
     let response = HealthResponse {
         status: "ok".into(),
-        runners_online: reg.by_status(RunnerStatus::Online, now).len(),
-        runners_stale: reg.by_status(RunnerStatus::Stale, now).len(),
-        runners_dead: reg.by_status(RunnerStatus::Dead, now).len(),
+        runners_online: reg
+            .by_status_with_ttl(RunnerStatus::Online, now, state.lease_ttl_secs)
+            .len(),
+        runners_stale: reg
+            .by_status_with_ttl(RunnerStatus::Stale, now, state.lease_ttl_secs)
+            .len(),
+        runners_dead: reg
+            .by_status_with_ttl(RunnerStatus::Dead, now, state.lease_ttl_secs)
+            .len(),
         queued: queue.len(),
     };
 
