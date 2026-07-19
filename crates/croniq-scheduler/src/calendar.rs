@@ -4,7 +4,7 @@
 //! Rules: `(all includes match) AND (no exclude matches)`. No includes = everything allowed.
 
 use crate::schedule::ast_weekday_to_chrono;
-use chrono::{Datelike, NaiveDate, NaiveTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use croniq_config::calendar_args::{self, AnnualArg};
 
 /// A compiled calendar with evaluated rules.
@@ -80,6 +80,146 @@ impl Calendar {
 
         includes_pass && !excludes_match
     }
+
+    /// Allowed second-of-day intervals on `date`.
+    ///
+    /// This factors `is_allowed` exactly: every rule kind is either
+    /// time-independent (Weekly/Monthly/Annual/Dates — gates the whole day)
+    /// or date-independent (Window — contributes the same daily time set on
+    /// every day), so "allowed at (date, t)" is equivalent to "all date-rules
+    /// pass on `date`" AND "t lies in (∩ include windows) ∖ (∪ exclude
+    /// windows)". Pinned by the `allowed_intervals_factor_is_allowed` test.
+    pub(crate) fn allowed_intervals_on(&self, date: NaiveDate) -> DaySet {
+        let mut set: DaySet = vec![(0, DAY_SECS)];
+        for rule in &self.includes {
+            match rule {
+                CalendarRule::Window(s, e) => {
+                    set = intersect_intervals(&set, &window_intervals(*s, *e));
+                }
+                date_rule => {
+                    if !date_rule.matches(date, NaiveTime::MIN) {
+                        return Vec::new();
+                    }
+                }
+            }
+        }
+        for rule in &self.excludes {
+            match rule {
+                CalendarRule::Window(s, e) => {
+                    set = subtract_intervals(&set, &window_intervals(*s, *e));
+                }
+                date_rule => {
+                    if date_rule.matches(date, NaiveTime::MIN) {
+                        return Vec::new();
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    /// Earliest local datetime `>= from` allowed by this calendar, or `None`
+    /// when nothing is allowed within [`MAX_SCAN_DAYS`] (genuinely exhausted,
+    /// e.g. a `dates` calendar entirely in the past). Unlike walking raw
+    /// schedule ticks through `is_allowed`, this jumps straight to the next
+    /// open window, so the cost is O(days-to-window) regardless of how
+    /// frequent the schedule is (#391).
+    pub fn next_allowed_after(&self, from: NaiveDateTime) -> Option<NaiveDateTime> {
+        next_instant_in(from, |d| self.allowed_intervals_on(d))
+    }
+}
+
+/// Sorted, disjoint, half-open `[start, end)` second-of-day intervals
+/// (endpoints in `0..=86400`) describing when a single day is open.
+pub(crate) type DaySet = Vec<(u32, u32)>;
+
+const DAY_SECS: u32 = 86_400;
+
+/// How far [`next_instant_in`] scans before declaring the gate permanently
+/// closed: 4 years + 2 days covers an `annual` rule that only matches Feb 29
+/// across a full leap cycle.
+pub(crate) const MAX_SCAN_DAYS: u64 = 4 * 365 + 2;
+
+/// Interval form of the shared window semantics (`CalendarRule::Window` /
+/// `TimeWindow::contains`): half-open `[start, end)`, `start > end` wraps
+/// overnight at midnight, `start == end` matches nothing.
+pub(crate) fn window_intervals(start: NaiveTime, end: NaiveTime) -> DaySet {
+    let s = start.num_seconds_from_midnight();
+    let e = end.num_seconds_from_midnight();
+    match s.cmp(&e) {
+        std::cmp::Ordering::Less => vec![(s, e)],
+        std::cmp::Ordering::Equal => Vec::new(),
+        std::cmp::Ordering::Greater => {
+            let mut set = DaySet::new();
+            if e > 0 {
+                set.push((0, e));
+            }
+            set.push((s, DAY_SECS));
+            set
+        }
+    }
+}
+
+/// Intersection of two interval sets (two-pointer merge).
+pub(crate) fn intersect_intervals(a: &DaySet, b: &DaySet) -> DaySet {
+    let mut out = DaySet::new();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        let lo = a[i].0.max(b[j].0);
+        let hi = a[i].1.min(b[j].1);
+        if lo < hi {
+            out.push((lo, hi));
+        }
+        if a[i].1 <= b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// `a` minus `b`, via intersecting `a` with the complement of `b`.
+pub(crate) fn subtract_intervals(a: &DaySet, b: &DaySet) -> DaySet {
+    let mut complement = DaySet::new();
+    let mut cursor = 0;
+    for &(s, e) in b {
+        if s > cursor {
+            complement.push((cursor, s));
+        }
+        cursor = cursor.max(e);
+    }
+    if cursor < DAY_SECS {
+        complement.push((cursor, DAY_SECS));
+    }
+    intersect_intervals(a, &complement)
+}
+
+/// Earliest local instant `>= from` inside the daily interval sets produced
+/// by `intervals_on`. `None` = nothing within [`MAX_SCAN_DAYS`].
+pub(crate) fn next_instant_in(
+    from: NaiveDateTime,
+    mut intervals_on: impl FnMut(NaiveDate) -> DaySet,
+) -> Option<NaiveDateTime> {
+    // Ceil sub-second precision to whole seconds so the returned instant is
+    // never before `from`. May yield 86400 (past midnight) — day 0 then
+    // simply finds no interval and the scan moves on.
+    let mut from_secs = from.time().num_seconds_from_midnight();
+    if from.time().nanosecond() > 0 {
+        from_secs += 1;
+    }
+    for offset in 0..=MAX_SCAN_DAYS {
+        let date = from.date().checked_add_days(chrono::Days::new(offset))?;
+        for (s, e) in intervals_on(date) {
+            let lower = if offset == 0 { from_secs.max(s) } else { s };
+            if lower < e {
+                return Some(
+                    date.and_time(NaiveTime::from_num_seconds_from_midnight_opt(lower, 0)?),
+                );
+            }
+        }
+    }
+    None
 }
 
 impl CalendarRule {
@@ -418,5 +558,229 @@ mod tests {
             CalendarRule::Annual(dates) => assert_eq!(dates, vec![(12, 25)]),
             other => panic!("expected Annual, got {other:?}"),
         }
+    }
+
+    // ─── DaySet primitives + next_allowed_after (#391) ───
+
+    fn dt(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::NaiveDateTime {
+        date(y, m, d).and_time(time(h, min))
+    }
+
+    fn weekdays() -> CalendarRule {
+        CalendarRule::Weekly(vec![
+            chrono::Weekday::Mon,
+            chrono::Weekday::Tue,
+            chrono::Weekday::Wed,
+            chrono::Weekday::Thu,
+            chrono::Weekday::Fri,
+        ])
+    }
+
+    /// Mon–Fri 08:00..18:00 — the business-hours shape from issue #391.
+    fn business_hours() -> Calendar {
+        Calendar {
+            name: "business-hours".into(),
+            timezone: None,
+            includes: vec![weekdays(), CalendarRule::Window(time(8, 0), time(18, 0))],
+            excludes: vec![],
+        }
+    }
+
+    #[test]
+    fn window_intervals_shapes() {
+        assert_eq!(
+            window_intervals(time(8, 0), time(18, 0)),
+            vec![(8 * 3600, 18 * 3600)]
+        );
+        // Overnight wraps at midnight.
+        assert_eq!(
+            window_intervals(time(22, 0), time(6, 0)),
+            vec![(0, 6 * 3600), (22 * 3600, 86_400)]
+        );
+        // Overnight degenerating to a pure suffix: no empty [0, 0) part.
+        assert_eq!(
+            window_intervals(time(22, 0), time(0, 0)),
+            vec![(22 * 3600, 86_400)]
+        );
+        // start == end matches nothing (half-open semantics, parity with
+        // CalendarRule::Window::matches).
+        assert_eq!(
+            window_intervals(time(9, 0), time(9, 0)),
+            Vec::<(u32, u32)>::new()
+        );
+    }
+
+    #[test]
+    fn intersect_and_subtract() {
+        let a = vec![(0u32, 10u32), (20, 30)];
+        let b = vec![(5u32, 25u32)];
+        assert_eq!(intersect_intervals(&a, &b), vec![(5, 10), (20, 25)]);
+        assert_eq!(subtract_intervals(&a, &b), vec![(0, 5), (25, 30)]);
+        assert_eq!(subtract_intervals(&a, &Vec::new()), a);
+        assert_eq!(
+            intersect_intervals(&a, &Vec::new()),
+            Vec::<(u32, u32)>::new()
+        );
+        // Subtraction consuming a whole interval.
+        assert_eq!(subtract_intervals(&a, &vec![(0, 15)]), vec![(20, 30)]);
+    }
+
+    /// Pin the factoring argument on `allowed_intervals_on`: interval
+    /// membership must agree with `is_allowed` on a 15-minute grid over a
+    /// composite calendar exercising every rule shape.
+    #[test]
+    fn allowed_intervals_factor_is_allowed() {
+        let cal = Calendar {
+            name: "composite".into(),
+            timezone: None,
+            includes: vec![weekdays(), CalendarRule::Window(time(8, 0), time(18, 0))],
+            excludes: vec![
+                CalendarRule::Annual(vec![(1, 1)]),
+                CalendarRule::Window(time(12, 0), time(12, 45)),
+            ],
+        };
+        // A week spanning New Year (hits the annual exclude) + a plain week.
+        for start in [date(2025, 12, 29), date(2026, 3, 30)] {
+            for day in 0..7 {
+                let d = start.checked_add_days(chrono::Days::new(day)).unwrap();
+                let set = cal.allowed_intervals_on(d);
+                for quarter in 0..96u32 {
+                    let secs = quarter * 900;
+                    let t = NaiveTime::from_num_seconds_from_midnight_opt(secs, 0).unwrap();
+                    let in_set = set.iter().any(|&(s, e)| secs >= s && secs < e);
+                    assert_eq!(cal.is_allowed(d, t), in_set, "mismatch at {d} {t}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn next_allowed_inside_window_returns_from() {
+        // 2026-03-30 is a Monday.
+        let from = dt(2026, 3, 30, 9, 30);
+        assert_eq!(business_hours().next_allowed_after(from), Some(from));
+    }
+
+    #[test]
+    fn next_allowed_start_edge_inclusive_end_edge_exclusive() {
+        let cal = business_hours();
+        let open = dt(2026, 3, 30, 8, 0);
+        assert_eq!(cal.next_allowed_after(open), Some(open));
+        // 18:00 itself is outside (half-open) → next day 08:00.
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 3, 30, 18, 0)),
+            Some(dt(2026, 3, 31, 8, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_before_open_same_day() {
+        assert_eq!(
+            business_hours().next_allowed_after(dt(2026, 3, 30, 6, 30)),
+            Some(dt(2026, 3, 30, 8, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_weekend_gap() {
+        // 2026-04-03 is a Friday; 18:30 → Monday 08:00.
+        assert_eq!(
+            business_hours().next_allowed_after(dt(2026, 4, 3, 18, 30)),
+            Some(dt(2026, 4, 6, 8, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_overnight_include() {
+        let cal = Calendar {
+            name: "nightly".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Window(time(22, 0), time(6, 0))],
+            excludes: vec![],
+        };
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 3, 30, 12, 0)),
+            Some(dt(2026, 3, 30, 22, 0))
+        );
+        let inside = dt(2026, 3, 30, 23, 0);
+        assert_eq!(cal.next_allowed_after(inside), Some(inside));
+    }
+
+    #[test]
+    fn next_allowed_annual_exclude_skips_whole_day() {
+        let mut cal = business_hours();
+        cal.excludes.push(CalendarRule::Annual(vec![(1, 1)]));
+        // 2026-01-01 is a Thursday; 07:00 that day → Friday 08:00.
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 1, 1, 7, 0)),
+            Some(dt(2026, 1, 2, 8, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_year_wrap() {
+        let cal = Calendar {
+            name: "new-year-only".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Annual(vec![(1, 1)])],
+            excludes: vec![],
+        };
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 12, 15, 10, 0)),
+            Some(dt(2027, 1, 1, 0, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_monthly_31_skips_short_months() {
+        let cal = Calendar {
+            name: "day-31".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Monthly(vec![31])],
+            excludes: vec![],
+        };
+        // No Feb 31 → next match is Mar 31.
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 2, 1, 0, 0)),
+            Some(dt(2026, 3, 31, 0, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_feb29_crosses_leap_years() {
+        let cal = Calendar {
+            name: "leap-day".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Annual(vec![(2, 29)])],
+            excludes: vec![],
+        };
+        assert_eq!(
+            cal.next_allowed_after(dt(2026, 3, 1, 0, 0)),
+            Some(dt(2028, 2, 29, 0, 0))
+        );
+    }
+
+    #[test]
+    fn next_allowed_dates_all_past_is_none() {
+        let cal = Calendar {
+            name: "one-off".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Dates(vec![date(2026, 4, 6)])],
+            excludes: vec![],
+        };
+        assert_eq!(cal.next_allowed_after(dt(2026, 5, 1, 0, 0)), None);
+    }
+
+    #[test]
+    fn next_allowed_ceils_subseconds() {
+        // 17:59:59.5 must not resolve to an instant before itself: the last
+        // whole second inside the window is 17:59:59, so ceil pushes past
+        // the window edge → next day 08:00.
+        let from =
+            date(2026, 3, 30).and_time(NaiveTime::from_hms_milli_opt(17, 59, 59, 500).unwrap());
+        assert_eq!(
+            business_hours().next_allowed_after(from),
+            Some(dt(2026, 3, 31, 8, 0))
+        );
     }
 }

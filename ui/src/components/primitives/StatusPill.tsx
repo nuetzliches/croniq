@@ -17,6 +17,7 @@ const TONE_FOR_STATE: Record<string, PillTone> = {
   active:    'success',
   enabled:   'success',
   overdue:   'error',
+  waiting:   'info',
   paused:    'warn',
   disabled:  'outline',
   inactive:  'outline',

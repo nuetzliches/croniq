@@ -145,6 +145,15 @@ pub struct JobScheduleState {
     /// the UI can badge it as a config error. `None` for healthy jobs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_error: Option<String>,
+    /// Set when the job is `active`, not overdue, and the current instant is
+    /// outside its calendar/window gate (issue #391): the scheduler is
+    /// intentionally idle until `next_fire_at`. Names the blocking gate,
+    /// e.g. `calendar 'business-hours'`, so the UI can render a neutral
+    /// "waiting" state instead of an alarming one. Absent when the gate is
+    /// open, the job has no gate, or the live trigger snapshot is
+    /// unavailable (store-only mode; jobs registered after boot).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suppressed_by: Option<String>,
 }
 
 /// `GET /v1/jobs/states` — per-job scheduling liveness from `job_states`.
@@ -181,6 +190,21 @@ pub async fn handle_list_states(
             std::collections::HashMap::new()
         };
 
+    // Gate state comes from the live trigger snapshot the scheduler shares
+    // for the forecast. Collected before the config_faults guard below — a
+    // std RwLock must not be held across an await. An absent map (store-only
+    // mode) or a job missing from it (registered after boot, refreshed on
+    // reload) degrades to "no gate info": `suppressed_by` stays None.
+    let suppressed: std::collections::HashMap<String, String> = match state.triggers.as_ref() {
+        Some(triggers) => triggers
+            .read()
+            .await
+            .iter()
+            .filter_map(|(key, trigger)| trigger.gate_closed_reason(now).map(|r| (key.clone(), r)))
+            .collect(),
+        None => std::collections::HashMap::new(),
+    };
+
     let faults = state.config_faults.read().unwrap();
     let out = states
         .into_iter()
@@ -189,6 +213,14 @@ pub async fn handle_list_states(
                 s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
             let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
             let config_error = faults.get(&s.job_key).cloned();
+            // Only an active, non-overdue job is "waiting on its gate";
+            // `overdue` keeps priority so a genuinely stalled scheduler
+            // still reads as stalled (#250).
+            let suppressed_by = if s.status == JobStatus::Active && !overdue {
+                suppressed.get(&s.job_key).cloned()
+            } else {
+                None
+            };
             JobScheduleState {
                 job_key: s.job_key,
                 status: s.status,
@@ -198,6 +230,7 @@ pub async fn handle_list_states(
                 overdue,
                 execution_mode,
                 config_error,
+                suppressed_by,
             }
         })
         .collect();
@@ -984,6 +1017,124 @@ mod tests {
                 .unwrap()
                 .contains("failed to compile")
         );
+    }
+
+    // ─── suppressed_by: calendar-gated waiting state (#391) ───
+
+    use std::collections::HashMap;
+
+    /// Triggers whose calendar matches only a long-past date — the gate is
+    /// deterministically closed "now", regardless of when the test runs.
+    fn gated_trigger_map() -> HashMap<String, croniq_scheduler::trigger::Trigger> {
+        crate::loader::load_str(
+            r#"
+            calendar oneoff { include annual 2020-01-01 }
+            job ops:tick { every 1 minutes { calendar oneoff } }
+            job plain:job { every 5 minutes }
+            "#,
+        )
+        .unwrap()
+        .triggers
+    }
+
+    fn make_state_with_triggers(
+        store: DynStore,
+        triggers: HashMap<String, croniq_scheduler::trigger::Trigger>,
+    ) -> Arc<ServerState> {
+        let mut state = make_state(vec![], store);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.triggers = Some(Arc::new(RwLock::new(triggers)));
+        }
+        state
+    }
+
+    fn seed_active_state(store: &DynStore, key: &str, next_fire_at: chrono::DateTime<Utc>) {
+        use croniq_store::models::{JobState, JobStatus};
+        store
+            .upsert_job_state(&JobState {
+                job_key: key.into(),
+                next_fire_at: Some(next_fire_at),
+                last_fired_at: None,
+                fire_count: 3,
+                status: JobStatus::Active,
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn job_states_flags_calendar_suppressed_job() {
+        let store = make_store();
+        seed_active_state(&store, "ops:tick", Utc::now() + chrono::Duration::hours(1));
+        let state = make_state_with_triggers(store, gated_trigger_map());
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .expect("job_states row present");
+        assert_eq!(row["overdue"], false);
+        assert_eq!(row["suppressed_by"], "calendar 'oneoff'");
+    }
+
+    #[tokio::test]
+    async fn job_states_overdue_wins_over_suppression() {
+        // A genuinely stalled scheduler (past next_fire_at) must still read
+        // as overdue — never as calmly waiting — even while the gate is
+        // closed (#250 signal keeps priority).
+        let store = make_store();
+        seed_active_state(&store, "ops:tick", Utc::now() - chrono::Duration::hours(1));
+        let state = make_state_with_triggers(store, gated_trigger_map());
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .expect("job_states row present")
+            .as_object()
+            .unwrap();
+        assert_eq!(row["overdue"], true);
+        assert!(row.get("suppressed_by").is_none(), "serde must skip None");
+    }
+
+    #[tokio::test]
+    async fn job_states_omits_suppressed_by_without_gate_or_snapshot() {
+        // Job without a calendar/window gate → absent.
+        let store = make_store();
+        seed_active_state(&store, "plain:job", Utc::now() + chrono::Duration::hours(1));
+        let state = make_state_with_triggers(store, gated_trigger_map());
+        let (_, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "plain:job")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert!(row.get("suppressed_by").is_none());
+
+        // No trigger snapshot at all (store-only mode) → absent.
+        let store = make_store();
+        seed_active_state(&store, "ops:tick", Utc::now() + chrono::Duration::hours(1));
+        let state = make_state(vec![], store);
+        let (_, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert!(row.get("suppressed_by").is_none());
     }
 
     #[tokio::test]

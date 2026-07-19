@@ -20,7 +20,7 @@ use croniq_scheduler::{
     trigger::{TimeWindow, Trigger, TriggerState},
 };
 use croniq_store::{
-    models::JobStatus,
+    models::{JobState, JobStatus},
     traits::{ExecutionStore, JobStore},
 };
 use thiserror::Error;
@@ -340,7 +340,16 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
 ///   `next_fire_at` from `now`, unless its `not_after` bound has passed.
 /// - `Active` in DB     → `next_fire_at` restored from the stored value so
 ///   the next tick fires at the correct time instead of re-computing from now.
+///   Exception (#391): a stored instant the trigger's calendar/window gate
+///   disallows can only have been written by a pre-#391 build (the fixed
+///   `compute_next_fire` never emits one) — it is recomputed from `now`
+///   instead, so a stale "overdue" never survives a restart.
 /// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
+///
+/// States healed here (re-armed exhausted triggers, recomputed gate-blocked
+/// fires) are persisted back to the store immediately, so the UI and the
+/// missed-fire watchdog see the corrected `next_fire_at` right after boot
+/// instead of only after the next fire (#391).
 pub fn restore_trigger_states(
     triggers: &mut HashMap<String, Trigger>,
     store: &dyn JobStore,
@@ -379,6 +388,7 @@ pub fn restore_trigger_states(
                         next_fire_at = ?trigger.next_fire_at,
                         "trigger restore: re-armed recurring trigger persisted as exhausted (recovery, see #249)"
                     );
+                    persist_healed_state(store, trigger, &job_state, now);
                 } else {
                     trigger.state = TriggerState::Exhausted;
                     trigger.next_fire_at = None;
@@ -391,20 +401,73 @@ pub fn restore_trigger_states(
             JobStatus::Active => {
                 // Restore the stored next_fire_at so the trigger doesn't skip
                 // or double-fire due to restart timing differences.
-                if job_state.next_fire_at.is_some() {
-                    trigger.next_fire_at = job_state.next_fire_at;
+                if let Some(stored) = job_state.next_fire_at {
                     trigger.fire_count = job_state.fire_count;
-                    tracing::debug!(
-                        job_key = %job_state.job_key,
-                        next_fire_at = ?job_state.next_fire_at,
-                        "trigger restore: next_fire_at restored"
-                    );
+                    if trigger.gate_allows(stored) {
+                        // Keeping a gate-allowed past instant is deliberate:
+                        // MisfirePolicy::FireNow catches it up once.
+                        trigger.next_fire_at = Some(stored);
+                        tracing::debug!(
+                            job_key = %job_state.job_key,
+                            next_fire_at = ?job_state.next_fire_at,
+                            "trigger restore: next_fire_at restored"
+                        );
+                    } else {
+                        // A gate-disallowed instant can only come from a
+                        // pre-#391 build — the fixed compute_next_fire never
+                        // emits one. Recompute instead of resurrecting the
+                        // stale "overdue".
+                        trigger.resume(now);
+                        tracing::warn!(
+                            job_key = %job_state.job_key,
+                            stored = %stored,
+                            next_fire_at = ?trigger.next_fire_at,
+                            "trigger restore: healed calendar/window-disallowed next_fire_at (pre-#391 row)"
+                        );
+                        persist_healed_state(store, trigger, &job_state, now);
+                    }
                 }
             }
             JobStatus::Paused | JobStatus::Disabled => {
                 // DSL intent already reflected in the trigger — nothing to do
             }
         }
+    }
+}
+
+/// Persist a trigger state healed during restore, so the UI and the
+/// missed-fire watchdog see the corrected `next_fire_at` immediately after
+/// boot instead of only after the next fire (#391). Best-effort: a failed
+/// write only logs — the next fire persists the same state anyway.
+fn persist_healed_state(
+    store: &dyn JobStore,
+    trigger: &Trigger,
+    stored: &JobState,
+    now: DateTime<Utc>,
+) {
+    let healed_status = if trigger.state == TriggerState::Armed {
+        JobStatus::Active
+    } else {
+        JobStatus::Exhausted
+    };
+    if healed_status == stored.status && trigger.next_fire_at == stored.next_fire_at {
+        return; // nothing changed — don't touch updated_at
+    }
+    let healed = JobState {
+        job_key: stored.job_key.clone(),
+        next_fire_at: trigger.next_fire_at,
+        // Preserve history — restore never rebuilds it.
+        last_fired_at: stored.last_fired_at,
+        fire_count: trigger.fire_count,
+        status: healed_status,
+        updated_at: now,
+    };
+    if let Err(e) = store.upsert_job_state(&healed) {
+        tracing::warn!(
+            job_key = %stored.job_key,
+            error = %e,
+            "trigger restore: could not persist healed job state"
+        );
     }
 }
 
@@ -1160,5 +1223,122 @@ mod tests {
         // Disabled DSL → Paused trigger; Paused status in DB → no override
         let trigger = &cfg.triggers["reports:monthly"];
         assert_eq!(trigger.state, TriggerState::Paused);
+    }
+
+    // ─── restore healing for calendar-gated jobs (#391) ─────────────────────
+
+    /// `every 1 minute { calendar business-hours }` — the issue #391 shape.
+    const GATED_JOB_SRC: &str = r#"
+        calendar biz {
+            include weekly weekday
+            include window "08:00".."18:00"
+        }
+        job ops:tick { every 1 minutes { calendar biz } }
+    "#;
+
+    fn fixed_utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
+    }
+
+    fn stored_state(store: &SqliteStore, key: &str) -> croniq_store::models::JobState {
+        store
+            .list_job_states()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.job_key == key)
+            .unwrap()
+    }
+
+    #[test]
+    fn restore_active_gate_disallowed_next_fire_is_healed_and_persisted() {
+        // A pre-#391 build could persist Active rows whose next_fire_at
+        // points inside a closed calendar gate (Saturday, here). Restore must
+        // recompute instead of resurrecting the stale "overdue" — and write
+        // the healed row back so the UI clears right after boot.
+        let mut cfg = load_str(GATED_JOB_SRC).unwrap();
+        let store = make_store();
+
+        let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday noon
+        let stale = fixed_utc(2026, 3, 28, 11, 59); // Saturday → gate closed
+        seed_job_state(
+            &store,
+            "ops:tick",
+            croniq_store::models::JobStatus::Active,
+            Some(stale),
+            42,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let monday_open = fixed_utc(2026, 3, 30, 8, 0);
+        let trigger = &cfg.triggers["ops:tick"];
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(monday_open));
+        assert_eq!(trigger.fire_count, 42);
+
+        let row = stored_state(&store, "ops:tick");
+        assert_eq!(row.status, croniq_store::models::JobStatus::Active);
+        assert_eq!(row.next_fire_at, Some(monday_open));
+        assert_eq!(row.fire_count, 42);
+    }
+
+    #[test]
+    fn restore_active_gate_allowed_past_instant_is_kept() {
+        // A gate-ALLOWED instant in the past is a legitimately missed fire:
+        // MisfirePolicy::FireNow catches it up once. Restore must keep it
+        // verbatim and not touch the store.
+        let mut cfg = load_str(GATED_JOB_SRC).unwrap();
+        let store = make_store();
+
+        let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday noon
+        let missed = fixed_utc(2026, 3, 27, 17, 59); // Friday, in-window
+        seed_job_state(
+            &store,
+            "ops:tick",
+            croniq_store::models::JobStatus::Active,
+            Some(missed),
+            7,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["ops:tick"];
+        assert_eq!(trigger.next_fire_at, Some(missed));
+        assert_eq!(trigger.fire_count, 7);
+
+        let row = stored_state(&store, "ops:tick");
+        assert_eq!(row.next_fire_at, Some(missed));
+    }
+
+    #[test]
+    fn restore_exhausted_calendar_gated_recurring_rearms_and_persists() {
+        // The restart case reported in #391: a calendar-gated recurring job
+        // wrongly persisted as Exhausted must come back armed at the next
+        // gate-open instant — and the healed row must be persisted so the
+        // stale state clears without waiting for the next fire.
+        let mut cfg = load_str(GATED_JOB_SRC).unwrap();
+        let store = make_store();
+
+        let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday noon
+        seed_job_state(
+            &store,
+            "ops:tick",
+            croniq_store::models::JobStatus::Exhausted,
+            None,
+            5,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let monday_open = fixed_utc(2026, 3, 30, 8, 0);
+        let trigger = &cfg.triggers["ops:tick"];
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(monday_open));
+
+        let row = stored_state(&store, "ops:tick");
+        assert_eq!(row.status, croniq_store::models::JobStatus::Active);
+        assert_eq!(row.next_fire_at, Some(monday_open));
+        assert_eq!(row.fire_count, 5);
     }
 }

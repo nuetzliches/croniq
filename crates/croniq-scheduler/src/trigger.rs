@@ -3,7 +3,7 @@
 //! A trigger is the runtime representation of a job's schedule. It tracks when
 //! the job should next fire, and transitions through states as executions occur.
 
-use chrono::{DateTime, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use chrono_tz::Tz;
 
 use crate::calendar::Calendar;
@@ -228,40 +228,120 @@ impl Trigger {
         }
     }
 
+    /// True when the calendar and window gate permit firing at `at`
+    /// (localized to the trigger's timezone).
+    pub fn gate_allows(&self, at: DateTime<Utc>) -> bool {
+        let local = at.with_timezone(&self.timezone);
+        let date = local.date_naive();
+        let time = local.time();
+
+        let calendar_ok = self
+            .calendar
+            .as_ref()
+            .map(|c| c.is_allowed(date, time))
+            .unwrap_or(true);
+
+        let window_ok = self
+            .window
+            .as_ref()
+            .map(|w| w.contains(time))
+            .unwrap_or(true);
+
+        calendar_ok && window_ok
+    }
+
+    /// Human-readable description of the gate(s) blocking `at`, or `None`
+    /// when the gate is open (or the trigger has no gate). Used by the API
+    /// to explain why a job is intentionally idle (#391), e.g.
+    /// `calendar 'business-hours'` or `window 08:00..18:00`.
+    pub fn gate_closed_reason(&self, at: DateTime<Utc>) -> Option<String> {
+        let local = at.with_timezone(&self.timezone);
+        let date = local.date_naive();
+        let time = local.time();
+
+        let mut reasons = Vec::new();
+        if let Some(c) = &self.calendar
+            && !c.is_allowed(date, time)
+        {
+            reasons.push(format!("calendar '{}'", c.name));
+        }
+        if let Some(w) = &self.window
+            && !w.contains(time)
+        {
+            reasons.push(format!(
+                "window {}..{}",
+                w.start.format("%H:%M"),
+                w.end.format("%H:%M")
+            ));
+        }
+        if reasons.is_empty() {
+            None
+        } else {
+            Some(reasons.join(" and "))
+        }
+    }
+
+    /// Earliest local instant `>= from_local` where both the calendar and
+    /// the trigger-level window are open. `None` = never within the scan
+    /// horizon (genuinely exhausted).
+    fn next_gate_open(&self, from_local: chrono::NaiveDateTime) -> Option<chrono::NaiveDateTime> {
+        crate::calendar::next_instant_in(from_local, |date| {
+            let mut set = match &self.calendar {
+                Some(c) => c.allowed_intervals_on(date),
+                None => vec![(0, 86_400)],
+            };
+            if let Some(w) = &self.window {
+                set = crate::calendar::intersect_intervals(
+                    &set,
+                    &crate::calendar::window_intervals(w.start, w.end),
+                );
+            }
+            set
+        })
+    }
+
     /// Compute the next valid fire time, respecting calendar and window constraints.
+    ///
+    /// When a candidate is gate-blocked, jump straight to the next gate-open
+    /// instant instead of stepping raw schedule ticks (#391 — the old
+    /// 366-tick walk gave `every 1 minute` a ~6h horizon, so any overnight
+    /// calendar gap wrongly exhausted the trigger).
     fn compute_next_fire(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        // Counts gate JUMPS, not schedule ticks. Wall-clock schedules fire at
+        // most once per day, so each iteration advances >= 1 day; 1500
+        // iterations out-lasts the gate scan horizon (MAX_SCAN_DAYS) before
+        // declaring exhaustion.
+        const MAX_GATE_JUMPS: u32 = 1500;
+
         let mut candidate = self.schedule.next_fire_after(after, &self.timezone)?;
-
-        // Apply calendar and window filtering — try up to 366 candidates
-        // (worst case: every day excluded except one)
-        for _ in 0..366 {
-            let local = candidate.with_timezone(&self.timezone);
-            let date = local.date_naive();
-            let time = local.time();
-
-            // Check calendar
-            let calendar_ok = self
-                .calendar
-                .as_ref()
-                .map(|c| c.is_allowed(date, time))
-                .unwrap_or(true);
-
-            // Check window
-            let window_ok = self
-                .window
-                .as_ref()
-                .map(|w| w.contains(time))
-                .unwrap_or(true);
-
-            if calendar_ok && window_ok {
+        for _ in 0..MAX_GATE_JUMPS {
+            if self.gate_allows(candidate) {
                 return Some(candidate);
             }
 
-            // Skip to next candidate
-            candidate = self.schedule.next_fire_after(candidate, &self.timezone)?;
+            let local = candidate.with_timezone(&self.timezone).naive_local();
+            let open_local = self.next_gate_open(local)?; // None => genuinely exhausted
+            let open_utc = crate::schedule::resolve_local(&self.timezone, open_local)?;
+
+            candidate = match &self.schedule {
+                // No wall-clock anchor: the first fire after a closed gate is
+                // the opening instant itself (matches FireNow semantics —
+                // "run as soon as permitted"); the cadence re-anchors there.
+                Schedule::Interval { .. } => open_utc,
+                // Wall-clock schedules re-derive their own next tick at or
+                // after the opening (a daily-09:00 job fires at 09:00, never
+                // at window-open 08:00). next_fire_after is strictly-after,
+                // so step back 1s to make open_utc itself eligible.
+                _ => self
+                    .schedule
+                    .next_fire_after(open_utc - Duration::seconds(1), &self.timezone)?,
+            };
+            // Loop re-verifies gate_allows(candidate): a DST roll-forward in
+            // resolve_local can land outside the window, and a wall-clock
+            // tick can miss the open period entirely — both re-jump.
         }
 
-        None // All candidates excluded
+        None // No gate-open schedule tick within the scan horizon
     }
 }
 
@@ -464,5 +544,247 @@ mod tests {
         );
 
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 3, 0)));
+    }
+
+    // ─── Gate-jump advancement (#391) ───
+
+    /// Mon–Fri 08:00..18:00 — the business-hours shape from issue #391.
+    fn business_hours_calendar() -> crate::calendar::Calendar {
+        use crate::calendar::CalendarRule;
+        crate::calendar::Calendar {
+            name: "business-hours".into(),
+            timezone: None,
+            includes: vec![
+                CalendarRule::Weekly(vec![
+                    chrono::Weekday::Mon,
+                    chrono::Weekday::Tue,
+                    chrono::Weekday::Wed,
+                    chrono::Weekday::Thu,
+                    chrono::Weekday::Fri,
+                ]),
+                CalendarRule::Window(
+                    NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                    NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+                ),
+            ],
+            excludes: vec![],
+        }
+    }
+
+    /// THE #391 regression: `every 1 minute { calendar business-hours }`
+    /// must advance from the last in-window fire straight to the next
+    /// window open — the old 366-tick walk (~6h horizon for 1-minute
+    /// intervals) exhausted the trigger on any overnight gap.
+    #[test]
+    fn interval_overnight_gap_advances_to_window_open() {
+        let now = utc(2026, 3, 30, 17, 58); // Monday, just before close
+        let mut trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            tz_utc(),
+            Some(business_hours_calendar()),
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        // Still inside the window: plain interval advancement.
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 17, 59)));
+
+        let fire_at = utc(2026, 3, 30, 17, 59);
+        trigger.mark_fired(fire_at, fire_at);
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 31, 8, 0)));
+    }
+
+    #[test]
+    fn interval_weekend_gap_advances_to_monday() {
+        use crate::calendar::CalendarRule;
+        let calendar = crate::calendar::Calendar {
+            name: "weekdays".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Weekly(vec![
+                chrono::Weekday::Mon,
+                chrono::Weekday::Tue,
+                chrono::Weekday::Wed,
+                chrono::Weekday::Thu,
+                chrono::Weekday::Fri,
+            ])],
+            excludes: vec![],
+        };
+        // Friday 2026-04-03 23:59 — a ~48h gap that overwhelmed the old
+        // 366-tick horizon even for 5-minute intervals.
+        let now = utc(2026, 4, 3, 23, 59);
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 300 },
+            tz_utc(),
+            Some(calendar),
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 4, 6, 0, 0)));
+    }
+
+    #[test]
+    fn trigger_created_during_closed_gate_arms_with_future_fire() {
+        // Saturday noon: before #391 this constructed straight into Exhausted.
+        let now = utc(2026, 3, 28, 12, 0);
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            tz_utc(),
+            Some(business_hours_calendar()),
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 8, 0)));
+    }
+
+    #[test]
+    fn wall_clock_rederives_own_tick_after_gap() {
+        use crate::calendar::CalendarRule;
+        let calendar = crate::calendar::Calendar {
+            name: "mondays".into(),
+            timezone: None,
+            includes: vec![
+                CalendarRule::Weekly(vec![chrono::Weekday::Mon]),
+                CalendarRule::Window(
+                    NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                    NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+                ),
+            ],
+            excludes: vec![],
+        };
+        // Tuesday: a daily-09:00 job must fire next Monday at 09:00 — its
+        // own tick — never at the 08:00 window-open instant.
+        let now = utc(2026, 3, 31, 12, 0);
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Daily {
+                time: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            },
+            tz_utc(),
+            Some(calendar),
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 4, 6, 9, 0)));
+    }
+
+    #[test]
+    fn once_at_gate_disallowed_stays_exhausted() {
+        // `once at` a gate-blocked instant must not silently fire at a
+        // different time — it exhausts (pre-#391 semantics preserved).
+        let window = TimeWindow {
+            start: NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
+            end: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        };
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Once {
+                at: utc(2026, 4, 1, 9, 0),
+            },
+            tz_utc(),
+            None,
+            Some(window),
+            MisfirePolicy::FireNow,
+            utc(2026, 3, 29, 0, 0),
+        );
+        assert!(trigger.next_fire_at.is_none());
+        assert_eq!(trigger.state, TriggerState::Exhausted);
+    }
+
+    #[test]
+    fn calendar_and_trigger_window_intersect() {
+        use crate::calendar::CalendarRule;
+        let calendar = crate::calendar::Calendar {
+            name: "daytime".into(),
+            timezone: None,
+            includes: vec![CalendarRule::Window(
+                NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+            )],
+            excludes: vec![],
+        };
+        let window = TimeWindow {
+            start: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+            end: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+        };
+        // Gate = calendar ∩ window opens at 12:00.
+        let now = utc(2026, 3, 30, 6, 0);
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            tz_utc(),
+            Some(calendar),
+            Some(window),
+            MisfirePolicy::FireNow,
+            now,
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 12, 0)));
+    }
+
+    #[test]
+    fn dst_spring_forward_rolls_window_open_without_exhausting() {
+        // Europe/Berlin 2026-03-29: clocks jump 02:00→03:00 local. A window
+        // opening at 02:00 resolves to the first existing instant
+        // (03:00 CEST = 01:00 UTC) instead of exhausting (#249 precedent).
+        let tz: Tz = "Europe/Berlin".parse().unwrap();
+        let window = TimeWindow {
+            start: NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
+            end: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        };
+        let now = utc(2026, 3, 29, 0, 0); // 01:00 CET local
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            tz,
+            None,
+            Some(window),
+            MisfirePolicy::FireNow,
+            now,
+        );
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 1, 0)));
+    }
+
+    #[test]
+    fn gate_closed_reason_names_the_gate() {
+        let now = utc(2026, 3, 28, 12, 0); // Saturday noon
+
+        let plain = make_trigger(Schedule::Interval { seconds: 60 }, now);
+        assert!(plain.gate_allows(now));
+        assert_eq!(plain.gate_closed_reason(now), None);
+
+        let gated = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            tz_utc(),
+            Some(business_hours_calendar()),
+            Some(TimeWindow {
+                start: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+            }),
+            MisfirePolicy::FireNow,
+            now,
+        );
+        // Saturday noon: calendar closed (weekday rule), trigger window open.
+        assert_eq!(
+            gated.gate_closed_reason(now),
+            Some("calendar 'business-hours'".into())
+        );
+        // Saturday evening: both gates closed.
+        assert_eq!(
+            gated.gate_closed_reason(utc(2026, 3, 28, 19, 0)),
+            Some("calendar 'business-hours' and window 08:00..18:00".into())
+        );
+        // Monday noon: open.
+        assert!(gated.gate_closed_reason(utc(2026, 3, 30, 12, 0)).is_none());
+        assert!(gated.gate_allows(utc(2026, 3, 30, 12, 0)));
     }
 }
