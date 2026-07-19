@@ -2208,6 +2208,40 @@ mod tests {
         assert!(result.missed_fires.is_empty());
     }
 
+    /// #391 regression: a calendar-gated job parked outside its window is
+    /// Active with `next_fire_at` at the next gate-open instant — a healthy,
+    /// intentionally-idle state that must never trip the liveness alert.
+    /// (The pre-#391 failure mode — a stale past `next_fire_at` lingering
+    /// through the gap — can no longer be produced: `compute_next_fire` only
+    /// emits gate-allowed instants and boot heals old rows.)
+    #[tokio::test]
+    async fn missed_fire_ignores_calendar_gated_waiting_job() {
+        let store = make_store();
+        let now = Utc::now();
+        // Seed the exact state the fixed scheduler persists for
+        // `every 1 minute { calendar business-hours }`.
+        let triggers = crate::loader::load_str(
+            r#"
+            calendar biz {
+                include weekly weekday
+                include window "08:00".."18:00"
+            }
+            job ops:tick { every 1 minutes { calendar biz } }
+            "#,
+        )
+        .unwrap()
+        .triggers;
+        let next_fire = triggers["ops:tick"].next_fire_at.expect("trigger armed");
+        assert!(next_fire > now, "gate-jump always lands in the future");
+        seed_job_state(&*store, "ops:tick", Some(next_fire), JobStatus::Active);
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("liveness", "*", "10m", "ops")]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty());
+    }
+
     #[tokio::test]
     async fn missed_fire_skips_non_active_status() {
         let store = make_store();

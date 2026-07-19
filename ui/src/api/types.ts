@@ -73,6 +73,12 @@ export interface JobScheduleState {
   /// at load time (issue #361). Distinguishes a fail-closed pause from a manual
   /// one; the value is a human-readable reason. Absent for healthy jobs.
   config_error?: string
+  /// Set when the job is active, not overdue, and the current instant is
+  /// outside its calendar/window gate (issue #391): the scheduler is
+  /// intentionally idle until `next_fire_at`. Names the blocking gate, e.g.
+  /// `calendar 'business-hours'`. Absent when the gate is open, the job has
+  /// no gate, or on older servers — treat `undefined` as not waiting.
+  suppressed_by?: string
 }
 
 export interface TriggerDefinition {

@@ -267,7 +267,10 @@ impl Schedule {
 ///   permanently the first time its fire time fell in the gap.
 /// - **Ambiguous (fall-back):** the wall-clock time occurs twice. Pick the
 ///   earliest (pre-transition) occurrence deliberately.
-fn resolve_local(tz: &Tz, naive: chrono::NaiveDateTime) -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn resolve_local(
+    tz: &Tz,
+    naive: chrono::NaiveDateTime,
+) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono::MappedLocalTime;
     match tz.from_local_datetime(&naive) {
         MappedLocalTime::Single(dt) => Some(dt.with_timezone(&chrono::Utc)),

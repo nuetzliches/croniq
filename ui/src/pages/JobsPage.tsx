@@ -117,6 +117,16 @@ export function JobsPage() {
     return m
   }, [jobStates.data])
 
+  // Calendar/window-gated jobs parked outside their window (#391): the
+  // server sets suppressed_by only when the job is active and NOT overdue,
+  // so this never competes with the overdue pill.
+  const waitingByJob = useMemo(() => {
+    const m: Record<string, { reason: string; nextFireAt: string | null }> = {}
+    for (const s of jobStates.data ?? [])
+      if (s.suppressed_by) m[s.job_key] = { reason: s.suppressed_by, nextFireAt: s.next_fire_at }
+    return m
+  }, [jobStates.data])
+
   const ephemeralByJob = useMemo(() => {
     const m: Record<string, boolean> = {}
     for (const s of jobStates.data ?? []) m[s.job_key] = s.execution_mode === 'ephemeral'
@@ -250,6 +260,7 @@ export function JobsPage() {
                 active={j.job_key === selected}
                 execs={execsByJob[j.job_key] ?? []}
                 overdue={overdueByJob[j.job_key] ?? false}
+                waiting={waitingByJob[j.job_key]}
                 ephemeral={ephemeralByJob[j.job_key] ?? false}
                 configError={configErrorByJob[j.job_key]}
                 onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
@@ -283,6 +294,7 @@ function JobRow({
   active,
   execs,
   overdue,
+  waiting,
   ephemeral,
   configError,
   onClick,
@@ -291,6 +303,7 @@ function JobRow({
   active: boolean
   execs: Execution[]
   overdue: boolean
+  waiting?: { reason: string; nextFireAt: string | null }
   ephemeral: boolean
   configError?: string
   onClick: () => void
@@ -324,6 +337,12 @@ function JobRow({
             state="config error"
             tone="error"
             title={`Paused — ${configError}`}
+          />
+        ) : null}
+        {waiting ? (
+          <StatusPill
+            state="waiting"
+            title={`Outside ${waiting.reason}${waiting.nextFireAt ? ` — next run ${formatRelative(waiting.nextFireAt)}` : ''}`}
           />
         ) : null}
         {overdue ? (
@@ -436,6 +455,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
     return next?.start ?? null
   }, [scheduleState, forecastData, jobKey])
   const overdue = scheduleState?.overdue ?? false
+  const suppressedBy = scheduleState?.suppressed_by ?? null
 
   if (job.isLoading || !job.data) {
     return <div className="dim center" style={{ padding: 40 }}>Loading…</div>
@@ -562,6 +582,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
         durSeries={durSeries}
         nextFire={nextFire}
         overdue={overdue}
+        suppressedBy={suppressedBy}
         schedule={schedules.data?.[0] ?? null}
       />
 
@@ -755,6 +776,7 @@ function KpiRow({
   durSeries,
   nextFire,
   overdue,
+  suppressedBy,
   schedule,
 }: {
   runsLast24: Execution[]
@@ -762,6 +784,8 @@ function KpiRow({
   durSeries: number[]
   nextFire: string | null
   overdue: boolean
+  /** Gate keeping the job intentionally idle (#391), e.g. `calendar 'biz'`. */
+  suppressedBy: string | null
   schedule: TriggerDefinition | null
 }) {
   const sr = stats && stats.total > 0 ? stats.success_rate * 100 : null
@@ -833,6 +857,15 @@ function KpiRow({
             <span style={{ fontSize: 18, color: 'var(--error)' }} title="The scheduled fire is overdue — the scheduler hasn't run it">
               overdue
             </span>
+          ) : suppressedBy ? (
+            // Calendar/window-gated job outside its window (#391): a
+            // healthy, intentionally idle state — neutral, not alarming.
+            <span
+              style={{ fontSize: 18, color: 'var(--fg-mute)' }}
+              title={`Outside ${suppressedBy}${nextFire ? ` — next run ${formatRelative(nextFire)}` : ''}`}
+            >
+              waiting
+            </span>
           ) : (
             <span style={{ fontSize: 18 }}>{fireRel ?? '—'}</span>
           )
@@ -842,6 +875,10 @@ function KpiRow({
           overdue && nextFire ? (
             <span className="mono" style={{ fontSize: 11, color: 'var(--error)' }}>
               due {formatRelative(nextFire)}
+            </span>
+          ) : suppressedBy && nextFire ? (
+            <span className="mono dim" style={{ fontSize: 11 }}>
+              next run {fireRel ?? formatRelative(nextFire)}
             </span>
           ) : schedule ? (
             <span className="mono dim" style={{ fontSize: 11 }}>
