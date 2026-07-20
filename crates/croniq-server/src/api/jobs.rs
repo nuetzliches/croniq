@@ -591,15 +591,26 @@ pub async fn handle_register(
         .create_trigger(&trigger_def)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Push to live scheduler
+    // Push to live scheduler. The calendar gate is resolved and attached
+    // here (issue #393); an unresolvable reference fails closed (paused
+    // trigger + config_error fault) under `strict_calendars`. Register stays
+    // lenient (no 400): it's a runner-bootstrap upsert where the referenced
+    // calendar may be created moments later — the fault surfaces the gap.
     let status = if let Some(ref tx) = state.scheduler_tx {
-        if let Some(trigger) = trigger_from_definition(&trigger_def, now) {
+        let resolved = state.resolved_calendars().await;
+        if let Some(built) = trigger_from_definition(&trigger_def, &resolved, now) {
             let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
             let _ = tx.send(SchedulerCommand::AddJob {
                 job: Box::new(job_config),
-                trigger: Box::new(trigger),
+                trigger: Box::new(built.trigger),
             });
-            "registered"
+            let faulted = built.calendar_fault.is_some();
+            state.set_config_fault(&trigger_def.job_key, built.calendar_fault);
+            if faulted {
+                "registered_calendar_fault"
+            } else {
+                "registered"
+            }
         } else {
             "registered_no_schedule"
         }
@@ -766,15 +777,20 @@ pub async fn handle_adopt(
 
     // Push the freshly-API-managed trigger to the running scheduler so the
     // job keeps firing without waiting for a reload. The DSL trigger keyed
-    // by the same job_key gets replaced inside the scheduler.
-    if let Some(ref tx) = state.scheduler_tx
-        && let Some(trigger) = trigger_from_definition(&trigger_def, now)
-    {
-        let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
-        let _ = tx.send(SchedulerCommand::AddJob {
-            job: Box::new(job_config),
-            trigger: Box::new(trigger),
-        });
+    // by the same job_key gets replaced inside the scheduler. Resolving the
+    // calendar here restores the gate the job had as a DSL trigger — before
+    // #393 adoption silently dropped it (the union resolver finds the
+    // calendar whether it is still DSL-defined or was itself adopted).
+    if let Some(ref tx) = state.scheduler_tx {
+        let resolved = state.resolved_calendars().await;
+        if let Some(built) = trigger_from_definition(&trigger_def, &resolved, now) {
+            let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
+            let _ = tx.send(SchedulerCommand::AddJob {
+                job: Box::new(job_config),
+                trigger: Box::new(built.trigger),
+            });
+            state.set_config_fault(&trigger_def.job_key, built.calendar_fault);
+        }
     }
 
     Ok((

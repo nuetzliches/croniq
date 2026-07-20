@@ -100,6 +100,7 @@ pub async fn handle_reload_config(
         &dsl_jobs,
         &dsl_calendars,
         &state.policy_dsl_adopt_on_mutate,
+        &state.policy_strict_calendars,
         &triggers,
         &state.config_faults,
     )

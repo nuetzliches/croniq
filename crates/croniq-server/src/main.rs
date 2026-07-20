@@ -296,6 +296,10 @@ async fn main() -> Result<()> {
             loaded.runtime.policy.dsl_adopt_on_mutate,
             std::sync::atomic::Ordering::Relaxed,
         );
+        s.policy_strict_calendars.store(
+            loaded.runtime.policy.strict_calendars,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // Surface jobs paused by an unresolved calendar reference (issue #361)
         // so `GET /v1/jobs/states` and `/metrics` can report them.
         *s.config_faults.write().unwrap() = std::mem::take(&mut loaded.calendar_faults);
@@ -434,10 +438,22 @@ async fn main() -> Result<()> {
 
     // Reconcile API/runner-registered jobs from DB (not in Croniqfile)
     {
-        use croniq_server::loader::{job_config_from_definition, trigger_from_definition};
+        use croniq_server::loader::{
+            job_config_from_definition, resolve_calendars, trigger_from_definition,
+        };
 
         let now = chrono::Utc::now();
         if let Ok(api_triggers) = store.list_triggers(None) {
+            // Resolve calendar gates against the union of DSL and store
+            // calendars so API-registered jobs are gated like DSL ones
+            // (issue #393). Unresolvable references fail closed under
+            // `strict_calendars`: the trigger comes back paused and the
+            // reason lands in `config_faults` next to the DSL faults.
+            let resolved = resolve_calendars(
+                &dsl_calendars_initial,
+                &store.list_calendars().unwrap_or_default(),
+                loaded.runtime.policy.strict_calendars,
+            );
             let mut api_count = 0;
             for def in &api_triggers {
                 if def.managed_by == "dsl" || !def.enabled {
@@ -446,10 +462,17 @@ async fn main() -> Result<()> {
                 if triggers.contains_key(&def.job_key) {
                     continue;
                 } // Croniqfile takes precedence
-                if let Some(trigger) = trigger_from_definition(def, now) {
+                if let Some(built) = trigger_from_definition(def, &resolved, now) {
                     let job_config = job_config_from_definition(def, None);
                     jobs.push(job_config);
-                    triggers.insert(def.job_key.clone(), trigger);
+                    triggers.insert(def.job_key.clone(), built.trigger);
+                    if let Some(reason) = built.calendar_fault {
+                        server_state
+                            .config_faults
+                            .write()
+                            .unwrap()
+                            .insert(def.job_key.clone(), reason);
+                    }
                     api_count += 1;
                 }
             }
@@ -497,6 +520,7 @@ async fn main() -> Result<()> {
     let scheduler_reload_dsl = Arc::clone(&dsl_jobs_shared);
     let scheduler_reload_dsl_cals = Arc::clone(&dsl_calendars_shared);
     let scheduler_reload_policy = Arc::clone(&server_state.policy_dsl_adopt_on_mutate);
+    let scheduler_reload_strict = Arc::clone(&server_state.policy_strict_calendars);
     let scheduler_reload_faults = Arc::clone(&server_state.config_faults);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
 
@@ -589,6 +613,7 @@ async fn main() -> Result<()> {
                                 &scheduler_reload_dsl,
                                 &scheduler_reload_dsl_cals,
                                 &scheduler_reload_policy,
+                                &scheduler_reload_strict,
                                 &scheduler_reload_snapshot,
                                 &scheduler_reload_faults,
                             ).await;

@@ -180,25 +180,11 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
     let strict_calendars = runtime.policy.strict_calendars;
 
     // Build calendars from compiled config. Calendars that fail to compile are
-    // dropped from `calendars` but remembered in `calendar_errors` so a job
-    // that references one can be failed closed (paused) instead of silently
-    // un-gated (issue #361).
-    let mut calendars: HashMap<String, Calendar> = HashMap::new();
-    let mut calendar_errors: HashMap<String, String> = HashMap::new();
-    for cfg in &runtime.calendars {
-        match Calendar::from_config(cfg) {
-            Ok(cal) => {
-                calendars.insert(cfg.name.clone(), cal);
-            }
-            Err(e) => {
-                // A referenced-but-broken calendar is escalated to ERROR at the
-                // point of reference below; log the compile failure itself at
-                // WARN here (an unreferenced broken calendar stays a warning).
-                tracing::warn!(calendar = %cfg.name, error = %e, "failed to compile calendar — skipping");
-                calendar_errors.insert(cfg.name.clone(), e.to_string());
-            }
-        }
-    }
+    // dropped from the set but remembered as errors so a job that references
+    // one can be failed closed (paused) instead of silently un-gated (issue
+    // #361). The DSL path has no store calendars — those only matter for
+    // API-registered triggers (see `trigger_from_definition`, issue #393).
+    let resolved_calendars = resolve_calendars(&runtime.calendars, &[], strict_calendars);
 
     let mut triggers = HashMap::new();
     let mut calendar_faults: HashMap<String, String> = HashMap::new();
@@ -246,38 +232,8 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         // calendar failed to compile, or is not defined) is a fault: under the
         // default `strict_calendars` policy the job is failed closed (paused)
         // rather than fired without its gate (issue #361).
-        let mut calendar_fault: Option<String> = None;
-        let calendar = match job_cfg.calendar.as_deref() {
-            None => None,
-            Some(name) => match calendars.get(name) {
-                Some(cal) => Some(cal.clone()),
-                None => {
-                    let reason = match calendar_errors.get(name) {
-                        Some(err) => {
-                            format!("calendar '{name}' failed to compile: {err}")
-                        }
-                        None => format!("calendar '{name}' is not defined"),
-                    };
-                    if strict_calendars {
-                        tracing::error!(
-                            job = %job_cfg.key,
-                            calendar = %name,
-                            reason = %reason,
-                            "job paused: referenced calendar did not resolve (strict_calendars)"
-                        );
-                        calendar_fault = Some(reason);
-                    } else {
-                        tracing::warn!(
-                            job = %job_cfg.key,
-                            calendar = %name,
-                            reason = %reason,
-                            "job loaded without its calendar gate (strict_calendars disabled)"
-                        );
-                    }
-                    None
-                }
-            },
-        };
+        let (calendar, calendar_fault) =
+            resolved_calendars.resolve(&job_cfg.key, job_cfg.calendar.as_deref());
 
         // Parse time window constraint (e.g. "08:00..18:00")
         let window = job_cfg.window.as_deref().and_then(TimeWindow::parse);
@@ -601,14 +557,182 @@ pub async fn restore_queued_executions(
     restored
 }
 
+/// Parse a store-persisted `CalendarDefinition` (whose `rules` field holds
+/// line-separated Croniqfile calendar-body DSL) into a compiled
+/// `CalendarConfig`. Mirrors `api::calendars::validate_rules`: the rules are
+/// wrapped in a synthetic calendar block and run through the real parser and
+/// semantic validation, so stored rows compile exactly like Croniqfile
+/// calendars. Rows predating the #356 validation gate may legitimately fail
+/// here — callers treat that as a compile error, not a panic.
+pub fn calendar_config_from_definition(
+    def: &croniq_store::models::CalendarDefinition,
+) -> Result<croniq_config::compile::CalendarConfig, String> {
+    let source = format!("calendar \"__store__\" {{\n{}\n}}\n", def.rules);
+    let ast = Parser::parse(&source).map_err(|e| e.to_string())?;
+    let errors: Vec<String> = croniq_config::validate::validate(&ast)
+        .into_iter()
+        .filter(|d| d.severity == croniq_config::validate::Severity::Error)
+        .map(|d| d.message)
+        .collect();
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    let runtime = compile::compile(&ast);
+    let mut cfg = runtime
+        .calendars
+        .into_iter()
+        .next()
+        .ok_or_else(|| "rules did not produce a calendar".to_string())?;
+    cfg.name = def.name.clone();
+    // A `timezone` directive inside the rules text wins; otherwise fall back
+    // to the definition's own timezone column.
+    if cfg.timezone.is_none() {
+        cfg.timezone = def.timezone.clone();
+    }
+    Ok(cfg)
+}
+
+/// The effective calendar set used to attach gates to runtime triggers:
+/// DSL-defined calendars plus store-persisted (API-managed) ones, with DSL
+/// winning on name collision — the same precedence `GET /v1/calendars` uses.
+pub struct ResolvedCalendars {
+    /// Successfully compiled calendars, by name.
+    pub calendars: HashMap<String, Calendar>,
+    /// Calendars that failed to parse/compile, by name, with the reason.
+    pub errors: HashMap<String, String>,
+    /// `policy { strict_calendars }`: unresolvable references fail closed.
+    pub strict: bool,
+}
+
+impl ResolvedCalendars {
+    /// An empty, lenient set — for contexts with no calendar sources at all
+    /// (storeless servers, tests).
+    pub fn empty_lenient() -> Self {
+        Self {
+            calendars: HashMap::new(),
+            errors: HashMap::new(),
+            strict: false,
+        }
+    }
+
+    /// Resolve a job's calendar reference to `(gate, fault)`.
+    ///
+    /// - `None` or empty name → no gate, no fault (empty string is the API's
+    ///   "clear the gate" convention).
+    /// - Known name → a clone of the compiled calendar, no fault.
+    /// - Unknown/broken name → no gate; under `strict` a `Some(reason)` fault
+    ///   the caller must fail closed on (pause the trigger, issue #361),
+    ///   otherwise legacy fail-open with a warning.
+    pub fn resolve(&self, job_key: &str, name: Option<&str>) -> (Option<Calendar>, Option<String>) {
+        let name = match name {
+            None | Some("") => return (None, None),
+            Some(n) => n,
+        };
+        if let Some(cal) = self.calendars.get(name) {
+            return (Some(cal.clone()), None);
+        }
+        let reason = match self.errors.get(name) {
+            Some(err) => format!("calendar '{name}' failed to compile: {err}"),
+            None => format!("calendar '{name}' is not defined"),
+        };
+        if self.strict {
+            tracing::error!(
+                job = %job_key,
+                calendar = %name,
+                reason = %reason,
+                "job paused: referenced calendar did not resolve (strict_calendars)"
+            );
+            (None, Some(reason))
+        } else {
+            tracing::warn!(
+                job = %job_key,
+                calendar = %name,
+                reason = %reason,
+                "job loaded without its calendar gate (strict_calendars disabled)"
+            );
+            (None, None)
+        }
+    }
+}
+
+/// Compile the union of DSL and store calendars into a [`ResolvedCalendars`].
+///
+/// Store calendars are parsed from their persisted rules text; DSL calendars
+/// are compiled on top so they win name collisions (Croniqfile precedence,
+/// mirroring `GET /v1/calendars`). Compile failures land in `errors` so a
+/// referencing job can be failed closed with a specific reason.
+pub fn resolve_calendars(
+    dsl: &[croniq_config::compile::CalendarConfig],
+    stored: &[croniq_store::models::CalendarDefinition],
+    strict: bool,
+) -> ResolvedCalendars {
+    let mut calendars: HashMap<String, Calendar> = HashMap::new();
+    let mut errors: HashMap<String, String> = HashMap::new();
+    for def in stored {
+        // Skip DSL-synthesized rows if a caller passes the raw `/v1/calendars`
+        // union — the DSL configs below are authoritative for those names.
+        if def.managed_by == "dsl" {
+            continue;
+        }
+        let compiled = calendar_config_from_definition(def)
+            .and_then(|cfg| Calendar::from_config(&cfg).map_err(|e| e.to_string()));
+        match compiled {
+            Ok(cal) => {
+                calendars.insert(def.name.clone(), cal);
+            }
+            Err(e) => {
+                tracing::warn!(calendar = %def.name, error = %e, "failed to compile stored calendar — skipping");
+                errors.insert(def.name.clone(), e);
+            }
+        }
+    }
+    for cfg in dsl {
+        match Calendar::from_config(cfg) {
+            Ok(cal) => {
+                calendars.insert(cfg.name.clone(), cal);
+                errors.remove(&cfg.name);
+            }
+            Err(e) => {
+                // A referenced-but-broken calendar is escalated to ERROR at
+                // the point of reference (`resolve`); the compile failure
+                // itself stays a warning (an unreferenced broken calendar is
+                // harmless). DSL wins even when broken: shadowed store
+                // entries must not silently take over.
+                tracing::warn!(calendar = %cfg.name, error = %e, "failed to compile calendar — skipping");
+                calendars.remove(&cfg.name);
+                errors.insert(cfg.name.clone(), e.to_string());
+            }
+        }
+    }
+    ResolvedCalendars {
+        calendars,
+        errors,
+        strict,
+    }
+}
+
+/// A runtime trigger built from a persisted `TriggerDefinition`, plus the
+/// calendar fault that paused it (if any).
+pub struct BuiltTrigger {
+    pub trigger: Trigger,
+    /// `Some(reason)` when the definition's calendar reference did not
+    /// resolve under `strict_calendars` — the trigger is returned already
+    /// paused (fail closed, mirroring the DSL path / issue #361). Callers
+    /// surface the reason through `ServerState.config_faults`.
+    pub calendar_fault: Option<String>,
+}
+
 /// Build a runtime Trigger from a persisted TriggerDefinition.
 ///
 /// Used for API/runner-registered jobs that don't come from the Croniqfile.
-/// Returns None if the schedule can't be parsed.
+/// The definition's `calendar` name is resolved against `calendars` and the
+/// compiled gate attached (issue #393). Returns None if the schedule can't
+/// be parsed.
 pub fn trigger_from_definition(
     def: &croniq_store::models::TriggerDefinition,
+    calendars: &ResolvedCalendars,
     now: DateTime<Utc>,
-) -> Option<Trigger> {
+) -> Option<BuiltTrigger> {
     let cron_expr = def.cron_expression.as_deref()?;
 
     // Parse schedule expression: interval shorthand ("5m", "300", "*/5 * * * *")
@@ -626,17 +750,30 @@ pub fn trigger_from_definition(
     let not_before = def.not_before;
     let not_after = def.not_after;
 
-    Some(Trigger::with_bounds(
+    let (calendar, calendar_fault) = calendars.resolve(&def.job_key, def.calendar.as_deref());
+
+    let mut trigger = Trigger::with_bounds(
         def.job_key.clone(),
         schedule,
         tz,
-        None, // calendar resolved separately
+        calendar,
         window,
         MisfirePolicy::FireNow,
         not_before,
         not_after,
         now,
-    ))
+    );
+
+    // Fail closed: an unresolved calendar reference must not fire un-gated
+    // (same contract as the DSL path in `load_from_compiled`).
+    if calendar_fault.is_some() {
+        trigger.pause();
+    }
+
+    Some(BuiltTrigger {
+        trigger,
+        calendar_fault,
+    })
 }
 
 /// Build a minimal JobConfig from a persisted trigger definition.
@@ -1340,5 +1477,137 @@ mod tests {
         assert_eq!(row.status, croniq_store::models::JobStatus::Active);
         assert_eq!(row.next_fire_at, Some(monday_open));
         assert_eq!(row.fire_count, 5);
+    }
+
+    // ─── API calendar resolution + attachment (#393) ────────────────────────
+
+    use croniq_store::models::{CalendarDefinition, TriggerDefinition};
+
+    fn cal_def(name: &str, rules: &str) -> CalendarDefinition {
+        CalendarDefinition {
+            calendar_id: format!("id-{name}"),
+            name: name.into(),
+            timezone: None,
+            rules: rules.into(),
+            managed_by: "api".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn trigger_def(job_key: &str, cron: &str, calendar: Option<&str>) -> TriggerDefinition {
+        TriggerDefinition {
+            trigger_id: format!("tid-{job_key}"),
+            job_key: job_key.into(),
+            cron_expression: Some(cron.into()),
+            timezone: None,
+            calendar: calendar.map(|c| c.into()),
+            window: None,
+            not_before: None,
+            not_after: None,
+            enabled: true,
+            managed_by: "api".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn store_calendar_compiles_and_gates_trigger() {
+        // A store-persisted calendar must gate an API trigger's fire time —
+        // the core #393 fix. Weekdays-only, so a Saturday `now` jumps to Monday.
+        let stored = vec![cal_def("weekdays", "include weekly weekday")];
+        let resolved = resolve_calendars(&[], &stored, true);
+        assert!(resolved.calendars.contains_key("weekdays"));
+
+        let def = trigger_def("api:tick", "1m", Some("weekdays"));
+        let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday
+        let built = trigger_from_definition(&def, &resolved, now).unwrap();
+
+        assert!(built.calendar_fault.is_none());
+        assert!(built.trigger.calendar.is_some());
+        assert_eq!(built.trigger.state, TriggerState::Armed);
+        // Gate skips the weekend to Monday 00:00.
+        assert_eq!(
+            built.trigger.next_fire_at,
+            Some(fixed_utc(2026, 3, 30, 0, 0))
+        );
+    }
+
+    #[test]
+    fn dsl_calendar_wins_name_collision_over_store() {
+        // Store and DSL both define "shared"; the DSL rule (weekly monday)
+        // must win over the store rule (weekly weekday).
+        let dsl = load_str("calendar shared { include weekly monday }")
+            .unwrap()
+            .runtime
+            .calendars;
+        let stored = vec![cal_def("shared", "include weekly weekday")];
+        let resolved = resolve_calendars(&dsl, &stored, true);
+
+        let def = trigger_def("api:tick", "1m", Some("shared"));
+        let now = fixed_utc(2026, 3, 31, 12, 0); // Tuesday
+        let built = trigger_from_definition(&def, &resolved, now).unwrap();
+        // DSL "monday-only" → next fire is the following Monday, not tomorrow.
+        assert_eq!(
+            built.trigger.next_fire_at,
+            Some(fixed_utc(2026, 4, 6, 0, 0))
+        );
+    }
+
+    #[test]
+    fn broken_store_calendar_faults_closed_under_strict() {
+        let stored = vec![cal_def("bad", "include weekly notaday")];
+        let resolved = resolve_calendars(&[], &stored, true);
+        assert!(resolved.errors.contains_key("bad"));
+
+        let def = trigger_def("api:tick", "1m", Some("bad"));
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert_eq!(built.trigger.state, TriggerState::Paused);
+        let reason = built.calendar_fault.expect("fault");
+        assert!(reason.contains("failed to compile"), "reason: {reason}");
+    }
+
+    #[test]
+    fn unknown_calendar_faults_closed_under_strict() {
+        let resolved = resolve_calendars(&[], &[], true);
+        let def = trigger_def("api:tick", "1m", Some("ghost"));
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert_eq!(built.trigger.state, TriggerState::Paused);
+        assert!(built.calendar_fault.unwrap().contains("not defined"));
+    }
+
+    #[test]
+    fn unknown_calendar_lenient_runs_ungated_without_fault() {
+        let resolved = resolve_calendars(&[], &[], false);
+        let def = trigger_def("api:tick", "1m", Some("ghost"));
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert_ne!(built.trigger.state, TriggerState::Paused);
+        assert!(built.trigger.calendar.is_none());
+        assert!(built.calendar_fault.is_none());
+    }
+
+    #[test]
+    fn empty_calendar_name_is_no_gate() {
+        let resolved = resolve_calendars(&[], &[], true);
+        let def = trigger_def("api:tick", "1m", Some(""));
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert!(built.trigger.calendar.is_none());
+        assert!(built.calendar_fault.is_none());
+    }
+
+    #[test]
+    fn calendar_config_timezone_precedence() {
+        // A `timezone` directive inside the rules text wins over the column.
+        let mut with_directive = cal_def("tz", "timezone Europe/Vienna\ninclude weekly weekday");
+        with_directive.timezone = Some("UTC".into());
+        let cfg = calendar_config_from_definition(&with_directive).unwrap();
+        assert_eq!(cfg.timezone.as_deref(), Some("Europe/Vienna"));
+
+        // With no directive, the column is the fallback.
+        let mut column_only = cal_def("tz2", "include weekly weekday");
+        column_only.timezone = Some("Europe/Berlin".into());
+        let cfg = calendar_config_from_definition(&column_only).unwrap();
+        assert_eq!(cfg.timezone.as_deref(), Some("Europe/Berlin"));
     }
 }

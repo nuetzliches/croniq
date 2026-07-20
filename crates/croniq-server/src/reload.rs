@@ -55,6 +55,11 @@ pub struct ReloadPlan {
     /// Whether `policy { dsl_adopt_on_mutate true }` is set in the new file.
     /// Apply propagates this into `ServerState.policy_dsl_adopt_on_mutate`.
     pub policy_dsl_adopt_on_mutate: bool,
+    /// Whether `policy { strict_calendars }` is set (default true) in the new
+    /// file. Apply propagates this into `ServerState.policy_strict_calendars`
+    /// so API handlers fail calendar references closed with the same policy
+    /// the loader used (issue #393).
+    pub policy_strict_calendars: bool,
     /// Merged jobs: DSL + API-registered (DSL wins on conflict).
     pub merged_jobs: Vec<JobConfig>,
     /// Merged triggers: DSL + API-registered (DSL wins on conflict).
@@ -164,6 +169,35 @@ pub async fn build_plan(
         .collect();
     let mut merged_jobs = dsl_jobs.clone();
 
+    // Adopted DSL calendars are dropped from the DSL set — the API store
+    // owns them now, so the resolver below picks up the store copy.
+    let adopted_calendars: HashSet<String> = store
+        .list_adoptions("calendar")
+        .map_err(|e| ReloadError::Store(format!("{e}")))?
+        .into_iter()
+        .map(|a| a.resource_key)
+        .collect();
+    let dsl_calendars: Vec<CalendarConfig> = loaded
+        .runtime
+        .calendars
+        .iter()
+        .filter(|c| !adopted_calendars.contains(&c.name))
+        .cloned()
+        .collect();
+
+    // Resolve calendar gates for API-registered triggers against the union
+    // of DSL and store calendars (issue #393). Unresolvable references fail
+    // closed under `strict_calendars`, mirroring the DSL faults collected by
+    // the loader above.
+    let resolved = crate::loader::resolve_calendars(
+        &dsl_calendars,
+        &store
+            .list_calendars()
+            .map_err(|e| ReloadError::Store(format!("{e}")))?,
+        loaded.runtime.policy.strict_calendars,
+    );
+
+    let mut api_calendar_faults: HashMap<String, String> = HashMap::new();
     let api_triggers = store
         .list_triggers(None)
         .map_err(|e| ReloadError::Store(format!("{e}")))?;
@@ -175,10 +209,13 @@ pub async fn build_plan(
             // DSL precedence — drop API trigger for this key.
             continue;
         }
-        if let Some(trigger) = trigger_from_definition(def, now) {
+        if let Some(built) = trigger_from_definition(def, &resolved, now) {
             let job_config = job_config_from_definition(def, None);
             merged_jobs.push(job_config);
-            merged_triggers.insert(def.job_key.clone(), trigger);
+            merged_triggers.insert(def.job_key.clone(), built.trigger);
+            if let Some(reason) = built.calendar_fault {
+                api_calendar_faults.insert(def.job_key.clone(), reason);
+            }
         }
     }
 
@@ -216,31 +253,22 @@ pub async fn build_plan(
         }
     };
 
-    let adopted_calendars: HashSet<String> = store
-        .list_adoptions("calendar")
-        .map_err(|e| ReloadError::Store(format!("{e}")))?
-        .into_iter()
-        .map(|a| a.resource_key)
-        .collect();
-    let dsl_calendars: Vec<CalendarConfig> = loaded
-        .runtime
-        .calendars
-        .into_iter()
-        .filter(|c| !adopted_calendars.contains(&c.name))
-        .collect();
-
     // Keep only faults for jobs that survived into the merged plan (an adopted
-    // job's DSL trigger is dropped, so its fault is moot).
-    let calendar_faults: HashMap<String, String> = loaded
+    // job's DSL trigger is dropped, so its fault is moot), then add the faults
+    // collected for API-registered triggers above. Apply replaces the fault
+    // set wholesale, so every reload must recompute both sources.
+    let mut calendar_faults: HashMap<String, String> = loaded
         .calendar_faults
         .into_iter()
         .filter(|(k, _)| merged_triggers.contains_key(k))
         .collect();
+    calendar_faults.extend(api_calendar_faults);
 
     Ok(ReloadPlan {
         dsl_jobs,
         dsl_calendars,
         policy_dsl_adopt_on_mutate: loaded.runtime.policy.dsl_adopt_on_mutate,
+        policy_strict_calendars: loaded.runtime.policy.strict_calendars,
         merged_jobs,
         merged_triggers,
         calendar_faults,
@@ -269,12 +297,14 @@ fn job_changed(a: &JobConfig, b: &JobConfig) -> bool {
 /// Sends a `SchedulerCommand::Reload` and waits for the scheduler to ack.
 /// After the ack, updates the shared DSL job/calendar lists and trigger
 /// snapshot so subsequent API reads and reload diffs see the new state.
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_plan(
     plan: ReloadPlan,
     scheduler_tx: &mpsc::UnboundedSender<SchedulerCommand>,
     dsl_jobs_shared: &RwLock<Vec<JobConfig>>,
     dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
     policy_dsl_adopt: &std::sync::atomic::AtomicBool,
+    policy_strict_calendars: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
     config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) -> Result<(), ApplyError> {
@@ -282,6 +312,7 @@ pub async fn apply_plan(
     let post_dsl = plan.dsl_jobs;
     let post_dsl_cals = plan.dsl_calendars;
     let post_policy = plan.policy_dsl_adopt_on_mutate;
+    let post_strict = plan.policy_strict_calendars;
     let post_faults = plan.calendar_faults;
 
     let (ack_tx, ack_rx) = oneshot::channel();
@@ -298,6 +329,7 @@ pub async fn apply_plan(
     *dsl_jobs_shared.write().await = post_dsl;
     *dsl_calendars_shared.write().await = post_dsl_cals;
     policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
+    policy_strict_calendars.store(post_strict, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
     *config_faults.write().unwrap() = post_faults;
     Ok(())
@@ -308,22 +340,26 @@ pub async fn apply_plan(
 /// Use this from the scheduler select-loop when you already own `&mut
 /// SchedulerLoop` — sending a command + awaiting the ack from within the
 /// scheduler task itself would deadlock.
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_plan_direct(
     plan: ReloadPlan,
     scheduler: &mut SchedulerLoop,
     dsl_jobs_shared: &RwLock<Vec<JobConfig>>,
     dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
     policy_dsl_adopt: &std::sync::atomic::AtomicBool,
+    policy_strict_calendars: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
     config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) {
     let post_triggers = plan.merged_triggers.clone();
     let post_policy = plan.policy_dsl_adopt_on_mutate;
+    let post_strict = plan.policy_strict_calendars;
     let post_faults = plan.calendar_faults;
     scheduler.reload(plan.merged_triggers, plan.merged_jobs);
     *dsl_jobs_shared.write().await = plan.dsl_jobs;
     *dsl_calendars_shared.write().await = plan.dsl_calendars;
     policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
+    policy_strict_calendars.store(post_strict, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
     *config_faults.write().unwrap() = post_faults;
 }
@@ -687,5 +723,107 @@ mod tests {
             croniq_scheduler::trigger::TriggerState::Paused
         );
         assert!(plan.calendar_faults.contains_key("a:b"));
+    }
+
+    /// Helper: seed an API trigger referencing a calendar name.
+    fn seed_api_trigger_cal(store: &DynStore, job_key: &str, calendar: Option<&str>) {
+        store
+            .create_trigger(&croniq_store::models::TriggerDefinition {
+                trigger_id: format!("tid-{job_key}"),
+                job_key: job_key.into(),
+                cron_expression: Some("1m".into()),
+                timezone: None,
+                calendar: calendar.map(|c| c.into()),
+                window: None,
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    /// Helper: seed an API (store) calendar.
+    fn seed_store_calendar(store: &DynStore, name: &str, rules: &str) {
+        store
+            .create_calendar(&croniq_store::models::CalendarDefinition {
+                calendar_id: format!("cid-{name}"),
+                name: name.into(),
+                timezone: None,
+                rules: rules.into(),
+                managed_by: "api".into(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_attaches_store_calendar_to_api_trigger() {
+        // #393: an API trigger referencing a store calendar must come back
+        // gated after a reload, not un-gated.
+        let (cur_tr, cur_dsl) = state_from("job dsl:x { every 1 hours }").await;
+        let store = empty_store();
+        seed_store_calendar(&store, "weekdays", "include weekly weekday");
+        seed_api_trigger_cal(&store, "api:gated", Some("weekdays"));
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "job dsl:x { every 1 hours }").unwrap();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert!(
+            plan.merged_triggers["api:gated"].calendar.is_some(),
+            "store calendar must be attached on reload"
+        );
+        assert!(!plan.calendar_faults.contains_key("api:gated"));
+    }
+
+    #[tokio::test]
+    async fn reload_faults_api_trigger_with_unknown_calendar_under_strict() {
+        let (cur_tr, cur_dsl) = state_from("job dsl:x { every 1 hours }").await;
+        let store = empty_store();
+        seed_api_trigger_cal(&store, "api:gated", Some("ghost"));
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "job dsl:x { every 1 hours }").unwrap();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            plan.merged_triggers["api:gated"].state,
+            croniq_scheduler::trigger::TriggerState::Paused
+        );
+        assert!(plan.calendar_faults.contains_key("api:gated"));
+        assert!(plan.policy_strict_calendars);
+    }
+
+    #[tokio::test]
+    async fn reload_api_trigger_unknown_calendar_lenient_runs_ungated() {
+        let (cur_tr, cur_dsl) = state_from("job dsl:x { every 1 hours }").await;
+        let store = empty_store();
+        seed_api_trigger_cal(&store, "api:gated", Some("ghost"));
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "policy { strict_calendars false }\njob dsl:x { every 1 hours }\n",
+        )
+        .unwrap();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert_ne!(
+            plan.merged_triggers["api:gated"].state,
+            croniq_scheduler::trigger::TriggerState::Paused
+        );
+        assert!(plan.merged_triggers["api:gated"].calendar.is_none());
+        assert!(!plan.calendar_faults.contains_key("api:gated"));
+        assert!(!plan.policy_strict_calendars);
     }
 }
