@@ -58,7 +58,8 @@ fn parse_error_to_load(err: croniq_config::parser::ParseError, source: &str) -> 
         ParseError::Lex(lex) => match lex {
             LexError::UnterminatedString { span }
             | LexError::UnterminatedPlaceholder { span }
-            | LexError::InvalidEscape { span, .. } => Some(*span),
+            | LexError::InvalidEscape { span, .. }
+            | LexError::UnexpectedChar { span, .. } => Some(*span),
         },
     };
 
@@ -734,10 +735,7 @@ pub fn trigger_from_definition(
     now: DateTime<Utc>,
 ) -> Option<BuiltTrigger> {
     let cron_expr = def.cron_expression.as_deref()?;
-
-    // Parse schedule expression: interval shorthand ("5m", "300", "*/5 * * * *")
-    let secs = parse_interval_seconds(cron_expr)?;
-    let schedule = croniq_scheduler::schedule::Schedule::Interval { seconds: secs };
+    let schedule = schedule_from_expr(cron_expr)?;
 
     let tz: chrono_tz::Tz = def
         .timezone
@@ -789,13 +787,22 @@ pub fn job_config_from_definition(
         .split_once(':')
         .unwrap_or(("default", &def.job_key));
 
+    // Reconstruct the compiled schedule from the persisted expression so
+    // next-fire previews work for API/adopted jobs. Previously hardcoded to
+    // `Disabled`, which made every adopted job read as "never fires".
+    let schedule = def
+        .cron_expression
+        .as_deref()
+        .and_then(compiled_schedule_from_expr)
+        .unwrap_or(CompiledSchedule::Disabled);
+
     JobConfig {
         key: def.job_key.clone(),
         namespace: ns.to_string(),
         name: name.to_string(),
         variant: None,
         description: job_def.and_then(|j| j.description.clone()),
-        schedule: CompiledSchedule::Disabled,
+        schedule,
         schedule_summary: def.cron_expression.clone().unwrap_or_default(),
         timezone: def.timezone.clone(),
         calendar: def.calendar.clone(),
@@ -943,7 +950,10 @@ pub fn synth_trigger_def_from_dsl(
     croniq_store::models::TriggerDefinition {
         trigger_id: dsl_trigger_id(&cfg.key),
         job_key: cfg.key.clone(),
-        cron_expression: Some(cfg.schedule_summary.clone()),
+        // Canonical, re-parseable DSL line — NOT `schedule_summary`, whose
+        // comma-joined weekday/monthly forms don't round-trip through the
+        // scheduler on reload (the summary is display-only).
+        cron_expression: Some(cfg.schedule.to_dsl()),
         timezone: cfg.timezone.clone(),
         calendar: cfg.calendar.clone(),
         window: cfg.window.clone(),
@@ -965,6 +975,35 @@ pub fn synth_trigger_def_from_dsl(
         created_at: now,
         updated_at: now,
     }
+}
+
+/// Build a runtime [`Schedule`] from a persisted `cron_expression`.
+///
+/// API-created triggers store interval shorthand (`"5m"`, `"300"`,
+/// `"*/5 * * * *"`); DSL-synthesized and adopted triggers store a canonical DSL
+/// schedule line (`"every day at 02:00"`, `"every monday friday at 09:00"`,
+/// `"once at \"…\""`) — see [`CompiledSchedule::to_dsl`]. The shorthand is tried
+/// first so the fast path and existing API values are untouched, then the full
+/// DSL grammar, so *every* schedule shape rebuilds — not just `Interval`
+/// (issue found while fixing #393). Malformed expressions yield `None`.
+fn schedule_from_expr(expr: &str) -> Option<Schedule> {
+    if let Some(seconds) = parse_interval_seconds(expr) {
+        return Some(Schedule::Interval { seconds });
+    }
+    let kind = croniq_config::parser::parse_schedule_expr(expr).ok()?;
+    Schedule::from_ast(&kind).ok()
+}
+
+/// Reconstruct the [`CompiledSchedule`] a persisted `cron_expression` describes,
+/// mirroring [`schedule_from_expr`] but for the config-side schedule type used
+/// in previews / `JobConfig`. `None` for malformed expressions.
+fn compiled_schedule_from_expr(expr: &str) -> Option<croniq_config::schedule::CompiledSchedule> {
+    use croniq_config::schedule::CompiledSchedule;
+    if let Some(seconds) = parse_interval_seconds(expr) {
+        return Some(CompiledSchedule::Interval { seconds });
+    }
+    let kind = croniq_config::parser::parse_schedule_expr(expr).ok()?;
+    Some(CompiledSchedule::from_ast(&kind))
 }
 
 fn parse_interval_seconds(s: &str) -> Option<u64> {
@@ -1594,6 +1633,57 @@ mod tests {
         let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
         assert!(built.trigger.calendar.is_none());
         assert!(built.calendar_fault.is_none());
+    }
+
+    #[test]
+    fn synth_dsl_trigger_rebuilds_for_all_schedule_shapes() {
+        // A DSL job's synthesized trigger must round-trip through the store:
+        // `synth_trigger_def_from_dsl` persists a canonical schedule expression
+        // that `trigger_from_definition` rebuilds into the *same* Schedule
+        // shape — not just intervals. Before the fix, `cron_expression` held
+        // the human summary (e.g. "every 5 minutes"), which only `Interval`
+        // jobs could re-parse, so an adopted daily/weekly/monthly/once job
+        // vanished from the scheduler on reload/restart. This is the unit-level
+        // stand-in for "build_plan/reload rebuilds the adopted trigger" across
+        // every schedule shape.
+        let resolved = ResolvedCalendars::empty_lenient();
+        let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday
+
+        #[allow(clippy::type_complexity)]
+        let cases: &[(&str, fn(&Schedule) -> bool)] = &[
+            ("job iv:tick { every 5 minutes }", |s| {
+                matches!(s, Schedule::Interval { seconds: 300 })
+            }),
+            ("job dl:report { every day at 02:00 }", |s| {
+                matches!(s, Schedule::Daily { .. })
+            }),
+            ("job wk:run { every monday friday at 09:00 }", |s| {
+                matches!(s, Schedule::Weekdays { .. })
+            }),
+            ("job mo:bill { every 1st 15th of month at 10:00 }", |s| {
+                matches!(s, Schedule::Monthly { .. })
+            }),
+            (
+                r#"job on:migrate { once at "2999-01-01T00:00:00Z" }"#,
+                |s| matches!(s, Schedule::Once { .. }),
+            ),
+        ];
+
+        for (src, is_shape) in cases {
+            let cfg = load_str(src).unwrap().runtime.jobs.pop().unwrap();
+            let def = synth_trigger_def_from_dsl(&cfg, now);
+            let built = trigger_from_definition(&def, &resolved, now)
+                .unwrap_or_else(|| panic!("{src}: trigger_from_definition returned None"));
+            assert!(
+                is_shape(&built.trigger.schedule),
+                "{src}: rebuilt wrong shape: {:?}",
+                built.trigger.schedule
+            );
+            assert!(
+                built.trigger.next_fire_at.is_some(),
+                "{src}: rebuilt trigger has no next fire time"
+            );
+        }
     }
 
     #[test]

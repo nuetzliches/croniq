@@ -112,6 +112,74 @@ impl CompiledSchedule {
             CompiledSchedule::Disabled => "disabled".to_string(),
         }
     }
+
+    /// Emit a canonical DSL schedule line that round-trips through
+    /// [`crate::parser::parse_schedule_expr`].
+    ///
+    /// Unlike [`Self::summary`], the weekday/monthly forms use the
+    /// space-separated syntax the parser accepts — the comma-joined summary
+    /// (`every monday, friday at 09:00`) does not re-parse. This is what gets
+    /// persisted into a `cron_expression` for DSL/adopted jobs so the scheduler
+    /// can rebuild the trigger on reload. Delegates to the shared canonical
+    /// emitter so it can never drift from the formatter.
+    pub fn to_dsl(&self) -> String {
+        crate::format::format_schedule_line(&self.to_schedule_kind())
+    }
+
+    /// Rebuild the AST [`ScheduleKind`] this schedule compiled from, so the
+    /// canonical formatter can emit it. The spans are synthetic (this value
+    /// was never lexed) but the formatter ignores them. `Once` is re-quoted so
+    /// datetimes with offsets survive re-lexing.
+    fn to_schedule_kind(&self) -> ScheduleKind {
+        use crate::ast::{StringValue, TimeValue};
+        use crate::lexer::Span;
+
+        let time = |hour: u8, minute: u8| TimeValue {
+            hour,
+            minute,
+            raw: format!("{hour:02}:{minute:02}"),
+            span: Span::empty(0),
+        };
+
+        match self {
+            CompiledSchedule::Interval { seconds } => {
+                // Invert `from_ast`: pick the coarsest unit that divides
+                // evenly, matching how `summary`/`format_schedule_line` choose.
+                let (count, unit) = if *seconds >= 3600 && seconds % 3600 == 0 {
+                    ((seconds / 3600) as u32, IntervalUnit::Hours)
+                } else if *seconds >= 60 && seconds % 60 == 0 {
+                    ((seconds / 60) as u32, IntervalUnit::Minutes)
+                } else {
+                    (*seconds as u32, IntervalUnit::Seconds)
+                };
+                ScheduleKind::Interval { count, unit }
+            }
+            CompiledSchedule::Daily { hour, minute } => ScheduleKind::Daily {
+                time: time(*hour, *minute),
+            },
+            CompiledSchedule::Weekdays { days, hour, minute } => ScheduleKind::Weekdays {
+                days: days.clone(),
+                time: time(*hour, *minute),
+            },
+            CompiledSchedule::Monthly {
+                ordinals,
+                hour,
+                minute,
+            } => ScheduleKind::Monthly {
+                ordinals: ordinals.clone(),
+                time: time(*hour, *minute),
+            },
+            CompiledSchedule::Once { at } => ScheduleKind::Once {
+                at: StringValue {
+                    value: at.clone(),
+                    quoted: true,
+                    is_placeholder: false,
+                    span: Span::empty(0),
+                },
+            },
+            CompiledSchedule::Disabled => ScheduleKind::Disabled,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -145,5 +213,47 @@ mod summary_tests {
             CompiledSchedule::Interval { seconds: 7200 }.summary(),
             "every 2 hours"
         );
+    }
+
+    #[test]
+    fn to_dsl_roundtrips_through_parser() {
+        use crate::parser::parse_schedule_expr;
+
+        // One case per schedule shape, including the ones whose `summary()`
+        // form (comma-joined weekdays/ordinals) does NOT re-parse.
+        let cases = [
+            CompiledSchedule::Interval { seconds: 300 },
+            CompiledSchedule::Interval { seconds: 60 },
+            CompiledSchedule::Interval { seconds: 90 },
+            CompiledSchedule::Interval { seconds: 3600 },
+            CompiledSchedule::Daily { hour: 2, minute: 0 },
+            CompiledSchedule::Weekdays {
+                days: vec![Weekday::Monday, Weekday::Friday],
+                hour: 9,
+                minute: 0,
+            },
+            CompiledSchedule::Monthly {
+                ordinals: vec![MonthOrdinal::Day(1), MonthOrdinal::Day(15)],
+                hour: 10,
+                minute: 0,
+            },
+            CompiledSchedule::Monthly {
+                ordinals: vec![MonthOrdinal::Last],
+                hour: 23,
+                minute: 59,
+            },
+            CompiledSchedule::Once {
+                at: "2026-04-01T03:00:00+00:00".to_string(),
+            },
+        ];
+
+        for sched in cases {
+            let dsl = sched.to_dsl();
+            let kind = parse_schedule_expr(&dsl)
+                .unwrap_or_else(|e| panic!("to_dsl output {dsl:?} did not re-parse: {e}"));
+            // Re-emitting the re-parsed schedule must be a fixed point.
+            let round = CompiledSchedule::from_ast(&kind).to_dsl();
+            assert_eq!(round, dsl, "round-trip changed the canonical form");
+        }
     }
 }

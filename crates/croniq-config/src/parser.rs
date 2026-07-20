@@ -57,6 +57,31 @@ pub struct Parser {
     pos: usize,
 }
 
+/// Parse a bare schedule expression — the DSL text that would follow a job's
+/// opening brace (`every 5 minutes`, `every day at 02:00`, `every Mon Fri at
+/// 09:00`, `once at "…"`, `disabled`) — into its AST [`ScheduleKind`].
+///
+/// Wraps the expression in a synthetic job block and runs it through the real
+/// parser, so it accepts exactly the Croniqfile schedule grammar (same wrapping
+/// trick as `calendar_config_from_definition` in croniq-server). Used to
+/// reconstruct a runtime schedule from a persisted `cron_expression` that holds
+/// a canonical DSL line rather than interval shorthand — see
+/// [`crate::schedule::CompiledSchedule::to_dsl`].
+pub fn parse_schedule_expr(expr: &str) -> Result<ScheduleKind, ParseError> {
+    let source = format!("job __sched__:__probe__ {{\n{expr}\n}}\n");
+    let ast = Parser::parse(&source)?;
+    ast.items
+        .into_iter()
+        .find_map(|item| match item {
+            Item::Job(j) => j.schedule.map(|s| s.kind),
+            _ => None,
+        })
+        .ok_or_else(|| ParseError::General {
+            message: "expression did not contain a schedule".into(),
+            span: Span::empty(0).into(),
+        })
+}
+
 impl Parser {
     /// Parse a Croniqfile source string into an AST.
     pub fn parse(source: &str) -> Result<Croniqfile, ParseError> {
