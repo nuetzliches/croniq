@@ -114,6 +114,12 @@ pub struct ServerState {
     /// resource into the API store; when `false` (default), `/adopt`
     /// returns 409 and PUT/DELETE on DSL resources stay blocked.
     pub policy_dsl_adopt_on_mutate: Arc<std::sync::atomic::AtomicBool>,
+    /// `policy { strict_calendars }` from the Croniqfile (default `true`).
+    /// API handlers resolve schedule calendar references with this policy:
+    /// under strict, an unresolvable reference fails closed (trigger paused +
+    /// `config_faults` entry) instead of running un-gated (issues #361/#393).
+    /// Set at boot and updated on every hot-reload.
+    pub policy_strict_calendars: Arc<std::sync::atomic::AtomicBool>,
     /// Path to the Croniqfile, needed by the admin reload endpoint.
     pub config_path: Option<std::path::PathBuf>,
     /// Counters for `croniq_config_reload_total`, incremented by both the
@@ -204,6 +210,7 @@ impl ServerState {
             dsl_jobs: None,
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -239,6 +246,7 @@ impl ServerState {
             dsl_jobs: None,
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -273,6 +281,7 @@ impl ServerState {
             dsl_jobs: None,
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -288,6 +297,43 @@ impl ServerState {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
         })
+    }
+
+    /// Compile the effective calendar set (DSL ∪ store, DSL wins) for
+    /// attaching gates to API-managed triggers (issue #393). A missing store
+    /// only degrades to the DSL-only set — the triggers being built here are
+    /// store-backed anyway, so that combination can't lose a stored calendar.
+    pub async fn resolved_calendars(&self) -> crate::loader::ResolvedCalendars {
+        let dsl: Vec<CalendarConfig> = match self.dsl_calendars.as_ref() {
+            Some(shared) => shared.read().await.clone(),
+            None => Vec::new(),
+        };
+        let stored = match self.store.as_ref() {
+            Some(store) => store.list_calendars().unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "could not list stored calendars — resolving against DSL only");
+                Vec::new()
+            }),
+            None => Vec::new(),
+        };
+        let strict = self
+            .policy_strict_calendars
+            .load(std::sync::atomic::Ordering::Relaxed);
+        crate::loader::resolve_calendars(&dsl, &stored, strict)
+    }
+
+    /// Insert (`Some`) or clear (`None`) the `config_error` fault for a job.
+    /// Clearing on successful calendar resolution is what heals a previously
+    /// faulted API schedule without waiting for a config reload.
+    pub fn set_config_fault(&self, job_key: &str, fault: Option<String>) {
+        let mut faults = self.config_faults.write().unwrap();
+        match fault {
+            Some(reason) => {
+                faults.insert(job_key.to_string(), reason);
+            }
+            None => {
+                faults.remove(job_key);
+            }
+        }
     }
 }
 
@@ -1748,6 +1794,7 @@ mod tests {
             dsl_jobs: None,
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -1927,6 +1974,7 @@ mod tests {
             dsl_jobs: Some(dsl_jobs),
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -2004,6 +2052,7 @@ mod tests {
             dsl_jobs: Some(dsl_jobs),
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
@@ -2088,6 +2137,7 @@ mod tests {
             dsl_jobs: Some(dsl_jobs),
             dsl_calendars: None,
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),

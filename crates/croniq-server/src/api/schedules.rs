@@ -20,7 +20,41 @@ use uuid::Uuid;
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
-use crate::loader::synth_trigger_def_from_dsl;
+use crate::api::calendars::ValidationError;
+use crate::loader::{ResolvedCalendars, synth_trigger_def_from_dsl};
+
+/// Shorthand for the structured error shape shared with the calendars API,
+/// so validation messages (e.g. an unknown calendar name) reach the UI.
+fn verr(
+    status: StatusCode,
+    error: &'static str,
+    message: String,
+) -> (StatusCode, Json<ValidationError>) {
+    (status, Json(ValidationError { error, message }))
+}
+
+/// Write-time guard for schedule create/update (issue #393): a non-empty
+/// calendar name that is neither a DSL nor a store calendar is rejected with
+/// 400 so a typo surfaces immediately instead of as a silently paused job.
+/// Known-but-broken calendars (compile errors) are accepted — they fail
+/// closed at attach time, matching DSL semantics where the file still loads.
+fn check_calendar_known(
+    calendar: Option<&str>,
+    resolved: &ResolvedCalendars,
+) -> Result<(), (StatusCode, Json<ValidationError>)> {
+    let Some(name) = calendar else { return Ok(()) };
+    if name.is_empty()
+        || resolved.calendars.contains_key(name)
+        || resolved.errors.contains_key(name)
+    {
+        return Ok(());
+    }
+    Err(verr(
+        StatusCode::BAD_REQUEST,
+        "unknown_calendar",
+        format!("calendar '{name}' is not defined"),
+    ))
+}
 
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
@@ -109,19 +143,35 @@ pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateTriggerRequest>,
-) -> Result<(StatusCode, Json<TriggerDefinition>), StatusCode> {
-    require_scope(&ctx, Scope::SCHEDULES_WRITE)?;
-    let store = state
-        .store
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+) -> Result<(StatusCode, Json<TriggerDefinition>), (StatusCode, Json<ValidationError>)> {
+    require_scope(&ctx, Scope::SCHEDULES_WRITE).map_err(|s| {
+        verr(
+            s,
+            "forbidden",
+            format!("missing scope: {}", Scope::SCHEDULES_WRITE),
+        )
+    })?;
+    let store = state.store.as_ref().ok_or_else(|| {
+        verr(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_store",
+            "store unavailable".into(),
+        )
+    })?;
 
     // Refuse to shadow a DSL trigger — the Croniqfile owns scheduling for this job.
     if let Some(dsl) = state.dsl_jobs.as_ref()
         && dsl.read().await.iter().any(|j| j.key == req.job_key)
     {
-        return Err(StatusCode::CONFLICT);
+        return Err(verr(
+            StatusCode::CONFLICT,
+            "dsl_managed",
+            format!("job '{}' is scheduled by the Croniqfile", req.job_key),
+        ));
     }
+
+    let resolved = state.resolved_calendars().await;
+    check_calendar_known(req.calendar.as_deref(), &resolved)?;
 
     let now = Utc::now();
     let trigger = TriggerDefinition {
@@ -138,19 +188,26 @@ pub async fn handle_create(
         created_at: now,
         updated_at: now,
     };
-    store
-        .create_trigger(&trigger)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store.create_trigger(&trigger).map_err(|_| {
+        verr(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "failed to persist schedule".into(),
+        )
+    })?;
 
-    // Push to live scheduler if possible
+    // Push to live scheduler if possible. The calendar gate is resolved and
+    // attached here (issue #393); an unresolvable reference fails closed
+    // (paused trigger + config_error fault) under `strict_calendars`.
     if let Some(ref tx) = state.scheduler_tx
-        && let Some(rt_trigger) = crate::loader::trigger_from_definition(&trigger, now)
+        && let Some(built) = crate::loader::trigger_from_definition(&trigger, &resolved, now)
     {
         let job_config = crate::loader::job_config_from_definition(&trigger, None);
         let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
             job: Box::new(job_config),
-            trigger: Box::new(rt_trigger),
+            trigger: Box::new(built.trigger),
         });
+        state.set_config_fault(&trigger.job_key, built.calendar_fault);
     }
 
     Ok((StatusCode::CREATED, Json(trigger)))
@@ -182,27 +239,57 @@ pub async fn handle_update(
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
     Json(req): Json<UpdateTriggerRequest>,
-) -> Result<Json<TriggerDefinition>, StatusCode> {
-    require_scope(&ctx, Scope::SCHEDULES_WRITE)?;
+) -> Result<Json<TriggerDefinition>, (StatusCode, Json<ValidationError>)> {
+    require_scope(&ctx, Scope::SCHEDULES_WRITE).map_err(|s| {
+        verr(
+            s,
+            "forbidden",
+            format!("missing scope: {}", Scope::SCHEDULES_WRITE),
+        )
+    })?;
     if trigger_id.starts_with("dsl:") {
-        return Err(StatusCode::CONFLICT);
+        return Err(verr(
+            StatusCode::CONFLICT,
+            "dsl_managed",
+            "DSL-managed schedules are owned by the Croniqfile".into(),
+        ));
     }
-    let store = state
-        .store
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state.store.as_ref().ok_or_else(|| {
+        verr(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_store",
+            "store unavailable".into(),
+        )
+    })?;
 
+    let not_found = || {
+        verr(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("no schedule with id '{trigger_id}'"),
+        )
+    };
     let mut existing = store
         .get_trigger(&trigger_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| {
+            verr(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "failed to load schedule".into(),
+            )
+        })?
+        .ok_or_else(not_found)?;
 
     // DSL-managed rows are filtered by the `dsl:` trigger_id prefix
     // above; we additionally guard against a stored row whose
     // `managed_by` says `dsl` (defensive, not expected). Every other
     // origin (`api`, `runner`, future operator imports) is editable.
     if existing.managed_by == "dsl" {
-        return Err(StatusCode::CONFLICT);
+        return Err(verr(
+            StatusCode::CONFLICT,
+            "dsl_managed",
+            "DSL-managed schedules are owned by the Croniqfile".into(),
+        ));
     }
 
     if let Some(cron) = req.cron_expression {
@@ -219,33 +306,46 @@ pub async fn handle_update(
     if let Some(enabled) = req.enabled {
         existing.enabled = enabled;
     }
+
+    let resolved = state.resolved_calendars().await;
+    check_calendar_known(existing.calendar.as_deref(), &resolved)?;
+
     let now = Utc::now();
     existing.updated_at = now;
 
-    let updated = store
-        .update_trigger(&existing)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let updated = store.update_trigger(&existing).map_err(|_| {
+        verr(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "failed to persist schedule".into(),
+        )
+    })?;
     if !updated {
         // Row vanished between get and update (race) — surface as 404
         // rather than success so the caller knows the write didn't land.
-        return Err(StatusCode::NOT_FOUND);
+        return Err(not_found());
     }
 
     // Push the new trigger to the live scheduler. The scheduler keys
     // by job_key, so RemoveJob+AddJob replaces in place — matches the
-    // create-after-delete pattern callers used to fake updates.
+    // create-after-delete pattern callers used to fake updates. The
+    // calendar gate rides along on the rebuilt trigger (issue #393).
     if let Some(ref tx) = state.scheduler_tx {
         let _ = tx.send(crate::scheduler::SchedulerCommand::RemoveJob {
             job_key: existing.job_key.clone(),
         });
-        if existing.enabled
-            && let Some(rt_trigger) = crate::loader::trigger_from_definition(&existing, now)
-        {
-            let job_config = crate::loader::job_config_from_definition(&existing, None);
-            let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-                job: Box::new(job_config),
-                trigger: Box::new(rt_trigger),
-            });
+        if existing.enabled {
+            if let Some(built) = crate::loader::trigger_from_definition(&existing, &resolved, now) {
+                let job_config = crate::loader::job_config_from_definition(&existing, None);
+                let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
+                    job: Box::new(job_config),
+                    trigger: Box::new(built.trigger),
+                });
+                state.set_config_fault(&existing.job_key, built.calendar_fault);
+            }
+        } else {
+            // A disabled schedule can't be faulted — it isn't running at all.
+            state.set_config_fault(&existing.job_key, None);
         }
     }
 
@@ -269,8 +369,26 @@ pub async fn handle_delete(
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
+    // Look up the job_key before deleting so the live scheduler can be told
+    // to drop the trigger — otherwise a deleted schedule keeps firing until
+    // the next restart/reload (found while fixing #393).
+    let job_key = store
+        .get_trigger(&trigger_id)
+        .ok()
+        .flatten()
+        .map(|t| t.job_key);
     match store.delete_trigger(&trigger_id) {
-        Ok(_) => StatusCode::NO_CONTENT,
+        Ok(_) => {
+            if let Some(job_key) = job_key {
+                if let Some(ref tx) = state.scheduler_tx {
+                    let _ = tx.send(crate::scheduler::SchedulerCommand::RemoveJob {
+                        job_key: job_key.clone(),
+                    });
+                }
+                state.set_config_fault(&job_key, None);
+            }
+            StatusCode::NO_CONTENT
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -503,5 +621,186 @@ mod tests {
         assert_eq!(body["enabled"], false);
         // Cron untouched because the body omitted it.
         assert_eq!(body["cron_expression"], "30s");
+    }
+
+    // ─── Calendar gate attachment (#393) ────────────────────────────────────
+
+    use crate::scheduler::SchedulerCommand;
+
+    /// Like `make_state`, but wires a live scheduler channel so tests can
+    /// assert on the `AddJob`/`RemoveJob` the handlers push. The existing
+    /// `make_state` leaves `scheduler_tx = None`, so the push path is skipped.
+    fn make_state_sched(
+        dsl: Vec<JobConfig>,
+        store: DynStore,
+    ) -> (Arc<ServerState>, mpsc::UnboundedReceiver<SchedulerCommand>) {
+        let runner = AppState::new();
+        let (comp_tx, _comp_rx) = mpsc::unbounded_channel();
+        let (sched_tx, sched_rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::with_auth(runner, comp_tx, None, Some(store));
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.dsl_jobs = Some(Arc::new(RwLock::new(dsl)));
+            s.scheduler_tx = Some(sched_tx);
+        }
+        (state, sched_rx)
+    }
+
+    /// Seed a store-managed (API) calendar. `rules` is Croniqfile calendar-body
+    /// DSL, one directive per line.
+    fn seed_calendar(store: &DynStore, name: &str, rules: &str) {
+        let now = Utc::now();
+        store
+            .create_calendar(&croniq_store::models::CalendarDefinition {
+                calendar_id: Uuid::new_v4().to_string(),
+                name: name.into(),
+                timezone: None,
+                rules: rules.into(),
+                managed_by: "api".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+    }
+
+    async fn post_json(
+        app: axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn create_schedule_with_store_calendar_attaches_gate() {
+        let store = make_store();
+        seed_calendar(&store, "biz", "include weekly weekday");
+        let (state, mut sched_rx) = make_state_sched(vec![], store);
+
+        let (status, _) = post_json(
+            server_router(state),
+            "/v1/schedules",
+            serde_json::json!({
+                "job_key": "api:gated",
+                "cron_expression": "1m",
+                "calendar": "biz",
+            }),
+        )
+        .await;
+        assert_eq!(status, 201);
+
+        let cmd = sched_rx.try_recv().expect("AddJob pushed");
+        match cmd {
+            SchedulerCommand::AddJob { trigger, .. } => {
+                assert!(
+                    trigger.calendar.is_some(),
+                    "store calendar must be compiled and attached"
+                );
+                assert_eq!(
+                    trigger.state,
+                    croniq_scheduler::trigger::TriggerState::Armed
+                );
+            }
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_schedule_with_unknown_calendar_returns_400() {
+        let store = make_store();
+        let (state, _rx) = make_state_sched(vec![], store);
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/schedules",
+            serde_json::json!({
+                "job_key": "api:typo",
+                "cron_expression": "1m",
+                "calendar": "does-not-exist",
+            }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "unknown_calendar");
+    }
+
+    #[tokio::test]
+    async fn update_schedule_to_unknown_calendar_returns_400() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        let (state, _rx) = make_state_sched(vec![], store);
+
+        let (status, _) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "calendar": "nope" }),
+        )
+        .await;
+        assert_eq!(status, 400);
+    }
+
+    #[tokio::test]
+    async fn update_schedule_calendar_sets_then_clears_fault() {
+        // Strict is the default. Point the schedule at a missing calendar via
+        // a direct store edit (bypassing the write-time 400 guard), then let
+        // an update to a valid calendar heal the recorded fault.
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        seed_calendar(&store, "biz", "include weekly weekday");
+        // Simulate a pre-existing fault (e.g. calendar deleted out from under
+        // the schedule): record it, then update the schedule onto "biz".
+        let (state, mut sched_rx) = make_state_sched(vec![], store);
+        state.set_config_fault("api:job", Some("calendar 'gone' is not defined".into()));
+
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "calendar": "biz" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(
+            state.config_faults.read().unwrap().get("api:job").is_none(),
+            "resolving onto a valid calendar must clear the fault"
+        );
+        // RemoveJob + AddJob were pushed; the AddJob trigger carries the gate.
+        let _ = sched_rx.try_recv().expect("RemoveJob");
+        match sched_rx.try_recv().expect("AddJob") {
+            SchedulerCommand::AddJob { trigger, .. } => assert!(trigger.calendar.is_some()),
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_schedule_sends_removejob() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        let (state, mut sched_rx) = make_state_sched(vec![], store);
+
+        let status = status_of(
+            server_router(state),
+            "DELETE",
+            &format!("/v1/schedules/{id}"),
+        )
+        .await;
+        assert_eq!(status, 204);
+        match sched_rx.try_recv().expect("RemoveJob pushed") {
+            SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "api:job"),
+            other => panic!("expected RemoveJob, got {other:?}"),
+        }
     }
 }
