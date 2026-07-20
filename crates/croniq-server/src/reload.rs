@@ -549,6 +549,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reload_rebuilds_adopted_non_interval_triggers() {
+        // After adoption a job lives only in the store (managed_by="api"), so a
+        // reload must rebuild its runtime trigger from the persisted canonical
+        // schedule expression. Before the fix `trigger_from_definition` only
+        // understood interval shorthand, so every adopted daily/weekly/once job
+        // silently vanished from the scheduler on the next reload/restart
+        // (found while fixing #393).
+        let (cur_tr, cur_dsl) = state_from("").await;
+        let store = empty_store();
+
+        let adopted = [
+            ("adopted:daily", "every day at 02:00"),
+            ("adopted:weekly", "every monday friday at 09:00"),
+            ("adopted:once", r#"once at "2999-01-01T00:00:00Z""#),
+        ];
+        for (key, cron) in adopted {
+            store
+                .create_trigger(&croniq_store::models::TriggerDefinition {
+                    trigger_id: format!("api-{key}"),
+                    job_key: key.into(),
+                    cron_expression: Some(cron.into()),
+                    timezone: None,
+                    calendar: None,
+                    window: None,
+                    not_before: None,
+                    not_after: None,
+                    enabled: true,
+                    managed_by: "api".into(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                })
+                .unwrap();
+        }
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "").unwrap();
+
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        for (key, _) in adopted {
+            let trigger = plan
+                .merged_triggers
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} was not rebuilt on reload"));
+            assert!(
+                trigger.next_fire_at.is_some(),
+                "{key}: rebuilt trigger has no next fire time"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn dsl_wins_on_conflict_with_api_trigger() {
         let (cur_tr, cur_dsl) = state_from("job shared:key { every 1 hours }").await;
 

@@ -130,6 +130,14 @@ pub enum LexError {
         #[label("here")]
         span: SourceSpan,
     },
+
+    #[error("unexpected character '{ch}'")]
+    #[diagnostic(code(croniq::lex::unexpected_char))]
+    UnexpectedChar {
+        ch: char,
+        #[label("here")]
+        span: SourceSpan,
+    },
 }
 
 /// Tokenizes a Croniqfile source string.
@@ -377,6 +385,19 @@ impl<'src> Lexer<'src> {
                 break;
             }
         }
+        if self.pos == start {
+            // The leading byte is neither a recognised token nor an ident
+            // char. Emitting a zero-length ident here would leave `pos`
+            // unmoved and spin `tokenize` into an unbounded token push (OOM);
+            // error out and step past the offending char instead so the span
+            // stays honest and the loop terminates.
+            let ch = self.source[start..].chars().next().unwrap_or('\u{FFFD}');
+            self.pos += ch.len_utf8();
+            return Err(LexError::UnexpectedChar {
+                ch,
+                span: Span::new(start, ch.len_utf8()).into(),
+            });
+        }
         let text = self.source[start..self.pos].to_string();
         Ok(Token::new(
             TokenKind::Ident(text),
@@ -408,6 +429,18 @@ mod tests {
     #[test]
     fn empty_input() {
         assert_eq!(tok_kinds(""), vec![TokenKind::Eof]);
+    }
+
+    #[test]
+    fn unexpected_char_errors_instead_of_hanging() {
+        // A stray comma (or any byte that is neither a recognised token nor an
+        // ident char) must surface as a LexError, not spin `tokenize` into an
+        // unbounded token push. Regression guard for the schedule round-trip
+        // work, where a legacy comma-joined summary reached the lexer.
+        assert!(matches!(
+            Lexer::tokenize("every monday, friday"),
+            Err(LexError::UnexpectedChar { ch: ',', .. })
+        ));
     }
 
     #[test]

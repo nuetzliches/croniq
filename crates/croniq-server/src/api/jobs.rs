@@ -719,7 +719,10 @@ pub async fn handle_adopt(
     let trigger_def = TriggerDefinition {
         trigger_id: Uuid::new_v4().to_string(),
         job_key: cfg.key.clone(),
-        cron_expression: Some(cfg.schedule_summary.clone()),
+        // Canonical, re-parseable DSL line (see `synth_trigger_def_from_dsl`) —
+        // `schedule_summary` doesn't round-trip for weekday/monthly schedules,
+        // so an adopted non-interval job would vanish on the next reload.
+        cron_expression: Some(cfg.schedule.to_dsl()),
         timezone: cfg.timezone.clone(),
         calendar: cfg.calendar.clone(),
         window: cfg.window.clone(),
@@ -1194,6 +1197,41 @@ mod tests {
         state
     }
 
+    /// Like `make_state_with_policy` but keeps the scheduler receiver alive so
+    /// a test can observe the commands the handler pushes (the default
+    /// `make_state` drops the receiver, silently discarding them).
+    fn make_state_keep_rx(
+        dsl: Vec<JobConfig>,
+        store: DynStore,
+        adopt: bool,
+    ) -> (
+        Arc<ServerState>,
+        mpsc::UnboundedReceiver<crate::scheduler::SchedulerCommand>,
+    ) {
+        let runner = AppState::new();
+        let (comp_tx, _comp_rx) = mpsc::unbounded_channel();
+        let (sched_tx, sched_rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::with_auth(runner, comp_tx, None, Some(store));
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.dsl_jobs = Some(Arc::new(RwLock::new(dsl)));
+            s.scheduler_tx = Some(sched_tx);
+        }
+        state
+            .policy_dsl_adopt_on_mutate
+            .store(adopt, std::sync::atomic::Ordering::Relaxed);
+        (state, sched_rx)
+    }
+
+    fn dsl_job_sched(key: &str, sched: &str) -> JobConfig {
+        crate::loader::load_str(&format!("job {key} {{ {sched} }}"))
+            .unwrap()
+            .runtime
+            .jobs
+            .pop()
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn adopt_job_returns_409_when_policy_off() {
         let state = make_state(vec![dsl_job("billing:invoice")], make_store());
@@ -1240,6 +1278,48 @@ mod tests {
         // The DSL snapshot dropped the adopted entry.
         let dsl = state.dsl_jobs.as_ref().unwrap().read().await;
         assert!(dsl.iter().all(|j| j.key != "billing:invoice"));
+    }
+
+    #[tokio::test]
+    async fn adopt_pushes_addjob_for_every_schedule_shape() {
+        // Adopting a DSL job must push an AddJob to the live scheduler so the
+        // job keeps firing without waiting for a reload. The #393-adjacent bug
+        // was that the pushed `cron_expression` held the human summary, which
+        // `trigger_from_definition` could only rebuild for intervals — so even
+        // interval jobs pushed nothing on some paths, and daily/weekly/once
+        // jobs never did.
+        for (key, sched) in [
+            ("iv:tick", "every 5 minutes"),
+            ("dl:report", "every day at 02:00"),
+            ("wk:run", "every monday friday at 09:00"),
+            ("on:migrate", r#"once at "2999-01-01T00:00:00Z""#),
+        ] {
+            let store = make_store();
+            let (state, mut rx) =
+                make_state_keep_rx(vec![dsl_job_sched(key, sched)], Arc::clone(&store), true);
+
+            let (status, _) = body_json(
+                server_router(Arc::clone(&state)),
+                "POST",
+                &format!("/v1/jobs/{key}/adopt"),
+            )
+            .await;
+            assert_eq!(status, 200, "{sched}: adopt failed");
+
+            let cmd = rx
+                .try_recv()
+                .unwrap_or_else(|_| panic!("{sched}: no scheduler command pushed"));
+            match cmd {
+                crate::scheduler::SchedulerCommand::AddJob { job, trigger } => {
+                    assert_eq!(job.key, key, "{sched}: wrong job pushed");
+                    assert!(
+                        trigger.next_fire_at.is_some(),
+                        "{sched}: pushed trigger has no next fire time"
+                    );
+                }
+                _ => panic!("{sched}: expected an AddJob command"),
+            }
+        }
     }
 
     #[tokio::test]
