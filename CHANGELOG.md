@@ -6,8 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-20
+
 ### Added
 
+- **Watchdog recovery counters on `/metrics`
+  ([#389](https://github.com/nuetzliches/croniq/issues/389)).** The
+  watchdog's recovery actions were visible only as WARN logs and audit
+  events, though their frequency is a key operator signal (frequent reaps =
+  unstable runner; stranded cancels = jobs deleted with work in flight).
+  `/metrics` now emits `croniq_watchdog_requeued_total{reason="dead_runner"
+  |"stale_claim"|"reconciled"}`, `croniq_watchdog_cancelled_total{reason=
+  "queue_ttl"|"stranded"}`, `croniq_watchdog_sla_missed_total`, and
+  `croniq_watchdog_missed_fires_total`. See the new watchdog-metrics
+  section in `docs/operations.md`.
 - **Takeover audit trail + runner-identity-flapping detection
   ([#374](https://github.com/nuetzliches/croniq/issues/374) follow-up).**
   Every inline takeover (new `instance_id` under an existing `runner_id`)
@@ -32,6 +44,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dead-threshold (immediate takeover with deposed-instance fencing,
   [#374](https://github.com/nuetzliches/croniq/issues/374)). Internal API
   only; no behaviour change.
+
+### Fixed
+
+- **Calendar-gated jobs no longer wrongly exhaust across a closed gate
+  ([#391](https://github.com/nuetzliches/croniq/issues/391)).** A calendar-
+  or window-gated trigger now jumps straight to the next gate-open instant
+  instead of stepping raw schedule ticks — the old 366-tick walk gave
+  `every 1 minute` only a ~6h horizon, so any overnight/weekend gap
+  exhausted the trigger and it showed as `overdue`. Trigger restore also
+  heals `next_fire_at` values a pre-fix build persisted inside a closed
+  gate, so a stale "overdue" never survives a restart.
+- **API-registered schedules now get their calendar attached at runtime
+  ([#393](https://github.com/nuetzliches/croniq/issues/393)).** Schedules
+  created via `POST/PUT /v1/schedules`, `POST /v1/jobs/register`, `/adopt`,
+  boot-time DB reconciliation, and hot-reload persisted and displayed a
+  `calendar` name but never attached the compiled calendar to the runtime
+  trigger, so the job ran **ungated** (fail-open, silently). Calendar names
+  are now resolved against the union of DSL and store calendars (DSL wins
+  on collision) and the gate attached; an unresolvable reference fails
+  closed (trigger paused + `config_error`) under `strict_calendars`,
+  matching the DSL path. `POST/PUT /v1/schedules` reject an unknown
+  calendar name with 400; editing or deleting a calendar
+  (`PUT/DELETE /v1/calendars/{id}`) now propagates to running triggers.
+  Also fixes `DELETE /v1/schedules/{id}` never telling the scheduler to
+  stop the job (a deleted schedule kept firing until restart).
+- **Adopted non-interval jobs survive reload
+  ([#395](https://github.com/nuetzliches/croniq/pull/395)).** `adopt` and
+  the DSL synth path persisted a job's human-readable schedule *summary*
+  (`every 5 minutes`) into `cron_expression`, which nothing could parse
+  back — so adopted `daily`/`weekly`/`monthly`/`once` jobs silently
+  vanished from the scheduler on the next reload/restart, and the live
+  push on adopt sent nothing. Schedules are now persisted as canonical,
+  re-parseable DSL and rebuilt for every schedule shape. Hardened the
+  lexer against an unbounded token push (OOM) on an unexpected character,
+  since the schedule parser now runs on stored data.
 
 ## [0.29.0] - 2026-07-18
 
