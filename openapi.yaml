@@ -1833,6 +1833,24 @@ paths:
                       removed: { type: array, items: { type: string } }
                       changed: { type: array, items: { type: string } }
                       total: { type: integer }
+                  pending_restart:
+                    type: array
+                    description: >
+                      Boot-only settings the Croniqfile changed since startup.
+                      A reload applies jobs, calendars, triggers and the
+                      `policy { }` flags only; `server { }`, `pull_api { }`,
+                      `observability { }`, `mcp { }`, `oidc { }`, `smtp { }`,
+                      `auth { }` and `alerts { }` need a server restart, so
+                      these entries were parsed and discarded (issue #406).
+                      Omitted when empty. `alerts` is reported as a
+                      fingerprint, never as values, because a channel can
+                      carry a signing key.
+                    items:
+                      type: object
+                      properties:
+                        setting: { type: string, example: server.execution_retention }
+                        running: { type: string, nullable: true, description: Value in effect; null when unset at boot }
+                        pending: { type: string, nullable: true, description: Value in the file; null when removed }
         "403": { description: Missing admin scope }
         "422":
           description: Validation or file-read error

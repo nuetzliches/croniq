@@ -122,6 +122,11 @@ pub struct ServerState {
     pub policy_strict_calendars: Arc<std::sync::atomic::AtomicBool>,
     /// Path to the Croniqfile, needed by the admin reload endpoint.
     pub config_path: Option<std::path::PathBuf>,
+    /// The boot-only settings this process actually started with (issue #406).
+    /// `None` on servers that never loaded a Croniqfile (tests, storeless
+    /// setups) — the reload endpoint then skips the pending-restart check
+    /// instead of reporting every setting as changed.
+    pub boot_only_settings: Option<crate::reload::BootOnlySettings>,
     /// Counters for `croniq_config_reload_total`, incremented by both the
     /// file-watcher reload path and the admin reload endpoint.
     pub reload_counters: Arc<ReloadCounters>,
@@ -218,6 +223,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -255,6 +261,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -291,6 +298,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -1805,6 +1813,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -1986,6 +1995,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -2065,6 +2075,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -2151,6 +2162,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),

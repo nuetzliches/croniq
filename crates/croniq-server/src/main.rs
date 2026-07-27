@@ -317,6 +317,9 @@ async fn main() -> Result<()> {
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.require_totp = require_totp;
         s.retention_configured = croniq_server::diagnostics::retention_configured(&loaded.runtime);
+        // Snapshot what a reload cannot change, so every reload path can warn
+        // about edits that need a restart (issue #406).
+        s.boot_only_settings = Some(reload::BootOnlySettings::from_runtime(&loaded.runtime));
         s.email_sender = croniq_server::email::build_from_dsl_and_env(loaded.runtime.smtp.as_ref());
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
@@ -537,6 +540,9 @@ async fn main() -> Result<()> {
     let scheduler_reload_strict = Arc::clone(&server_state.policy_strict_calendars);
     let scheduler_reload_faults = Arc::clone(&server_state.config_faults);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
+    // Boot-only settings never change while the process runs, so the watcher /
+    // SIGHUP path owns a plain copy to diff each reload against (issue #406).
+    let scheduler_reload_boot_only = server_state.boot_only_settings.clone();
 
     let scheduler_task_heartbeat = Arc::clone(&scheduler_heartbeat);
     let scheduler_handle = tokio::spawn(async move {
@@ -621,6 +627,14 @@ async fn main() -> Result<()> {
                     ).await {
                         Ok(plan) => {
                             let diff = plan.diff.clone();
+                            // Warn before applying: a reload that looks
+                            // successful must not hide the parts of the edit it
+                            // silently drops (issue #406).
+                            let pending_restart = scheduler_reload_boot_only
+                                .as_ref()
+                                .map(|running| running.changes_vs(&plan.boot_only))
+                                .unwrap_or_default();
+                            reload::log_pending_restart(&pending_restart);
                             reload::apply_plan_direct(
                                 plan,
                                 &mut scheduler_loop,
@@ -637,6 +651,7 @@ async fn main() -> Result<()> {
                                 removed = diff.removed.len(),
                                 changed = diff.changed.len(),
                                 total = diff.total,
+                                pending_restart = pending_restart.len(),
                                 "config reloaded"
                             );
                         }
