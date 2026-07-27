@@ -637,6 +637,7 @@ paths:
                 refresh_token: { type: string }
       responses:
         "200":
+          description: Fresh access and refresh token pair
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
@@ -659,6 +660,7 @@ paths:
       summary: List job definitions
       responses:
         "200":
+          description: List of job definitions
           content:
             application/json:
               schema:
@@ -686,6 +688,7 @@ paths:
                 tags: { type: array, items: { type: string } }
       responses:
         "201":
+          description: The created or updated job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -700,6 +703,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -732,6 +736,7 @@ paths:
                 tags: { type: array, items: { type: string } }
       responses:
         "200":
+          description: The updated job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -762,6 +767,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The activated job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -778,6 +784,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The deactivated job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -801,6 +808,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The adopted job and its trigger
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslJobAdoptResponse" }
@@ -840,6 +848,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: List of trigger definitions
           content:
             application/json:
               schema:
@@ -862,6 +871,7 @@ paths:
                 enabled: { type: boolean, default: true }
       responses:
         "201":
+          description: The created trigger definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
@@ -876,6 +886,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The trigger definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
@@ -902,6 +913,7 @@ paths:
                 enabled: { type: boolean }
       responses:
         "200":
+          description: The updated trigger definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
@@ -909,6 +921,11 @@ paths:
         "409": { description: Trigger is DSL-managed and cannot be edited via API }
     delete:
       summary: Delete a trigger
+      parameters:
+        - name: trigger_id
+          in: path
+          required: true
+          schema: { type: string }
       responses:
         "204": { description: Deleted }
 
@@ -917,6 +934,7 @@ paths:
       summary: List connected runners
       responses:
         "200":
+          description: List of connected runners
           content:
             application/json:
               schema:
@@ -933,6 +951,7 @@ paths:
             text/event-stream: {}
 
   /v1/runners/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     delete:
       summary: Deregister a runner
       responses:
@@ -953,6 +972,7 @@ paths:
           schema: { type: integer, default: 100 }
       responses:
         "200":
+          description: List of executions
           content:
             application/json:
               schema:
@@ -1000,10 +1020,12 @@ paths:
           description: Server was built without the Live Console hub (older binary or test mode)
 
   /v1/executions/{id}/logs:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:
       summary: Get execution logs
       responses:
         "200":
+          description: Log events recorded for the execution
           content:
             application/json:
               schema:
@@ -1041,6 +1063,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
+          description: "Cancellation outcome, including whether the owning runner was notified"
           content:
             application/json:
               schema:
@@ -1067,6 +1090,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: List of dead letters
           content:
             application/json:
               schema:
@@ -1095,19 +1119,22 @@ paths:
                 job_key: { type: string }
       responses:
         "200":
+          description: Number of dead letters deleted
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   deleted: { type: integer }
-        "400": { description: Neither ids nor all provided, or a malformed id }
+        "400": { description: "Neither ids nor all provided, or a malformed id" }
 
   /v1/dead-letters/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:
       summary: Get dead letter details
       responses:
         "200":
+          description: The dead letter
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeadLetter" }
@@ -1117,6 +1144,7 @@ paths:
         "204": { description: Deleted }
 
   /v1/dead-letters/{id}/replay:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:
       summary: Replay a dead letter as a new execution
       description: |
@@ -1140,6 +1168,7 @@ paths:
                   description: Override the stale-replay guard.
       responses:
         "200":
+          description: The execution queued from the dead letter
           content:
             application/json:
               schema:
@@ -1149,7 +1178,7 @@ paths:
                   attempt: { type: integer }
                   scheduled_for: { type: string, format: date-time }
         "409":
-          description: Replay refused by the stale-replay guard (retry with `force: true`).
+          description: "Replay refused by the stale-replay guard (retry with `force: true`)."
           content:
             application/json:
               schema:
@@ -1170,6 +1199,7 @@ paths:
         signing keys are never serialized. Requires `alerts:read`.
       responses:
         "200":
+          description: Effective alerts config with operational overrides applied
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertsConfigView" }
@@ -1238,6 +1268,7 @@ paths:
                 note: { type: string }
       responses:
         "200":
+          description: The stored override for the rule
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertRuleOverride" }
@@ -1266,6 +1297,7 @@ paths:
                 expires_at: { type: string, format: date-time, nullable: true }
       responses:
         "200":
+          description: The stored override for the rule
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertRuleOverride" }
@@ -1296,6 +1328,7 @@ paths:
                 expires_at: { type: string, format: date-time, nullable: true }
       responses:
         "200":
+          description: The stored override for the rule
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertRuleOverride" }
@@ -1311,6 +1344,7 @@ paths:
         - { name: name, in: path, required: true, schema: { type: string } }
       responses:
         "200":
+          description: The current override for the rule
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertRuleOverride" }
@@ -1332,6 +1366,7 @@ paths:
       summary: List calendars
       responses:
         "200":
+          description: List of calendars
           content:
             application/json:
               schema:
@@ -1341,11 +1376,13 @@ paths:
       summary: Create a calendar
       responses:
         "201":
+          description: The created calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
 
   /v1/calendars/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:
       summary: Get a calendar
       description: |
@@ -1353,6 +1390,7 @@ paths:
         (Croniqfile-defined calendars synthesized at read time).
       responses:
         "200":
+          description: The calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
@@ -1364,6 +1402,7 @@ paths:
         ownership, call `POST /v1/calendars/dsl:{name}/adopt` first.
       responses:
         "200":
+          description: The updated calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
@@ -1402,6 +1441,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
+          description: The adopted calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslAdoptResponse" }
@@ -1456,6 +1496,7 @@ paths:
           schema: { type: integer, default: 5 }
       responses:
         "200":
+          description: Forecast buckets covering the requested window
           content:
             application/json:
               schema:
@@ -1511,6 +1552,7 @@ paths:
                 instance_id: { type: string }
       responses:
         "200":
+          description: "Work items to execute, plus execution IDs the runner should cancel"
           content:
             application/json:
               schema:
@@ -1587,6 +1629,7 @@ paths:
                   fields: { type: object }
       responses:
         "200":
+          description: Number of log events accepted
           content:
             application/json:
               schema:
@@ -1598,6 +1641,7 @@ paths:
       summary: List API clients
       responses:
         "200":
+          description: List of API clients
           content:
             application/json:
               schema:
@@ -1616,6 +1660,7 @@ paths:
                 scopes: { type: array, items: { type: string } }
       responses:
         "201":
+          description: The created API client
           content:
             application/json:
               schema:
@@ -1626,16 +1671,19 @@ paths:
                   scopes: { type: array, items: { type: string } }
 
   /v1/api-clients/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     delete:
       summary: Delete an API client and its keys
       responses:
         "204": { description: Deleted }
 
   /v1/api-clients/{id}/tokens:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:
       summary: Issue a token for an API client
       responses:
         "200":
+          description: A token scoped to the API client
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
@@ -1653,6 +1701,7 @@ paths:
                 client_id: { type: string }
       responses:
         "201":
+          description: "The generated key; `raw_key` is shown only once"
           content:
             application/json:
               schema:
@@ -1664,6 +1713,7 @@ paths:
                   client_id: { type: string }
 
   /v1/api-keys/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     delete:
       summary: Revoke an API key
       responses:
@@ -1764,6 +1814,7 @@ paths:
                     rejected with 400.
       responses:
         "200":
+          description: "Trigger outcome, including whether the run was deduplicated"
           content:
             application/json:
               schema:
@@ -1899,7 +1950,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
         "400": { description: Neither code nor recovery_code provided }
-        "401": { description: Invalid mfa_token, expired, or wrong code }
+        "401": { description: "Invalid mfa_token, expired, or wrong code" }
         "403": { description: User deactivated }
 
   /v1/auth/login/enroll/totp/begin:
@@ -2067,7 +2118,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
-        "401": { description: Unknown state, bad code, or invalid ID token }
+        "401": { description: "Unknown state, bad code, or invalid ID token" }
         "403": { description: Linked user is deactivated }
         "404": { description: OIDC not configured }
         "410": { description: State expired }
@@ -2317,7 +2368,7 @@ paths:
               properties:
                 password: { type: string }
       responses:
-        "204": { description: TOTP disabled, recovery codes wiped }
+        "204": { description: "TOTP disabled, recovery codes wiped" }
         "401": { description: Password wrong }
 
   /v1/users/me/totp/recovery-codes/regenerate:
