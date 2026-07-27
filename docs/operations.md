@@ -182,6 +182,46 @@ via **Settings → Two-factor authentication**. `croniq-server` logs a `WARN`
 at boot whenever enforcement is on. SSO/OIDC and API-key callers are
 unaffected — enforcement gates the password login flow only.
 
+### JWT secret and stored TOTP secrets
+
+Stored TOTP seeds are encrypted at rest with AES-256-GCM under a key derived
+(HKDF-SHA256) from the **JWT secret**. The two are therefore coupled: change the
+JWT secret and every stored TOTP secret becomes undecryptable.
+
+The secret is resolved as `CRONIQ_JWT_SECRET` → `$DATA_DIR/jwt.secret`
+(auto-created on first boot). Before 0.29.0, `pull_api { auth <value> }` came
+first in that chain — it was never an auth on/off switch, its value was used
+verbatim as the signing secret (issue #371). The directive was removed in
+0.29.0, so **upgrading a deployment that relied on it** falls through to a
+freshly generated `$DATA_DIR/jwt.secret`, silently rotating the wrap key
+(issue #408).
+
+A leftover `pull_api { auth … }` line is consequently a hard config error, not
+an ignored line — the message names the migration. To upgrade:
+
+1. Copy the value from `pull_api { auth <value> }` into the `CRONIQ_JWT_SECRET`
+   env var (or write it to `$DATA_DIR/jwt.secret`).
+2. Delete the `auth` line from the Croniqfile.
+3. Start the server and check that `doctor` does not report
+   `totp.secrets_undecryptable`.
+
+If TOTP secrets have already become undecryptable, affected users get a bare
+`500` from `POST /v1/auth/login` when they submit a code, and the server logs
+`stored TOTP secret could not be unwrapped`. **Recovery codes still work** —
+they are SHA-256 hashed, not wrapped — so the way back in is:
+
+1. Restore the old secret via `CRONIQ_JWT_SECRET` if you still have it. That
+   alone fixes everything.
+2. Otherwise: sign in with a recovery code, then re-enrol under
+   **Settings → Two-factor authentication**.
+3. With no recovery code left either, an admin has to reset the user's second
+   factor.
+
+**Rotating `CRONIQ_JWT_SECRET` deliberately** invalidates stored TOTP secrets
+the same way, so order the steps: relax enforcement
+(`auth { totp { required false } }`) → rotate → have users re-enrol →
+re-enable enforcement.
+
 ### Probing from the UI: `GET /v1/auth/config`
 
 ```jsonc
@@ -232,6 +272,77 @@ of defence against accidental production use.
 Both flags are read by `croniq init` at first-boot only; they do
 nothing on subsequent restarts where the database already exists.
 
+## Configuration validation
+
+Every path that loads a Croniqfile — server boot, `croniq-server doctor`, a
+hot-reload, and the `croniq validate` CLI — runs the same semantic validation
+and **fails closed** on any error (issue #402). Before this, only
+`croniq validate` did, so the server quietly accepted configs that
+`croniq validate` rejected: a duplicate job key dropped one of the jobs, a job
+without a schedule was never scheduled, an unknown runner type compiled to
+nothing, and `doctor` exited `0` for all of it.
+
+What that means in practice:
+
+- **Boot** — the server refuses to start and prints every error at once.
+- **`doctor`** — one critical finding, exit `1`, so it works as a CI/pre-deploy
+  gate.
+- **Reload** — the reload is rejected and the previously running config stays
+  active, exactly like a syntax error. `POST /v1/admin/reload-config` answers
+  `422` with the message.
+
+Unknown **directives** are errors too (issue #403), including inside
+`server { }`, `pull_api { }`, `defaults { }`, `auth { }`, `observability { }`,
+`mcp { }`, `policy { }`, `smtp { }` and `oidc { }` — with a did-you-mean
+suggestion:
+
+```console
+$ croniq-server --config Croniqfile doctor
+[CRITICAL] Croniqfile cannot be loaded
+    invalid configuration:
+      - unknown directive 'execution_retentionn' in `server { }` — did you mean 'execution_retention'?
+    Run `croniq validate <Croniqfile>` for exact locations.
+```
+
+A typo used to be a silent no-op, which is the worst outcome for a setting whose
+absence is invisible in the short term: a mistyped `execution_retention` left
+run history growing forever and nothing misbehaved.
+
+Two things are deliberately *not* boot failures:
+
+- **Calendar problems** — a calendar whose rules don't compile, and a
+  `calendar` reference that resolves to nothing, fail per job: the job loads
+  **paused** with a `config_error`, under `policy { strict_calendars }`
+  (issue #361). One broken calendar must not take the whole scheduler down.
+- **Warnings** — e.g. an interval shorter than the runner poll cycle. They are
+  logged at `WARN` and the config loads.
+
+### Reload vs. restart
+
+A reload (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`) re-reads the
+whole file but only applies **jobs, calendars, triggers and the `policy { }`
+flags**. Everything else — `server { }`, `pull_api { }`, `observability { }`,
+`mcp { }`, `oidc { }`, `smtp { }`, `auth { }` and `alerts { }` — is read at boot
+only.
+
+Changing a boot-only setting and reloading is therefore a no-op, and used to be
+a *silent* one: the reload reported success, so with `--watch` there was no
+signal that part of the edit hadn't landed. This bites hardest in container
+deployments, where a config-only change doesn't recreate the container and so
+never restarts the process. Each changed boot-only setting is now named in a
+`WARN` (issue #406):
+
+```
+WARN server.execution_retention changed in the Croniqfile (30d → 90d); this
+     setting is applied at boot only and needs a server restart to take effect
+```
+
+They are also counted in the reload summary (`pending_restart=2`) and returned
+by `POST /v1/admin/reload-config` as `pending_restart`, so a caller can report
+"applied, with N settings pending restart" instead of a plain success. The
+`alerts { }` block is compared as a fingerprint, never by value — a channel can
+carry an HMAC signing key, which must not reach the log.
+
 ## Configuration diagnostics
 
 croniq surfaces recommended-but-missing configuration in three places, all
@@ -254,9 +365,15 @@ Current checks:
 | `email.delivery` | warning | No SMTP configured — invitation / password-reset links are returned in the API/UI response only and must be delivered manually. |
 | `email.smtp_feature_missing` | critical | `CRONIQ_SMTP_*` is set but this build lacks the `smtp` feature, so mail is silently dropped. |
 | `links.app_url` | warning | No public base URL pinned (`server { app_url }` / `CRONIQ_APP_URL`); links are derived from request headers and the public password-reset link falls back to localhost on a directly-exposed server. |
-| `totp.enforced_without_enrollment` | warning | Enforced 2FA (`require_totp`) is on but one or more active users have no confirmed TOTP secret — they are refused at login until they enrol. (Live surfaces only; `doctor` can't evaluate it offline.) |
+| `totp.enforced_without_enrollment` | info | Enforced 2FA (`require_totp`) is on and one or more active users have no confirmed TOTP secret — they will be walked through [inline enrolment](#authtotprequired--enforced-2fa) at their next sign-in. Expected right after switching enforcement on; nobody is locked out. (Live surfaces only; `doctor` can't evaluate it offline.) |
+| `totp.secrets_undecryptable` | critical | One or more confirmed TOTP secrets no longer decrypt with the active JWT secret, so those users get a `500` from `POST /v1/auth/login` when they submit a code. See [JWT secret and stored TOTP secrets](#jwt-secret-and-stored-totp-secrets). (Live surfaces only.) |
+| `retention.unbounded_history` | info | Neither `server { execution_retention }` nor any `keep_last` is set, so run history grows without bound. See [Data retention](#data-retention). Informational by design — it never makes `doctor` exit non-zero. |
 
 Findings report posture only — never secrets.
+
+A Croniqfile that fails to load at all is reported by `doctor` as a single
+critical finding (and exits `1`) — see [Configuration
+validation](#configuration-validation).
 
 ## Alert rule overrides
 
@@ -414,5 +531,34 @@ on a large existing database drains the backlog over several ticks rather than
 in one long-locking statement (this matters most for SQLite's whole-database
 write lock). An invalid or zero `execution_retention` is ignored (pruning
 stays disabled) and logged at boot. Changes to these knobs take effect on
-server restart. Once pruned, an execution and its logs are gone; dashboards,
-`/metrics` aggregates, and the UI run history reflect only the retained window.
+server restart — a hot-reload parses them and then warns that they are pending
+a restart (see [Reload](#reload-vs-restart) below). Once pruned, an execution
+and its logs are gone; dashboards, `/metrics` aggregates, and the UI run
+history reflect only the retained window.
+
+With neither knob set, `croniq-server doctor` reports
+`retention.unbounded_history` as an informational finding. It never turns the
+exit code non-zero — keeping history forever is a legitimate choice — it only
+makes sure the decision is visible.
+
+#### Pruning caps growth; it does not shrink the file (issue #404)
+
+Retention deletes rows. It does **not** return disk space to the filesystem:
+
+- **SQLite** — deleted pages go on the freelist and are reused by later
+  writes, so the database stops growing, but `croniq.db` stays at its
+  high-water mark. Reclaiming that space needs an explicit `VACUUM`, which
+  rewrites the whole database: budget roughly the current DB size in free
+  space, and expect an exclusive lock for the duration (no writes, so no job
+  state changes while it runs). Croniq never runs it for you, and no migration
+  sets `PRAGMA auto_vacuum` — that pragma only takes effect on a database where
+  it was set *before* the tables were created, so on an existing database it
+  needs a full `VACUUM` anyway.
+- **PostgreSQL** — autovacuum makes the space reusable within the table;
+  returning it to the OS needs `VACUUM FULL`, with the same caveats.
+
+This matters because enabling retention is usually a reaction to "the database
+got bigger than I expected". Enabling it, restarting, and waiting for the sweep
+leaves the file at exactly its previous size — which is expected, not a sign
+that retention isn't working. To confirm it *is* working, watch the row counts
+(or SQLite's `PRAGMA freelist_count` growing) rather than the file size.
