@@ -263,3 +263,121 @@ async fn auth_config_totp_not_required_by_default() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["totp"]["required"], serde_json::json!(false));
 }
+
+/// Issue #408: an upgrade that changes the JWT secret also changes the
+/// HKDF-derived key that wraps stored TOTP secrets, so a previously enrolled
+/// user can no longer be verified. The classic trigger is dropping a
+/// `pull_api { auth … }` line (removed in 0.29.0) and falling through to a
+/// freshly generated `$DATA_DIR/jwt.secret`.
+///
+/// The response is a bare 500 — indistinguishable from any other fault — so the
+/// server logs a dedicated error and `doctor` reports
+/// `totp.secrets_undecryptable`. This test pins the wire behaviour and the
+/// count the finding is built from.
+mod rotated_jwt_secret {
+    use super::*;
+    use croniq_server::diagnostics::undecryptable_totp_secrets;
+    use croniq_store::models::TotpSecret;
+
+    const OLD_SECRET: &str = "the-secret-that-was-in-pull_api-auth";
+    const NEW_SECRET: &str = "freshly-generated-jwt.secret";
+    const SEED_B32: &str = "JBSWY3DPEHPK3PXP";
+
+    /// One active user with a confirmed TOTP secret wrapped with `OLD_SECRET`,
+    /// served by a router whose JWT secret is `NEW_SECRET`.
+    fn app_after_secret_rotation() -> (axum::Router, croniq_server::store::DynStore) {
+        let store = sqlite_store(SqliteStore::in_memory().unwrap());
+        let now = Utc::now();
+        store
+            .users_create(&User {
+                user_id: "u-admin".into(),
+                username: "admin".into(),
+                email: None,
+                display_name: None,
+                role: Role::Admin,
+                is_active: true,
+                created_at: now,
+                updated_at: now,
+                last_login_at: None,
+            })
+            .unwrap();
+        store
+            .upsert_credentials(&PasswordCredential {
+                user_id: "u-admin".into(),
+                username: "admin".into(),
+                password_hash: hash_password(PASSWORD).unwrap(),
+                failed_attempts: 0,
+                locked_until: None,
+                created_at: now,
+            })
+            .unwrap();
+        store
+            .totp_upsert(&TotpSecret {
+                user_id: "u-admin".into(),
+                secret_enc: croniq_auth::crypto::wrap_totp_secret(OLD_SECRET, SEED_B32.as_bytes())
+                    .unwrap(),
+                enabled: true,
+                confirmed_at: Some(now),
+                created_at: now,
+            })
+            .unwrap();
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let jwt = JwtConfig {
+            secret: NEW_SECRET.into(),
+            ..Default::default()
+        };
+        let state = ServerState::with_auth(runner, tx, Some(jwt), Some(store.clone()));
+        (server_router(state), store)
+    }
+
+    #[tokio::test]
+    async fn login_with_a_code_fails_while_the_server_is_healthy() {
+        let (app, _store) = app_after_secret_rotation();
+        // /v1/auth/config still answers 200 — the server is up and serving,
+        // which is exactly why the failure reads as an outage in the UI (#410).
+        let (cfg_status, _) = get_json(app.clone(), "/v1/auth/config").await;
+        assert_eq!(cfg_status, StatusCode::OK);
+
+        let (status, _body) = post_json(
+            app,
+            "/v1/auth/login",
+            serde_json::json!({
+                "username": "admin",
+                "password": PASSWORD,
+                "code": "123456",
+            }),
+        )
+        .await;
+        // The unwrap happens before the code is checked, so any code lands here.
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn recovery_codes_are_unaffected() {
+        // Recovery codes are SHA-256 hashed, not wrapped, so they remain the
+        // documented way back in. A wrong one must still be a 401, not the 500
+        // above — that is what makes the recovery path usable at all.
+        let (app, _store) = app_after_secret_rotation();
+        let (status, _body) = post_json(
+            app,
+            "/v1/auth/login",
+            serde_json::json!({
+                "username": "admin",
+                "password": PASSWORD,
+                "recovery_code": "not-a-real-code",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_count_the_affected_secrets() {
+        let (_app, store) = app_after_secret_rotation();
+        assert_eq!(undecryptable_totp_secrets(&store, NEW_SECRET), 1);
+        // Restoring the old secret is the documented remedy — it must work.
+        assert_eq!(undecryptable_totp_secrets(&store, OLD_SECRET), 0);
+    }
+}

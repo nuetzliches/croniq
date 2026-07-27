@@ -5,7 +5,7 @@
 //! croniq-server --config Croniqfile --listen :4000 --data-dir ./.data
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -23,8 +23,12 @@ use croniq_store::sqlite::SqliteStore;
 use tokio::sync::mpsc;
 
 #[derive(Parser)]
+// `version` picks up CARGO_PKG_VERSION, which the release workflow rewrites
+// in-place to the pushed tag — so `--version` reports the same value the
+// `GET /version` endpoint and the MCP handshake do (issue #407).
 #[command(
     name = "croniq-server",
+    version,
     about = "Croniq distributed job scheduler",
     long_about = "Croniq distributed job scheduler.\n\
 \n\
@@ -89,8 +93,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     tracing::info!(config = %cli.config.display(), "loading Croniqfile");
-    let mut loaded = load_file(&cli.config)
-        .with_context(|| format!("failed to load {}", cli.config.display()))?;
+    let mut loaded = match load_file(&cli.config) {
+        Ok(loaded) => loaded,
+        // A config that fails to load is the most critical finding `doctor` can
+        // report, so it renders in the findings format and exits non-zero
+        // rather than surfacing as an error chain (issue #402).
+        Err(e) if matches!(cli.command, Some(Command::Doctor)) => {
+            report_doctor_load_failure(&cli.config, &e)
+        }
+        Err(e) => {
+            return Err(anyhow::Error::new(e))
+                .with_context(|| format!("failed to load {}", cli.config.display()));
+        }
+    };
 
     let job_count = loaded.runtime.jobs.len();
     let active = loaded.triggers.len();
@@ -135,13 +150,7 @@ async fn main() -> Result<()> {
     // the gate is active and remember the recovery path if the worst happens.
     let require_totp = resolve_require_totp(&loaded.runtime);
     if require_totp {
-        tracing::warn!(
-            "enforced 2FA is ON — every password login must present a TOTP or recovery \
-             code. Users without a confirmed secret are guided through inline enrolment \
-             on next sign-in (not locked out). If you've lost both the authenticator and \
-             all recovery codes, set auth {{ totp {{ required false }} }} (or \
-             CRONIQ_REQUIRE_TOTP=false), re-enrol, then re-enable."
-        );
+        tracing::warn!("{}", croniq_server::diagnostics::ENFORCED_TOTP_BOOT_NOTICE);
     }
 
     // Open (or create) the persistence store. The backend is chosen from
@@ -307,6 +316,10 @@ async fn main() -> Result<()> {
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.require_totp = require_totp;
+        s.retention_configured = croniq_server::diagnostics::retention_configured(&loaded.runtime);
+        // Snapshot what a reload cannot change, so every reload path can warn
+        // about edits that need a restart (issue #406).
+        s.boot_only_settings = Some(reload::BootOnlySettings::from_runtime(&loaded.runtime));
         s.email_sender = croniq_server::email::build_from_dsl_and_env(loaded.runtime.smtp.as_ref());
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
@@ -351,13 +364,17 @@ async fn main() -> Result<()> {
     // Surface configuration health at boot (missing SMTP, unpinned URL, …).
     // The same checks back `croniq-server doctor` and GET /v1/system/diagnostics.
     {
-        use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
-        let input = DiagnosticsInput::from_runtime(
-            server_state.app_base_url.is_some(),
-            server_state.email_sender.delivers(),
-            require_totp,
-            server_state.store.as_ref(),
-        );
+        use croniq_server::diagnostics::{
+            DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
+        };
+        let input = DiagnosticsInput::from_runtime(RuntimeFacts {
+            app_base_url_configured: server_state.app_base_url.is_some(),
+            email_delivery_active: server_state.email_sender.delivers(),
+            totp_enforced: require_totp,
+            retention_configured: retention_configured(&loaded.runtime),
+            store: server_state.store.as_ref(),
+            jwt_secret: server_state.jwt_config.as_ref().map(|c| c.secret.as_str()),
+        });
         for d in run_diagnostics(&input) {
             let remedy = d.remedy.as_deref().unwrap_or("");
             match d.severity {
@@ -523,6 +540,9 @@ async fn main() -> Result<()> {
     let scheduler_reload_strict = Arc::clone(&server_state.policy_strict_calendars);
     let scheduler_reload_faults = Arc::clone(&server_state.config_faults);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
+    // Boot-only settings never change while the process runs, so the watcher /
+    // SIGHUP path owns a plain copy to diff each reload against (issue #406).
+    let scheduler_reload_boot_only = server_state.boot_only_settings.clone();
 
     let scheduler_task_heartbeat = Arc::clone(&scheduler_heartbeat);
     let scheduler_handle = tokio::spawn(async move {
@@ -607,6 +627,14 @@ async fn main() -> Result<()> {
                     ).await {
                         Ok(plan) => {
                             let diff = plan.diff.clone();
+                            // Warn before applying: a reload that looks
+                            // successful must not hide the parts of the edit it
+                            // silently drops (issue #406).
+                            let pending_restart = scheduler_reload_boot_only
+                                .as_ref()
+                                .map(|running| running.changes_vs(&plan.boot_only))
+                                .unwrap_or_default();
+                            reload::log_pending_restart(&pending_restart);
                             reload::apply_plan_direct(
                                 plan,
                                 &mut scheduler_loop,
@@ -623,6 +651,7 @@ async fn main() -> Result<()> {
                                 removed = diff.removed.len(),
                                 changed = diff.changed.len(),
                                 total = diff.total,
+                                pending_restart = pending_restart.len(),
                                 "config reloaded"
                             );
                         }
@@ -972,6 +1001,21 @@ fn resolve_app_base_url(dsl_app_url: Option<&str>) -> Option<String> {
     }
 }
 
+/// Render a load failure as a critical `doctor` finding and exit non-zero.
+///
+/// `doctor` is documented as a pre-deploy gate, so a Croniqfile that cannot be
+/// loaded at all has to be reported in the same shape as every other finding —
+/// and must never exit 0 (issue #402).
+fn report_doctor_load_failure(path: &Path, err: &croniq_server::loader::LoadError) -> ! {
+    println!("[CRITICAL] {} cannot be loaded", path.display());
+    for line in format!("{err}").lines() {
+        println!("    {line}");
+    }
+    println!();
+    println!("1 finding(s) (1 critical). Address the items above to resolve.");
+    std::process::exit(1);
+}
+
 /// `croniq-server doctor` — print a configuration health report and exit.
 ///
 /// Offline preflight: runs the same checks surfaced at boot and via
@@ -979,19 +1023,24 @@ fn resolve_app_base_url(dsl_app_url: Option<&str>) -> Option<String> {
 /// (no server, DB, or ports). Exits non-zero on any `Critical` finding so it
 /// can gate a deploy.
 fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
-    use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
+    use croniq_server::diagnostics::{
+        DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
+    };
 
     let smtp_feature = croniq_server::email::smtp_feature_compiled();
     let smtp_configured = croniq_server::email::smtp_configured(rt.smtp.as_ref());
-    let input = DiagnosticsInput::from_runtime(
-        resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
+    let input = DiagnosticsInput::from_runtime(RuntimeFacts {
+        app_base_url_configured: resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
         // Offline approximation of build_from_dsl_and_env(): a real transport
         // needs the `smtp` feature compiled AND a usable config (URL or host
         // + from) from the Croniqfile smtp{} block or CRONIQ_SMTP_* env.
-        smtp_feature && smtp_configured,
-        resolve_require_totp(rt),
-        None, // no live store offline → the enforced-2FA enrollment check is skipped
-    );
+        email_delivery_active: smtp_feature && smtp_configured,
+        totp_enforced: resolve_require_totp(rt),
+        retention_configured: retention_configured(rt),
+        // No live store offline → the checks that read stored rows are skipped.
+        store: None,
+        jwt_secret: None,
+    });
 
     let findings = run_diagnostics(&input);
     if findings.is_empty() {

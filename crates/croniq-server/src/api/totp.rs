@@ -277,8 +277,17 @@ pub(crate) fn confirm_pending_enrollment(
     if secret_row.enabled {
         return Err(StatusCode::CONFLICT);
     }
-    let raw = unwrap_totp_secret(jwt_secret, &secret_row.secret_enc)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Pending enrolment, so this was wrapped with the secret that was active a
+    // few seconds ago — a failure means it changed in between (issue #408).
+    let raw = unwrap_totp_secret(jwt_secret, &secret_row.secret_enc).map_err(|e| {
+        tracing::error!(
+            user_id,
+            error = %e,
+            "pending TOTP secret could not be unwrapped — the JWT secret changed between enrol \
+             begin and confirm. The user has to restart enrolment."
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let secret_b32 = String::from_utf8(raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match verify_code(&secret_b32, code) {
         Ok(true) => {}
