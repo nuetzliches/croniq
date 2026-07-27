@@ -25,7 +25,14 @@ const DEFAULT_SERVER_URL: &str = "http://localhost:4000";
 // ─── CLI definition ───────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "croniq", about = "Better Cron — job scheduling done right")]
+// `version` picks up CARGO_PKG_VERSION, which the release workflow rewrites
+// in-place to the pushed tag — so `--version` reports the same value the API
+// and the MCP handshake do (issue #407).
+#[command(
+    name = "croniq",
+    version,
+    about = "Better Cron — job scheduling done right"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

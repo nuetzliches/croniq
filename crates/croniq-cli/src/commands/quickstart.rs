@@ -109,3 +109,30 @@ pub fn quickstart(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SAMPLE_CRONIQFILE;
+    use croniq_config::parser::Parser;
+    use croniq_config::validate::{Severity, validate};
+
+    /// The generated Croniqfile must load on a server without complaints.
+    ///
+    /// Since #402/#403 the server fails closed on error-severity diagnostics,
+    /// including unknown directive keys — so a template that drifts from the
+    /// DSL would hand a brand-new user a config their server refuses to start
+    /// with, on their very first command.
+    #[test]
+    fn sample_croniqfile_validates_clean() {
+        let ast = Parser::parse(SAMPLE_CRONIQFILE).expect("template must parse");
+        let errors: Vec<String> = validate(&ast)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.message)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "quickstart template rejected: {errors:?}"
+        );
+    }
+}

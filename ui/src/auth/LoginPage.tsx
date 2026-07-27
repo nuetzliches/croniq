@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { Lock, Shield, ShieldCheck, ArrowRight, ExternalLink, Bell } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from './store'
+import { classifyLoginFailure } from './login-failure'
 import { apiFetch, apiPost } from '@/api/client'
 import { isMac } from '@/lib/utils'
 import {
@@ -197,13 +198,11 @@ export function LoginPage() {
     window.setTimeout(() => setShake(false), 400)
   }
 
-  function reportFailure(err: unknown) {
-    const msg = err instanceof Error ? err.message : ''
-    const unreachable = err instanceof TypeError || /^5\d\d[: ]/.test(msg)
-    if (unreachable) flashError('Cannot reach server. Check that the Croniq backend is running.')
-    else if (/^401[: ]/.test(msg)) flashError('Invalid credentials.')
-    else if (/^403[: ]/.test(msg)) flashError('Account is locked or inactive. Contact an admin.')
-    else flashError('Login failed. Check your credentials.')
+  // Classification lives in `login-failure.ts` so it is unit-testable — the
+  // wording decides where an operator starts looking, and a 5xx must not read
+  // as "the backend is down" (issue #410).
+  function reportFailure(err: unknown, hadCode = false) {
+    flashError(classifyLoginFailure(err, hadCode).message)
   }
 
   // One submit handler, one request. We POST username + password (+ the code
@@ -243,14 +242,9 @@ export function LoginPage() {
       login(res.access_token, res.refresh_token)
       navigate('/')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      if (mfaCode.trim() && /^401[: ]/.test(msg)) {
-        // A code was sent, so a 401 is the password or the code — we can't tell
-        // which from a bare 401, so name both.
-        flashError('Sign-in failed. Check your password and code.')
-      } else {
-        reportFailure(err)
-      }
+      // A code was sent, so a 401 is the password or the code — the classifier
+      // names both in that case.
+      reportFailure(err, mfaCode.trim().length > 0)
     } finally {
       setLoading(false)
     }

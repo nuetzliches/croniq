@@ -122,6 +122,11 @@ pub struct ServerState {
     pub policy_strict_calendars: Arc<std::sync::atomic::AtomicBool>,
     /// Path to the Croniqfile, needed by the admin reload endpoint.
     pub config_path: Option<std::path::PathBuf>,
+    /// The boot-only settings this process actually started with (issue #406).
+    /// `None` on servers that never loaded a Croniqfile (tests, storeless
+    /// setups) — the reload endpoint then skips the pending-restart check
+    /// instead of reporting every setting as changed.
+    pub boot_only_settings: Option<crate::reload::BootOnlySettings>,
     /// Counters for `croniq_config_reload_total`, incremented by both the
     /// file-watcher reload path and the admin reload endpoint.
     pub reload_counters: Arc<ReloadCounters>,
@@ -152,10 +157,16 @@ pub struct ServerState {
     /// Whether every password login must present a valid TOTP/recovery
     /// code (enforced 2FA). Resolved at boot from DSL
     /// `auth { totp { required bool } }` + env `CRONIQ_REQUIRE_TOTP`;
-    /// defaults to `false`. When `true`, accounts without a confirmed
-    /// TOTP secret are refused at login (they must enrol before
-    /// enforcement) and the login UI shows the code field up-front.
+    /// defaults to `false`. When `true`, the login UI shows the code field
+    /// up-front, and an account without a confirmed TOTP secret is *not*
+    /// refused: login answers `enrollment_required` with a short-lived enrol
+    /// token so the user can set up TOTP inline (issue #409).
     pub require_totp: bool,
+    /// Whether the running config caps run history — `execution_retention` or
+    /// a `keep_last` (issue #405). Snapshotted at boot because both knobs are
+    /// boot-only (a reload parses them but cannot apply them), so this reflects
+    /// what the watchdog actually prunes, not what the file says right now.
+    pub retention_configured: bool,
     /// Effective failure-alert configuration after
     /// `alerts::merge_legacy_env_hook` (issue #140 PR-5). Backs the
     /// read-only `GET /v1/alerts/config` endpoint. The
@@ -212,6 +223,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -220,6 +232,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -248,6 +261,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -256,6 +270,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -283,6 +298,7 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -291,6 +307,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -1796,6 +1813,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -1804,6 +1822,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -1976,6 +1995,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -1984,6 +2004,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -2054,6 +2075,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -2062,6 +2084,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -2139,6 +2162,7 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             config_path: None,
+            boot_only_settings: None,
             reload_counters: ReloadCounters::new(),
             watchdog_counters: WatchdogCounters::new(),
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -2147,6 +2171,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,

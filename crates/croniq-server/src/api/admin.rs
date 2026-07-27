@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
-use crate::reload::{self, ReloadDiff, ReloadError};
+use crate::reload::{self, PendingRestart, ReloadDiff, ReloadError};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ReloadQuery {
@@ -27,6 +27,12 @@ pub struct ReloadSuccess {
     pub applied: bool,
     pub dry_run: bool,
     pub diff: ReloadDiff,
+    /// Boot-only settings the file changed but this reload cannot apply, so a
+    /// caller can report "applied, with N settings pending restart" instead of a
+    /// plain success (issue #406). Omitted when empty, and when the server has
+    /// no boot snapshot to compare against.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_restart: Vec<PendingRestart>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,18 +85,30 @@ pub async fn handle_reload_config(
         }
     };
 
+    // Boot-only settings the file changed since startup. Reported on both the
+    // dry-run and the applied response, and logged on apply, because a
+    // successful reload otherwise reads as a full apply (issue #406).
+    let pending_restart = state
+        .boot_only_settings
+        .as_ref()
+        .map(|running| running.changes_vs(&plan.boot_only))
+        .unwrap_or_default();
+
     // Dry-run stops here: return the diff without applying.
     if query.dry_run {
         let body = ReloadSuccess {
             applied: false,
             dry_run: true,
             diff: plan.diff,
+            pending_restart,
         };
         return Ok((
             StatusCode::OK,
             Json(serde_json::to_value(body).unwrap_or_default()),
         ));
     }
+
+    reload::log_pending_restart(&pending_restart);
 
     // Stage 2: apply via the scheduler command channel + await ack.
     let diff = plan.diff.clone();
@@ -112,6 +130,7 @@ pub async fn handle_reload_config(
                 applied: true,
                 dry_run: false,
                 diff,
+                pending_restart,
             };
             Ok((
                 StatusCode::OK,

@@ -6,6 +6,132 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--version` on both binaries
+  ([#407](https://github.com/nuetzliches/croniq/issues/407)).** Neither
+  `croniq` nor `croniq-server` generated the flag, so answering "which
+  version is this?" meant starting the server and querying the HTTP API —
+  not an option for a pulled-but-not-running image, or when the server
+  won't start. Both clap commands now carry `version`, which picks up
+  `CARGO_PKG_VERSION` and therefore reports exactly what `GET /version`
+  and the MCP handshake do.
+- **`doctor` finding for unbounded run history
+  ([#405](https://github.com/nuetzliches/croniq/issues/405)).** Retention
+  is opt-in by design (an upgrade must never delete history), which means
+  the default configuration grows `executions` and `execution_logs` for as
+  long as the server lives, and nothing said so. The new
+  `retention.unbounded_history` finding fires when neither
+  `server { execution_retention }` nor any `keep_last` is configured. It is
+  informational and never turns `doctor`'s exit code non-zero — keeping
+  history forever is a legitimate choice; the point is that the decision is
+  visible.
+- **`doctor` finding for undecryptable TOTP secrets
+  ([#408](https://github.com/nuetzliches/croniq/issues/408)).**
+  `totp.secrets_undecryptable` (critical) counts confirmed TOTP secrets that
+  no longer unwrap with the active JWT secret — a precise signal for the
+  otherwise near-undiagnosable state described below.
+- **Reload warns about boot-only settings
+  ([#406](https://github.com/nuetzliches/croniq/issues/406)).** A reload
+  re-reads the whole Croniqfile but only applies jobs, calendars, triggers
+  and the `policy { }` flags; `server { }`, `pull_api { }` and the rest are
+  boot-only and were dropped without a word. That is documented, but the
+  reload still *looked* like a full apply — with `--watch` the operator
+  edited the file, saw a successful reload, and had no indication that part
+  of the edit hadn't landed (worst in container deployments, where a
+  config-only change never restarts the process). Each changed boot-only
+  setting is now named in a `WARN` with its old and new value, counted in
+  the reload summary as `pending_restart`, and returned by
+  `POST /v1/admin/reload-config` in a `pending_restart` array. The
+  `alerts { }` block is compared by fingerprint rather than by value, so a
+  channel's HMAC signing key can't reach the log.
+
+### Changed
+
+- **The server load path runs semantic validation and fails closed
+  ([#402](https://github.com/nuetzliches/croniq/issues/402)).**
+  `loader::load_file` ran parse → compile → load and never called
+  `croniq_config::validate`, so every diagnostic the validator uniquely
+  contributes was silently accepted at boot *and* by `croniq-server
+  doctor` — which operators use as a pre-deploy gate. A duplicate job key
+  dropped one of the jobs (`jobs=2 triggers=1`, exit 0), a job without a
+  schedule was never scheduled, an unknown runner type compiled to nothing,
+  and the `ephemeral` + `singleton` rejection from #302 applied only to
+  `croniq validate`, not to the server that schedules the job. Boot, reload
+  and `doctor` now reject these: the server refuses to start (listing every
+  error at once), a reload is rejected with the running config left intact,
+  and `doctor` reports one critical finding and exits `1`. Calendar rule
+  failures and unresolvable `calendar` references stay per-job faults —
+  the affected jobs load paused under `policy { strict_calendars }`
+  (#361) — so one broken calendar still cannot take the scheduler down.
+- **Unknown directives are config errors
+  ([#403](https://github.com/nuetzliches/croniq/issues/403)).** Directives
+  inside `server { }`, `pull_api { }`, `defaults { }`, `auth { }`,
+  `observability { }`, `mcp { }`, `policy { }`, `smtp { }` and `oidc { }`
+  (and their sub-block names) were dropped without a diagnostic by both the
+  server and `croniq validate`, while a typo one nesting level up — an
+  unknown top-level block or calendar rule type — was already a hard parse
+  error. A silently ignored setting is hard to notice precisely because
+  nothing misbehaves: a mistyped `execution_retention` left run history
+  growing forever, and the only signal was a missing line in the boot log.
+  Unknown keys now error with a did-you-mean suggestion, or the block's
+  known key list when nothing is close.
+- **`totp.enforced_without_enrollment` no longer claims a lockout
+  ([#409](https://github.com/nuetzliches/croniq/issues/409)).** The finding
+  said affected users "are refused at login" and recommended switching
+  enforced 2FA **off** to fix it — a security downgrade prompted by an
+  incorrect message, and one an operator follows under pressure. Login has
+  handed those accounts an inline enrolment token since enforced 2FA
+  shipped, so the boot log contained two contradictory warnings in the same
+  startup. The finding now describes inline enrolment, drops the
+  `required false` remedy (that belongs to the genuine lockout case,
+  #408), and is `info` rather than `warning` — it is the expected state
+  right after enforcement is switched on. The boot notice and the finding
+  share one source of truth and a test asserts they agree.
+
+### Fixed
+
+- **A leftover `pull_api { auth … }` line is no longer silently ignored
+  ([#408](https://github.com/nuetzliches/croniq/issues/408)).** #371
+  established that the directive's value was used verbatim as the JWT
+  signing secret, and 0.29.0 removed it — but that value is also the
+  HKDF-SHA256 input for the AES-256-GCM key that wraps stored TOTP secrets
+  at rest. Ignoring the line on upgrade therefore falls through to a
+  freshly generated `$DATA_DIR/jwt.secret`, silently rotating the wrap key
+  and making **every stored TOTP secret undecryptable** — with nothing in
+  the boot log to say the secret source had changed. The line is now a
+  config error whose message names the migration (move the value to
+  `CRONIQ_JWT_SECRET`, then delete the line). On top of that, a failed
+  unwrap during login logs a dedicated error naming the likely cause and
+  the recovery path instead of discarding the `CryptoError`, and
+  `docs/operations.md` documents the coupling and the rotation order.
+- **The login page no longer reports every 5xx as "cannot reach server"
+  ([#410](https://github.com/nuetzliches/croniq/issues/410)).** A transport
+  failure and an HTTP error *response* are opposite situations — the latter
+  proves the server was reached and failed internally — but both produced
+  "Cannot reach server. Check that the Croniq backend is running.", sending
+  the operator to check proxy, DNS and container status while
+  `/v1/auth/config` and `/health` stayed green. The concrete case is the
+  `500` above. The reachability wording is now reserved for a genuine
+  transport error; a `500` reads "Server error during sign-in (HTTP 500) —
+  the backend is reachable but failed internally, check the server logs",
+  and 502/503/504 name the proxy/upstream layer. Classification moved into
+  a unit-tested pure function, which also makes the existing "Invalid
+  credentials." branch reachable again (`apiFetch` throws a bare
+  `Unauthorized` error for 401, which the old message-prefix check missed).
+- **Documented that retention does not shrink the database file
+  ([#404](https://github.com/nuetzliches/croniq/issues/404)).**
+  `execution_retention` and `keep_last` delete rows, but nothing runs
+  `VACUUM` and no migration sets `PRAGMA auto_vacuum`, so on SQLite the
+  freed pages are reused and the file stays at its high-water mark. Since
+  enabling retention is usually a reaction to "the database got bigger than
+  I expected", the reasonable conclusion was that retention wasn't working.
+  `docs/operations.md` now states that pruning caps growth without
+  returning space to the filesystem, what an explicit `VACUUM` costs (a
+  full rewrite under an exclusive lock, roughly the DB size in free space),
+  why `auto_vacuum` isn't a drop-in on an existing database, and the
+  `VACUUM FULL` equivalent on PostgreSQL.
+
 ## [0.30.0] - 2026-07-20
 
 ### Added

@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/auth/store'
+import { ApiError } from './error'
 
 // Default to same-origin (relative URLs) so the UI works unchanged in any
 // deployment where croniq-server serves both the UI and the API — which is
@@ -8,22 +9,8 @@ import { useAuthStore } from '@/auth/store'
 // build time only when UI and API live on different origins.
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
-/**
- * Error thrown by API helpers on a non-OK response. Carries the HTTP status
- * and the parsed JSON body (when the response was JSON) so callers can branch
- * on structured errors (e.g. the 409 stale-replay guard). The `message` keeps
- * the historical `"<status>: <text>"` format so existing toasts don't regress.
- */
-export class ApiError extends Error {
-  status: number
-  body?: unknown
-  constructor(status: number, rawBody: string, body?: unknown) {
-    super(`${status}: ${rawBody}`)
-    this.name = 'ApiError'
-    this.status = status
-    this.body = body
-  }
-}
+// Re-exported so `import { ApiError } from '@/api/client'` keeps working.
+export { ApiError }
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = useAuthStore.getState().token

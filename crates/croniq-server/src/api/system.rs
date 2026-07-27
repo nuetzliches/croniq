@@ -10,7 +10,7 @@ use croniq_auth::context::Scope;
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
-use crate::diagnostics::{self, Diagnostic, DiagnosticsInput};
+use crate::diagnostics::{self, Diagnostic, DiagnosticsInput, RuntimeFacts};
 
 /// `GET /v1/system/diagnostics` — admin-only configuration health report.
 ///
@@ -22,12 +22,14 @@ pub async fn handle_diagnostics(
     Extension(ctx): Extension<CallerContext>,
 ) -> Result<Json<Vec<Diagnostic>>, StatusCode> {
     require_scope(&ctx, Scope::ADMIN)?;
-    let input = DiagnosticsInput::from_runtime(
-        state.app_base_url.is_some(),
-        state.email_sender.delivers(),
-        state.require_totp,
-        state.store.as_ref(),
-    );
+    let input = DiagnosticsInput::from_runtime(RuntimeFacts {
+        app_base_url_configured: state.app_base_url.is_some(),
+        email_delivery_active: state.email_sender.delivers(),
+        totp_enforced: state.require_totp,
+        retention_configured: state.retention_configured,
+        store: state.store.as_ref(),
+        jwt_secret: state.jwt_config.as_ref().map(|c| c.secret.as_str()),
+    });
     Ok(Json(diagnostics::run_diagnostics(&input)))
 }
 
