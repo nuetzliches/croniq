@@ -152,10 +152,16 @@ pub struct ServerState {
     /// Whether every password login must present a valid TOTP/recovery
     /// code (enforced 2FA). Resolved at boot from DSL
     /// `auth { totp { required bool } }` + env `CRONIQ_REQUIRE_TOTP`;
-    /// defaults to `false`. When `true`, accounts without a confirmed
-    /// TOTP secret are refused at login (they must enrol before
-    /// enforcement) and the login UI shows the code field up-front.
+    /// defaults to `false`. When `true`, the login UI shows the code field
+    /// up-front, and an account without a confirmed TOTP secret is *not*
+    /// refused: login answers `enrollment_required` with a short-lived enrol
+    /// token so the user can set up TOTP inline (issue #409).
     pub require_totp: bool,
+    /// Whether the running config caps run history — `execution_retention` or
+    /// a `keep_last` (issue #405). Snapshotted at boot because both knobs are
+    /// boot-only (a reload parses them but cannot apply them), so this reflects
+    /// what the watchdog actually prunes, not what the file says right now.
+    pub retention_configured: bool,
     /// Effective failure-alert configuration after
     /// `alerts::merge_legacy_env_hook` (issue #140 PR-5). Backs the
     /// read-only `GET /v1/alerts/config` endpoint. The
@@ -220,6 +226,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -256,6 +263,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -291,6 +299,7 @@ impl ServerState {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -1804,6 +1813,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -1984,6 +1994,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -2062,6 +2073,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
@@ -2147,6 +2159,7 @@ mod tests {
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
+            retention_configured: false,
             alerts: croniq_config::compile::AlertsConfig::default(),
             console_hub: None,
             scheduler_heartbeat: None,
