@@ -276,6 +276,85 @@ jobs:
             exit 1
           fi
 
+  spec:
+    name: OpenAPI spec (parse + validate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.0.0
+        with:
+          python-version: '3.12'
+      # Explicit install rather than leaning on the runner image's system
+      # PyYAML: the ubuntu-latest image is free to drop it, and setup-python
+      # gives us an interpreter that isn't PEP 668 externally-managed.
+      # Versions pinned so a new validator release can't turn this job red
+      # on an unrelated PR — bump deliberately.
+      - run: pip install 'pyyaml==6.0.3' 'openapi-spec-validator==0.9.0'
+      - name: Validate openapi.yaml
+        # Nothing else in CI read this file, so for a long time it wasn't
+        # actually valid YAML and no job noticed — an unquoted `description`
+        # containing ": " made a plain scalar look like a nested mapping.
+        # The five language SDKs are generated from this spec, so a broken
+        # or silently mis-parsed file is a real breakage, not a cosmetic one.
+        run: |
+          python - <<'EOF'
+          import sys, yaml
+          from openapi_spec_validator import OpenAPIV31SpecValidator
+
+          try:
+              spec = yaml.safe_load(open("openapi.yaml"))
+          except yaml.YAMLError as e:
+              print(f"::error file=openapi.yaml::openapi.yaml is not valid YAML: {e}")
+              sys.exit(1)
+
+          errors = []
+
+          # Structural smoke test — catches a truncated or wholesale-garbled
+          # file that still happens to parse as *some* YAML document.
+          if not isinstance(spec, dict):
+              errors.append("top level is not a mapping")
+          else:
+              for key in ("openapi", "info", "paths"):
+                  if key not in spec:
+                      errors.append(f"missing top-level `{key}`")
+
+          # A null-valued key is the fingerprint of the silent half of the
+          # same bug: inside a `{ ... }` flow mapping an unquoted scalar is
+          # split on commas, so `{ description: Unknown state, bad code }`
+          # parses as two keys with `bad code` mapping to None. That produces
+          # no parse error at all — only this check catches it. Quote the
+          # value to fix.
+          def find_nulls(node, path="$"):
+              if isinstance(node, dict):
+                  for k, v in node.items():
+                      if v is None:
+                          errors.append(f"null-valued key at {path}.{k} "
+                                        "(unquoted scalar split on a comma?)")
+                      find_nulls(v, f"{path}.{k}")
+              elif isinstance(node, list):
+                  for i, v in enumerate(node):
+                      find_nulls(v, f"{path}[{i}]")
+
+          find_nulls(spec)
+
+          # Full OpenAPI 3.1 validation. This subsumes the null-key check
+          # above (a comma-split shows up as an unevaluated property), but
+          # that check names the offending key directly, which the schema
+          # error does not — so both earn their place.
+          if not errors:
+              for e in OpenAPIV31SpecValidator(spec).iter_errors():
+                  where = "/".join(str(p) for p in e.absolute_path) or "<root>"
+                  errors.append(f"{where}: {e.message}")
+
+          if errors:
+              for msg in errors:
+                  print(f"::error file=openapi.yaml::{msg}")
+              sys.exit(1)
+
+          print(f"openapi.yaml OK — {len(spec['paths'])} paths, "
+                f"{len(spec.get('components', {}).get('schemas', {}))} schemas")
+          EOF
+
   docker:
     # Build each architecture on a native runner instead of QEMU-emulating
     # arm64 on amd64. The previous single-runner setup spent ~50 of its 60
