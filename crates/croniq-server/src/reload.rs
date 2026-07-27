@@ -138,6 +138,13 @@ pub async fn build_plan(
             line: None,
             column: None,
         },
+        // Semantic errors (#402) reject the reload the same way a parse error
+        // does — the running config stays untouched.
+        LoadError::Validate { messages } => ReloadError::Validation {
+            message: messages.join("; "),
+            line: None,
+            column: None,
+        },
     })?;
 
     let now = Utc::now();

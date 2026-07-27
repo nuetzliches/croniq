@@ -41,6 +41,18 @@ pub enum LoadError {
 
     #[error("schedule error in job '{job}': {reason}")]
     Schedule { job: String, reason: String },
+
+    /// Semantic validation failed (issue #402). Carries every error-severity
+    /// diagnostic, not just the first, so one boot attempt reports the whole
+    /// list. Locations are omitted deliberately: after `import` resolution the
+    /// AST spans belong to whichever file contributed the item, and pinning a
+    /// line number to the wrong file is worse than none — `croniq validate`
+    /// reports exact positions per file.
+    #[error(
+        "invalid configuration:\n{}\nRun `croniq validate <Croniqfile>` for exact locations.",
+        .messages.iter().map(|m| format!("  - {m}")).collect::<Vec<_>>().join("\n")
+    )]
+    Validate { messages: Vec<String> },
 }
 
 /// Convert a `ParseError` into a `LoadError::Parse` with 1-based line/column
@@ -174,8 +186,51 @@ pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
     load_from_compiled(runtime, &ast)
 }
 
+/// Semantic validation options used on every server load path.
+///
+/// Only the calendar checks are off: a calendar that fails to compile and a
+/// reference that resolves to nothing are both the loader's own business (see
+/// [`ResolvedCalendars`] and issue #361) and must pause the affected jobs
+/// rather than abort the boot.
+const LOADER_VALIDATE: croniq_config::validate::Options = croniq_config::validate::Options {
+    check_calendars: false,
+};
+
+/// Run semantic validation over the resolved AST and fail closed on any
+/// error-severity diagnostic (issue #402).
+///
+/// Before this, the server path ran parse → compile → load and skipped the
+/// validator entirely, so everything it uniquely catches — duplicate job keys,
+/// schedule-less jobs, unknown runner types, `ephemeral` + `singleton`,
+/// unknown directives (#403) — was silently accepted at boot and by
+/// `croniq-server doctor`. Duplicate keys and schedule-less jobs quietly
+/// reduced what the scheduler ended up running.
+///
+/// Warnings are logged but never block: they describe configurations that work
+/// and are merely risky (e.g. an interval shorter than the runner poll cycle).
+fn validate_ast(ast: &Croniqfile) -> Result<(), LoadError> {
+    use croniq_config::validate::Severity;
+
+    let mut messages = Vec::new();
+    for d in croniq_config::validate::validate_with(ast, LOADER_VALIDATE) {
+        match d.severity {
+            Severity::Error => messages.push(d.message),
+            Severity::Warning => {
+                tracing::warn!(diagnostic = %d.message, "Croniqfile warning")
+            }
+        }
+    }
+    if messages.is_empty() {
+        Ok(())
+    } else {
+        Err(LoadError::Validate { messages })
+    }
+}
+
 /// Build a LoadedConfig from a compiled RuntimeConfig and its AST.
 fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<LoadedConfig, LoadError> {
+    validate_ast(ast)?;
+
     let now = Utc::now();
 
     let strict_calendars = runtime.policy.strict_calendars;
@@ -1051,6 +1106,176 @@ mod tests {
         assert_eq!(cfg.runtime.jobs.len(), 1);
         assert_eq!(cfg.runtime.jobs[0].key, "etl:sync");
         assert!(cfg.triggers.contains_key("etl:sync"));
+    }
+
+    /// The error-severity messages a load produced, or an empty vec when it
+    /// succeeded. Used by the #402 cases below.
+    fn load_errors(src: &str) -> Vec<String> {
+        match load_str(src) {
+            Ok(_) => Vec::new(),
+            Err(LoadError::Validate { messages }) => messages,
+            Err(other) => panic!("expected a validation failure, got: {other}"),
+        }
+    }
+
+    // ── Issue #402: the server load path must run the validator ─────────────
+    //
+    // Each case below used to load with exit 0 — the validator was only
+    // reachable through `croniq validate`, so `doctor` reported success for
+    // semantically broken configs.
+
+    #[test]
+    fn duplicate_job_key_fails_closed() {
+        // The exact repro from #402: one of the two jobs used to be dropped
+        // silently ("jobs=2 triggers=1").
+        let src = r#"
+            job demo:noop { every 1 hour
+                            runner shell { command "true" } }
+            job demo:noop { every 2 hours
+                            runner shell { command "true" } }
+        "#;
+        assert_eq!(
+            load_errors(src),
+            vec!["duplicate job key 'demo:noop'".to_string()]
+        );
+    }
+
+    #[test]
+    fn job_without_schedule_fails_closed() {
+        let src = r#"job demo:noop { runner shell { command "true" } }"#;
+        assert_eq!(
+            load_errors(src),
+            vec!["job 'demo:noop' has no schedule".to_string()]
+        );
+    }
+
+    #[test]
+    fn unknown_runner_type_fails_closed() {
+        let src = r#"
+            job demo:noop {
+                every 1 hour
+                runner http { url "https://example.test" }
+            }
+        "#;
+        let errors = load_errors(src);
+        assert!(
+            errors
+                .iter()
+                .any(|m| m.contains("unknown runner type 'http'")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_with_singleton_fails_closed() {
+        // #302 was fixed in `croniq validate` but not on the path that
+        // schedules the job.
+        let src = r#"
+            job demo:noop {
+                ephemeral every 1 hour
+                singleton
+                runner shell { command "true" }
+            }
+        "#;
+        let errors = load_errors(src);
+        assert!(
+            errors
+                .iter()
+                .any(|m| m.contains("has no effect on the `ephemeral` job")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_directive_fails_closed() {
+        // #403 repro: a typo'd retention knob left history growing forever and
+        // the only signal was a missing line in the boot log.
+        let src = r#"
+            server { listen :4000
+                     execution_retentionn 90d }
+            job demo:noop { every 1 hour
+                            runner shell { command "true" } }
+        "#;
+        let errors = load_errors(src);
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert!(
+            errors[0].contains("unknown directive 'execution_retentionn'"),
+            "got: {}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn removed_pull_api_auth_fails_closed() {
+        // #408: silently ignoring this line rotates the key that wraps stored
+        // TOTP secrets, so it must not load.
+        let src = r#"
+            pull_api { auth some-secret }
+            job demo:noop { every 1 hour
+                            runner shell { command "true" } }
+        "#;
+        let errors = load_errors(src);
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert!(
+            errors[0].contains("CRONIQ_JWT_SECRET"),
+            "got: {}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn validation_error_lists_every_finding() {
+        // One boot attempt reports the whole list, not just the first error.
+        let src = r#"
+            server { listenn :4000 }
+            job demo:noop { runner shell { command "true" } }
+        "#;
+        let errors = load_errors(src);
+        assert_eq!(errors.len(), 2, "got: {errors:?}");
+        let rendered = format!(
+            "{}",
+            LoadError::Validate {
+                messages: errors.clone()
+            }
+        );
+        assert!(rendered.contains("croniq validate"), "got: {rendered}");
+        for m in &errors {
+            assert!(rendered.contains(m), "missing {m} in: {rendered}");
+        }
+    }
+
+    #[test]
+    fn valid_config_still_loads() {
+        // The counterpart to the cases above: a clean file must not acquire
+        // new errors from the validator running on this path.
+        let src = r#"
+            server { listen :4000; execution_retention 30d }
+            defaults { timezone UTC; timeout 5m }
+            calendar biz { include weekly weekday }
+            job demo:noop {
+                every 1 hour { calendar biz }
+                runner shell { command "true" }
+            }
+        "#;
+        let cfg = load_str(src).expect("clean config must load");
+        assert_eq!(cfg.runtime.jobs.len(), 1);
+        assert!(cfg.calendar_faults.is_empty());
+    }
+
+    #[test]
+    fn broken_calendar_still_pauses_instead_of_failing_the_load() {
+        // Guard the #361 boundary: calendar rule failures and unresolvable
+        // references stay per-job faults, so the loader disables those checks
+        // rather than turning them into boot failures.
+        for src in [
+            r#"calendar biz { include weekly funday }
+               job ops:tick { every 1 minutes { calendar biz } }"#,
+            r#"job ops:tick { every 1 minutes { calendar nonexistent } }"#,
+        ] {
+            let cfg = load_str(src).expect("calendar faults must not fail the load");
+            assert_eq!(cfg.triggers["ops:tick"].state, TriggerState::Paused);
+            assert!(cfg.calendar_faults.contains_key("ops:tick"));
+        }
     }
 
     #[test]

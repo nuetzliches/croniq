@@ -20,8 +20,39 @@ pub struct Diagnostic {
     pub span: SourceSpan,
 }
 
+/// Which checks [`validate_with`] runs. Every field defaults to "on"; a caller
+/// only ever turns a check *off* because it enforces that rule itself.
+#[derive(Debug, Clone, Copy)]
+pub struct Options {
+    /// Check `calendar { }` rule arguments and job `calendar` references.
+    ///
+    /// The server's loader turns this off because it owns both outcomes: a
+    /// calendar whose rules don't compile, and a reference that resolves to no
+    /// calendar (DSL or store-registered), fail *per job* — the job loads
+    /// paused with a `config_faults` entry under `policy { strict_calendars }`
+    /// (issue #361). Left on, either condition would abort the whole boot
+    /// instead of pausing the jobs that depend on it.
+    ///
+    /// Duplicate calendar *names* are checked regardless: nothing downstream
+    /// reports them, and one definition silently wins.
+    pub check_calendars: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            check_calendars: true,
+        }
+    }
+}
+
 /// Validate a Croniqfile AST, returning errors and warnings.
 pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
+    validate_with(ast, Options::default())
+}
+
+/// [`validate`] with individual checks disabled — see [`Options`].
+pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut job_keys = HashSet::new();
     let mut calendar_names = HashSet::new();
@@ -82,7 +113,9 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
                 }
 
                 // Validate schedule calendar references
-                if let Some(ref sched) = job.schedule {
+                if let Some(ref sched) = job.schedule
+                    && opts.check_calendars
+                {
                     for opt in &sched.options {
                         if opt.key.value == "calendar" {
                             for arg in &opt.args {
@@ -112,7 +145,9 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
                 // Validate singleton / max_concurrent (issue #278, #302)
                 validate_concurrency(job, default_ephemeral, &mut diags);
             }
-            Item::Calendar(cal) => {
+            // Falls through to the catch-all when the caller owns calendar
+            // failures itself — see `Options::check_calendars`.
+            Item::Calendar(cal) if opts.check_calendars => {
                 validate_calendar(cal, &mut diags);
             }
             _ => {}

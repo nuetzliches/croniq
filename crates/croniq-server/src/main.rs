@@ -5,7 +5,7 @@
 //! croniq-server --config Croniqfile --listen :4000 --data-dir ./.data
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -93,8 +93,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     tracing::info!(config = %cli.config.display(), "loading Croniqfile");
-    let mut loaded = load_file(&cli.config)
-        .with_context(|| format!("failed to load {}", cli.config.display()))?;
+    let mut loaded = match load_file(&cli.config) {
+        Ok(loaded) => loaded,
+        // A config that fails to load is the most critical finding `doctor` can
+        // report, so it renders in the findings format and exits non-zero
+        // rather than surfacing as an error chain (issue #402).
+        Err(e) if matches!(cli.command, Some(Command::Doctor)) => {
+            report_doctor_load_failure(&cli.config, &e)
+        }
+        Err(e) => {
+            return Err(anyhow::Error::new(e))
+                .with_context(|| format!("failed to load {}", cli.config.display()));
+        }
+    };
 
     let job_count = loaded.runtime.jobs.len();
     let active = loaded.triggers.len();
@@ -974,6 +985,21 @@ fn resolve_app_base_url(dsl_app_url: Option<&str>) -> Option<String> {
         Ok(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
         _ => None,
     }
+}
+
+/// Render a load failure as a critical `doctor` finding and exit non-zero.
+///
+/// `doctor` is documented as a pre-deploy gate, so a Croniqfile that cannot be
+/// loaded at all has to be reported in the same shape as every other finding —
+/// and must never exit 0 (issue #402).
+fn report_doctor_load_failure(path: &Path, err: &croniq_server::loader::LoadError) -> ! {
+    println!("[CRITICAL] {} cannot be loaded", path.display());
+    for line in format!("{err}").lines() {
+        println!("    {line}");
+    }
+    println!();
+    println!("1 finding(s) (1 critical). Address the items above to resolve.");
+    std::process::exit(1);
 }
 
 /// `croniq-server doctor` — print a configuration health report and exit.
