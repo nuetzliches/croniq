@@ -1,43 +1,8 @@
-import { lazy } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router'
+import { BrowserRouter, Routes } from 'react-router'
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { LoginPage } from '@/auth/LoginPage'
-import { ProtectedRoute } from '@/auth/ProtectedRoute'
-import { Layout } from '@/layout/Layout'
+import { appRoutes } from '@/routes'
 import { Toaster } from '@/components/ui/toaster'
 import { pushApiError } from '@/lib/toast'
-
-// Page-level code splitting. Each route loads its own chunk on demand so
-// the initial bundle is just login + layout + the chunks needed for the
-// landing route. The Suspense boundary lives in Layout, around <Outlet />,
-// so all protected pages share a single fallback spinner.
-const DashboardPage = lazy(() =>
-  import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })),
-)
-const JobsPage = lazy(() =>
-  import('@/pages/JobsPage').then((m) => ({ default: m.JobsPage })),
-)
-const RunnersPage = lazy(() =>
-  import('@/pages/RunnersPage').then((m) => ({ default: m.RunnersPage })),
-)
-const DeadLettersPage = lazy(() =>
-  import('@/pages/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })),
-)
-const ExecutionsPage = lazy(() =>
-  import('@/pages/ExecutionsPage').then((m) => ({ default: m.ExecutionsPage })),
-)
-const AlertsPage = lazy(() =>
-  import('@/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })),
-)
-const CalendarsPage = lazy(() =>
-  import('@/pages/CalendarsPage').then((m) => ({ default: m.CalendarsPage })),
-)
-const SettingsPage = lazy(() =>
-  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
-)
-const ConsolePage = lazy(() =>
-  import('@/pages/ConsolePage').then((m) => ({ default: m.ConsolePage })),
-)
 
 // Surface every failed mutation as a toast. Individual callers can
 // still pass their own `onError` to override or augment. Auth-401
@@ -62,26 +27,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<Layout />}>
-              <Route path="/" element={<DashboardPage />} />
-              <Route path="/jobs" element={<JobsPage />} />
-              <Route path="/jobs/:jobKey" element={<JobsPage />} />
-              <Route path="/runners" element={<RunnersPage />} />
-              <Route path="/runners/:runnerId" element={<RunnersPage />} />
-              <Route path="/dead-letters" element={<DeadLettersPage />} />
-              <Route path="/dead-letters/:id" element={<DeadLettersPage />} />
-              <Route path="/executions" element={<ExecutionsPage />} />
-              <Route path="/executions/:id" element={<ExecutionsPage />} />
-              <Route path="/alerts" element={<AlertsPage />} />
-              <Route path="/calendars" element={<CalendarsPage />} />
-              <Route path="/console" element={<ConsolePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Route>
-          </Route>
-        </Routes>
+        <Routes>{appRoutes}</Routes>
       </BrowserRouter>
       <Toaster />
     </QueryClientProvider>
