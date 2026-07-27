@@ -4,7 +4,7 @@ All notable changes to Croniq are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.31.0] - 2026-07-27
 
 ### Added
 
@@ -131,6 +131,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   full rewrite under an exclusive lock, roughly the DB size in free space),
   why `auto_vacuum` isn't a drop-in on an existing database, and the
   `VACUUM FULL` equivalent on PostgreSQL.
+- **`openapi.yaml` was not valid YAML, and nothing checked it
+  ([#412](https://github.com/nuetzliches/croniq/pull/412)).** Two failure
+  modes, both from unquoted plain scalars carrying YAML-significant
+  punctuation: a `description` containing `": "` made the whole document
+  fail to load, and four `{ description: … }` flow mappings contained
+  commas, which split the value at the first comma and invented
+  null-valued keys — silently truncating
+  `{ description: Unknown state, bad code, or invalid ID token }` to
+  "Unknown state" while raising no parse error at all. Validating the
+  repaired file against OpenAPI 3.1 surfaced 50 further pre-existing
+  violations, also fixed: 38 response objects missing the required
+  `description`, and 12 path parameters used in URL templates but never
+  declared, leaving generators with no name or type to bind. Since the five
+  language SDKs are generated from this file, a mis-parse here is a real
+  breakage. A new CI job now parses the spec, rejects null-valued keys (the
+  precise diagnostic for the comma case, which the schema error does not
+  name), and runs full OpenAPI 3.1 validation, with the validator and
+  PyYAML versions pinned so an upstream release cannot turn an unrelated PR
+  red.
+- **Unknown UI routes rendered a blank page
+  ([#416](https://github.com/nuetzliches/croniq/pull/416)).** The route
+  table had no catch-all, so a path matching nothing made `<Routes>` render
+  `null` — a white page with no navigation and no way back, which reads as
+  "the app is broken" rather than "wrong URL". A `path="*"` route now sits
+  inside `Layout` (and therefore inside `ProtectedRoute`), so an
+  authenticated operator keeps the sidebar and gets a link home while a
+  logged-out one is bounced to `/login` like anywhere else. `NotFoundPage`
+  is imported eagerly rather than lazily — the last-resort fallback should
+  not depend on a chunk fetch that could itself fail.
+
+### Security
+
+- **Dependency bumps resolving 11 open Dependabot alerts, all HIGH
+  ([#415](https://github.com/nuetzliches/croniq/pull/415),
+  [#413](https://github.com/nuetzliches/croniq/pull/413)).**
+  `react-router` 7.18 → **8.3.0** (RSC-mode CSRF bypass; the advisory has
+  no 7.x backport, so the major bump *is* the fix — Croniq's UI uses the
+  declarative API and no RSC, so real exposure was negligible),
+  `postcss` → 8.5.18 (path traversal via source-map auto-loading),
+  `js-yaml` → 4.3.0 (quadratic CPU consumption via merge-key chains) and
+  `brace-expansion` (DoS via exponential expansion) across `ui/` and both
+  TypeScript SDK directories, plus `quinn-proto` 0.11.14 → 0.11.16
+  (transitive, `Cargo.lock` only). The react-router major was verified
+  against the running dev stack before merging — client-side navigation,
+  deep links, `useParams`, `useSearchParams` (read and write),
+  `useMatch`/`NavLink`, history, and the `ProtectedRoute` redirect — since
+  a type-check and a build cannot catch changed runtime routing behaviour.
 
 ## [0.30.0] - 2026-07-20
 
