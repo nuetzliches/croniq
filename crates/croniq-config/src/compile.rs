@@ -139,11 +139,12 @@ pub struct PasswordAuthConfig {
 }
 
 /// `auth { totp { required bool } }`. When `Some(true)`, every password
-/// login must present a valid TOTP (or recovery) code, and users without
-/// a confirmed TOTP secret are refused — so accounts must enrol *before*
-/// enforcement is switched on (see the rollout note in the docs). `None`
-/// means the DSL did not set it; the server merges with
-/// `CRONIQ_REQUIRE_TOTP` at boot, defaulting to off.
+/// login must present a valid TOTP (or recovery) code. Users without a
+/// confirmed TOTP secret are *not* refused: login returns an enrolment
+/// token and they set TOTP up inline (issue #409), so enforcement can be
+/// switched on without enrolling everyone first. `None` means the DSL did
+/// not set it; the server merges with `CRONIQ_REQUIRE_TOTP` at boot,
+/// defaulting to off.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TotpAuthConfig {
     pub required: Option<bool>,

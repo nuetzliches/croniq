@@ -150,13 +150,7 @@ async fn main() -> Result<()> {
     // the gate is active and remember the recovery path if the worst happens.
     let require_totp = resolve_require_totp(&loaded.runtime);
     if require_totp {
-        tracing::warn!(
-            "enforced 2FA is ON — every password login must present a TOTP or recovery \
-             code. Users without a confirmed secret are guided through inline enrolment \
-             on next sign-in (not locked out). If you've lost both the authenticator and \
-             all recovery codes, set auth {{ totp {{ required false }} }} (or \
-             CRONIQ_REQUIRE_TOTP=false), re-enrol, then re-enable."
-        );
+        tracing::warn!("{}", croniq_server::diagnostics::ENFORCED_TOTP_BOOT_NOTICE);
     }
 
     // Open (or create) the persistence store. The backend is chosen from
@@ -322,6 +316,7 @@ async fn main() -> Result<()> {
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.require_totp = require_totp;
+        s.retention_configured = croniq_server::diagnostics::retention_configured(&loaded.runtime);
         s.email_sender = croniq_server::email::build_from_dsl_and_env(loaded.runtime.smtp.as_ref());
         // Issue #140 PR-5: surface the effective alerts config
         // (after CRONIQ_ON_FAILURE_CMD synthesis) so the read-only
@@ -366,13 +361,17 @@ async fn main() -> Result<()> {
     // Surface configuration health at boot (missing SMTP, unpinned URL, …).
     // The same checks back `croniq-server doctor` and GET /v1/system/diagnostics.
     {
-        use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
-        let input = DiagnosticsInput::from_runtime(
-            server_state.app_base_url.is_some(),
-            server_state.email_sender.delivers(),
-            require_totp,
-            server_state.store.as_ref(),
-        );
+        use croniq_server::diagnostics::{
+            DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
+        };
+        let input = DiagnosticsInput::from_runtime(RuntimeFacts {
+            app_base_url_configured: server_state.app_base_url.is_some(),
+            email_delivery_active: server_state.email_sender.delivers(),
+            totp_enforced: require_totp,
+            retention_configured: retention_configured(&loaded.runtime),
+            store: server_state.store.as_ref(),
+            jwt_secret: server_state.jwt_config.as_ref().map(|c| c.secret.as_str()),
+        });
         for d in run_diagnostics(&input) {
             let remedy = d.remedy.as_deref().unwrap_or("");
             match d.severity {
@@ -1009,19 +1008,24 @@ fn report_doctor_load_failure(path: &Path, err: &croniq_server::loader::LoadErro
 /// (no server, DB, or ports). Exits non-zero on any `Critical` finding so it
 /// can gate a deploy.
 fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
-    use croniq_server::diagnostics::{DiagnosticsInput, Severity, run_diagnostics};
+    use croniq_server::diagnostics::{
+        DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
+    };
 
     let smtp_feature = croniq_server::email::smtp_feature_compiled();
     let smtp_configured = croniq_server::email::smtp_configured(rt.smtp.as_ref());
-    let input = DiagnosticsInput::from_runtime(
-        resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
+    let input = DiagnosticsInput::from_runtime(RuntimeFacts {
+        app_base_url_configured: resolve_app_base_url(rt.server.app_url.as_deref()).is_some(),
         // Offline approximation of build_from_dsl_and_env(): a real transport
         // needs the `smtp` feature compiled AND a usable config (URL or host
         // + from) from the Croniqfile smtp{} block or CRONIQ_SMTP_* env.
-        smtp_feature && smtp_configured,
-        resolve_require_totp(rt),
-        None, // no live store offline → the enforced-2FA enrollment check is skipped
-    );
+        email_delivery_active: smtp_feature && smtp_configured,
+        totp_enforced: resolve_require_totp(rt),
+        retention_configured: retention_configured(rt),
+        // No live store offline → the checks that read stored rows are skipped.
+        store: None,
+        jwt_secret: None,
+    });
 
     let findings = run_diagnostics(&input);
     if findings.is_empty() {

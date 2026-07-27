@@ -231,8 +231,9 @@ pub async fn handle_login(
     //     and mint tokens (single-request login);
     //   * account has a secret but no inline code → hand back a short-lived
     //     mfa_token for the two-step /v1/auth/login/totp exchange;
-    //   * account has no secret but enforced 2FA is on → refuse (it can't
-    //     satisfy the requirement; it must enrol before enforcement).
+    //   * account has no secret but enforced 2FA is on → hand back a
+    //     short-lived enroll_token and let the user set TOTP up inline; the
+    //     account is *not* refused (issue #409).
     let secret_row = store
         .totp_get(&user.user_id)
         .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
@@ -533,10 +534,29 @@ fn verify_second_factor(
 ) -> Result<(), Response> {
     match (code, recovery_code) {
         (Some(code), None) => {
-            let raw = unwrap_totp_secret(&jwt_config.secret, &secret_row.secret_enc)
-                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
-            let secret_b32 = String::from_utf8(raw)
-                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
+            // A failure here is almost always a changed JWT secret, not a
+            // corrupt row: the at-rest wrap key is HKDF-derived from it. The
+            // error used to be discarded, leaving a bare 500 that the login
+            // page rendered as "cannot reach server" — so the real cause was
+            // invisible on every surface (issue #408). Log it with the user id
+            // so the operator can see the scope.
+            let raw =
+                unwrap_totp_secret(&jwt_config.secret, &secret_row.secret_enc).map_err(|e| {
+                    tracing::error!(
+                        user_id,
+                        error = %e,
+                        "stored TOTP secret could not be unwrapped — the JWT secret has most \
+                         likely changed since enrolment. Restore the previous value via \
+                         CRONIQ_JWT_SECRET, or have the user sign in with a recovery code and \
+                         re-enrol. `croniq-server doctor` reports this as \
+                         totp.secrets_undecryptable."
+                    );
+                    status_err(StatusCode::INTERNAL_SERVER_ERROR)
+                })?;
+            let secret_b32 = String::from_utf8(raw).map_err(|_| {
+                tracing::error!(user_id, "decrypted TOTP secret is not valid UTF-8");
+                status_err(StatusCode::INTERNAL_SERVER_ERROR)
+            })?;
             match verify_code(&secret_b32, code) {
                 Ok(true) => Ok(()),
                 _ => Err(status_err(StatusCode::UNAUTHORIZED)),
