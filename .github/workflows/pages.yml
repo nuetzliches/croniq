@@ -39,7 +39,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Build the wasm bridge so site/generator.html has a working
       # ./wasm/ path. We reuse the same scripts the UI uses but copy
       # into site/wasm/ instead of ui/src/lib/wasm/.
