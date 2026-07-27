@@ -23,8 +23,12 @@ use croniq_store::sqlite::SqliteStore;
 use tokio::sync::mpsc;
 
 #[derive(Parser)]
+// `version` picks up CARGO_PKG_VERSION, which the release workflow rewrites
+// in-place to the pushed tag — so `--version` reports the same value the
+// `GET /version` endpoint and the MCP handshake do (issue #407).
 #[command(
     name = "croniq-server",
+    version,
     about = "Croniq distributed job scheduler",
     long_about = "Croniq distributed job scheduler.\n\
 \n\
