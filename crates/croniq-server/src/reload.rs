@@ -46,6 +46,192 @@ impl ReloadDiff {
     }
 }
 
+// ─── Boot-only settings (issue #406) ─────────────────────────────────────────
+
+/// A boot-only setting whose value in the Croniqfile differs from the value the
+/// server is running with — parsed by the reload, then discarded.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PendingRestart {
+    /// Dotted DSL path, e.g. `server.execution_retention`.
+    pub setting: &'static str,
+    /// What the running server uses. `None` ⇒ not set at boot.
+    pub running: Option<String>,
+    /// What the reloaded file asks for. `None` ⇒ removed from the file.
+    pub pending: Option<String>,
+}
+
+/// Snapshot of every setting a reload parses but cannot apply.
+///
+/// A reload re-reads the whole file but only diffs and applies jobs, calendars,
+/// triggers and the `policy { }` flags; `server { }`, `pull_api { }` and the
+/// rest are dropped on the floor. That is documented ("take effect on server
+/// restart"), but the reload still *looks* like a full apply, and with `--watch`
+/// there was no signal at all that part of an edit had not landed — a trap in
+/// container deployments, where a config-only change doesn't recreate the
+/// container and so never restarts the process (issue #406).
+///
+/// Comparing snapshots is deliberately dumb: flatten to `path → rendered value`
+/// and diff the maps, so a new boot-only directive only has to be added to
+/// [`BootOnlySettings::from_runtime`] to be covered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BootOnlySettings(std::collections::BTreeMap<&'static str, String>);
+
+impl BootOnlySettings {
+    /// Flatten the boot-only settings of a compiled config. Settings that are
+    /// unset are absent from the map rather than stored as an empty string, so
+    /// "removed from the file" and "set to empty" stay distinguishable.
+    pub fn from_runtime(rt: &croniq_config::compile::RuntimeConfig) -> Self {
+        let mut m = std::collections::BTreeMap::new();
+        let mut put = |k: &'static str, v: Option<String>| {
+            if let Some(v) = v {
+                m.insert(k, v);
+            }
+        };
+
+        put("server.listen", Some(rt.server.listen.clone()));
+        put("server.data_dir", Some(rt.server.data_dir.clone()));
+        put("server.db", Some(rt.server.db.clone()));
+        put("server.app_url", rt.server.app_url.clone());
+        put(
+            "server.execution_retention",
+            rt.server.execution_retention.clone(),
+        );
+
+        if let Some(p) = rt.pull_api.as_ref() {
+            put("pull_api.listen", Some(p.listen.clone()));
+            put("pull_api.lease_ttl", Some(p.lease_ttl.clone()));
+            put(
+                "pull_api.trigger_dedup_window",
+                Some(p.trigger_dedup_window.clone()),
+            );
+        }
+
+        if let Some(o) = rt.observability.as_ref() {
+            if let Some(l) = o.log.as_ref() {
+                put("observability.log.level", Some(l.level.clone()));
+                put("observability.log.format", Some(l.format.clone()));
+                put("observability.log.output", Some(l.output.clone()));
+            }
+            if let Some(me) = o.metrics.as_ref() {
+                put("observability.metrics.listen", Some(me.listen.clone()));
+                put("observability.metrics.path", Some(me.path.clone()));
+            }
+        }
+
+        if let Some(mc) = rt.mcp.as_ref() {
+            put("mcp.enabled", Some(mc.enabled.to_string()));
+            put("mcp.allowed_hosts", Some(mc.allowed_hosts.join(" ")));
+        }
+
+        if let Some(o) = rt.oidc.as_ref() {
+            put("oidc.issuer", o.issuer.clone());
+            put("oidc.client_id", o.client_id.clone());
+            put("oidc.redirect_url", o.redirect_url.clone());
+            put("oidc.default_role", o.default_role.clone());
+            put("oidc.provider_name", o.provider_name.clone());
+            put("oidc.post_login_redirect", o.post_login_redirect.clone());
+        }
+
+        if let Some(s) = rt.smtp.as_ref() {
+            put("smtp.host", s.host.clone());
+            put("smtp.port", s.port.map(|p| p.to_string()));
+            put("smtp.security", s.security.clone());
+            put("smtp.from", s.from.clone());
+        }
+
+        put(
+            "auth.password.enabled",
+            rt.auth.password.enabled.map(|b| b.to_string()),
+        );
+        put(
+            "auth.totp.required",
+            rt.auth.totp.required.map(|b| b.to_string()),
+        );
+
+        // Alerts are cloned into the completion processor at boot, so channel
+        // and rule edits are boot-only too. Rendered as a fingerprint, never as
+        // values: a channel can carry an HMAC signing key, which must not reach
+        // the log. The hash covers those keys (one-way) so rotating one is still
+        // detected, while only the counts are ever printed.
+        put("alerts", Some(alerts_fingerprint(&rt.alerts)));
+
+        Self(m)
+    }
+
+    /// Settings that differ between the running snapshot (`self`) and a freshly
+    /// parsed one, in stable path order.
+    pub fn changes_vs(&self, pending: &Self) -> Vec<PendingRestart> {
+        let mut keys: Vec<&'static str> = self.0.keys().copied().collect();
+        keys.extend(pending.0.keys().copied());
+        keys.sort_unstable();
+        keys.dedup();
+
+        keys.into_iter()
+            .filter(|k| self.0.get(k) != pending.0.get(k))
+            .map(|setting| PendingRestart {
+                setting,
+                running: self.0.get(setting).cloned(),
+                pending: pending.0.get(setting).cloned(),
+            })
+            .collect()
+    }
+}
+
+/// `N channel(s), M rule(s), fingerprint XXXXXXXX` — see the alerts note in
+/// [`BootOnlySettings::from_runtime`].
+fn alerts_fingerprint(alerts: &croniq_config::compile::AlertsConfig) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // `channels` is a HashMap, so hash it in name order for a stable result.
+    let mut names: Vec<&String> = alerts.channels.keys().collect();
+    names.sort();
+    for name in &names {
+        name.hash(&mut hasher);
+        if let Some(ch) = alerts.channels.get(*name) {
+            // Serde skips `signing_key` (it must never leak through
+            // `/v1/dsl`), so feed the secret to the hasher separately —
+            // otherwise a key rotation would look like "no change".
+            serde_json::to_string(&ch.kind)
+                .unwrap_or_default()
+                .hash(&mut hasher);
+            if let croniq_config::compile::ChannelKind::Webhook { signing_key, .. } = &ch.kind {
+                signing_key.hash(&mut hasher);
+            }
+        }
+    }
+    for rule in &alerts.rules {
+        serde_json::to_string(rule)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
+    format!(
+        "{} channel(s), {} rule(s), fingerprint {:016x}",
+        alerts.channels.len(),
+        alerts.rules.len(),
+        hasher.finish()
+    )
+}
+
+/// WARN once per changed boot-only setting, naming the old and new value.
+///
+/// Called by every reload path (watcher, SIGHUP, admin endpoint) so a reload
+/// that only *looks* successful can't hide a setting that didn't land.
+pub fn log_pending_restart(changes: &[PendingRestart]) {
+    for c in changes {
+        tracing::warn!(
+            setting = c.setting,
+            running = c.running.as_deref().unwrap_or("<unset>"),
+            pending = c.pending.as_deref().unwrap_or("<unset>"),
+            "{} changed in the Croniqfile ({} → {}); this setting is applied at boot only and \
+             needs a server restart to take effect",
+            c.setting,
+            c.running.as_deref().unwrap_or("<unset>"),
+            c.pending.as_deref().unwrap_or("<unset>"),
+        );
+    }
+}
+
 /// A validated reload ready to apply.
 pub struct ReloadPlan {
     /// DSL-only jobs (for `dsl_jobs_shared` update on apply).
@@ -71,6 +257,12 @@ pub struct ReloadPlan {
     pub calendar_faults: HashMap<String, String>,
     /// Summary of the difference vs. the running state.
     pub diff: ReloadDiff,
+    /// The boot-only settings *as written in the reloaded file* (issue #406).
+    /// Applying the plan does not apply these; callers compare them against the
+    /// snapshot taken at boot ([`BootOnlySettings::changes_vs`]) to warn about
+    /// the ones that need a restart. Kept out of [`ReloadDiff`] because the diff
+    /// is what a reload changes, and these are exactly what it cannot.
+    pub boot_only: BootOnlySettings,
 }
 
 /// Reload failure modes — shaped so the admin handler can surface them as
@@ -148,6 +340,7 @@ pub async fn build_plan(
     })?;
 
     let now = Utc::now();
+    let boot_only = BootOnlySettings::from_runtime(&loaded.runtime);
 
     // Adopted DSL keys are skipped on this reload — the API store wins.
     // Calendars and jobs are tracked under separate resource_type values
@@ -280,6 +473,7 @@ pub async fn build_plan(
         merged_triggers,
         calendar_faults,
         diff,
+        boot_only,
     })
 }
 
@@ -420,6 +614,167 @@ mod tests {
             RwLock::new(loaded.triggers),
             RwLock::new(loaded.runtime.jobs),
         )
+    }
+
+    // ── Boot-only settings (issue #406) ─────────────────────────────────
+
+    fn boot_only_of(src: &str) -> BootOnlySettings {
+        BootOnlySettings::from_runtime(&load_str(src).unwrap().runtime)
+    }
+
+    /// The one setting from the issue's own example, end to end.
+    #[tokio::test]
+    async fn changed_retention_is_reported_as_pending_restart() {
+        let running =
+            boot_only_of("server { execution_retention 30d }\njob a:one { every 1 hours }");
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "server { execution_retention 90d }\njob a:one { every 1 hours }",
+        )
+        .unwrap();
+        let (cur_tr, cur_dsl) = state_from("job a:one { every 1 hours }").await;
+        let store = empty_store();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            running.changes_vs(&plan.boot_only),
+            vec![PendingRestart {
+                setting: "server.execution_retention",
+                running: Some("30d".into()),
+                pending: Some("90d".into()),
+            }]
+        );
+        // The jobs are untouched, so the reload itself is a no-op — which is
+        // exactly the case where a plain "reloaded" log used to be misleading.
+        assert!(plan.diff.is_noop());
+    }
+
+    #[test]
+    fn job_only_edits_report_nothing_pending() {
+        let running = boot_only_of("server { listen :4000 }\njob a:one { every 1 hours }");
+        let pending = boot_only_of("server { listen :4000 }\njob a:one { every 30 minutes }");
+        assert!(running.changes_vs(&pending).is_empty());
+    }
+
+    #[test]
+    fn identical_config_reports_nothing_pending() {
+        let src = r#"
+            server { listen :4000; app_url "https://x.test"; execution_retention 30d }
+            pull_api { lease_ttl 60s }
+            observability { log { level info } metrics { listen :9900; path /metrics } }
+            mcp { enabled true; allowed_hosts a.test }
+            smtp { host smtp.test; port 587 }
+            auth { totp { required true } }
+            job a:one { every 1 hours }
+        "#;
+        assert!(boot_only_of(src).changes_vs(&boot_only_of(src)).is_empty());
+    }
+
+    #[test]
+    fn added_and_removed_settings_are_distinguishable() {
+        let bare = boot_only_of("job a:one { every 1 hours }");
+        let with_url =
+            boot_only_of("server { app_url \"https://x.test\" }\njob a:one { every 1 hours }");
+
+        assert_eq!(
+            bare.changes_vs(&with_url),
+            vec![PendingRestart {
+                setting: "server.app_url",
+                running: None,
+                pending: Some("https://x.test".into()),
+            }]
+        );
+        // …and the other direction: dropping the line is a change too.
+        assert_eq!(
+            with_url.changes_vs(&bare),
+            vec![PendingRestart {
+                setting: "server.app_url",
+                running: Some("https://x.test".into()),
+                pending: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn every_boot_only_section_is_covered() {
+        // One edit per section, to catch a section that was never flattened.
+        let base = r#"
+            server { listen :4000; data_dir /a; db sqlite }
+            pull_api { lease_ttl 60s }
+            observability { log { level info } metrics { listen :9900; path /m } }
+            mcp { enabled true }
+            oidc { issuer "https://a.test" }
+            smtp { host a.test }
+            auth { password { enabled true } totp { required false } }
+            job a:one { every 1 hours }
+        "#;
+        let running = boot_only_of(base);
+        for (label, edited) in [
+            ("server.listen", base.replace(":4000", ":4001")),
+            ("server.data_dir", base.replace("/a", "/b")),
+            ("server.db", base.replace("db sqlite", "db postgres://x/y")),
+            ("pull_api.lease_ttl", base.replace("60s", "90s")),
+            (
+                "observability.log.level",
+                base.replace("level info", "level debug"),
+            ),
+            (
+                "observability.metrics.path",
+                base.replace("/m", "/metrics2"),
+            ),
+            ("mcp.enabled", base.replace("enabled true", "enabled false")),
+            (
+                "oidc.issuer",
+                base.replace("https://a.test", "https://b.test"),
+            ),
+            ("smtp.host", base.replace("host a.test", "host b.test")),
+            (
+                "auth.totp.required",
+                base.replace("required false", "required true"),
+            ),
+        ] {
+            let changes = running.changes_vs(&boot_only_of(&edited));
+            assert!(
+                changes.iter().any(|c| c.setting == label),
+                "editing {label} produced {changes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn alerts_changes_are_detected_without_logging_values() {
+        let base = r#"
+            alerts {
+              channel "ops" { webhook "https://hooks.test/a"
+                              sign hmac super-secret }
+              rule "fail" { when job_failed; channels "ops" }
+            }
+            job a:one { every 1 hours }
+        "#;
+        let running = boot_only_of(base);
+
+        // A rotated signing key must still register as a change even though
+        // serde skips the field…
+        let rotated = base.replace("super-secret", "rotated-secret");
+        let changes = running.changes_vs(&boot_only_of(&rotated));
+        assert_eq!(changes.len(), 1, "got: {changes:?}");
+        assert_eq!(changes[0].setting, "alerts");
+        // …and neither the old nor the new secret may appear in what we print.
+        let rendered = format!("{changes:?}");
+        assert!(!rendered.contains("super-secret"), "leaked: {rendered}");
+        assert!(!rendered.contains("rotated-secret"), "leaked: {rendered}");
+        assert!(
+            rendered.contains("1 channel(s), 1 rule(s)"),
+            "got: {rendered}"
+        );
+
+        // An unrelated edit to the URL is a change as well.
+        let moved = base.replace("hooks.test/a", "hooks.test/b");
+        assert_eq!(running.changes_vs(&boot_only_of(&moved)).len(), 1);
     }
 
     #[tokio::test]
