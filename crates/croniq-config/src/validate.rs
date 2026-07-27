@@ -39,6 +39,11 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
         }
     }
 
+    // Unknown / removed directive keys and sub-block names in the
+    // operator-facing blocks (`server { }`, `pull_api { }`, …). Kept in its own
+    // module because it is table-driven rather than rule-driven (issue #403).
+    crate::block_directives::validate_blocks(ast, &mut diags);
+
     // Running `defaults { execution_mode … }` baseline. Tracked in item order
     // so per-job ephemeral detection matches compile_job: a defaults block only
     // affects jobs declared after it, and later blocks/directives win.
