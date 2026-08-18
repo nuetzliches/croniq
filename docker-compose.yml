@@ -21,9 +21,15 @@ services:
     image: ${CRONIQ_IMAGE:-croniq:local}
     build: .
     restart: unless-stopped
+    # Published to 127.0.0.1 only, never 0.0.0.0 (issue #431). The demo
+    # profile below seeds admin/demo-admin, a fixed admin-scoped API key and
+    # the recovery code 123456 — all of them in this repository — so the one
+    # thing keeping a demo instance safe is that nobody else can reach it.
+    # Dropping the `127.0.0.1:` prefix publishes those credentials to every
+    # interface on the host, including the public one on a cloud VM.
     ports:
-      - "4000:4000"   # UI + API
-      - "9900:9900"   # Prometheus metrics
+      - "127.0.0.1:4000:4000"   # UI + API
+      - "127.0.0.1:9900:9900"   # Prometheus metrics
     volumes:
       - croniq-data:/var/lib/croniq
       - ./Croniqfile.demo:/etc/croniq/Croniqfile:ro

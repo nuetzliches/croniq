@@ -40,6 +40,38 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tower::util::ServiceExt;
 
+// ─── Auth fixtures (issue #431) ───────────────────────────────────────────────
+//
+// `require_auth` fails closed: a ServerState without a jwt_config rejects every
+// authenticated route with 401 rather than injecting a synthetic admin caller.
+// These tests therefore configure a real signing key and send a real admin
+// token, so they exercise the middleware instead of bypassing it.
+
+const TEST_JWT_SECRET: &str = "integration-integration-test-secret";
+
+fn test_jwt() -> croniq_auth::jwt::JwtConfig {
+    croniq_auth::jwt::JwtConfig::new(TEST_JWT_SECRET)
+}
+
+fn admin_bearer() -> String {
+    let pair = croniq_auth::jwt::issue_token_pair(
+        &test_jwt(),
+        "test-admin",
+        "test-admin",
+        // API-client shaped: a user token is checked against
+        // users.token_generation on every request (issue #431), which would
+        // mean seeding a user row into every fixture here.
+        croniq_auth::CallerType::ApiKey,
+        None,
+        None,
+        croniq_auth::AuthMethod::ApiKey,
+        &[croniq_auth::context::Scope::ADMIN.to_string()],
+        None,
+    )
+    .expect("minting a test admin token cannot fail");
+    format!("Bearer {}", pair.access_token)
+}
+
 // ─── Test harness ─────────────────────────────────────────────────────────────
 
 /// A fully wired in-memory Croniq server for integration testing.
@@ -88,7 +120,8 @@ impl TestServer {
         // it, `try_dequeue_for` skips the store claim and rows stay `queued`,
         // which the completion CAS guard (#374) then rejects. A short
         // long-poll timeout keeps empty-queue polls from blocking 30s.
-        let mut state = ServerState::with_auth(runner, tx, None, Some(Arc::clone(&store)));
+        let mut state =
+            ServerState::with_auth(runner, tx, Some(test_jwt()), Some(Arc::clone(&store)));
         {
             let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
             s.long_poll_timeout = Duration::from_millis(50);
@@ -127,6 +160,7 @@ async fn post_json(app: axum::Router, uri: &str, body: serde_json::Value) -> ser
     let resp = app
         .oneshot(
             Request::builder()
+                .header("authorization", admin_bearer())
                 .method("POST")
                 .uri(uri)
                 .header("content-type", "application/json")
@@ -143,6 +177,7 @@ async fn get_json(app: axum::Router, uri: &str) -> serde_json::Value {
     let resp = app
         .oneshot(
             Request::builder()
+                .header("authorization", admin_bearer())
                 .method("GET")
                 .uri(uri)
                 .body(Body::empty())
@@ -726,7 +761,7 @@ async fn store_state_consistent_through_lifecycle() {
 fn store_backed_router(store: DynStore) -> axum::Router {
     let runner = AppState::new();
     let (tx, _rx) = mpsc::unbounded_channel();
-    let state = ServerState::with_auth(runner, tx, None, Some(store));
+    let state = ServerState::with_auth(runner, tx, Some(test_jwt()), Some(store));
     server_router(state)
 }
 

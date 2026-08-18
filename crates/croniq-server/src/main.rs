@@ -240,10 +240,7 @@ async fn main() -> Result<()> {
         tracing::error!(error = %e, "could not resolve JWT secret");
         std::process::exit(1);
     });
-    let jwt_config = Some(croniq_auth::jwt::JwtConfig {
-        secret: jwt_secret,
-        ..Default::default()
-    });
+    let jwt_config = Some(croniq_auth::jwt::JwtConfig::new(jwt_secret));
     // Scheduler command channel for live job registration via API
     let (scheduler_cmd_tx, mut scheduler_cmd_rx) =
         mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
@@ -891,6 +888,7 @@ async fn main() -> Result<()> {
             .map(|p| ([0, 0, 0, 0], p).into())
             .or_else(|_| metrics_listen.parse())
             .with_context(|| format!("invalid metrics address: {metrics_listen}"))?;
+        enforce_demo_loopback(&metrics_addr, "--metrics")?;
 
         let metrics_app = croniq_server::metrics::metrics_router(Arc::clone(&server_state));
         let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await?;
@@ -908,6 +906,8 @@ async fn main() -> Result<()> {
         .map(|p| ([0, 0, 0, 0], p).into())
         .or_else(|_| cli.listen.parse())
         .with_context(|| format!("invalid listen address: {}", cli.listen))?;
+
+    enforce_demo_loopback(&addr, "--listen")?;
 
     let mut app = server_router(server_state);
 
@@ -1000,6 +1000,74 @@ async fn shutdown_signal() {
 
 /// Resolve the effective `password_login_enabled` flag for the running server.
 ///
+/// Env var set by `docker-entrypoint.sh` immediately before it execs the
+/// server inside the demo image. It means "this process lives in its own
+/// network namespace, so binding `0.0.0.0` exposes nothing by itself — reach
+/// is decided by the port publish, which `docker-compose.yml` pins to
+/// `127.0.0.1`". Nothing else sets it, so a demo-mode server started directly
+/// on a host still gets the hard refusal in [`enforce_demo_loopback`].
+const DEMO_CONTAINER_BIND_VAR: &str = "CRONIQ_DEMO_CONTAINER_BIND";
+
+/// Refuse to expose the demo profile to the network (issue #431).
+///
+/// `CRONIQ_DEMO_MODE=1` seeds a published admin password, a fixed admin-scoped
+/// API key, and — with `CRONIQ_DEMO_MFA=1` — the literal recovery code
+/// `123456` in all ten MFA slots. Everything needed to take the instance over
+/// is in the public repository, so the only thing keeping a demo safe is that
+/// nobody else can reach it. That was previously a comment in
+/// `docker-compose.yml`; here it becomes a startup condition.
+///
+/// A bind inside a container is allowed to be non-loopback because it has to
+/// be: Docker forwards a published port to the container's interface address,
+/// so a process bound to `127.0.0.1` in its own netns is unreachable even from
+/// the host. The demo compose file therefore publishes to `127.0.0.1` on the
+/// host side, which is where the guarantee actually lands for that deployment.
+fn enforce_demo_loopback(addr: &std::net::SocketAddr, flag: &str) -> Result<()> {
+    let demo = std::env::var("CRONIQ_DEMO_MODE").as_deref() == Ok("1");
+    let in_container = std::env::var(DEMO_CONTAINER_BIND_VAR).as_deref() == Ok("1");
+    match demo_bind_verdict(demo, in_container, addr) {
+        DemoBind::Allowed => Ok(()),
+        DemoBind::AllowedInContainer => {
+            tracing::warn!(
+                address = %addr,
+                "demo mode is binding a non-loopback address inside a container — the demo \
+                 credentials are public, so the published port must stay bound to 127.0.0.1 \
+                 on the host (see docker-compose.yml)"
+            );
+            Ok(())
+        }
+        DemoBind::Refused => anyhow::bail!(
+            "refusing to start: CRONIQ_DEMO_MODE=1 seeds publicly known credentials \
+             (admin/demo-admin, a fixed admin API key, and with CRONIQ_DEMO_MFA=1 the \
+             recovery code 123456), so the demo profile must not be reachable from the \
+             network — but {flag} resolves to {addr}.\n\
+             Bind loopback instead (e.g. {flag} 127.0.0.1:{port}), or unset \
+             CRONIQ_DEMO_MODE and configure real credentials.",
+            port = addr.port()
+        ),
+    }
+}
+
+/// Outcome of the demo-mode bind check. Split out from
+/// [`enforce_demo_loopback`] so the decision is testable without mutating
+/// process-wide environment variables.
+#[derive(Debug, PartialEq, Eq)]
+enum DemoBind {
+    Allowed,
+    AllowedInContainer,
+    Refused,
+}
+
+fn demo_bind_verdict(demo: bool, in_container: bool, addr: &std::net::SocketAddr) -> DemoBind {
+    if !demo || addr.ip().is_loopback() {
+        DemoBind::Allowed
+    } else if in_container {
+        DemoBind::AllowedInContainer
+    } else {
+        DemoBind::Refused
+    }
+}
+
 /// Precedence (highest first): DSL `auth { password { enabled bool } }` →
 /// env `CRONIQ_PASSWORD_LOGIN_ENABLED` → default `true`.
 ///
@@ -1258,6 +1326,54 @@ fn parse_duration_secs(s: &str) -> Result<u64, String> {
     } else {
         s.parse::<u64>()
             .map_err(|_| format!("invalid duration {s:?}: expected '<n>[s|m|h]' or bare seconds"))
+    }
+}
+
+#[cfg(test)]
+mod demo_bind_tests {
+    use super::{DemoBind, demo_bind_verdict};
+    use std::net::SocketAddr;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn demo_mode_refuses_every_non_loopback_bind() {
+        // The default `--listen :4000` resolves to 0.0.0.0, which is exactly
+        // the case that put admin/demo-admin on the network (issue #431).
+        for a in ["0.0.0.0:4000", "192.168.1.10:4000", "[::]:4000"] {
+            assert_eq!(
+                demo_bind_verdict(true, false, &addr(a)),
+                DemoBind::Refused,
+                "{a} must be refused in demo mode"
+            );
+        }
+    }
+
+    #[test]
+    fn demo_mode_allows_loopback() {
+        for a in ["127.0.0.1:4000", "[::1]:4000"] {
+            assert_eq!(demo_bind_verdict(true, false, &addr(a)), DemoBind::Allowed);
+        }
+    }
+
+    #[test]
+    fn container_bind_is_allowed_but_flagged() {
+        // A container must bind 0.0.0.0 for a published port to reach it;
+        // exposure is decided by the host-side publish instead.
+        assert_eq!(
+            demo_bind_verdict(true, true, &addr("0.0.0.0:4000")),
+            DemoBind::AllowedInContainer
+        );
+    }
+
+    #[test]
+    fn non_demo_servers_are_untouched() {
+        assert_eq!(
+            demo_bind_verdict(false, false, &addr("0.0.0.0:4000")),
+            DemoBind::Allowed
+        );
     }
 }
 

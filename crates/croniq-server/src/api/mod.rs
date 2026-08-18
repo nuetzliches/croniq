@@ -1625,6 +1625,56 @@ async fn handle_version() -> Json<VersionResponse> {
     })
 }
 
+// ─── Test support ─────────────────────────────────────────────────────────────
+
+/// Shared auth fixtures for the API unit tests.
+///
+/// `require_auth` fails closed since issue #431: a `ServerState` without a
+/// `jwt_config` rejects every authenticated route with 401 instead of minting
+/// a synthetic admin caller. Tests that used to lean on that fallback now
+/// configure a real signing key and present a real admin token, so they
+/// exercise the middleware they run behind rather than bypassing it.
+#[cfg(test)]
+pub(crate) mod test_auth {
+    use croniq_auth::context::Scope;
+    use croniq_auth::jwt::{JwtConfig, issue_token_pair};
+    use croniq_auth::{AuthMethod, CallerType};
+
+    /// Signing key for every router built by the unit tests in this crate.
+    /// Fixed rather than random so a token minted by [`admin_bearer`]
+    /// validates against a config built anywhere else in the test suite.
+    pub(crate) const TEST_JWT_SECRET: &str = "croniq-api-unit-test-secret";
+
+    pub(crate) fn jwt() -> JwtConfig {
+        JwtConfig::new(TEST_JWT_SECRET)
+    }
+
+    /// An `Authorization` header value carrying an admin-scoped access token.
+    ///
+    /// Minted as an API-client token (`user_id: None`) rather than a user
+    /// token, deliberately: a user token is checked against
+    /// `users.token_generation` on every request (issue #431), which would
+    /// require every one of these tests to seed a matching user row. These
+    /// tests are about jobs, schedules and executions, not about identity —
+    /// the generation check has its own coverage in
+    /// `tests/token_generation.rs`.
+    pub(crate) fn admin_bearer() -> String {
+        let pair = issue_token_pair(
+            &jwt(),
+            "test-admin-client",
+            "test-admin-client",
+            CallerType::ApiKey,
+            None,
+            None,
+            AuthMethod::ApiKey,
+            &[Scope::ADMIN.to_string()],
+            None,
+        )
+        .expect("minting a test admin token cannot fail");
+        format!("Bearer {}", pair.access_token)
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1640,7 +1690,10 @@ mod tests {
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
         // Use a very short long-poll timeout in tests so they complete quickly
-        let state = ServerState::with_timeout(runner, tx, Duration::from_millis(50));
+        let mut state = ServerState::with_timeout(runner, tx, Duration::from_millis(50));
+        // Auth fails closed (issue #431), so the router needs a real signing
+        // key and the request helpers below need a real admin token.
+        Arc::get_mut(&mut state).unwrap().jwt_config = Some(test_auth::jwt());
         (state, rx)
     }
 
@@ -1648,6 +1701,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("POST")
                     .uri(uri)
                     .header("content-type", "application/json")
@@ -1664,6 +1718,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("GET")
                     .uri(uri)
                     .body(Body::empty())
@@ -1814,7 +1869,8 @@ mod tests {
         // as alive.
         let runner = AppState::with_lease_ttl(300);
         let (tx, _rx) = mpsc::unbounded_channel();
-        let state = ServerState::new(runner, tx);
+        let mut state = ServerState::new(runner, tx);
+        Arc::get_mut(&mut state).unwrap().jwt_config = Some(test_auth::jwt());
 
         {
             let mut reg = state.runner.registry.write().await;
@@ -1892,10 +1948,7 @@ mod tests {
     ) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
-        let jwt_config = JwtConfig {
-            secret: secret.to_string(),
-            ..Default::default()
-        };
+        let jwt_config = JwtConfig::new(secret.to_string());
         let state = Arc::new(ServerState {
             runner,
             completion_tx: tx,
@@ -2002,6 +2055,7 @@ mod tests {
             Some(croniq_auth::Role::Admin),
             croniq_auth::AuthMethod::Password,
             &["admin".into()],
+            None,
         )
         .unwrap();
 
@@ -2084,7 +2138,7 @@ mod tests {
             runner,
             completion_tx: tx,
             long_poll_timeout: Duration::from_millis(50),
-            jwt_config: None,
+            jwt_config: Some(test_auth::jwt()),
             store: None,
             scheduler_tx: None,
             triggers: None,
@@ -2166,7 +2220,7 @@ mod tests {
             runner,
             completion_tx: tx,
             long_poll_timeout: Duration::from_millis(50),
-            jwt_config: None,
+            jwt_config: Some(test_auth::jwt()),
             store: None,
             scheduler_tx: None,
             triggers: None,
@@ -2255,7 +2309,7 @@ mod tests {
             runner,
             completion_tx: tx,
             long_poll_timeout: Duration::from_millis(50),
-            jwt_config: None,
+            jwt_config: Some(test_auth::jwt()),
             store: None,
             scheduler_tx: None,
             triggers: None,
@@ -2328,7 +2382,12 @@ mod tests {
             crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
         let runner = AppState::new();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let state = ServerState::with_auth(runner, tx, None, Some(store.clone()));
+        let state = ServerState::with_auth(
+            runner,
+            tx,
+            Some(crate::api::test_auth::jwt()),
+            Some(store.clone()),
+        );
         (state, store)
     }
 
@@ -2340,6 +2399,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("POST")
                     .uri(uri)
                     .header("content-type", "application/json")
@@ -2534,6 +2594,7 @@ mod tests {
         let resp = server_router(Arc::clone(&state))
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("POST")
                     .uri("/v1/trigger")
                     .header("content-type", "application/json")
@@ -2668,7 +2729,12 @@ mod tests {
         let store: DynStore = crate::store::sqlite_store(SqliteStore::in_memory().unwrap());
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut state = ServerState::with_auth(runner, tx, None, Some(Arc::clone(&store)));
+        let mut state = ServerState::with_auth(
+            runner,
+            tx,
+            Some(crate::api::test_auth::jwt()),
+            Some(Arc::clone(&store)),
+        );
         {
             let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
             s.long_poll_timeout = Duration::from_millis(50);
@@ -3243,10 +3309,7 @@ mod tests {
             crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
-        let jwt_config = JwtConfig {
-            secret: "runner-identity-test-secret".to_string(),
-            ..Default::default()
-        };
+        let jwt_config = JwtConfig::new("runner-identity-test-secret".to_string());
         let mut state =
             ServerState::with_auth(runner, tx, Some(jwt_config), Some(Arc::clone(&store)));
         {
@@ -3277,6 +3340,7 @@ mod tests {
                 "work:events".into(),
                 "runners:write".into(),
             ],
+            None,
         )
         .unwrap()
         .access_token

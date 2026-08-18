@@ -112,4 +112,16 @@ if [ ! -f "$DB_FILE" ]; then
   fi
 fi
 
+# Demo mode refuses to bind a non-loopback address (issue #431), because the
+# profile ships publicly known credentials. Inside a container that refusal
+# would be wrong: the process has its own network namespace, so it must bind
+# 0.0.0.0 for a published port to reach it at all, and what decides exposure is
+# the host-side publish — which docker-compose.yml pins to 127.0.0.1. This
+# entrypoint only ever runs inside the image, so it is the right place to say
+# so. Exported here and nowhere else: a demo-mode server started directly on a
+# host still gets the hard refusal.
+if [ "${CRONIQ_DEMO_MODE:-0}" = "1" ]; then
+  export CRONIQ_DEMO_CONTAINER_BIND=1
+fi
+
 exec "$@"

@@ -1,0 +1,19 @@
+-- Token generation counter (issue #431).
+--
+-- Access tokens are stateless JWTs valid until `exp`, up to an hour. That
+-- meant a password change, a password reset, or deactivating an account did
+-- not stop tokens already issued to that user: refresh was correctly blocked
+-- (it re-checks `is_active`), but every access token minted beforehand kept
+-- working for the rest of its lifetime. "I reset the password to lock an
+-- attacker out" is a reasonable operator expectation, and it did not hold.
+--
+-- This column is the version of a user's credentials. It is stamped into every
+-- access token as the `token_generation` claim, checked by the auth middleware
+-- on each request, and incremented on password change, password reset and
+-- deactivation — which invalidates every token minted before the bump, at the
+-- cost of one indexed primary-key lookup per authenticated request.
+--
+-- Existing rows start at 0. Tokens minted before this migration carry no claim
+-- at all and are read as generation 0, so a rolling restart does not sign
+-- everyone out; the first bump on a given account invalidates them.
+ALTER TABLE users ADD COLUMN token_generation INTEGER NOT NULL DEFAULT 0;

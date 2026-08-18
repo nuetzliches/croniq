@@ -190,6 +190,11 @@ pub async fn handle_confirm(
     if store.upsert_credentials(&updated).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // A reset is the canonical "lock the attacker out" action, so it must
+    // invalidate access tokens issued under the old password (issue #431).
+    if store.users_bump_token_generation(&user.user_id).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let _ = store.password_resets_mark_used(&reset.reset_id, Utc::now());
 
     StatusCode::NO_CONTENT.into_response()

@@ -1140,6 +1140,32 @@ impl AuthStore for SqliteStore {
         Ok(count as u64)
     }
 
+    fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT token_generation FROM users WHERE user_id = ?1",
+            [user_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(map_err(other)),
+        })
+    }
+
+    fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Read-modify-write in one statement so two concurrent bumps (a reset
+        // racing a deactivation) cannot land on the same value.
+        conn.execute(
+            "UPDATE users SET token_generation = token_generation + 1 WHERE user_id = ?1",
+            [user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

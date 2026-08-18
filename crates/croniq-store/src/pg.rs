@@ -18,14 +18,51 @@ pub struct PgStore {
 
 impl PgStore {
     /// Connect to a PostgreSQL database.
+    ///
+    /// TLS is negotiated according to [`crate::pg_tls`]: demanded by default
+    /// for a remote host, preferred for loopback and unix sockets, and
+    /// overridable through `sslmode=` in the connection string or
+    /// `CRONIQ_PG_SSLMODE`. Before #431 this was unconditionally `NoTls`.
     pub fn connect(connection_string: &str) -> Result<Self, StoreError> {
-        let client = Client::connect(connection_string, NoTls)
-            .map_err(|e| StoreError::Database(e.to_string()))?;
+        let client = Self::connect_client(connection_string)?;
         let store = Self {
             client: Mutex::new(client),
         };
         store.migrate()?;
         Ok(store)
+    }
+
+    fn connect_client(connection_string: &str) -> Result<Client, StoreError> {
+        let mut config: postgres::Config = connection_string.parse().map_err(|e| {
+            StoreError::Database(format!("invalid Postgres connection string: {e}"))
+        })?;
+        let mode = crate::pg_tls::resolve_ssl_mode(connection_string, &config)?;
+
+        match mode {
+            crate::pg_tls::SslMode::Disable => {
+                config.ssl_mode(postgres::config::SslMode::Disable);
+                config.connect(NoTls)
+            }
+            crate::pg_tls::SslMode::Prefer => {
+                config.ssl_mode(postgres::config::SslMode::Prefer);
+                config.connect(crate::pg_tls::make_connector()?)
+            }
+            crate::pg_tls::SslMode::Require => {
+                config.ssl_mode(postgres::config::SslMode::Require);
+                config.connect(crate::pg_tls::make_connector()?)
+            }
+        }
+        .map_err(|e| {
+            // A handshake failure here is the single most likely upgrade
+            // symptom, so say what changed rather than surfacing a bare
+            // driver error.
+            StoreError::Database(format!(
+                "Postgres connection failed with sslmode={mode:?}: {e}. \
+                 If this database has no TLS, set CRONIQ_PG_SSLMODE=prefer (or \
+                 sslmode=disable in the connection string). If it has a private \
+                 CA, point CRONIQ_PG_ROOT_CERT at its PEM bundle."
+            ))
+        })
     }
 
     fn migrate(&self) -> Result<(), StoreError> {
@@ -88,6 +125,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("022_scheduled_for", PG_MIGRATION_022),
     ("023_dead_letter_policy", PG_MIGRATION_023),
     ("024_runner_identities", PG_MIGRATION_024),
+    ("025_token_generation", PG_MIGRATION_025),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -206,6 +244,14 @@ CREATE TABLE IF NOT EXISTS runner_identities (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_identities_owner
     ON runner_identities(owner_id);
+"#;
+
+// Credential generation counter, stamped into every access token and checked
+// on each authenticated request so a password change / reset / deactivation
+// invalidates tokens already issued.
+// See `migrations/025_token_generation.sql` for the full rationale.
+const PG_MIGRATION_025: &str = r#"
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_generation BIGINT NOT NULL DEFAULT 0;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1614,6 +1660,28 @@ impl AuthStore for PgStore {
             )
             .map_err(map_err)?;
         Ok(row.get::<_, i64>(0) as u64)
+    }
+
+    fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                "SELECT token_generation FROM users WHERE user_id = $1",
+                &[&user_id],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(|r| r.get::<_, i64>(0)))
+    }
+
+    fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        // Single-statement read-modify-write so concurrent bumps serialise.
+        db.execute(
+            "UPDATE users SET token_generation = token_generation + 1 WHERE user_id = $1",
+            &[&user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
     }
 
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {

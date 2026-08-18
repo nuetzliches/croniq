@@ -103,6 +103,48 @@ pub const MUTATION_TOOL_NAMES: &[&str] = &[
     "dlq_retry",
 ];
 
+/// Names of the read-only tools, i.e. every registered tool that is *not* in
+/// [`MUTATION_TOOL_NAMES`].
+///
+/// The server's `/mcp` gate is deny-by-default (issue #431): a `tools/call`
+/// naming a tool in neither list is treated as a mutation and requires
+/// `mcp:write`. That means a tool added here by mistake is a real widening, so
+/// `every_registered_tool_is_classified` asserts the two lists partition the
+/// router exactly — adding a tool without classifying it fails CI rather than
+/// silently landing in the permissive half.
+pub const READ_TOOL_NAMES: &[&str] = &[
+    "list_runners",
+    "get_runner",
+    "queue_status",
+    "list_jobs",
+    "list_executions",
+    "get_execution_logs",
+    "get_job",
+    "list_schedules",
+    "get_schedule",
+    "list_calendars",
+    "get_calendar",
+    "list_dead_letters",
+    "get_dead_letter",
+    "dashboard_forecast",
+];
+
+/// How a `tools/call` for `name` must be gated.
+///
+/// `None` means the tool is unknown to this build, and the caller is expected
+/// to deny — an unrecognised name is either a typo (rmcp rejects it anyway) or
+/// a tool this gate has not been taught about, and neither should be waved
+/// through on a read-only credential.
+pub fn tool_requires_write(name: &str) -> Option<bool> {
+    if MUTATION_TOOL_NAMES.contains(&name) {
+        Some(true)
+    } else if READ_TOOL_NAMES.contains(&name) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Build a Streamable-HTTP MCP service ready to be `.nest_service`'d under an
 /// axum route (e.g. `/mcp`). Each session creates its own [`CroniqMcp`]
 /// instance sharing the given `state`/`store`/`jobs` — mutations are wired in

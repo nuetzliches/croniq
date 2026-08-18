@@ -358,6 +358,24 @@ pub trait AuthStore {
     /// prevent the last admin from being demoted or removed (avoids lock-out).
     fn users_count_active_admins(&self) -> Result<u64, StoreError>;
 
+    /// Current credential generation for `user_id`, or `None` when no such
+    /// user exists.
+    ///
+    /// The auth middleware compares this against the `token_generation` claim
+    /// on every JWT-authenticated request (issue #431). `None` means the user
+    /// was deleted, which invalidates their tokens too.
+    fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError>;
+
+    /// Increment `user_id`'s credential generation, invalidating every access
+    /// token minted before this call.
+    ///
+    /// Called on password change, password reset, and deactivation — the three
+    /// events after which an operator reasonably expects existing sessions to
+    /// stop working. Deliberately *not* called for profile edits or role
+    /// changes: signing someone out is a real cost, so it is spent only where
+    /// the credential itself changed or the account was disabled.
+    fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError>;
+
     // Invitations — admin issues, user redeems with a raw token.
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError>;
     fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError>;

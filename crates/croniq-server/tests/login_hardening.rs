@@ -81,10 +81,7 @@ fn app_with(totp: bool, locked_until: Option<chrono::DateTime<Utc>>) -> axum::Ro
     }
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let jwt = JwtConfig {
-        secret: JWT_SECRET.into(),
-        ..Default::default()
-    };
+    let jwt = JwtConfig::new(JWT_SECRET);
     server_router(ServerState::with_auth(
         AppState::new(),
         tx,
@@ -98,10 +95,7 @@ fn app_with(totp: bool, locked_until: Option<chrono::DateTime<Utc>>) -> axum::Ro
 /// the rate-limit test free of ~30 bcrypt verifications.
 fn app_without_store() -> axum::Router {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let jwt = JwtConfig {
-        secret: JWT_SECRET.into(),
-        ..Default::default()
-    };
+    let jwt = JwtConfig::new(JWT_SECRET);
     server_router(ServerState::with_auth(AppState::new(), tx, Some(jwt), None))
 }
 

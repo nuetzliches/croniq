@@ -22,19 +22,44 @@ use croniq_store::sqlite::SqliteStore;
 use tokio::sync::mpsc;
 use tower::util::ServiceExt;
 
+/// Insert the user the test tokens are minted for.
+///
+/// Since issue #431 the auth middleware checks every user-typed JWT against
+/// `users.token_generation`, so a token naming a user that does not exist is
+/// rejected — which is the point: a deleted user's tokens must stop working.
+/// The fixture therefore has to create the user it authenticates as.
+fn seed_user(store: &croniq_server::store::DynStore, user_id: &str, role: croniq_auth::Role) {
+    let now = chrono::Utc::now();
+    store
+        .users_create(&croniq_store::models::User {
+            user_id: user_id.to_string(),
+            username: user_id.to_string(),
+            email: None,
+            display_name: None,
+            role,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .expect("seeding the test user cannot fail");
+}
+
 const TEST_JWT_SECRET: &str = "console-stream-scope-test-secret-please-do-not-use-in-prod";
 
 fn make_state() -> Arc<ServerState> {
     let store = croniq_server::store::sqlite_store(SqliteStore::in_memory().unwrap());
+    seed_user(
+        &store,
+        ("test-user", croniq_auth::Role::Admin).0,
+        ("test-user", croniq_auth::Role::Admin).1,
+    );
     let runner = AppState::new();
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut state = ServerState::with_auth(
         runner,
         tx,
-        Some(JwtConfig {
-            secret: TEST_JWT_SECRET.into(),
-            ..Default::default()
-        }),
+        Some(JwtConfig::new(TEST_JWT_SECRET)),
         Some(store),
     );
     // Without a hub the handler answers 503, which would mask whether the
@@ -54,6 +79,7 @@ fn token(state: &ServerState, role: Role) -> String {
         Some(role),
         croniq_auth::AuthMethod::Password,
         &default_scopes_for_role(role),
+        None,
     )
     .unwrap()
     .access_token

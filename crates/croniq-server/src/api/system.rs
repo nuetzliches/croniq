@@ -55,6 +55,7 @@ mod tests {
             role: None,
             auth_method: AuthMethod::Password,
             scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            token_generation: None,
         }
     }
 

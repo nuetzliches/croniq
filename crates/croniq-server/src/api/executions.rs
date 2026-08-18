@@ -134,7 +134,7 @@ mod tests {
     fn make_state(store: DynStore) -> Arc<ServerState> {
         let runner = AppState::new();
         let (tx, _rx) = mpsc::unbounded_channel();
-        ServerState::with_auth(runner, tx, None, Some(store))
+        ServerState::with_auth(runner, tx, Some(crate::api::test_auth::jwt()), Some(store))
     }
 
     fn seed_execution(store: &DynStore, state: ExecutionState, runner_id: Option<&str>) -> Uuid {
@@ -172,6 +172,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("POST")
                     .uri(uri)
                     .body(Body::empty())

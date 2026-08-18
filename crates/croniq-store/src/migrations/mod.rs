@@ -70,6 +70,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "024_runner_identities",
         include_str!("024_runner_identities.sql"),
     ),
+    (
+        "025_token_generation",
+        include_str!("025_token_generation.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -509,5 +513,79 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_025_adds_token_generation_starting_at_zero() {
+        // Seed-then-apply: bootstrap the schema up to the migration before this
+        // one, insert a user the way an existing deployment would have it, then
+        // apply 025 in isolation and assert the post-condition.
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "024_runner_identities").unwrap();
+
+        conn.execute(
+            "INSERT INTO users (user_id, username, role, is_active, created_at, updated_at)
+             VALUES (?1, 'alex', 'admin', 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
+            ["00000000-0000-0000-0000-000000000030"],
+        )
+        .unwrap();
+
+        // The column must not exist yet, or the migration is a no-op and this
+        // test would pass without proving anything.
+        assert!(
+            conn.query_row("SELECT token_generation FROM users", [], |r| r
+                .get::<_, i64>(0))
+                .is_err(),
+            "token_generation must not exist before 025"
+        );
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "025_token_generation")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // Existing rows are backfilled to generation 0, which is what a token
+        // minted before the upgrade (carrying no claim) reads as — so a rolling
+        // restart does not sign every user out.
+        let generation: i64 = conn
+            .query_row(
+                "SELECT token_generation FROM users WHERE username = 'alex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation, 0);
+
+        // New rows get the default without naming the column.
+        conn.execute(
+            "INSERT INTO users (user_id, username, role, is_active, created_at, updated_at)
+             VALUES (?1, 'blake', 'viewer', 1, '2026-02-01T00:00:00+00:00', '2026-02-01T00:00:00+00:00')",
+            ["00000000-0000-0000-0000-000000000031"],
+        )
+        .unwrap();
+        let generation: i64 = conn
+            .query_row(
+                "SELECT token_generation FROM users WHERE username = 'blake'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation, 0);
+
+        // And it is a plain counter the bump can increment.
+        conn.execute(
+            "UPDATE users SET token_generation = token_generation + 1 WHERE username = 'alex'",
+            [],
+        )
+        .unwrap();
+        let generation: i64 = conn
+            .query_row(
+                "SELECT token_generation FROM users WHERE username = 'alex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation, 1);
     }
 }

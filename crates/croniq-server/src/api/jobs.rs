@@ -993,7 +993,8 @@ mod tests {
     fn make_state(dsl: Vec<JobConfig>, store: DynStore) -> Arc<ServerState> {
         let runner = AppState::new();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut state = ServerState::with_auth(runner, tx, None, Some(store));
+        let mut state =
+            ServerState::with_auth(runner, tx, Some(crate::api::test_auth::jwt()), Some(store));
         {
             let s = Arc::get_mut(&mut state).unwrap();
             s.dsl_jobs = Some(Arc::new(RwLock::new(dsl)));
@@ -1005,6 +1006,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method(method)
                     .uri(uri)
                     .body(Body::empty())
@@ -1021,6 +1023,7 @@ mod tests {
     async fn status_of(app: axum::Router, method: &str, uri: &str) -> u16 {
         app.oneshot(
             Request::builder()
+                .header("authorization", crate::api::test_auth::admin_bearer())
                 .method(method)
                 .uri(uri)
                 .body(Body::empty())
@@ -1230,6 +1233,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
                     .method("POST")
                     .uri(uri)
                     .header("content-type", "application/json")
@@ -1340,7 +1344,12 @@ mod tests {
         let runner = AppState::new();
         let (comp_tx, _comp_rx) = mpsc::unbounded_channel();
         let (sched_tx, sched_rx) = mpsc::unbounded_channel();
-        let mut state = ServerState::with_auth(runner, comp_tx, None, Some(store));
+        let mut state = ServerState::with_auth(
+            runner,
+            comp_tx,
+            Some(crate::api::test_auth::jwt()),
+            Some(store),
+        );
         {
             let s = Arc::get_mut(&mut state).unwrap();
             s.dsl_jobs = Some(Arc::new(RwLock::new(dsl)));

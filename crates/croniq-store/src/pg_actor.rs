@@ -547,6 +547,16 @@ impl AuthStore for PgStoreHandle {
         self.call(|s| s.users_count_active_admins())
     }
 
+    fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError> {
+        let user_id = user_id.to_string();
+        self.call(move |s| s.users_token_generation(&user_id))
+    }
+
+    fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError> {
+        let user_id = user_id.to_string();
+        self.call(move |s| s.users_bump_token_generation(&user_id))
+    }
+
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
         let invite = invite.clone();
         self.call(move |s| s.invitations_create(&invite))

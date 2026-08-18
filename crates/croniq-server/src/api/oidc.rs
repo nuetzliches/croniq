@@ -161,6 +161,11 @@ pub async fn handle_callback(
     // Mint the standard access + refresh pair. `auth_method = Oidc`
     // so audit logs can tell SSO sessions apart from password ones.
     let scopes = default_scopes_for_role(user.role);
+    // Same credential-generation stamp as the password path (issue #431), so
+    // an SSO session is invalidated by a deactivation like any other.
+    let token_generation = store
+        .users_token_generation(&user.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pair = issue_token_pair(
         jwt_config,
         &user.user_id,
@@ -170,6 +175,7 @@ pub async fn handle_callback(
         Some(user.role),
         AuthMethod::Oidc,
         &scopes,
+        token_generation,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

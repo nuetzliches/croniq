@@ -35,6 +35,29 @@ use tempfile::TempDir;
 use tokio::sync::{RwLock, mpsc};
 use tower::util::ServiceExt;
 
+/// Insert the user the test tokens are minted for.
+///
+/// Since issue #431 the auth middleware checks every user-typed JWT against
+/// `users.token_generation`, so a token naming a user that does not exist is
+/// rejected — which is the point: a deleted user's tokens must stop working.
+/// The fixture therefore has to create the user it authenticates as.
+fn seed_user(store: &croniq_server::store::DynStore, user_id: &str, role: croniq_auth::Role) {
+    let now = chrono::Utc::now();
+    store
+        .users_create(&croniq_store::models::User {
+            user_id: user_id.to_string(),
+            username: user_id.to_string(),
+            email: None,
+            display_name: None,
+            role,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .expect("seeding the test user cannot fail");
+}
+
 // ─── Harness ──────────────────────────────────────────────────────────────────
 
 const TEST_JWT_SECRET: &str = "reload-test-secret";
@@ -60,6 +83,16 @@ impl Harness {
 
         let loaded = load_str(initial_config).unwrap();
         let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
+        seed_user(
+            &store,
+            ("admin-user", croniq_auth::Role::Admin).0,
+            ("admin-user", croniq_auth::Role::Admin).1,
+        );
+        seed_user(
+            &store,
+            ("test-user", croniq_auth::Role::Operator).0,
+            ("test-user", croniq_auth::Role::Operator).1,
+        );
         let runner = AppState::new();
 
         let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
@@ -87,10 +120,7 @@ impl Harness {
             s.dsl_calendars = Some(Arc::clone(&dsl_calendars_shared));
             s.triggers = Some(Arc::clone(&trigger_snapshot));
             s.config_path = Some(config_path.clone());
-            s.jwt_config = Some(JwtConfig {
-                secret: TEST_JWT_SECRET.into(),
-                ..Default::default()
-            });
+            s.jwt_config = Some(JwtConfig::new(TEST_JWT_SECRET));
         }
 
         let mut scheduler_loop = SchedulerLoop::new(
@@ -164,6 +194,7 @@ impl Harness {
             Some(croniq_auth::Role::Admin),
             croniq_auth::AuthMethod::Password,
             &["admin".into()],
+            None,
         )
         .unwrap();
         pair.access_token
@@ -181,6 +212,7 @@ impl Harness {
             Some(croniq_auth::Role::Operator),
             croniq_auth::AuthMethod::Password,
             &scopes,
+            None,
         )
         .unwrap();
         pair.access_token
