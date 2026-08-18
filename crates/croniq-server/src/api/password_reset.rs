@@ -28,7 +28,7 @@ use axum::{
 };
 use chrono::Utc;
 use croniq_auth::api_key::{generate_token, hash_token};
-use croniq_auth::password::hash_password;
+use croniq_auth::password::{hash_password, validate_password};
 use croniq_store::models::{PasswordCredential, PasswordReset};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -147,7 +147,7 @@ pub async fn handle_confirm(
     if !state.password_login_enabled {
         return password_disabled_response();
     }
-    if req.new_password.len() < 8 {
+    if validate_password(&req.new_password).is_err() {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let Some(store) = state.store.as_ref() else {

@@ -23,7 +23,7 @@ use axum::{
 use chrono::Utc;
 use croniq_auth::api_key::{generate_token, hash_token};
 use croniq_auth::context::Scope;
-use croniq_auth::password::hash_password;
+use croniq_auth::password::{hash_password, validate_password};
 use croniq_auth::{CallerContext, CallerType};
 use croniq_store::models::{Invitation, PasswordCredential, Role, User};
 use serde::{Deserialize, Serialize};
@@ -223,7 +223,7 @@ pub async fn handle_accept(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<AcceptInvitationRequest>,
 ) -> StatusCode {
-    if req.username.trim().is_empty() || req.password.len() < 8 {
+    if req.username.trim().is_empty() || validate_password(&req.password).is_err() {
         return StatusCode::BAD_REQUEST;
     }
     let Some(store) = state.store.as_ref() else {

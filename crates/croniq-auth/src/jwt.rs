@@ -164,6 +164,15 @@ struct MfaClaims {
     iss: String,
     exp: i64,
     iat: i64,
+    /// Unique per issuance. Without it the claim set is a pure function of
+    /// (user, second), so two logins in the same second produce the exact
+    /// same token — and the server's per-token second-factor failure budget
+    /// (issue #428) would then follow a user into their *next* login attempt
+    /// instead of being cleared by redoing the password step. Defaulted on
+    /// deserialisation so tokens minted before the upgrade still validate
+    /// through a rolling restart.
+    #[serde(default)]
+    jti: String,
 }
 
 /// Mint an MFA step-up token for `user_id`. TTL is 5 minutes —
@@ -178,6 +187,7 @@ pub fn issue_mfa_token(config: &JwtConfig, user_id: &str) -> Result<(String, i64
         iss: config.issuer.clone(),
         exp: exp.timestamp(),
         iat: now.timestamp(),
+        jti: uuid::Uuid::new_v4().to_string(),
     };
     let token = encode(
         &Header::default(),
@@ -222,6 +232,7 @@ pub fn issue_totp_enroll_token(
         iss: config.issuer.clone(),
         exp: exp.timestamp(),
         iat: now.timestamp(),
+        jti: uuid::Uuid::new_v4().to_string(),
     };
     let token = encode(
         &Header::default(),
@@ -304,6 +315,21 @@ pub enum AuthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_mfa_token_is_unique_and_still_validates() {
+        // Two tokens minted for the same user in the same second must not be
+        // byte-identical: the server's per-token second-factor failure budget
+        // (issue #428) keys on the token, so a repeated password step has to
+        // yield a genuinely new token.
+        let cfg = JwtConfig::default();
+        let (a, ttl) = issue_mfa_token(&cfg, "u-1").unwrap();
+        let (b, _) = issue_mfa_token(&cfg, "u-1").unwrap();
+        assert_ne!(a, b, "mfa tokens must differ per issuance");
+        assert_eq!(ttl, 300);
+        assert_eq!(validate_mfa_token(&cfg, &a).unwrap(), "u-1");
+        assert_eq!(validate_mfa_token(&cfg, &b).unwrap(), "u-1");
+    }
 
     #[test]
     fn issue_and_validate_round_trip_for_user() {

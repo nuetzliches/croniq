@@ -323,8 +323,8 @@ marketing demo image. **Neither belongs in any production deployment.**
 
 | Variable | Effect |
 |---|---|
-| `CRONIQ_DEMO_MODE=1` | Allows `CRONIQ_ADMIN_PASSWORD=admin`. Without it, the entrypoint refuses to start with a fixed `admin` password. |
-| `CRONIQ_DEMO_MFA=1` | Pre-enables TOTP on the seeded admin and bakes the literal recovery code `123456` into all 10 slots. `admin/admin` then lands on the MFA prompt; typing `123456` completes login. The TOTP secret itself is still randomly generated, so a real authenticator code (if the secret is retrieved out-of-band) keeps working. |
+| `CRONIQ_DEMO_MODE=1` | Marks the deployment as the local demo stack. It no longer weakens the password rules: `CRONIQ_ADMIN_PASSWORD=admin` is refused with or without it, because `croniq init` enforces the same 8–72 byte policy as every other password path (issue #428). The demo stack ships `demo-admin`. |
+| `CRONIQ_DEMO_MFA=1` | Pre-enables TOTP on the seeded admin and bakes the literal recovery code `123456` into all 10 slots. `admin/demo-admin` then lands on the MFA prompt; typing `123456` completes login. The TOTP secret itself is still randomly generated, so a real authenticator code (if the secret is retrieved out-of-band) keeps working. |
 
 `CRONIQ_DEMO_MFA=1` set on its own (without `CRONIQ_DEMO_MODE=1`)
 emits a warning at first-boot init but still runs — the demo flag

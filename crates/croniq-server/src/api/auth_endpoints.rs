@@ -16,8 +16,8 @@ use croniq_auth::jwt::{
     issue_mfa_token, issue_token_pair, issue_totp_enroll_token, validate_mfa_token,
     validate_totp_enroll_token,
 };
-use croniq_auth::password::verify_password;
-use croniq_auth::totp::{hash_recovery_code, verify_code};
+use croniq_auth::password::{dummy_verify, verify_password};
+use croniq_auth::totp::{hash_recovery_code, verify_code_with_step};
 use croniq_auth::{AuthMethod, CallerContext, CallerType, default_scopes_for_role};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,7 @@ use uuid::Uuid;
 use super::ServerState;
 use crate::api::audit;
 use crate::api::auth_middleware::{require_grantable_scopes, require_scope};
+use crate::api::login_throttle::{ClientIp, LoginThrottle, MFA_MAX_FAILURES};
 
 // ─── Request/Response types ──────────────────────────────────────────────────
 
@@ -150,15 +151,34 @@ pub(super) fn password_disabled_response() -> Response {
         .into_response()
 }
 
+/// 429 response for the per-IP login throttle (issue #428). Keyed by the
+/// socket peer address — deployments behind a reverse proxy should
+/// throttle at the proxy, since every request reaches us from the
+/// proxy's address (see [`crate::api::login_throttle`]).
+pub(super) fn rate_limited_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(serde_json::json!({
+            "error": "rate_limited",
+            "message": "too many login attempts from this address — try again later",
+        })),
+    )
+        .into_response()
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// `POST /v1/auth/login`
 pub async fn handle_login(
     State(state): State<Arc<ServerState>>,
+    ClientIp(peer_ip): ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, Response> {
     if !state.password_login_enabled {
         return Err(password_disabled_response());
+    }
+    if !state.login_throttle.allow_ip(peer_ip) {
+        return Err(rate_limited_response());
     }
     let store = state
         .store
@@ -169,16 +189,27 @@ pub async fn handle_login(
         .as_ref()
         .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
 
-    let cred = store
+    let Some(cred) = store
         .get_credentials(&req.username)
         .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
-        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
+    else {
+        // Unknown username. Burn one bcrypt verification against a constant
+        // hash so this branch costs the same as a wrong password — the
+        // immediate 401 was a timing oracle for username enumeration
+        // (issue #428). Same symmetry idea as password_reset's always-202.
+        dummy_verify(&req.password);
+        return Err(status_err(StatusCode::UNAUTHORIZED));
+    };
 
-    // Check lockout
+    // Check lockout. The response is the same generic 401 as a wrong
+    // password — a distinct status would confirm that the account exists
+    // (only existing accounts can be locked), and the dummy verification
+    // keeps the timing symmetric with the branches that do hash.
     if let Some(locked_until) = cred.locked_until
         && Utc::now() < locked_until
     {
-        return Err(status_err(StatusCode::FORBIDDEN));
+        dummy_verify(&req.password);
+        return Err(status_err(StatusCode::UNAUTHORIZED));
     }
 
     // Verify password
@@ -261,6 +292,7 @@ pub async fn handle_login(
         verify_second_factor(
             jwt_config,
             store,
+            &state.login_throttle,
             &user.user_id,
             &secret_row,
             &req.code,
@@ -312,11 +344,15 @@ pub async fn handle_login(
 /// 6-digit TOTP code (or single-use recovery code) for normal tokens.
 pub async fn handle_totp_login(
     State(state): State<Arc<ServerState>>,
+    ClientIp(peer_ip): ClientIp,
     Json(req): Json<TotpLoginRequest>,
 ) -> Result<Json<TokenResponse>, Response> {
     if !state.password_login_enabled {
         // TOTP login is the second step of the password flow; gate the same way.
         return Err(password_disabled_response());
+    }
+    if !state.login_throttle.allow_ip(peer_ip) {
+        return Err(rate_limited_response());
     }
     let store = state
         .store
@@ -329,6 +365,16 @@ pub async fn handle_totp_login(
 
     let user_id = validate_mfa_token(jwt_config, &req.mfa_token)
         .map_err(|_| status_err(StatusCode::UNAUTHORIZED))?;
+
+    // Failure budget per mfa_token (issue #428): after MFA_MAX_FAILURES
+    // wrong codes the token is dead for the rest of its 5-minute TTL and
+    // the caller must redo the password step. Keyed by the token's hash;
+    // the raw JWT never sits in the map.
+    let mfa_key = hash_api_key(&req.mfa_token);
+    if state.login_throttle.mfa_blocked(&mfa_key) {
+        return Err(status_err(StatusCode::UNAUTHORIZED));
+    }
+
     let user = store
         .users_get_by_id(&user_id)
         .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
@@ -347,14 +393,37 @@ pub async fn handle_totp_login(
 
     // Accept either a current 6-digit TOTP code OR a single-use recovery
     // code (exactly one). Shared with the inline `/v1/auth/login` path.
-    verify_second_factor(
+    if let Err(resp) = verify_second_factor(
         jwt_config,
         store,
+        &state.login_throttle,
         &user_id,
         &secret_row,
         &req.code,
         &req.recovery_code,
-    )?;
+    ) {
+        // Count only real second-factor rejections against the budget —
+        // not malformed requests (400) or server errors (500).
+        if resp.status() == StatusCode::UNAUTHORIZED {
+            let failures = state.login_throttle.record_mfa_failure(&mfa_key);
+            if failures == MFA_MAX_FAILURES {
+                tracing::warn!(
+                    user_id,
+                    "mfa_token invalidated after {failures} failed second-factor attempts"
+                );
+                audit::record_event(
+                    store,
+                    "user",
+                    Some(&user_id),
+                    "auth.totp_throttled",
+                    "user",
+                    Some(&user_id),
+                );
+            }
+        }
+        return Err(resp);
+    }
+    state.login_throttle.clear_mfa(&mfa_key);
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     let action = if req.recovery_code.is_some() {
@@ -527,6 +596,7 @@ fn mint_user_tokens(
 fn verify_second_factor(
     jwt_config: &croniq_auth::jwt::JwtConfig,
     store: &crate::store::DynStore,
+    throttle: &LoginThrottle,
     user_id: &str,
     secret_row: &croniq_store::models::TotpSecret,
     code: &Option<String>,
@@ -557,8 +627,13 @@ fn verify_second_factor(
                 tracing::error!(user_id, "decrypted TOTP secret is not valid UTF-8");
                 status_err(StatusCode::INTERNAL_SERVER_ERROR)
             })?;
-            match verify_code(&secret_b32, code) {
-                Ok(true) => Ok(()),
+            match verify_code_with_step(&secret_b32, code) {
+                // A valid code is consumable once: the matched 30-second
+                // time step is recorded per user, and any code from a step
+                // at or below the last consumed one is rejected. Without
+                // this, a code observed in transit stays valid for the
+                // rest of its ±1-step skew window (issue #428).
+                Ok(Some(step)) if throttle.consume_totp_step(user_id, step) => Ok(()),
                 _ => Err(status_err(StatusCode::UNAUTHORIZED)),
             }
         }

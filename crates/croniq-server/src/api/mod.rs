@@ -14,6 +14,7 @@ pub mod executions;
 pub mod hardening;
 pub mod invitations;
 pub mod jobs;
+pub mod login_throttle;
 pub mod maintenance;
 pub mod oidc;
 pub mod password_reset;
@@ -212,6 +213,10 @@ pub struct ServerState {
     /// additionally inert without auth or without a store, since neither
     /// case can tell callers apart or record a decision.
     pub runner_identity_binding: bool,
+    /// In-memory throttling for the public login surface (issue #428):
+    /// per-IP sliding window on the login endpoints, per-`mfa_token`
+    /// second-factor failure budget, and per-user TOTP replay guard.
+    pub login_throttle: login_throttle::LoginThrottle,
 }
 
 impl ServerState {
@@ -248,6 +253,7 @@ impl ServerState {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         })
     }
 
@@ -287,6 +293,7 @@ impl ServerState {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         })
     }
 
@@ -325,6 +332,7 @@ impl ServerState {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         })
     }
 
@@ -1917,6 +1925,7 @@ mod tests {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         });
         (state, rx)
     }
@@ -2100,6 +2109,7 @@ mod tests {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -2181,6 +2191,7 @@ mod tests {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -2269,6 +2280,7 @@ mod tests {
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
             runner_identity_binding: true,
+            login_throttle: login_throttle::LoginThrottle::default(),
         });
         let app = server_router(Arc::clone(&state));
 
