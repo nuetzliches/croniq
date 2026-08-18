@@ -3,6 +3,7 @@ package croniq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -267,6 +268,52 @@ func TestRunnerSurvives409PollAndKeepsPolling(t *testing.T) {
 
 	if got := rs.count("POST", "/v1/work/poll"); got < 2 {
 		t.Errorf("expected at least 2 polls (survives 409), got %d", got)
+	}
+}
+
+func TestRunnerStopsOnPoll403(t *testing.T) {
+	// Counterpart to TestRunnerSurvives409PollAndKeepsPolling: a 409 is
+	// transient and retried forever, a 403 is permanent and must stop the
+	// runner on the first occurrence (issue #437).
+	rs := newRecordingServer()
+	defer rs.close()
+
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 403, body: `{"error":"runner_id is bound to a different credential"}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(100*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Run(ctx) }()
+
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("Run did not return — the runner kept polling after a 403")
+	}
+
+	var denied *OwnershipDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected *OwnershipDeniedError, got %v", err)
+	}
+	if denied.RunnerID != "test-runner" {
+		t.Errorf("expected the error to name the runner_id, got %q", denied.RunnerID)
+	}
+	if !strings.Contains(denied.Error(), "DELETE /v1/runners/{id}") {
+		t.Errorf("expected the error to name the remedy, got %q", denied.Error())
+	}
+	if got := rs.count("POST", "/v1/work/poll"); got != 1 {
+		t.Errorf("expected exactly 1 poll (403 is fatal), got %d", got)
 	}
 }
 

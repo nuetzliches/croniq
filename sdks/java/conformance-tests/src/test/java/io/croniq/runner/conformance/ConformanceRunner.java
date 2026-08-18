@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.croniq.runner.CroniqOwnershipDeniedException;
 import io.croniq.runner.CroniqRunner;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import java.time.Duration;
@@ -36,6 +37,12 @@ final class ConformanceRunner {
                     runner.run();
                 } catch (InterruptedException ignored) {
                     // expected on close()
+                } catch (CroniqOwnershipDeniedException ignored) {
+                    // Expected for case 15: a 403 on poll is permanent, so the
+                    // SDK is contractually required to stop. The HTTP-count
+                    // assertions are what prove it actually did — a case that
+                    // doesn't anticipate this exit still fails on
+                    // min_count/max_count.
                 }
             });
             try {
@@ -52,10 +59,19 @@ final class ConformanceRunner {
                 int durationMaxMs = spec.expectations().durationMaxMs() == null
                         ? 5_000
                         : spec.expectations().durationMaxMs();
-                Awaitility.await()
-                        .atMost(Duration.ofMillis(durationMaxMs))
-                        .pollInterval(Duration.ofMillis(50))
-                        .until(() -> expectationsLikelyMet(spec, server.recorded()));
+                if (hasMaxCount(spec)) {
+                    // A max_count is a "ceiling over a time window" assertion.
+                    // Exiting as soon as the lower bounds are met would let a
+                    // runner that violates the ceiling right after our exit
+                    // pass trivially, so burn the full window. Mirrors the
+                    // .NET / Go / Python / TypeScript bindings.
+                    Thread.sleep(durationMaxMs);
+                } else {
+                    Awaitility.await()
+                            .atMost(Duration.ofMillis(durationMaxMs))
+                            .pollInterval(Duration.ofMillis(50))
+                            .until(() -> expectationsLikelyMet(spec, server.recorded()));
+                }
             } finally {
                 runner.close();
                 loop.join(Duration.ofSeconds(5));
@@ -109,10 +125,19 @@ final class ConformanceRunner {
         return b.build();
     }
 
+    /** True when any expectation carries a {@code max_count} ceiling. */
+    private static boolean hasMaxCount(CaseSpec spec) {
+        if (spec.expectations() == null || spec.expectations().http() == null) {
+            return false;
+        }
+        return spec.expectations().http().stream().anyMatch(e -> e.maxCount() != null);
+    }
+
     /**
      * Returns true once every expectation's {@code min_count} / {@code exact_count}
-     * lower bound is satisfied. Doesn't short-circuit when only max bounds remain
-     * — those need the full case window to confirm.
+     * lower bound is satisfied. Only consulted for cases without a
+     * {@code max_count} — those burn the full window instead, see
+     * {@link #hasMaxCount(CaseSpec)}.
      */
     private static boolean expectationsLikelyMet(CaseSpec spec, List<MockServerHarness.RecordedRequest> recorded) {
         if (spec.expectations() == null || spec.expectations().http() == null) {

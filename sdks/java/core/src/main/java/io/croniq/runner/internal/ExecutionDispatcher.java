@@ -1,5 +1,6 @@
 package io.croniq.runner.internal;
 
+import io.croniq.runner.CroniqHttpException;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.handler.CroniqCancellation;
 import io.croniq.runner.handler.CroniqJobHandler;
@@ -262,6 +263,24 @@ public final class ExecutionDispatcher {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
+                } catch (CroniqHttpException e) {
+                    if (e.isOwnershipDenied()) {
+                        // Permanent (#436/#437): every later renew fails the
+                        // same way and the lease will expire mid-handler.
+                        log.error(
+                                "lease renew refused with 403 Forbidden — this runner's credential does not own"
+                                        + " runner_id {}, so the lease will expire and the execution be reclaimed."
+                                        + " Give the runner its own runner_id, or release the existing binding with"
+                                        + " DELETE /v1/runners/{id}",
+                                runnerId);
+                    } else {
+                        // Since #447 renew is a real per-execution lease: 404
+                        // (no longer leased here) and 409 (already terminal)
+                        // are the normal outcome of a renew racing our own
+                        // completion, so they stay at debug alongside the
+                        // transient failures.
+                        log.debug("Renew failed with HTTP {}", e.statusCode());
+                    }
                 } catch (Exception e) {
                     // Transient failures are logged and ignored — the server
                     // will mark the execution as stalled if no heartbeats
@@ -276,6 +295,18 @@ public final class ExecutionDispatcher {
     private void sendAck(WorkAssignment work, String status, String error, long durationMs) {
         try {
             client.ack(new AckRequest(runnerId, work.executionId(), status, error, durationMs, work.attempt()));
+        } catch (CroniqHttpException e) {
+            if (e.isOwnershipDenied()) {
+                // Permanent (#436/#437) — the execution stays claimed until its
+                // lease expires, so name the fix rather than just the failure.
+                log.error(
+                        "ack refused with 403 Forbidden — this runner's credential does not own runner_id {}, so"
+                                + " the execution stays claimed until its lease expires. Give the runner its own"
+                                + " runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+                        runnerId);
+            } else {
+                log.warn("Failed to ack execution (status={}): HTTP {}", status, e.statusCode());
+            }
         } catch (Exception e) {
             // Ack failures are logged and dropped — the server will eventually
             // re-issue the work and the next attempt will land.

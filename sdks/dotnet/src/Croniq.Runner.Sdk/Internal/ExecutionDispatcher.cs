@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 
 using Croniq.Runner.Sdk.Configuration;
 using Croniq.Runner.Sdk.Logging;
@@ -198,6 +199,19 @@ internal sealed class ExecutionDispatcher(
                 new AckRequest(runnerId, executionId, status, error, stopwatch.ElapsedMilliseconds, attempt),
                 CancellationToken.None).ConfigureAwait(false);
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+        {
+            // Ownership refusal (#436/#437) — permanent, and it means the
+            // execution stays claimed until its lease expires. Distinct
+            // message so the operator sees the fix, not just "ack failed".
+            _logger.LogError(
+                ex,
+                "ack refused with 403 Forbidden — this runner's credential does not own " +
+                "runner_id={RunnerId}, so the execution stays claimed until its lease expires. " +
+                "Give the runner its own runner_id, or release the existing binding with " +
+                "DELETE /v1/runners/{{id}}.",
+                runnerId);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "failed to ack execution");
@@ -224,6 +238,27 @@ internal sealed class ExecutionDispatcher(
                 try
                 {
                     await client.RenewAsync(new RenewRequest(runnerId, executionId), ct).ConfigureAwait(false);
+                }
+                catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    // Ownership refusal (#436/#437): permanent. Every renew
+                    // from here on fails the same way and the lease will
+                    // expire mid-handler, so this must be visible.
+                    _logger.LogError(
+                        ex,
+                        "lease renew refused with 403 Forbidden — this runner's credential does " +
+                        "not own runner_id={RunnerId}. The lease will expire and the execution " +
+                        "be reclaimed. Give the runner its own runner_id, or release the " +
+                        "existing binding with DELETE /v1/runners/{{id}}.",
+                        runnerId);
+                }
+                catch (HttpRequestException ex)
+                    when (ex.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Conflict)
+                {
+                    // Since #447 renew is a real per-execution lease: 404 (no
+                    // longer leased here) and 409 (already terminal) are the
+                    // normal outcome of a renew racing our own completion.
+                    _logger.LogDebug(ex, "lease renew raced execution completion");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

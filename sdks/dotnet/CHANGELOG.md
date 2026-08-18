@@ -6,6 +6,33 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `403` on the work endpoints is fatal
+  ([#437](https://github.com/nuetzliches/croniq/issues/437)).** Since server
+  issue #436 bound a runner's identity to the authenticated caller,
+  `/v1/work/*` answers `403` when the credential does not own the `runner_id`
+  the request names. The poll loop retried that forever on `PollRetryDelay`,
+  so a fenced-out runner looked idle rather than misconfigured. A `403` is
+  permanent — no retry can clear it — so `UpdateConflictStreak` now bails on
+  the first one (an effective threshold of 1, independent of
+  `MaxConsecutivePollConflicts`) and `RunAsync` throws the new
+  `RunnerOwnershipDeniedException`, which carries `RunnerId` and names both
+  fixes: give the runner its own `runner_id`, or release the existing binding
+  with `DELETE /v1/runners/{id}`. The `409` conflict-streak path is unchanged,
+  and the streak counter is deliberately left untouched by a `403` — it
+  reports how long a duplicate deployment has been fenced out, which a `403`
+  says nothing about.
+
+  A `403` on ack, lease renew or a streaming-log batch is now logged at
+  `LogError` with the same remedy instead of being flattened into the generic
+  failure (`LogDebug` for renew, `LogWarning` for log batches). Each has a
+  distinct consequence worth naming: an unacked execution stays claimed until
+  its lease expires, a refused renew means the lease expires mid-handler, and
+  a refused batch means the execution produces no log output. Renew's
+  `404`/`409` — routine when a renew races the runner's own completion, see
+  server issue #438 — are now matched explicitly and stay at `LogDebug`.
+
 ### Security
 
 - **HTTPS is required for a non-loopback `ServerUrl`

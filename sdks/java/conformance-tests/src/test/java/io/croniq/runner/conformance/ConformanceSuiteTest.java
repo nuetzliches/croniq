@@ -22,7 +22,15 @@ class ConformanceSuiteTest {
     private static final Path CASES_DIR =
             Path.of("..", "..", "conformance", "cases").toAbsolutePath().normalize();
 
-    /** Cases covered by the current Java SDK. Expanded as features land. */
+    /**
+     * Cases covered by the current Java SDK. Expanded as features land.
+     *
+     * <p><strong>A case missing from this set is silently not run</strong> — no
+     * skip is reported and the suite stays green. Every new YAML in
+     * {@code sdks/conformance/cases/} must be added here (tracked as issue
+     * #453, which proposes replacing the allowlist with an explicit
+     * skip-with-reason list).
+     */
     private static final Set<String> SCOPE = Set.of(
             // PR-2: poll/ack loop + cancellation
             "01-poll-empty.yaml",
@@ -41,7 +49,9 @@ class ConformanceSuiteTest {
             "10-streaming-logs-time-threshold.yaml",
             // #441: hostile server-supplied identifiers
             "13-hostile-identifiers-rejected.yaml",
-            "14-hostile-execution-id-dropped.yaml");
+            "14-hostile-execution-id-dropped.yaml",
+            // #437: a 403 on poll is permanent and stops the runner
+            "15-poll-403-ownership-fatal.yaml");
 
     static Stream<Arguments> cases() throws Exception {
         if (!Files.isDirectory(CASES_DIR)) {

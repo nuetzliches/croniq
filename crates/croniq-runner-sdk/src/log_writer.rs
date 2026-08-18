@@ -360,15 +360,33 @@ async fn flush_all(
             .drain(..take)
             .map(|e| enrich_event(&e, job_key, runner_id, serialized_tags))
             .collect();
-        if let Err(err) = client.push_events_boxed(execution_id, &chunk).await {
-            tracing::warn!(
-                execution_id = %execution_id,
-                error = %err,
-                dropped = chunk.len(),
-                "log_writer: batch POST failed — events lost"
-            );
-            // Continue draining; if this is a transient server issue,
-            // later batches may succeed.
+        match client.push_events_boxed(execution_id, &chunk).await {
+            Ok(()) => {}
+            // A 403 is the ownership refusal from #436: permanent, and every
+            // later batch will be dropped too. Log it loudly once per batch
+            // rather than burying it in the generic warn (#437).
+            Err(err @ crate::client::ClientError::WorkOwnershipDenied { .. }) => {
+                tracing::error!(
+                    execution_id = %execution_id,
+                    runner_id = %runner_id,
+                    error = %err,
+                    dropped = chunk.len(),
+                    "log_writer: batch POST refused with 403 Forbidden — this runner's \
+                     credential does not own runner_id, so no log event will ever reach \
+                     the server. Give the runner its own runner_id, or release the \
+                     existing binding with DELETE /v1/runners/{{id}}."
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    execution_id = %execution_id,
+                    error = %err,
+                    dropped = chunk.len(),
+                    "log_writer: batch POST failed — events lost"
+                );
+                // Continue draining; if this is a transient server issue,
+                // later batches may succeed.
+            }
         }
     }
 }

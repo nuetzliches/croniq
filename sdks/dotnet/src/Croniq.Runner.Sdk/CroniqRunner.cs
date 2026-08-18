@@ -180,6 +180,11 @@ public sealed class CroniqRunner : IAsyncDisposable
     /// </list>
     /// <para>Increment case: 409 Conflict. Returns <c>true</c> (bail) when the
     /// counter reaches <paramref name="maxConsecutive"/>.</para>
+    /// <para>Immediate-bail case: 403 Forbidden. The credential does not own
+    /// the <c>runner_id</c> (issue #437) — permanent, so the effective
+    /// threshold is 1 and <paramref name="maxConsecutive"/> does not apply.
+    /// The streak counter is left alone: it reports how long a duplicate
+    /// deployment has been fenced out, which a 403 says nothing about.</para>
     /// </remarks>
     internal static bool UpdateConflictStreak(
         System.Net.HttpStatusCode? failureStatus,
@@ -191,6 +196,10 @@ public sealed class CroniqRunner : IAsyncDisposable
             // Success
             consecutive = 0;
             return false;
+        }
+        if (failureStatus == System.Net.HttpStatusCode.Forbidden)
+        {
+            return true;
         }
         if (failureStatus == System.Net.HttpStatusCode.Conflict)
         {
@@ -275,6 +284,17 @@ public sealed class CroniqRunner : IAsyncDisposable
                 var status = (ex as HttpRequestException)?.StatusCode;
                 var shouldBail = UpdateConflictStreak(
                     status, ref consecutiveConflicts, _options.MaxConsecutivePollConflicts);
+
+                if (shouldBail && status == System.Net.HttpStatusCode.Forbidden)
+                {
+                    _logger.LogError(
+                        ex,
+                        "fatal: server returned 403 Forbidden on poll — this runner's credential " +
+                        "does not own runner_id={RunnerId}. Give the runner its own runner_id, " +
+                        "or release the existing binding with DELETE /v1/runners/{{id}}.",
+                        _resolvedRunnerId);
+                    throw new RunnerOwnershipDeniedException(_resolvedRunnerId!, ex);
+                }
 
                 if (shouldBail)
                 {

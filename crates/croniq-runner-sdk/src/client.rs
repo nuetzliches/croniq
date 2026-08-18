@@ -22,6 +22,35 @@ pub enum ClientError {
         "poll instance conflict — another runner is already registered with this runner_id: {body}"
     )]
     PollInstanceConflict { body: String },
+
+    /// The server returned `403 Forbidden` from a work endpoint — the
+    /// authenticated credential is bound to a *different* `runner_id`
+    /// than the one this request named (issue #436). Unlike a 5xx this
+    /// is **permanent**: retrying cannot clear it. An operator has to
+    /// give the runner its own `runner_id` or release the stale binding
+    /// with `DELETE /v1/runners/{id}`.
+    #[error(
+        "work ownership denied on {endpoint} — this credential does not own the runner_id it \
+         named. Give the runner its own runner_id, or release the existing binding with \
+         DELETE /v1/runners/{{id}}: {body}"
+    )]
+    WorkOwnershipDenied {
+        endpoint: &'static str,
+        body: String,
+    },
+}
+
+/// Map a non-2xx response from a work endpoint to a [`ClientError`].
+///
+/// `403` is lifted out of the generic [`ClientError::Server`] bucket so
+/// callers can distinguish "operator must intervene" from "transient" —
+/// every other status stays transient.
+fn work_endpoint_error(endpoint: &'static str, status: u16, body: String) -> ClientError {
+    if status == 403 {
+        ClientError::WorkOwnershipDenied { endpoint, body }
+    } else {
+        ClientError::Server { status, body }
+    }
 }
 
 /// Low-level HTTP client for Croniq API endpoints.
@@ -136,7 +165,7 @@ impl CroniqClient {
             if status == 409 {
                 return Err(ClientError::PollInstanceConflict { body });
             }
-            return Err(ClientError::Server { status, body });
+            return Err(work_endpoint_error("/v1/work/poll", status, body));
         }
 
         Ok(resp.json().await?)
@@ -153,13 +182,19 @@ impl CroniqClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Server { status, body });
+            return Err(work_endpoint_error("/v1/work/ack", status, body));
         }
 
         Ok(())
     }
 
     /// Renew a work item lease.
+    ///
+    /// Since #447 the endpoint is a real per-execution lease: `404` means
+    /// the execution is no longer leased by this runner and `409` means
+    /// it has already reached a terminal state — both routine when a
+    /// renew races the runner's own completion. `403` is the ownership
+    /// refusal and surfaces as [`ClientError::WorkOwnershipDenied`].
     pub async fn renew(&self, req: &RenewRequest) -> Result<(), ClientError> {
         let resp = self
             .add_auth(self.http.post(format!("{}/v1/work/renew", self.base_url)))
@@ -170,7 +205,7 @@ impl CroniqClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Server { status, body });
+            return Err(work_endpoint_error("/v1/work/renew", status, body));
         }
 
         Ok(())
@@ -194,7 +229,7 @@ impl CroniqClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Server { status, body });
+            return Err(work_endpoint_error("/v1/work/{id}/events", status, body));
         }
 
         Ok(())
@@ -265,5 +300,32 @@ mod tests {
         });
         let wa: WorkAssignment = serde_json::from_value(json).unwrap();
         assert!(wa.scheduled_for.is_none());
+    }
+
+    #[test]
+    fn work_endpoint_error_lifts_403_out_of_the_transient_bucket() {
+        // 403 is the ownership refusal from #436 — permanent, so it must
+        // not be mistaken for a retryable server error.
+        let err = work_endpoint_error("/v1/work/poll", 403, "forbidden".into());
+        assert!(matches!(
+            err,
+            ClientError::WorkOwnershipDenied {
+                endpoint: "/v1/work/poll",
+                ..
+            }
+        ));
+        let rendered = err.to_string();
+        assert!(rendered.contains("DELETE /v1/runners/{id}"), "{rendered}");
+    }
+
+    #[test]
+    fn work_endpoint_error_keeps_other_statuses_transient() {
+        for status in [404, 409, 500, 503] {
+            let err = work_endpoint_error("/v1/work/renew", status, String::new());
+            assert!(
+                matches!(err, ClientError::Server { status: s, .. } if s == status),
+                "status {status} must stay transient"
+            );
+        }
     }
 }

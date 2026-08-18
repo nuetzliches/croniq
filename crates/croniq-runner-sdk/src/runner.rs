@@ -37,6 +37,13 @@ pub(crate) enum PollLoopAction {
 ///   to instance ownership; counting it would bail prematurely).
 /// * 409 conflicts increment and trip [`PollLoopAction::BailOut`] at the
 ///   configured threshold.
+/// * A 403 ([`ClientError::WorkOwnershipDenied`]) bails on the *first*
+///   occurrence regardless of the threshold: the credential is bound to
+///   another `runner_id` and no amount of retrying can change that
+///   (issue #437). The streak counter is left untouched — it belongs to
+///   the 409 story and the loop exits immediately anyway.
+///
+/// [`ClientError::WorkOwnershipDenied`]: crate::client::ClientError::WorkOwnershipDenied
 pub(crate) fn update_conflict_streak(
     result: &Result<crate::client::PollResponse, crate::client::ClientError>,
     consecutive: &mut u32,
@@ -47,6 +54,7 @@ pub(crate) fn update_conflict_streak(
             *consecutive = 0;
             PollLoopAction::Continue
         }
+        Err(crate::client::ClientError::WorkOwnershipDenied { .. }) => PollLoopAction::BailOut,
         Err(crate::client::ClientError::PollInstanceConflict { .. }) => {
             *consecutive = consecutive.saturating_add(1);
             if *consecutive >= max_consecutive {
@@ -432,12 +440,55 @@ impl CroniqRunner {
                                 let renew_handle = tokio::spawn(async move {
                                     loop {
                                         tokio::time::sleep(Duration::from_secs(15)).await;
-                                        let _ = renew_client
+                                        // The result used to be discarded outright
+                                        // (`let _ = …`), which hid a misconfigured
+                                        // credential completely — see #437.
+                                        let renewed = renew_client
                                             .renew(&RenewRequest {
                                                 runner_id: renew_runner_id.clone(),
                                                 execution_id: renew_exec_id.clone(),
                                             })
                                             .await;
+                                        match renewed {
+                                            Ok(()) => {}
+                                            Err(
+                                                crate::client::ClientError::WorkOwnershipDenied {
+                                                    ..
+                                                },
+                                            ) => {
+                                                tracing::error!(
+                                                    runner_id = %renew_runner_id,
+                                                    execution_id = %renew_exec_id,
+                                                    "lease renew refused with 403 Forbidden — this \
+                                                     runner's credential does not own runner_id. \
+                                                     The lease will expire and the execution be \
+                                                     reclaimed. Give the runner its own runner_id, \
+                                                     or release the existing binding with \
+                                                     DELETE /v1/runners/{{id}}."
+                                                );
+                                            }
+                                            // Since #447 renew is a real per-execution
+                                            // lease: 404 (no longer leased here) and 409
+                                            // (already terminal) are the normal outcome
+                                            // of a renew racing our own completion.
+                                            Err(crate::client::ClientError::Server {
+                                                status: status @ (404 | 409),
+                                                ..
+                                            }) => {
+                                                tracing::debug!(
+                                                    execution_id = %renew_exec_id,
+                                                    status,
+                                                    "lease renew raced execution completion"
+                                                );
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    execution_id = %renew_exec_id,
+                                                    error = %e,
+                                                    "lease renew failed — will retry"
+                                                );
+                                            }
+                                        }
                                     }
                                 });
 
@@ -479,6 +530,7 @@ impl CroniqRunner {
                             }
 
                             // Ack
+                            let ack_runner_id = runner_id.clone();
                             let ack = AckRequest {
                                 runner_id,
                                 execution_id: exec_id.clone(),
@@ -487,14 +539,41 @@ impl CroniqRunner {
                                 duration_ms: Some(duration_ms),
                                 attempt,
                             };
-                            if let Err(e) = client.ack(&ack).await {
-                                tracing::error!(execution_id = %exec_id, error = %e, "failed to ack");
+                            match client.ack(&ack).await {
+                                Ok(()) => {}
+                                Err(e @ crate::client::ClientError::WorkOwnershipDenied { .. }) => {
+                                    tracing::error!(
+                                        execution_id = %exec_id,
+                                        runner_id = %ack_runner_id,
+                                        error = %e,
+                                        "ack refused with 403 Forbidden — this runner's credential \
+                                         does not own runner_id, so the execution stays claimed \
+                                         until its lease expires. Give the runner its own \
+                                         runner_id, or release the existing binding with \
+                                         DELETE /v1/runners/{{id}}."
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(execution_id = %exec_id, error = %e, "failed to ack");
+                                }
                             }
 
                             // Remove from inflight
                             inflight.write().await.retain(|id| id != &exec_id);
                         });
                     }
+                }
+                Err(e @ crate::client::ClientError::WorkOwnershipDenied { .. }) => {
+                    // Threshold of 1: a 403 is permanent, so retrying only
+                    // hides an operator misconfiguration (issue #437).
+                    tracing::error!(
+                        runner_id = %self.runner_id,
+                        instance_id = %self.instance_id,
+                        "fatal: server returned 403 Forbidden on poll — this runner's credential \
+                         does not own runner_id. Give the runner its own runner_id, or release \
+                         the existing binding with DELETE /v1/runners/{{id}}."
+                    );
+                    return Err(e);
                 }
                 Err(e) if action == PollLoopAction::BailOut => {
                     tracing::error!(
@@ -552,6 +631,12 @@ mod tests {
         Err(ClientError::Server {
             status: 503,
             body: "service unavailable".into(),
+        })
+    }
+    fn ownership_denied() -> Result<PollResponse, ClientError> {
+        Err(ClientError::WorkOwnershipDenied {
+            endpoint: "/v1/work/poll",
+            body: "runner_id is owned by another credential".into(),
         })
     }
 
@@ -623,6 +708,30 @@ mod tests {
         let action = update_conflict_streak(&conflict(), &mut streak, 1);
         assert_eq!(action, PollLoopAction::BailOut);
         assert_eq!(streak, 1);
+    }
+
+    #[test]
+    fn ownership_denied_bails_on_the_first_occurrence() {
+        // Threshold of 1 regardless of max_consecutive_poll_conflicts: a
+        // 403 is permanent, so a second attempt can only fail the same way.
+        let mut streak = 0;
+        assert_eq!(
+            update_conflict_streak(&ownership_denied(), &mut streak, 100),
+            PollLoopAction::BailOut
+        );
+    }
+
+    #[test]
+    fn ownership_denied_does_not_disturb_the_conflict_streak() {
+        // The 409 counter tells operators how long a duplicate deployment
+        // has been fenced out; a 403 is a different failure and must not
+        // inflate it.
+        let mut streak = 2;
+        assert_eq!(
+            update_conflict_streak(&ownership_denied(), &mut streak, 3),
+            PollLoopAction::BailOut
+        );
+        assert_eq!(streak, 2);
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 import { anySignal } from './abort.js';
-import type { CroniqClient } from './client.js';
+import { type CroniqClient, isOwnershipDenied } from './client.js';
 import { ExecutionContextImpl } from './context.js';
 import { sleep } from './deferred.js';
 import { parseScheduledFor, parseTimeoutMs } from './duration.js';
@@ -150,11 +150,22 @@ export class ExecutionDispatcher {
       if (error !== undefined) payload.error = error;
       await client.ack(payload, ackAC.signal);
     } catch (err) {
-      logger.error('failed to ack execution', {
-        error: String(err),
-        execution_id: executionId,
-        job_key: jobKey,
-      });
+      if (isOwnershipDenied(err)) {
+        // Permanent (#436/#437) — the execution stays claimed until its
+        // lease expires, so name the fix rather than just the failure.
+        logger.error(
+          'ack refused with 403 Forbidden — this runner\'s credential does not own runner_id, ' +
+            'so the execution stays claimed until its lease expires. Give the runner its own ' +
+            'runner_id, or release the existing binding with DELETE /v1/runners/{id}',
+          { error: String(err), runner_id: runnerId, execution_id: executionId, job_key: jobKey },
+        );
+      } else {
+        logger.error('failed to ack execution', {
+          error: String(err),
+          execution_id: executionId,
+          job_key: jobKey,
+        });
+      }
     }
   }
 
@@ -171,6 +182,22 @@ export class ExecutionDispatcher {
         await client.renew({ runner_id: runnerId, execution_id: executionId }, signal);
       } catch (err) {
         if (signal.aborted) return;
+        if (isOwnershipDenied(err)) {
+          // Permanent (#436/#437): every later renew fails the same way and
+          // the lease will expire mid-handler.
+          logger.error(
+            'lease renew refused with 403 Forbidden — this runner\'s credential does not own ' +
+              'runner_id, so the lease will expire and the execution be reclaimed. Give the ' +
+              'runner its own runner_id, or release the existing binding with ' +
+              'DELETE /v1/runners/{id}',
+            { error: String(err), runner_id: runnerId, execution_id: executionId },
+          );
+          continue;
+        }
+        // Since #447 renew is a real per-execution lease: 404 (no longer
+        // leased here) and 409 (already terminal) are the normal outcome of
+        // a renew racing our own completion, so they stay at debug
+        // alongside the transient failures.
         logger.debug('lease renew failed', {
           error: String(err),
           execution_id: executionId,

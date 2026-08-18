@@ -7,6 +7,30 @@ the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `403` on the work endpoints is fatal
+  ([#437](https://github.com/nuetzliches/croniq/issues/437)).** Since server
+  issue #436 bound a runner's identity to the authenticated caller,
+  `/v1/work/*` answers `403` when the credential does not own the `runner_id`
+  the request names. The poll loop retried that forever on
+  `poll_retry_delay_ms`, so a fenced-out runner looked idle rather than
+  misconfigured. A `403` is permanent — no retry can clear it — so
+  `Runner.run()` now raises the new `RunnerOwnershipDeniedError` (exported
+  from the package root) on the first one. It carries `runner_id` and names
+  both fixes: give the runner its own `runner_id`, or release the existing
+  binding with `DELETE /v1/runners/{id}`. The drain and client-close steps in
+  the `finally` block still run, so in-flight handlers get their grace period
+  before the error reaches the caller.
+
+  A `403` on ack, lease renew or a streaming-log batch is now logged at
+  `error` with the same remedy instead of the generic `error`/`debug`/
+  `warning`: an unacked execution stays claimed until its lease expires, a
+  refused renew means the lease expires mid-handler, and a refused batch means
+  the execution produces no log output. Renew's `404`/`409` — routine when a
+  renew races the runner's own completion, see server issue #438 — stay at
+  `debug`.
+
 ### Security
 
 - **HTTPS is required for a non-loopback `server_url`

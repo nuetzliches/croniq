@@ -27,7 +27,7 @@ export type {
   WorkEvent,
   WorkEventLevel,
 } from './protocol.js';
-export { HttpError } from './client.js';
+export { HttpError, RunnerOwnershipDeniedError } from './client.js';
 export { isLoopbackHostname } from './security.js';
 
 // Producer-side trigger (on-demand) client — parity with the .NET SDK (#277).

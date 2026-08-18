@@ -2,7 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { setMaxListeners } from 'node:events';
 
 import { anySignal } from './abort.js';
-import { CroniqClient, HttpError } from './client.js';
+import {
+  CroniqClient,
+  HttpError,
+  RunnerOwnershipDeniedError,
+  isOwnershipDenied,
+} from './client.js';
 import { sleep } from './deferred.js';
 import { ExecutionDispatcher } from './dispatcher.js';
 import {
@@ -188,6 +193,19 @@ export class CroniqRunner {
         response = await this.#client.poll(request, this.#options.pollTimeoutMs, signal);
       } catch (err) {
         if (signal.aborted) return;
+        // A 403 is permanent (issue #437): the credential is bound to
+        // another runner_id, so the next poll fails identically. Stop with
+        // an actionable error instead of retrying on the poll interval,
+        // which makes a fenced-out runner look merely idle.
+        if (isOwnershipDenied(err)) {
+          this.#logger.error(
+            'fatal: poll refused with 403 Forbidden — this runner\'s credential does not own ' +
+              'runner_id. Give the runner its own runner_id, or release the existing binding ' +
+              'with DELETE /v1/runners/{id}',
+            { runner_id: this.#runnerId! },
+          );
+          throw new RunnerOwnershipDeniedError(this.#runnerId!);
+        }
         const detail = err instanceof HttpError
           ? { status: err.status, status_text: err.statusText }
           : { error: String(err) };

@@ -102,6 +102,37 @@ public class PollConflictStreakTests
     }
 
     [Fact]
+    public void Forbidden_BailsImmediatelyRegardlessOfThreshold()
+    {
+        // 403 is the ownership refusal from #436: permanent, so the
+        // effective threshold is 1 no matter how tolerant the operator
+        // configured the 409 streak.
+        int streak = 0;
+        CroniqRunner.UpdateConflictStreak(HttpStatusCode.Forbidden, ref streak, 100).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Forbidden_LeavesTheConflictStreakAlone()
+    {
+        // The counter reports how long a duplicate deployment has been
+        // fenced out; a 403 says nothing about that and must not inflate it.
+        int streak = 2;
+        CroniqRunner.UpdateConflictStreak(HttpStatusCode.Forbidden, ref streak, 3).ShouldBeTrue();
+        streak.ShouldBe(2);
+    }
+
+    [Fact]
+    public void RunnerOwnershipDeniedException_CarriesRunnerIdAndRemedy()
+    {
+        var ex = new RunnerOwnershipDeniedException("runner-42");
+
+        ex.RunnerId.ShouldBe("runner-42");
+        ex.Message.ShouldContain("runner-42");
+        ex.Message.ShouldContain("DELETE /v1/runners/{id}");
+        ex.InnerException.ShouldBeNull();
+    }
+
+    [Fact]
     public void PollInstanceConflictException_CarriesRunnerIdAndCount()
     {
         // Spot-check the exception shape since hosts may want to handle

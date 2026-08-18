@@ -1,3 +1,4 @@
+using System.Net;
 using System.Threading.Channels;
 
 using Croniq.Runner.Sdk.Configuration;
@@ -257,6 +258,22 @@ internal sealed class LogWriter : ILogWriter
             try
             {
                 await _client.PushEventsAsync(_executionId, chunk, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+            {
+                // Ownership refusal (#436/#437) — permanent, so every later
+                // batch is lost too. Loud enough that an operator notices the
+                // silent log stream instead of hunting for missing output.
+                using (_logger.BeginScope(new Dictionary<string, object> { ["execution_id"] = _executionId }))
+                {
+                    _logger.LogError(
+                        ex,
+                        "log_writer: batch POST refused with 403 Forbidden — this runner's " +
+                        "credential does not own its runner_id, so no log event will reach the " +
+                        "server ({Count} events dropped). Give the runner its own runner_id, or " +
+                        "release the existing binding with DELETE /v1/runners/{{id}}.",
+                        chunk.Count);
+                }
             }
             catch (Exception ex)
             {
