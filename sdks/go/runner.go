@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -246,17 +247,24 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.registerSchedules(ctx)
 
 	var wg sync.WaitGroup
-	r.pollLoop(ctx, &wg)
+	// A fatal poll outcome still drains: in-flight handlers get their
+	// grace period before the error reaches the caller.
+	err := r.pollLoop(ctx, &wg)
 	r.drain(&wg)
-	return nil
+	return err
 }
 
-// pollLoop runs until ctx is cancelled. Each iteration: enforce
-// capacity, poll, process cancellations, dispatch new assignments.
-func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
+// pollLoop runs until ctx is cancelled, or until a poll fails in a way no
+// retry can fix. Each iteration: enforce capacity, poll, process
+// cancellations, dispatch new assignments.
+//
+// The returned error is non-nil only for the fatal case — today a 403
+// ownership refusal ([OwnershipDeniedError]). Every other failure is
+// transient and retried after PollRetryDelay.
+func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
 		// Control-slot polling (issue #176): even at capacity we still
@@ -280,7 +288,29 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
+			}
+			// A 403 is permanent (issue #437): the credential is bound to
+			// another runner_id, so the next poll fails identically. Stop
+			// with an actionable error instead of retrying on the poll
+			// interval, which makes a fenced-out runner look merely idle.
+			// Distinct from the 409 arm below, which retries forever
+			// (see TestRunnerSurvives409PollAndKeepsPolling).
+			if isOwnershipDenied(err) {
+				slog.ErrorContext(ctx, "fatal: poll refused with 403 Forbidden — this runner's credential does not own runner_id; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+					"runner_id", r.opts.RunnerID,
+					"error", err,
+				)
+				var se *ServerError
+				body := ""
+				if errors.As(err, &se) {
+					body = se.Body
+				}
+				return &OwnershipDeniedError{
+					RunnerID: r.opts.RunnerID,
+					Endpoint: "/v1/work/poll",
+					Body:     body,
+				}
 			}
 			slog.WarnContext(ctx, "poll failed — backing off",
 				"error", err,
@@ -288,7 +318,7 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 			)
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(r.opts.PollRetryDelay):
 				continue
 			}
@@ -307,7 +337,7 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 		if atCapacity {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(r.opts.CapacityBackoff):
 				continue
 			}
@@ -452,7 +482,25 @@ func (r *Runner) renewLoop(executionID string, done <-chan struct{}) {
 				ExecutionID: executionID,
 			})
 			cancel()
-			if err != nil {
+			switch {
+			case err == nil:
+			case isOwnershipDenied(err):
+				// Permanent (#436/#437): every later renew fails the same
+				// way and the lease will expire mid-handler.
+				slog.Error("lease renew refused with 403 Forbidden — this runner's credential does not own runner_id, so the lease will expire and the execution be reclaimed; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+					"runner_id", r.opts.RunnerID,
+					"execution_id", executionID,
+					"error", err,
+				)
+			case serverStatus(err) == http.StatusNotFound || serverStatus(err) == http.StatusConflict:
+				// Since #447 renew is a real per-execution lease: 404 (no
+				// longer leased here) and 409 (already terminal) are the
+				// normal outcome of a renew racing our own completion.
+				slog.Debug("lease renew raced execution completion",
+					"execution_id", executionID,
+					"status", serverStatus(err),
+				)
+			default:
 				slog.Warn("renew failed", "execution_id", executionID, "error", err)
 			}
 		}
@@ -473,6 +521,14 @@ func (r *Runner) ackResult(a WorkAssignment, status, errStr string, durationMs i
 		Attempt:     a.Attempt,
 	})
 	if err != nil {
+		if isOwnershipDenied(err) {
+			slog.Error("ack refused with 403 Forbidden — this runner's credential does not own runner_id, so the execution stays claimed until its lease expires; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+				"runner_id", r.opts.RunnerID,
+				"execution_id", a.ExecutionID,
+				"error", err,
+			)
+			return
+		}
 		slog.Error("failed to ack execution",
 			"execution_id", a.ExecutionID,
 			"status", status,

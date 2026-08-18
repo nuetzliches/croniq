@@ -17,6 +17,7 @@ import enum
 import logging
 from typing import TYPE_CHECKING
 
+from croniq_runner._errors import is_ownership_denied
 from croniq_runner._options import LogWriterOptions
 from croniq_runner._protocol import WorkEvent
 
@@ -213,6 +214,20 @@ class LogWriter:
             try:
                 await self._client.push_events(self._execution_id, chunk)
             except Exception as exc:  # noqa: BLE001 — surface as warning, keep draining
+                if is_ownership_denied(exc):
+                    # Permanent (#436/#437) — every later batch is lost too,
+                    # so the operator must see this rather than wonder why
+                    # the execution produced no output.
+                    _log.error(
+                        "log_writer: batch POST refused with 403 Forbidden — this runner's "
+                        "credential does not own its runner_id, so no log event will reach "
+                        "the server (%d event(s) dropped, execution %s). Give the runner its "
+                        "own runner_id, or release the existing binding with "
+                        "DELETE /v1/runners/{id}",
+                        len(chunk),
+                        self._execution_id,
+                    )
+                    continue
                 _log.warning(
                     "log_writer: batch POST failed — %d event(s) dropped (execution %s): %s",
                     len(chunk),

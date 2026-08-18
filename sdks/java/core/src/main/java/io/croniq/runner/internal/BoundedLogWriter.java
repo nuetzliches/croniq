@@ -1,5 +1,6 @@
 package io.croniq.runner.internal;
 
+import io.croniq.runner.CroniqHttpException;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.handler.CroniqLogWriter;
 import io.croniq.runner.protocol.WorkEvent;
@@ -132,6 +133,17 @@ public final class BoundedLogWriter implements CroniqLogWriter {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
+            } catch (CroniqHttpException e) {
+                if (e.isOwnershipDenied()) {
+                    // Permanent (#436/#437) — every later batch is lost too, so
+                    // the operator must see this rather than wonder why the
+                    // execution produced no output.
+                    log.error("log batch push refused with 403 Forbidden — this runner's credential does not own"
+                            + " its runner_id, so no log event will reach the server. Give the runner its own"
+                            + " runner_id, or release the existing binding with DELETE /v1/runners/{id}");
+                } else {
+                    log.debug("Log batch push failed with HTTP {}", e.statusCode());
+                }
             } catch (Exception e) {
                 log.debug("Log batch push failed: {}", e.toString());
                 // Drop the batch we tried to send — retrying indefinitely

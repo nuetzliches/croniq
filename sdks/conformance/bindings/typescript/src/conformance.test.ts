@@ -43,6 +43,11 @@ async function runCase(spec: CaseSpec): Promise<void> {
 
     const runPromise = runner.run(runAC.signal).catch((err) => {
       if ((err as Error)?.name === 'AbortError') return;
+      // Expected for case 15: a 403 on poll is permanent, so the SDK is
+      // contractually required to stop. The HTTP-count assertions below are
+      // what prove it actually did — a case that does not anticipate this
+      // exit still fails on min_count/max_count.
+      if ((err as Error)?.name === 'RunnerOwnershipDeniedError') return;
       throw err;
     });
 

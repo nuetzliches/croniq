@@ -78,6 +78,12 @@ internal static class ConformanceRunner
             // doesn't anticipate this exit would fail on min_count/max_count
             // mismatch.
         }
+        catch (RunnerOwnershipDeniedException)
+        {
+            // Expected for case 15: a 403 on poll is permanent, so the SDK is
+            // contractually required to stop. Same reasoning as above — the
+            // max_count assertion is what proves it stopped.
+        }
         stopwatch.Stop();
 
         var recorded2 = mock.RecordedRequests;

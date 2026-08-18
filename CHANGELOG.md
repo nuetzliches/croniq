@@ -503,6 +503,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Runner SDKs treat a `403` on the work endpoints as fatal
+  ([#437](https://github.com/nuetzliches/croniq/issues/437)).** Since
+  [#436](https://github.com/nuetzliches/croniq/issues/436) bound a runner's
+  identity to the authenticated caller, `/v1/work/poll`, `…/ack`, `…/renew`
+  and `…/{execution_id}/events` answer `403` when the credential does not own
+  the `runner_id` the request names. All six SDKs retried that forever on the
+  poll interval — five seconds by default — so a runner fenced out by an
+  operator mistake looked *idle* rather than misconfigured: no work arrived,
+  nothing crashed, and the only trace was a warning per poll (`debug` in
+  Java, i.e. invisible). Unlike the `409` of a duplicate deployment, which
+  can resolve itself when the other process exits, a `403` is permanent —
+  retrying cannot clear it.
+
+  Every SDK now stops on the first poll `403` with an error naming the
+  `runner_id` and the two fixes: give the runner its own `runner_id`, or
+  release the existing binding with `DELETE /v1/runners/{id}`. Rust and .NET
+  reuse their existing conflict-streak machinery with an effective threshold
+  of 1 (`ClientError::WorkOwnershipDenied` / `RunnerOwnershipDeniedException`)
+  and leave the `409` counter untouched, since it reports something else. Go
+  returns an `*OwnershipDeniedError` from `Runner.Run` after draining;
+  Python raises `RunnerOwnershipDeniedError`; TypeScript rejects `run()` with
+  `RunnerOwnershipDeniedError`; Java throws `CroniqOwnershipDeniedException`.
+  The `409` path is deliberately untouched everywhere — Go's
+  `TestRunnerSurvives409PollAndKeepsPolling` still pins retry-forever for it.
+
+  Ack, renew and log-event failures no longer flatten the status either. A
+  `403` on any of them is now logged at error level with the same remedy,
+  because each has its own visible consequence: an unacked execution stays
+  claimed until its lease expires, a refused renew means the lease expires
+  mid-handler, and a refused event batch means the execution produces no log
+  output at all. The Rust renew loop stopped discarding its result outright
+  (`let _ = renew_client.renew(…)`). Renew's `404`/`409` — routine when a
+  renew races the runner's own completion, see #438/#447 — stay at debug in
+  all six.
+
+  Java additionally needed the status code plumbed out of the wire layer:
+  `CroniqClient.ensureSuccess` collapsed every non-2xx into an `IOException`
+  whose only record of the status was the message text, so no caller could
+  branch without parsing strings. It now throws a typed
+  `CroniqHttpException` carrying `statusCode()`, `operation()` and `body()`,
+  and the generic poll-failure log moved from `debug` to `warn` to match the
+  other five.
+
+  Conformance case `15-poll-403-ownership-fatal.yaml` pins the wire
+  behaviour: the mock answers `403` on every poll and the case asserts
+  exactly one poll over a two-second window, which a runner retrying on a
+  200 ms delay could not satisfy. It runs in all five bindings — the Java
+  binding's hardcoded `SCOPE` allowlist was extended (a case missing from it
+  is silently skipped with a green suite; that trap is
+  [#453](https://github.com/nuetzliches/croniq/issues/453)), and the Java
+  binding now also burns the full case window when an expectation carries a
+  `max_count`, matching the other four, so ceiling assertions actually hold
+  there.
+
 - **`POST /v1/work/renew` is a real per-execution lease
   ([#438](https://github.com/nuetzliches/croniq/issues/438)).** The handler
   accepted a `RenewRequest { runner_id, execution_id }` but never read

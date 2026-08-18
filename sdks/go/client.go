@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,48 @@ type ServerError struct {
 
 func (e *ServerError) Error() string {
 	return fmt.Sprintf("server error: %d — %s", e.Status, e.Body)
+}
+
+// OwnershipDeniedError reports a 403 from one of the work endpoints: the
+// authenticated credential is bound to a different runner_id than the one
+// the request named (server issue #436).
+//
+// Unlike a 409 — where a duplicate deployment may release the identity on
+// its own — this is permanent. Retrying cannot clear it; an operator has to
+// give the runner its own runner_id or release the existing binding with
+// DELETE /v1/runners/{id}. [Runner.Run] returns this error rather than
+// polling forever, so a misconfigured runner exits instead of looking idle
+// (issue #437). Callers can match it with [errors.As].
+type OwnershipDeniedError struct {
+	RunnerID string
+	Endpoint string
+	Body     string
+}
+
+func (e *OwnershipDeniedError) Error() string {
+	return fmt.Sprintf(
+		"work ownership denied on %s — this runner's credential does not own runner_id %q. "+
+			"Give the runner its own runner_id, or release the existing binding with "+
+			"DELETE /v1/runners/{id}: %s",
+		e.Endpoint, e.RunnerID, e.Body)
+}
+
+// isOwnershipDenied reports whether err is a 403 from a work endpoint —
+// the wire layer keeps every non-2xx as a *ServerError, so the runner loop
+// is where the status becomes a policy decision.
+func isOwnershipDenied(err error) bool {
+	var se *ServerError
+	return errors.As(err, &se) && se.Status == http.StatusForbidden
+}
+
+// serverStatus extracts the HTTP status from err, or 0 when err is not a
+// *ServerError (network failure, timeout, …).
+func serverStatus(err error) int {
+	var se *ServerError
+	if errors.As(err, &se) {
+		return se.Status
+	}
+	return 0
 }
 
 // Client is a thin typed wrapper around the Croniq HTTP API. It is

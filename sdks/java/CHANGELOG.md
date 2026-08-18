@@ -6,6 +6,41 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `403` on the work endpoints is fatal, and the wire layer now carries the
+  status code ([#437](https://github.com/nuetzliches/croniq/issues/437)).**
+  Since server issue #436 bound a runner's identity to the authenticated
+  caller, `/v1/work/*` answers `403` when the credential does not own the
+  `runner_id` the request names. Two problems compounded here. The poll loop
+  logged every failure at `debug` — effectively invisible — and retried
+  forever on `pollRetryDelay()`, so a fenced-out runner looked idle rather
+  than misconfigured. And `CroniqClient.ensureSuccess` collapsed every non-2xx
+  into an `IOException` whose only record of the status was the message text,
+  so no caller could branch on it without parsing strings.
+
+  `ensureSuccess` now throws the new `CroniqHttpException` (an `IOException`
+  subclass) carrying `statusCode()`, `operation()`, `body()` and a convenience
+  `isOwnershipDenied()`. The poll loop uses it: a `403` stops the runner with
+  the new unchecked `CroniqOwnershipDeniedException`, which carries
+  `runnerId()` and names both fixes — give the runner its own `runner_id`, or
+  release the existing binding with `DELETE /v1/runners/{id}`. Every other
+  poll failure moved from `debug` to `warn`, matching the other five SDKs.
+
+  A `403` on ack, lease renew or a streaming-log batch is logged at `error`
+  with the same remedy instead of the generic `warn`/`debug`: an unacked
+  execution stays claimed until its lease expires, a refused renew means the
+  lease expires mid-handler, and a refused batch means the execution produces
+  no log output. Renew's `404`/`409` — routine when a renew races the runner's
+  own completion, see server issue #438 — stay at `debug`.
+
+  The conformance binding gained the new case
+  `15-poll-403-ownership-fatal.yaml` in its `SCOPE` allowlist, and now burns
+  the full case window whenever an expectation carries a `max_count` instead
+  of exiting as soon as the lower bounds are met — matching the .NET, Go,
+  Python and TypeScript bindings, so ceiling assertions (cases 12 and 15)
+  actually hold here.
+
 ### Security
 
 - **HTTPS is required for a non-loopback `serverUrl`

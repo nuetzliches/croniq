@@ -1,4 +1,4 @@
-import type { CroniqClient } from './client.js';
+import { type CroniqClient, isOwnershipDenied } from './client.js';
 import { deferred, sleep, type Deferred } from './deferred.js';
 import type { LogEnrichment } from './enrichment.js';
 import type { Logger } from './logger.js';
@@ -186,6 +186,19 @@ export class StreamingLogWriter implements LogWriter {
         const ac = new AbortController();
         await this.#client.pushEvents(this.#executionId, chunk, ac.signal);
       } catch (err) {
+        if (isOwnershipDenied(err)) {
+          // Permanent (#436/#437) — every later batch is lost too, so the
+          // operator must see this rather than wonder why the execution
+          // produced no output.
+          this.#logger.error(
+            'log_writer: batch POST refused with 403 Forbidden — this runner\'s credential ' +
+              'does not own its runner_id, so no log event will reach the server. Give the ' +
+              'runner its own runner_id, or release the existing binding with ' +
+              'DELETE /v1/runners/{id}',
+            { error: String(err), execution_id: this.#executionId, dropped: chunk.length },
+          );
+          continue;
+        }
         this.#logger.warn(
           'log_writer: batch POST failed — events dropped',
           { error: String(err), execution_id: this.#executionId, dropped: chunk.length },

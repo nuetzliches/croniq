@@ -186,11 +186,22 @@ func (w *LogWriter) flusherLoop(client pusher, executionID, jobKey, runnerID, se
 			err := client.PushEvents(ctx, executionID, chunk)
 			cancel()
 			if err != nil {
-				slog.Warn("log writer batch POST failed — events lost",
-					"execution_id", executionID,
-					"dropped", len(chunk),
-					"error", err,
-				)
+				if isOwnershipDenied(err) {
+					// Permanent (#436/#437) — every later batch is lost too,
+					// so the operator must see this rather than wonder why
+					// the execution produced no output.
+					slog.Error("log writer batch POST refused with 403 Forbidden — this runner's credential does not own its runner_id, so no log event will reach the server; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+						"execution_id", executionID,
+						"dropped", len(chunk),
+						"error", err,
+					)
+				} else {
+					slog.Warn("log writer batch POST failed — events lost",
+						"execution_id", executionID,
+						"dropped", len(chunk),
+						"error", err,
+					)
+				}
 			}
 		}
 		// reset slice capacity so we don't accumulate after a large burst

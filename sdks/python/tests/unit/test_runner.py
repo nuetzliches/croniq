@@ -9,7 +9,12 @@ from collections.abc import Callable
 
 import httpx
 
-from croniq_runner import HandlerError, Runner, RunnerOptions
+from croniq_runner import (
+    HandlerError,
+    Runner,
+    RunnerOptions,
+    RunnerOwnershipDeniedError,
+)
 from croniq_runner._client import CroniqClient
 
 
@@ -230,6 +235,47 @@ async def test_authorization_header_set_from_api_key() -> None:
 
     assert all(h == "ApiKey secret123" for h in seen_auth if h is not None)
     assert any(h == "ApiKey secret123" for h in seen_auth)
+
+
+async def test_runner_stops_on_poll_403() -> None:
+    """A 403 on poll is permanent — the runner must bail, not retry.
+
+    Counterpart to the 409 story: a conflict is transient and retried on the
+    poll interval, whereas a 403 says the credential is bound to a different
+    runner_id and no retry can change that (issue #437).
+    """
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            polls += 1
+            return httpx.Response(
+                403, json={"error": "runner_id is bound to another credential"}
+            )
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=50,
+        drain_timeout_ms=500,
+        runner_id="r-denied",
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    try:
+        await asyncio.wait_for(runner.run(), timeout=2.0)
+    except RunnerOwnershipDeniedError as exc:
+        assert exc.runner_id == "r-denied"
+        assert "DELETE /v1/runners/{id}" in str(exc)
+    else:
+        raise AssertionError("expected RunnerOwnershipDeniedError")
+
+    assert polls == 1, f"expected exactly 1 poll (403 is fatal), got {polls}"
 
 
 def test_runner_id_property_unavailable_before_run() -> None:

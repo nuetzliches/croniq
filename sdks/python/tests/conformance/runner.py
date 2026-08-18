@@ -12,7 +12,7 @@ import contextlib
 import time
 from typing import TYPE_CHECKING
 
-from croniq_runner import Runner, RunnerOptions
+from croniq_runner import Runner, RunnerOptions, RunnerOwnershipDeniedError
 from tests.conformance.body_matcher import match_body
 from tests.conformance.handler_sentinels import apply_to as apply_handlers
 from tests.conformance.mock_server import MockServerHarness, RecordedRequest
@@ -68,6 +68,12 @@ async def run_case(httpserver: HTTPServer, spec: CaseSpec) -> None:
         # the test forever.
         try:
             await asyncio.wait_for(run_task, timeout=2.0)
+        except RunnerOwnershipDeniedError:
+            # Expected for case 15: a 403 on poll is permanent, so the SDK
+            # is contractually required to stop. The HTTP-count assertions
+            # below are what prove it actually did — a case that does not
+            # anticipate this exit still fails on min_count/max_count.
+            pass
         except TimeoutError:
             run_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

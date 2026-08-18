@@ -1,0 +1,50 @@
+name: "Poll returning 403 ownership-denied stops the runner"
+description: |
+  openapi.yaml documents the work endpoints (/v1/work/poll, …/ack,
+  …/renew, …/{execution_id}/events) returning 403 when the authenticated
+  credential does not own the runner_id the request names (issue #436).
+  Unlike the 409 of case 11 — where a deposed instance may legitimately
+  win its identity back — a 403 is **permanent**: retrying cannot clear
+  it. An operator has to give the runner its own runner_id or release the
+  binding with DELETE /v1/runners/{id}. A runner that retries on the poll
+  interval instead looks merely *idle*, which is the diagnostic trap
+  issue #437 closes.
+
+  Server returns 403 on every poll. The runner should: stop after the
+  first one and surface a fatal error naming the runner_id and the fix
+  (how that error is reported is language-specific and asserted in each
+  SDK's own tests — the wire has no way to see it).
+
+  We assert exactly one poll over the whole case window. With
+  poll_retry_delay_ms=200 inside a 2 s window a retrying runner would
+  produce roughly ten, so the ceiling is the observable proof that the
+  runner treated the 403 as fatal rather than transient. min_count=1
+  pins the other side: it must have actually tried once.
+
+runner_config:
+  runner_id: "conformance-403"
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 1000
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 403
+      body:
+        error: "runner_id is bound to a different credential"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 1
+      max_count: 1
+      body_match:
+        runner_id: "conformance-403"

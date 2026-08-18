@@ -107,8 +107,24 @@ public final class CroniqRunner implements AutoCloseable {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
+                } catch (CroniqHttpException e) {
+                    // A 403 is permanent (issue #437): the credential is bound
+                    // to another runner_id, so the next poll fails identically.
+                    // Stop with an actionable error instead of retrying on the
+                    // poll interval, which makes a fenced-out runner look idle.
+                    if (e.isOwnershipDenied()) {
+                        log.error(
+                                "fatal: poll refused with 403 Forbidden — this runner's credential does not own"
+                                        + " runner_id {}. Give the runner its own runner_id, or release the existing"
+                                        + " binding with DELETE /v1/runners/{id}",
+                                runnerId);
+                        throw new CroniqOwnershipDeniedException(runnerId, e);
+                    }
+                    log.warn("Poll failed with HTTP {} — backing off {}", e.statusCode(), options.pollRetryDelay());
+                    sleep(options.pollRetryDelay());
+                    continue;
                 } catch (Exception e) {
-                    log.debug("Poll failed: {} — backing off {}", e.toString(), options.pollRetryDelay());
+                    log.warn("Poll failed: {} — backing off {}", e.toString(), options.pollRetryDelay());
                     sleep(options.pollRetryDelay());
                     continue;
                 }

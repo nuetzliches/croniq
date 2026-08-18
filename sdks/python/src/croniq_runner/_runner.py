@@ -19,7 +19,12 @@ from croniq_runner._context import (
     _parse_scheduled_for,
     _parse_timeout,
 )
-from croniq_runner._errors import HandlerError, NoHandlerRegisteredError
+from croniq_runner._errors import (
+    HandlerError,
+    NoHandlerRegisteredError,
+    RunnerOwnershipDeniedError,
+    is_ownership_denied,
+)
 from croniq_runner._identifiers import (
     is_safe_execution_id,
     preview_for_log,
@@ -201,6 +206,18 @@ class Runner:
             except asyncio.CancelledError:
                 raise
             except (httpx.HTTPError, Exception) as exc:  # noqa: BLE001
+                # A 403 is permanent (issue #437): the credential is bound
+                # to another runner_id, so the next poll fails identically.
+                # Stop with an actionable error instead of retrying on the
+                # poll interval, which makes a fenced-out runner look idle.
+                if is_ownership_denied(exc):
+                    _log.error(
+                        "fatal: poll refused with 403 Forbidden — this runner's credential "
+                        "does not own runner_id. Give the runner its own runner_id, or "
+                        "release the existing binding with DELETE /v1/runners/{id}",
+                        extra={"runner_id": self._runner_id or ""},
+                    )
+                    raise RunnerOwnershipDeniedError(self._runner_id or "") from exc
                 _log.warning("poll failed (%s) — backing off %dms", exc, opts.poll_retry_delay_ms)
                 await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
                 continue
@@ -428,12 +445,26 @@ class Runner:
                     attempt=attempt,
                 )
             )
-        except Exception:
-            _log.error(
-                "failed to ack execution",
-                exc_info=True,
-                extra={"job_key": job_key, "execution_id": execution_id},
-            )
+        except Exception as exc:  # noqa: BLE001 — ack failure must not kill the task
+            if is_ownership_denied(exc):
+                _log.error(
+                    "ack refused with 403 Forbidden — this runner's credential does not own "
+                    "runner_id, so the execution stays claimed until its lease expires. Give "
+                    "the runner its own runner_id, or release the existing binding with "
+                    "DELETE /v1/runners/{id}",
+                    exc_info=True,
+                    extra={
+                        "runner_id": self._runner_id or "",
+                        "job_key": job_key,
+                        "execution_id": execution_id,
+                    },
+                )
+            else:
+                _log.error(
+                    "failed to ack execution",
+                    exc_info=True,
+                    extra={"job_key": job_key, "execution_id": execution_id},
+                )
 
     async def _renew_loop(self, execution_id: str, stop: asyncio.Event) -> None:
         interval = self._options.renew_interval_ms / 1000.0
@@ -450,6 +481,24 @@ class Runner:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — transient renew failure is non-fatal
+                if is_ownership_denied(exc):
+                    # Permanent (#436/#437): every later renew fails the same
+                    # way and the lease will expire mid-handler.
+                    _log.error(
+                        "lease renew refused with 403 Forbidden — this runner's credential "
+                        "does not own runner_id, so the lease will expire and the execution "
+                        "be reclaimed. Give the runner its own runner_id, or release the "
+                        "existing binding with DELETE /v1/runners/{id}",
+                        extra={
+                            "runner_id": self._runner_id or "",
+                            "execution_id": execution_id,
+                        },
+                    )
+                    continue
+                # Since #447 renew is a real per-execution lease: 404 (no
+                # longer leased here) and 409 (already terminal) are the
+                # normal outcome of a renew racing our own completion, so
+                # they stay at debug alongside the transient failures.
                 _log.debug(
                     "lease renew failed: %s", exc, extra={"execution_id": execution_id}
                 )

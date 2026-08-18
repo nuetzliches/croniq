@@ -34,6 +34,35 @@ export class HttpError extends Error {
 }
 
 /**
+ * A work endpoint answered `403 Forbidden`: the authenticated credential is
+ * bound to a different `runner_id` than the one this runner names in its
+ * requests (server issue #436).
+ *
+ * Unlike a `409` — where a duplicate deployment may release the identity on
+ * its own — this is **permanent**: retrying cannot clear it. `CroniqRunner.run`
+ * rejects with this instead of polling forever, so a misconfigured runner
+ * exits rather than looking merely idle (issue #437). The fix is an operator
+ * action: give the runner its own `runner_id`, or release the existing
+ * binding with `DELETE /v1/runners/{id}`.
+ */
+export class RunnerOwnershipDeniedError extends Error {
+  constructor(public readonly runnerId: string) {
+    super(
+      `work ownership denied — the credential this runner authenticates with does not own ` +
+        `runner_id '${runnerId}'. The server answered 403 Forbidden on POST /v1/work/poll ` +
+        `and will keep doing so: give this runner its own runner_id, or release the ` +
+        `existing binding with DELETE /v1/runners/{id}.`,
+    );
+    this.name = 'RunnerOwnershipDeniedError';
+  }
+}
+
+/** True when `err` is a 403 from a work endpoint — the ownership refusal. */
+export function isOwnershipDenied(err: unknown): boolean {
+  return err instanceof HttpError && err.status === 403;
+}
+
+/**
  * HTTP client for the Croniq runner API. Adds `Authorization` per request
  * (ApiKey takes precedence over Bearer when both are set) and serialises
  * snake_case JSON in/out.

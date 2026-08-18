@@ -2,6 +2,7 @@ package io.croniq.runner.internal;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.croniq.runner.CroniqHttpException;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.protocol.AckRequest;
 import io.croniq.runner.protocol.PollRequest;
@@ -15,6 +16,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
@@ -136,13 +138,19 @@ public class CroniqClient {
         return URI.create(base + path);
     }
 
+    /**
+     * Turn a non-2xx response into a {@link CroniqHttpException}, which carries
+     * the status code as a field. Before #437 this collapsed every failure into
+     * a plain {@link IOException} whose only record of the status was the
+     * message text, so no caller could branch on it without string parsing.
+     */
     private static void ensureSuccess(HttpResponse<byte[]> resp, String op) throws IOException {
         int sc = resp.statusCode();
         if (sc < 200 || sc >= 300) {
-            String body = resp.body() == null ? "" : new String(resp.body());
+            String body = resp.body() == null ? "" : new String(resp.body(), StandardCharsets.UTF_8);
             String snippet = body.length() > 200 ? body.substring(0, 200) + "…" : body;
             log.debug("Croniq {} returned HTTP {}: {}", op, sc, snippet);
-            throw new IOException("Croniq " + op + " returned HTTP " + sc + ": " + snippet);
+            throw new CroniqHttpException(op, sc, snippet);
         }
     }
 
