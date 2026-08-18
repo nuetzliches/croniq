@@ -21,7 +21,7 @@ public class AddCroniqShellHandlerTests
         services.AddLogging();
         return services.AddCroniqRunner(opts =>
         {
-            opts.ServerUrl = "http://example.test:4000";
+            opts.ServerUrl = "https://example.test:4000";
             opts.ApiKey = "croniq_abc";
         });
     }

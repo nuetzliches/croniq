@@ -31,17 +31,53 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	authHeader string
+
+	// insecureHTTP records the caller's explicit opt-in to a cleartext
+	// http:// base URL on a non-loopback host (see WithInsecureHTTP).
+	insecureHTTP bool
+
+	// configErr holds the base-URL validation failure, if any. Recorded
+	// at construction time rather than returned, because NewClient has
+	// no error result — Err surfaces it, Runner.Run returns it before
+	// the first poll, and do refuses to send anything while it is set.
+	configErr error
 }
 
 // NewClient constructs a Client targeting the given base URL. Trailing
 // slashes are tolerated.
+//
+// The base URL must be https:// unless its host is loopback (localhost,
+// 127.0.0.0/8, ::1) — the credential is attached to every request and would
+// otherwise travel in cleartext. A non-loopback http:// URL is recorded as a
+// configuration error (see [Client.Err]) unless [Client.WithInsecureHTTP] is
+// chained on.
 func NewClient(baseURL string) *Client {
 	return &Client{
 		// 0 timeout = unbounded; individual requests use ctx deadlines.
 		httpClient: &http.Client{},
 		baseURL:    strings.TrimRight(baseURL, "/"),
+		configErr:  validateBaseURL(baseURL, false),
 	}
 }
+
+// WithInsecureHTTP opts this client in to a cleartext http:// base URL on a
+// non-loopback host, clearing the configuration error NewClient recorded and
+// emitting one loud warning instead: the API key then travels in cleartext on
+// every request. Intended for lab and staging setups that genuinely have no
+// TLS terminator — never for production.
+func (c *Client) WithInsecureHTTP() *Client {
+	c.insecureHTTP = true
+	// Re-run validation with the opt-in applied: the flag necessarily
+	// arrives after NewClient in a builder chain, so the constructor
+	// could not have taken it into account.
+	c.configErr = validateBaseURL(c.baseURL, true)
+	return c
+}
+
+// Err reports the base-URL validation failure recorded at construction, or
+// nil when the configuration is sound. Every request short-circuits with this
+// error while it is set.
+func (c *Client) Err() error { return c.configErr }
 
 // WithAPIKey configures `Authorization: ApiKey {key}` on every request.
 // Returns the same client for chaining.
@@ -112,6 +148,11 @@ func (c *Client) RegisterJob(ctx context.Context, req *RegisterJobRequest) error
 // do is the single HTTP send-and-decode helper. Non-2xx responses are
 // returned as *ServerError so the runner can decide retry policy.
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	// Never put a credential on the wire against a base URL we refused.
+	if c.configErr != nil {
+		return c.configErr
+	}
+
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)

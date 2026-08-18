@@ -69,6 +69,30 @@ See [`examples/quickstart`](examples/quickstart/main.go) for the full template.
 - **Drain-on-shutdown** — cancelling `Run`'s context stops polling but lets in-flight handlers finish naturally up to `WithDrainTimeout`; past the budget remaining handlers are cancelled.
 - **On-demand triggering (producer)** — `croniq.NewTriggerClient(...)` wraps `POST /v1/trigger` with its own credentials (the `jobs:trigger` scope), independent of the runner. See [Triggering jobs](#triggering-jobs-producer).
 
+## Transport security
+
+The credential is attached to every request as an `Authorization` header. Over `http://` it travels in cleartext — and Go's `http.DefaultTransport` honours `HTTP_PROXY`, so it can traverse an intermediary in the clear too.
+
+`NewRunner`, `NewClient` and `NewTriggerClient` therefore refuse a cleartext server URL unless the host is loopback:
+
+- accepted: any `https://` URL, and `http://` on `localhost`, `127.0.0.0/8` or `::1` — so the `http://localhost:4000` quickstart default keeps working;
+- refused: `http://` on any other host. The constructors have no error result, so the failure is recorded at construction and surfaced before anything goes on the wire: `Runner.Run` returns it instead of starting the poll loop, `TriggerClient.Err()` / `Client.Err()` expose it, and every request short-circuits with it.
+
+If a deployment genuinely has no TLS terminator (a lab or staging box), opt in explicitly — the SDK then works, but logs one loud `slog` warning:
+
+```go
+r := croniq.NewRunner(
+    "http://croniq.internal:4000",
+    croniq.ResolveRunnerID("my-runner"),
+    croniq.WithAPIKey(os.Getenv("CRONIQ_API_KEY")),
+    croniq.WithInsecureHTTP(), // the API key travels in cleartext
+)
+
+tc := croniq.NewTriggerClient("http://croniq.internal:4000").
+    WithAPIKey(os.Getenv("CRONIQ_TRIGGER_KEY")).
+    WithInsecureHTTP()
+```
+
 ## Capabilities vs Tags
 
 A common pitfall: **don't put implementation details into capabilities**. Capabilities drive job routing (`require`/`prefer` in the Croniqfile). Tags are filter-only — for UI and operations, not routing.

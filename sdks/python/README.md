@@ -98,7 +98,8 @@ Any other exception's `str(exc)` is forwarded as the error message.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `server_url` | `http://localhost:4000` | Croniq server base URL |
+| `server_url` | `http://localhost:4000` | Croniq server base URL — **HTTPS required off loopback**, see below |
+| `allow_insecure_http` | `False` | Opt in to a cleartext `http://` `server_url` on a non-loopback host |
 | `runner_id` | resolved at start | Stable runner identifier — see resolution order in `_identity.py` |
 | `api_key` / `bearer_token` | `None` | Auth header (`ApiKey` preferred when both set) |
 | `capabilities` | `[]` | Capabilities advertised to the server |
@@ -110,6 +111,32 @@ Any other exception's `str(exc)` is forwarded as the error message.
 | `poll_retry_delay_ms` | `5_000` | Back-off after a failed poll |
 | `capacity_backoff_ms` | `500` | Idle delay at `max_inflight` |
 | `log_writer` | `LogWriterOptions()` | Streaming-log tunables |
+
+### Transport security
+
+The API key is attached to every request as an `Authorization` header. Over
+`http://` it travels in cleartext — and because httpx honours `HTTP_PROXY` by
+default, it can traverse an intermediary in the clear too.
+
+`RunnerOptions` and `TriggerClientOptions` therefore refuse a cleartext
+`server_url` at construction time unless the host is loopback:
+
+- accepted: any `https://` URL, and `http://` on `localhost`, `127.0.0.0/8`
+  or `::1` — so the `http://localhost:4000` quickstart default keeps working;
+- refused: `http://` on any other host, with a `ValueError` naming the URL and
+  the opt-in.
+
+If a deployment genuinely has no TLS terminator (a lab or staging box), opt in
+explicitly — the SDK then starts, but logs one loud warning on the
+`croniq_runner.security` logger:
+
+```python
+RunnerOptions(
+    server_url="http://croniq.internal:4000",
+    api_key="croniq_...",
+    allow_insecure_http=True,  # the API key travels in cleartext
+)
+```
 
 ## Streaming logs example
 

@@ -87,6 +87,11 @@ type TriggerClient struct {
 // [TriggerClient.WithRequestTimeout]. Configure credentials with
 // [TriggerClient.WithAPIKey] or [TriggerClient.WithBearer] — the endpoint
 // requires the jobs:trigger or admin scope.
+//
+// serverURL must be https:// unless its host is loopback (localhost,
+// 127.0.0.0/8, ::1); a non-loopback http:// URL makes every
+// [TriggerClient.Trigger] call fail with a configuration error unless
+// [TriggerClient.WithInsecureHTTP] is chained on. See [TriggerClient.Err].
 func NewTriggerClient(serverURL string) *TriggerClient {
 	return &TriggerClient{
 		client:         NewClient(serverURL),
@@ -114,6 +119,20 @@ func (tc *TriggerClient) WithHTTPClient(hc *http.Client) *TriggerClient {
 	tc.client.WithHTTPClient(hc)
 	return tc
 }
+
+// WithInsecureHTTP opts this client in to a cleartext http:// server URL on a
+// non-loopback host. Without it such a URL makes every trigger call fail; with
+// it the client works but logs one loud warning, because the credential then
+// travels in cleartext on every call (and through any HTTP proxy the
+// environment configures). Lab and staging only — never production.
+func (tc *TriggerClient) WithInsecureHTTP() *TriggerClient {
+	tc.client.WithInsecureHTTP()
+	return tc
+}
+
+// Err reports the base-URL validation failure recorded at construction, or
+// nil when the configuration is sound.
+func (tc *TriggerClient) Err() error { return tc.client.Err() }
 
 // WithRequestTimeout overrides the per-call timeout applied when the context
 // passed to [TriggerClient.Trigger] carries no deadline of its own. A

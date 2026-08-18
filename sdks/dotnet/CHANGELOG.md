@@ -6,6 +6,24 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
 
 ## [Unreleased]
 
+### Security
+
+- **HTTPS is required for a non-loopback `ServerUrl`
+  ([#440](https://github.com/nuetzliches/croniq/issues/440)).** `ServerUrl`
+  defaulted to `http://localhost:4000` and `[Required, Url]` accepted any
+  `http://` host, so swapping in a real host shipped the API key as a
+  cleartext `Authorization` header on every poll, with no warning. Both
+  `CroniqRunnerOptions` and `CroniqClientOptions` now validate the scheme
+  during options validation — i.e. at host startup via the existing
+  `ValidateOnStart()`, not on the first request. `https://` is always
+  accepted; `http://` only when the host is loopback (`localhost`,
+  `127.0.0.0/8`, `::1`), so the documented `http://localhost:4000` quickstart
+  keeps working; anything else fails with an `OptionsValidationException`
+  naming the URL and the opt-in. The new `AllowInsecureHttp` option property
+  (bindable from `Croniq:Runner` / `Croniq:Client`) accepts a cleartext URL
+  deliberately and logs one loud warning under the
+  `Croniq.Runner.Sdk.Security` category instead.
+
 ### Added
 
 - **Scoped shell-handler registration

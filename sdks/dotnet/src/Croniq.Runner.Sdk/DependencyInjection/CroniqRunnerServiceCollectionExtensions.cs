@@ -94,6 +94,11 @@ public static class CroniqRunnerServiceCollectionExtensions
         // ValidateOnStart() registered in each public overload above.
         services.AddSingleton<IValidateOptions<CroniqRunnerOptions>, CroniqRunnerOptionsValidator>();
 
+        // Transport security (#440): refuse a cleartext ServerUrl on a
+        // non-loopback host, so the API key can't be shipped in the clear by
+        // an operator who only swapped the host in the documented default.
+        services.AddSingleton<IValidateOptions<CroniqRunnerOptions>, CroniqRunnerOptionsSecurityValidator>();
+
         services.TryAddSingleton<RunnerStateProbe>();
         services.TryAddSingleton<IRunnerStateProbe>(sp => sp.GetRequiredService<RunnerStateProbe>());
         services.TryAddSingleton<RunnerIdentityResolver>();

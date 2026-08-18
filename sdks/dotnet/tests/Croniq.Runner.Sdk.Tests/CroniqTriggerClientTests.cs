@@ -115,12 +115,12 @@ public class CroniqTriggerClientTests
     {
         var http = new HttpClient(stub)
         {
-            BaseAddress = new Uri("http://example.test:4000"),
+            BaseAddress = new Uri("https://example.test:4000"),
             Timeout = Timeout.InfiniteTimeSpan,
         };
         var monitor = new StubOptionsMonitor(new CroniqClientOptions
         {
-            ServerUrl = "http://example.test:4000",
+            ServerUrl = "https://example.test:4000",
             ApiKey = "croniq_trigger_key",
         });
         return new CroniqTriggerClient(http, monitor);

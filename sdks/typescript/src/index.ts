@@ -28,6 +28,7 @@ export type {
   WorkEventLevel,
 } from './protocol.js';
 export { HttpError } from './client.js';
+export { isLoopbackHostname } from './security.js';
 
 // Producer-side trigger (on-demand) client — parity with the .NET SDK (#277).
 export { CroniqTriggerClient, createTriggerClient, QueueOverflowError } from './trigger.js';

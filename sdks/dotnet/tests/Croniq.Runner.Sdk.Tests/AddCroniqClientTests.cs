@@ -25,7 +25,7 @@ public class AddCroniqClientTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Croniq:Client:ServerUrl"] = "http://example.test:4000",
+                ["Croniq:Client:ServerUrl"] = "https://example.test:4000",
                 ["Croniq:Client:ApiKey"] = "croniq_trigger_key",
             })
             .Build();
@@ -36,7 +36,7 @@ public class AddCroniqClientTests
         using var provider = services.BuildServiceProvider();
         var opts = provider.GetRequiredService<IOptions<CroniqClientOptions>>().Value;
 
-        opts.ServerUrl.ShouldBe("http://example.test:4000");
+        opts.ServerUrl.ShouldBe("https://example.test:4000");
         opts.ApiKey.ShouldBe("croniq_trigger_key");
         provider.GetRequiredService<ICroniqTriggerClient>().ShouldNotBeNull();
     }
@@ -52,12 +52,12 @@ public class AddCroniqClientTests
         services.AddLogging();
         services.AddCroniqRunner(opts =>
         {
-            opts.ServerUrl = "http://runner.test:4000";
+            opts.ServerUrl = "https://runner.test:4000";
             opts.ApiKey = "croniq_runner_key";
         });
         services.AddCroniqClient(opts =>
         {
-            opts.ServerUrl = "http://example.test:4000";
+            opts.ServerUrl = "https://example.test:4000";
             opts.ApiKey = "croniq_trigger_key";
         });
         services.AddCroniqClient();
@@ -70,7 +70,7 @@ public class AddCroniqClientTests
 
         var headers = capture.LastRequest!.Headers.GetValues("Authorization").ToArray();
         headers.ShouldHaveSingleItem().ShouldBe("ApiKey croniq_trigger_key");
-        capture.LastRequest.RequestUri!.ShouldBe(new Uri("http://example.test:4000/v1/trigger"));
+        capture.LastRequest.RequestUri!.ShouldBe(new Uri("https://example.test:4000/v1/trigger"));
         result.ExecutionId.ShouldBe("exec-1");
     }
 
@@ -78,9 +78,9 @@ public class AddCroniqClientTests
     public void Twice_RegistersOptionsValidationOnlyOnce()
     {
         var services = new ServiceCollection();
-        services.AddCroniqClient(opts => opts.ServerUrl = "http://example.test:4000");
+        services.AddCroniqClient(opts => opts.ServerUrl = "https://example.test:4000");
         var countAfterFirst = services.Count;
-        services.AddCroniqClient(opts => opts.ServerUrl = "http://other.test:4000");
+        services.AddCroniqClient(opts => opts.ServerUrl = "https://other.test:4000");
 
         // Second call must be a no-op for the shared setup.
         services.Count.ShouldBe(countAfterFirst);

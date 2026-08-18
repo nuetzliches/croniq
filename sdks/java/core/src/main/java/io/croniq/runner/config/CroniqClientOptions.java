@@ -28,17 +28,34 @@ public final class CroniqClientOptions {
     private final String apiKey;
     private final String bearerToken;
     private final Duration requestTimeout;
+    private final boolean allowInsecureHttp;
 
     private CroniqClientOptions(Builder b) {
         this.serverUrl = b.serverUrl;
         this.apiKey = b.apiKey;
         this.bearerToken = b.bearerToken;
         this.requestTimeout = b.requestTimeout;
+        this.allowInsecureHttp = b.allowInsecureHttp;
     }
 
-    /** Base URL of the Croniq server, e.g. {@code http://localhost:4000}. */
+    /**
+     * Base URL of the Croniq server, e.g. {@code http://localhost:4000}.
+     *
+     * <p>Must be {@code https} unless the host is loopback ({@code localhost},
+     * {@code 127.0.0.0/8}, {@code ::1}) — the trigger credential rides along on every
+     * request and would otherwise travel in cleartext. See {@link #allowInsecureHttp()}.
+     */
     public URI serverUrl() {
         return serverUrl;
+    }
+
+    /**
+     * Whether a cleartext {@code http} {@link #serverUrl()} on a non-loopback host was
+     * explicitly opted in to. Off by default: such a URL is otherwise refused by
+     * {@link Builder#build()}.
+     */
+    public boolean allowInsecureHttp() {
+        return allowInsecureHttp;
     }
 
     /**
@@ -69,7 +86,8 @@ public final class CroniqClientOptions {
                 .serverUrl(serverUrl)
                 .apiKey(apiKey)
                 .bearerToken(bearerToken)
-                .requestTimeout(requestTimeout);
+                .requestTimeout(requestTimeout)
+                .allowInsecureHttp(allowInsecureHttp);
     }
 
     public static final class Builder {
@@ -77,6 +95,7 @@ public final class CroniqClientOptions {
         private String apiKey;
         private String bearerToken;
         private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
+        private boolean allowInsecureHttp;
 
         private Builder() {}
 
@@ -104,7 +123,26 @@ public final class CroniqClientOptions {
             return this;
         }
 
+        /**
+         * Opts in to a cleartext {@code http} {@code serverUrl} on a non-loopback host.
+         *
+         * <p>Off by default: such a URL is otherwise refused by {@link #build()}. With the
+         * opt-in the client works but logs one loud warning — the credential then travels
+         * in cleartext on every trigger call, and through any HTTP proxy the environment
+         * configures. Lab and staging only; never production.
+         *
+         * @param v whether cleartext HTTP is accepted
+         * @return this builder
+         */
+        public Builder allowInsecureHttp(boolean v) {
+            this.allowInsecureHttp = v;
+            return this;
+        }
+
         public CroniqClientOptions build() {
+            // Transport security (#440): fail fast on a base URL that would put the
+            // trigger credential on the wire in the clear.
+            ServerUrls.validate(serverUrl, allowInsecureHttp, "CroniqClientOptions");
             return new CroniqClientOptions(this);
         }
     }

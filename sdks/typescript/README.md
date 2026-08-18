@@ -147,17 +147,20 @@ The same registered handler serves both its Croniqfile schedule (safety-net / re
 
 | Option             | Default        | Description                                          |
 | ------------------ | -------------- | ---------------------------------------------------- |
-| `serverUrl`        | _(required)_   | Croniq server base URL.                              |
+| `serverUrl`        | _(required)_   | Croniq server base URL. HTTPS required off loopback. |
 | `apiKey`           | —              | `Authorization: ApiKey {…}`. Precedence over bearer. |
 | `bearerToken`      | —              | `Authorization: Bearer {…}`.                         |
 | `requestTimeoutMs` | `30_000`       | Per-request timeout.                                 |
 | `fetchImpl`        | global `fetch` | Custom `fetch` (testing / proxies).                  |
+| `allowInsecureHttp`| `false`        | Opt in to cleartext `http://` off loopback.          |
+| `logger`           | console (warn) | Sink for SDK diagnostics.                            |
 
 ## Configuration
 
 | Option                | Default                                              | Description                                                              |
 | --------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| `serverUrl`           | _(required)_                                         | Croniq server base URL.                                                  |
+| `serverUrl`           | _(required)_                                         | Croniq server base URL. HTTPS required off loopback — see below.         |
+| `allowInsecureHttp`   | `false`                                              | Opt in to a cleartext `http://` `serverUrl` on a non-loopback host.      |
 | `runnerId`            | resolved                                             | Stable id. Falls back to `RUNNER_ID` env var → state file → generated.   |
 | `runnerIdPrefix`      | `"runner"`                                           | Used when generating an id.                                              |
 | `runnerDataDir`       | platform default                                     | Where the persistent `runner-id` file lives.                             |
@@ -174,6 +177,25 @@ The same registered handler serves both its Croniqfile schedule (safety-net / re
 | `logWriter`           | see below                                            | Streaming log-writer tunables.                                           |
 
 LogWriter sub-options: `channelCapacity` (256), `batchSizeThreshold` (32), `batchTimeThresholdMs` (200), `maxBatchPerPost` (100), `shutdownTimeoutMs` (5_000).
+
+### Transport security
+
+The credential is attached to every request as an `Authorization` header. Over `http://` it travels in cleartext — and undici honours `HTTP_PROXY` by default, so it can traverse an intermediary in the clear too.
+
+Both `createRunner` and `createTriggerClient` therefore refuse a cleartext `serverUrl` at construction time unless the host is loopback:
+
+- accepted: any `https://` URL, and `http://` on `localhost`, `127.0.0.0/8` or `::1` — so the `http://localhost:4000` quickstart default keeps working;
+- refused: `http://` on any other host, with a `TypeError` naming the URL and the opt-in.
+
+If a deployment genuinely has no TLS terminator (a lab or staging box), opt in explicitly — the SDK then starts, but emits one loud warning through the configured `logger`:
+
+```ts
+const runner = createRunner({
+  serverUrl: 'http://croniq.internal:4000',
+  apiKey: process.env.CRONIQ_API_KEY,
+  allowInsecureHttp: true, // the API key travels in cleartext
+});
+```
 
 ## Wire-protocol conformance
 

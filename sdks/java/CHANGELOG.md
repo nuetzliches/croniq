@@ -4,6 +4,25 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- **HTTPS is required for a non-loopback `serverUrl`
+  ([#440](https://github.com/nuetzliches/croniq/issues/440)).** `serverUrl`
+  defaulted to `http://localhost:4000` and `URI.create` accepted any `http`
+  host silently, so swapping in a real host shipped the API key as a cleartext
+  `Authorization` header on every poll, with no warning. `CroniqRunnerOptions`
+  and `CroniqClientOptions` now validate the scheme in `Builder.build()` — so
+  a misconfiguration fails fast instead of on the first poll. An `https` URL
+  is always accepted; `http` only when the host is loopback (`localhost`,
+  `127.0.0.0/8`, `::1`), keeping the documented `http://localhost:4000`
+  quickstart working; anything else throws `IllegalArgumentException` naming
+  the URL and the opt-in. The new `allowInsecureHttp(true)` builder method
+  (`croniq.runner.allow-insecure-http` in the Spring Boot starter) accepts a
+  cleartext URL deliberately and logs one loud SLF4J warning under
+  `io.croniq.runner.config.ServerUrls` instead.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added — logical fire time

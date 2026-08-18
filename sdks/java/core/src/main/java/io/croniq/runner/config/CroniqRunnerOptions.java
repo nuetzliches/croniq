@@ -39,8 +39,10 @@ public final class CroniqRunnerOptions {
     private final Duration drainTimeout;
     private final Duration pollRetryDelay;
     private final Duration capacityBackoff;
+    private final boolean allowInsecureHttp;
 
     private CroniqRunnerOptions(Builder b) {
+        this.allowInsecureHttp = b.allowInsecureHttp;
         this.serverUrl = b.serverUrl;
         this.runnerId = b.runnerId;
         this.runnerIdPrefix = b.runnerIdPrefix;
@@ -57,8 +59,24 @@ public final class CroniqRunnerOptions {
         this.capacityBackoff = b.capacityBackoff;
     }
 
+    /**
+     * Base URL of the Croniq server.
+     *
+     * <p>Must be {@code https} unless the host is loopback ({@code localhost},
+     * {@code 127.0.0.0/8}, {@code ::1}) — the API key rides along on every request and
+     * would otherwise travel in cleartext. See {@link #allowInsecureHttp()}.
+     */
     public URI serverUrl() {
         return serverUrl;
+    }
+
+    /**
+     * Whether a cleartext {@code http} {@link #serverUrl()} on a non-loopback host was
+     * explicitly opted in to. Off by default: such a URL is otherwise refused by
+     * {@link Builder#build()}.
+     */
+    public boolean allowInsecureHttp() {
+        return allowInsecureHttp;
     }
 
     public String runnerId() {
@@ -119,6 +137,7 @@ public final class CroniqRunnerOptions {
 
     public Builder toBuilder() {
         return new Builder()
+                .allowInsecureHttp(allowInsecureHttp)
                 .serverUrl(serverUrl)
                 .runnerId(runnerId)
                 .runnerIdPrefix(runnerIdPrefix)
@@ -150,6 +169,7 @@ public final class CroniqRunnerOptions {
         private Duration drainTimeout = DEFAULT_DRAIN_TIMEOUT;
         private Duration pollRetryDelay = DEFAULT_POLL_RETRY_DELAY;
         private Duration capacityBackoff = DEFAULT_CAPACITY_BACKOFF;
+        private boolean allowInsecureHttp;
 
         public Builder serverUrl(URI v) {
             this.serverUrl = Objects.requireNonNull(v, "serverUrl");
@@ -158,6 +178,22 @@ public final class CroniqRunnerOptions {
 
         public Builder serverUrl(String v) {
             return serverUrl(URI.create(v));
+        }
+
+        /**
+         * Opts in to a cleartext {@code http} {@code serverUrl} on a non-loopback host.
+         *
+         * <p>Off by default: such a URL is otherwise refused by {@link #build()}. With the
+         * opt-in the runner starts but logs one loud warning — the API key then travels in
+         * cleartext on every poll, and through any HTTP proxy the environment configures.
+         * Lab and staging only; never production.
+         *
+         * @param v whether cleartext HTTP is accepted
+         * @return this builder
+         */
+        public Builder allowInsecureHttp(boolean v) {
+            this.allowInsecureHttp = v;
+            return this;
         }
 
         public Builder runnerId(String v) {
@@ -229,6 +265,9 @@ public final class CroniqRunnerOptions {
         }
 
         public CroniqRunnerOptions build() {
+            // Transport security (#440): fail fast on a base URL that would put the
+            // API key on the wire in the clear, rather than on the first poll.
+            ServerUrls.validate(serverUrl, allowInsecureHttp, "CroniqRunnerOptions");
             return new CroniqRunnerOptions(this);
         }
     }

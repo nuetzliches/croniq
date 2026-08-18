@@ -15,7 +15,7 @@ from croniq_runner._client import CroniqClient
 
 def _build_client(handler: Callable[[httpx.Request], httpx.Response]) -> CroniqClient:
     transport = httpx.MockTransport(handler)
-    options = RunnerOptions(server_url="http://test.invalid", api_key="testkey")
+    options = RunnerOptions(server_url="https://test.invalid", api_key="testkey")
     http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
     return CroniqClient(options, http=http)
 
@@ -53,7 +53,7 @@ async def test_runner_acks_success_after_handler_completes() -> None:
         return httpx.Response(404)
 
     options = RunnerOptions(
-        server_url="http://test.invalid",
+        server_url="https://test.invalid",
         api_key="testkey",
         poll_timeout_ms=500,
         poll_retry_delay_ms=100,
@@ -119,7 +119,7 @@ async def test_runner_acks_failure_when_handler_raises() -> None:
         return httpx.Response(200, json={})
 
     options = RunnerOptions(
-        server_url="http://test.invalid",
+        server_url="https://test.invalid",
         api_key="k",
         poll_timeout_ms=500,
         poll_retry_delay_ms=100,
@@ -164,7 +164,7 @@ async def test_runner_self_registers_job_with_schedule() -> None:
         return httpx.Response(200, json={})
 
     options = RunnerOptions(
-        server_url="http://test.invalid",
+        server_url="https://test.invalid",
         api_key="k",
         capabilities=["a", "b"],
         poll_timeout_ms=200,
@@ -207,7 +207,7 @@ async def test_authorization_header_set_from_api_key() -> None:
         return httpx.Response(200, json={"work": [], "cancel": []})
 
     options = RunnerOptions(
-        server_url="http://test.invalid",
+        server_url="https://test.invalid",
         api_key="secret123",
         poll_timeout_ms=200,
         poll_retry_delay_ms=100,

@@ -32,8 +32,8 @@ class _Recorder:
 
 
 def _client(rec: _Recorder, **opts: object) -> TriggerClient:
-    http = httpx.AsyncClient(transport=httpx.MockTransport(rec.handle), base_url="http://test")
-    options = TriggerClientOptions(server_url="http://test", **opts)  # type: ignore[arg-type]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(rec.handle), base_url="https://test")
+    options = TriggerClientOptions(server_url="https://test", **opts)  # type: ignore[arg-type]
     return TriggerClient(options, http=http)
 
 

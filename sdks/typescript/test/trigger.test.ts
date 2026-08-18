@@ -39,7 +39,7 @@ describe('CroniqTriggerClient.trigger', () => {
   it('posts a snake_case body to POST /v1/trigger with every field', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":3}'));
     const client = createTriggerClient({
-      serverUrl: 'http://example.test:4000',
+      serverUrl: 'https://example.test:4000',
       apiKey: 'croniq_trigger_key',
       fetchImpl,
     });
@@ -53,7 +53,7 @@ describe('CroniqTriggerClient.trigger', () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('http://example.test:4000/v1/trigger');
+    expect(calls[0]!.url).toBe('https://example.test:4000/v1/trigger');
     expect(calls[0]!.init.method).toBe('POST');
 
     const body = bodyOf(calls[0]!);
@@ -69,7 +69,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('omits unset optional fields from the wire body', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":1}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     await client.trigger('etl:data-sync');
 
@@ -82,7 +82,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('forwards nested/typed metadata verbatim as a JSON object', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-3","queued":1}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     await client.trigger('email:send', {
       metadata: { user_id: 'u-42', attempt: 2, flags: { urgent: true } },
@@ -93,7 +93,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('defaults a missing deduplicated flag to false (older server)', async () => {
     const { fetchImpl } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     const result = await client.trigger('etl:data-sync');
 
@@ -102,7 +102,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('surfaces deduplicated: true', async () => {
     const { fetchImpl } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0,"deduplicated":true}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     const result = await client.trigger('etl:data-sync', { idempotencyKey: 'evt-1' });
 
@@ -112,7 +112,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('throws HttpError on a non-2xx response', async () => {
     const { fetchImpl } = stubFetch(() => ({ status: 404, body: '{"error":"unknown job"}' }));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     await expect(client.trigger('nope:missing')).rejects.toBeInstanceOf(HttpError);
   });
@@ -123,7 +123,7 @@ describe('CroniqTriggerClient.trigger', () => {
       body: '{"execution_id":"","queued":0,"deduplicated":false}',
       headers: { 'retry-after': '5' },
     }));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     const err = await client.trigger('billing:invoice').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(QueueOverflowError);
@@ -134,7 +134,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('leaves retryAfterMs undefined when the 429 carries no Retry-After', async () => {
     const { fetchImpl } = stubFetch(() => ({ status: 429, body: '{}' }));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     const err = await client.trigger('billing:invoice').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(QueueOverflowError);
@@ -143,7 +143,7 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('rejects a blank job key without hitting the network', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"x","queued":0}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
     await expect(client.trigger('   ')).rejects.toBeInstanceOf(TypeError);
     expect(calls).toHaveLength(0);
@@ -152,7 +152,7 @@ describe('CroniqTriggerClient.trigger', () => {
   it('sends Authorization: ApiKey when an api key is set (precedence over bearer)', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0}'));
     const client = createTriggerClient({
-      serverUrl: 'http://example.test:4000',
+      serverUrl: 'https://example.test:4000',
       apiKey: 'key-abc',
       bearerToken: 'tok-xyz',
       fetchImpl,
@@ -167,7 +167,7 @@ describe('CroniqTriggerClient.trigger', () => {
   it('falls back to Bearer when only a bearer token is set', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0}'));
     const client = createTriggerClient({
-      serverUrl: 'http://example.test:4000',
+      serverUrl: 'https://example.test:4000',
       bearerToken: 'tok-xyz',
       fetchImpl,
     });
@@ -180,11 +180,11 @@ describe('CroniqTriggerClient.trigger', () => {
 
   it('trims trailing slashes from serverUrl', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0}'));
-    const client = createTriggerClient({ serverUrl: 'http://example.test:4000///', fetchImpl });
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000///', fetchImpl });
 
     await client.trigger('billing:invoice');
 
-    expect(calls[0]!.url).toBe('http://example.test:4000/v1/trigger');
+    expect(calls[0]!.url).toBe('https://example.test:4000/v1/trigger');
   });
 
   it('rejects a missing or invalid serverUrl at construction', () => {
