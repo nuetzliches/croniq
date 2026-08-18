@@ -416,9 +416,11 @@ shell-runner:
     - /backups:/backups
 ```
 
-**Trust model.** Anyone with write access to the Croniqfile (or to
-`__runner_exec` job metadata via the API) can run arbitrary commands as the
-shell-runner process. Treat the runner pool's filesystem and network as
+**Trust model.** Anyone with write access to the Croniqfile can run arbitrary
+commands as the shell-runner process. `__runner_exec` is stamped by the DSL
+compiler alone: every API and MCP path that accepts caller metadata strips the
+reserved `__` namespace at the ingress, so the Croniqfile — not an API token —
+is the trust boundary. Treat the runner pool's filesystem and network as
 exposed to whoever can ship a Croniqfile change. Run separate shell-runner
 pools per blast-radius bracket and use `runner { require <pool> }` /
 `exclude <pool>` to pin sensitive jobs to the right pool.

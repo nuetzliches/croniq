@@ -526,6 +526,60 @@ pub const RUNNER_EXEC_METADATA_KEY: &str = "__runner_exec";
 /// claim path to cap in-flight executions per job.
 pub const MAX_CONCURRENT_METADATA_KEY: &str = "__max_concurrent";
 
+/// Prefix marking the metadata namespace reserved for keys the scheduler and
+/// the DSL compiler stamp themselves ([`RUNNER_EXEC_METADATA_KEY`],
+/// [`MAX_CONCURRENT_METADATA_KEY`], `__require`, `__prefer`, …).
+///
+/// Runners act on these keys directly — the shell runner deserialises
+/// `__runner_exec` into a command it spawns — so caller-supplied metadata
+/// must never reach into the namespace. Every ingress that accepts metadata
+/// from an API/MCP caller strips it with [`strip_reserved_metadata_map`] or
+/// [`strip_reserved_metadata_json`] before the values reach a work item,
+/// execution row, or stored job definition.
+pub const RESERVED_METADATA_PREFIX: &str = "__";
+
+/// Whether `key` falls inside the reserved metadata namespace described on
+/// [`RESERVED_METADATA_PREFIX`].
+pub fn is_reserved_metadata_key(key: &str) -> bool {
+    key.starts_with(RESERVED_METADATA_PREFIX)
+}
+
+/// Drop every reserved-namespace key from a caller-supplied metadata map.
+///
+/// Returns the dropped keys so the caller can log what it refused. The map is
+/// left with only the keys that are safe to forward.
+pub fn strip_reserved_metadata_map(metadata: &mut HashMap<String, String>) -> Vec<String> {
+    let dropped: Vec<String> = metadata
+        .keys()
+        .filter(|k| is_reserved_metadata_key(k))
+        .cloned()
+        .collect();
+    for key in &dropped {
+        metadata.remove(key);
+    }
+    dropped
+}
+
+/// Drop every reserved-namespace key from caller-supplied metadata held as
+/// arbitrary JSON. Non-object values (including `null`) carry no keys and are
+/// left untouched.
+///
+/// Returns the dropped keys so the caller can log what it refused.
+pub fn strip_reserved_metadata_json(metadata: &mut serde_json::Value) -> Vec<String> {
+    let Some(map) = metadata.as_object_mut() else {
+        return Vec::new();
+    };
+    let dropped: Vec<String> = map
+        .keys()
+        .filter(|k| is_reserved_metadata_key(k))
+        .cloned()
+        .collect();
+    for key in &dropped {
+        map.remove(key);
+    }
+    dropped
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RetryConfig {
     pub strategy: String,
@@ -1604,6 +1658,65 @@ fn compile_calendar(cal: &CalendarBlock, vars: &HashMap<String, String>) -> Cale
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        MAX_CONCURRENT_METADATA_KEY, RUNNER_EXEC_METADATA_KEY, is_reserved_metadata_key,
+        strip_reserved_metadata_json, strip_reserved_metadata_map,
+    };
+
+    #[test]
+    fn reserved_metadata_key_detection() {
+        assert!(is_reserved_metadata_key(RUNNER_EXEC_METADATA_KEY));
+        assert!(is_reserved_metadata_key(MAX_CONCURRENT_METADATA_KEY));
+        assert!(is_reserved_metadata_key("__require"));
+        assert!(is_reserved_metadata_key("__"));
+        assert!(!is_reserved_metadata_key("_single"));
+        assert!(!is_reserved_metadata_key("env"));
+        assert!(!is_reserved_metadata_key("nested__key"));
+    }
+
+    #[test]
+    fn strip_reserved_metadata_map_drops_only_reserved_keys() {
+        let mut meta: HashMap<String, String> = HashMap::new();
+        meta.insert(RUNNER_EXEC_METADATA_KEY.into(), "{}".into());
+        meta.insert("__max_concurrent".into(), "999".into());
+        meta.insert("env".into(), "prod".into());
+
+        let mut dropped = strip_reserved_metadata_map(&mut meta);
+        dropped.sort();
+
+        assert_eq!(dropped, vec!["__max_concurrent", RUNNER_EXEC_METADATA_KEY]);
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta["env"], "prod");
+    }
+
+    #[test]
+    fn strip_reserved_metadata_json_drops_only_reserved_keys() {
+        let mut meta = serde_json::json!({
+            "__runner_exec": "{\"kind\":\"shell\",\"command\":\"id\"}",
+            "__require": "[\"shell\"]",
+            "env": "prod",
+        });
+
+        let mut dropped = strip_reserved_metadata_json(&mut meta);
+        dropped.sort();
+
+        assert_eq!(dropped, vec!["__require", RUNNER_EXEC_METADATA_KEY]);
+        assert_eq!(meta, serde_json::json!({ "env": "prod" }));
+    }
+
+    #[test]
+    fn strip_reserved_metadata_json_ignores_non_objects() {
+        for mut value in [
+            serde_json::Value::Null,
+            serde_json::json!("string"),
+            serde_json::json!([1, 2, 3]),
+        ] {
+            let before = value.clone();
+            assert!(strip_reserved_metadata_json(&mut value).is_empty());
+            assert_eq!(value, before);
+        }
+    }
+
     use super::*;
     use crate::parser::Parser;
 

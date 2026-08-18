@@ -1345,7 +1345,7 @@ async fn handle_trigger(
             // consumed verbatim by the shell runner. Drop such keys; the
             // caller's own `require`/`prefer` request fields (applied
             // below) are the supported way to influence those.
-            if k.starts_with("__") {
+            if croniq_config::compile::is_reserved_metadata_key(k) {
                 tracing::debug!(
                     job_key = %req.job_key,
                     key = %k,

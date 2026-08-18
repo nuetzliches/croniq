@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Reserved `__` metadata namespace is now enforced on every metadata
+  ingress.** The `__`-prefixed metadata namespace belongs to the scheduler and
+  the DSL compiler (`__runner_exec`, `__require`, `__prefer`,
+  `__max_concurrent`) and runners act on those keys directly.
+  `POST /v1/trigger` has always dropped caller-supplied keys in that
+  namespace; the MCP `enqueue_job`, `job_trigger` and `create_job` tools and
+  `POST /v1/jobs` did not, and forwarded them into the dispatch queue and the
+  stored job definition unchanged. All four now apply the same filter, which
+  moved into `croniq-config` as the single source of truth
+  (`is_reserved_metadata_key`, `strip_reserved_metadata_map`,
+  `strip_reserved_metadata_json`), so the namespace stays scheduler-owned no
+  matter which API a caller reaches for. Callers keep influencing routing
+  through the documented `require` / `prefer` fields; non-reserved metadata is
+  unaffected.
+
 ## [0.31.0] - 2026-07-27
 
 ### Added

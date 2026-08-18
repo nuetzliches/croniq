@@ -678,7 +678,11 @@ paths:
                 job_key: { type: string }
                 description: { type: string }
                 assigned_runner_id: { type: string }
-                metadata: { type: object }
+                metadata:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: >
+                    Free-form job metadata. Keys prefixed with `__` are reserved for the scheduler and are ignored when supplied by a caller.
                 timeout: { type: string }
                 max_retries: { type: integer }
                 dead_letter_enabled: { type: boolean }
@@ -1803,7 +1807,10 @@ paths:
                 job_key: { type: string }
                 require: { type: array, items: { type: string } }
                 prefer: { type: array, items: { type: string } }
-                metadata: { type: object }
+                metadata:
+                  type: object
+                  description: >
+                    Free-form metadata. Keys prefixed with `__` are reserved for the scheduler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are ignored when supplied by a caller — use `require` / `prefer` to influence routing.
                 timeout: { type: string, default: "5m" }
                 idempotency_key:
                   type: string
