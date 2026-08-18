@@ -97,6 +97,31 @@ pub struct ValidationError {
     pub message: String,
 }
 
+/// Reject a `timezone` that is not an IANA zone name, with the did-you-mean
+/// from `croniq_config::timezone` (issue #426's helper, applied to the one
+/// timezone-bearing column that never went through it).
+///
+/// The calendar's zone decides which day its rules gate and when its `window`
+/// rules open (issue #450), so a typo here shifts every job that consults the
+/// calendar. The loader falls back to UTC with a warning for rows written
+/// before this check existed; new writes fail at the request that made them.
+/// An empty string means "unset", matching `handle_update`'s clear convention.
+fn check_timezone_valid(timezone: Option<&str>) -> Result<(), (StatusCode, Json<ValidationError>)> {
+    let Some(name) = timezone.filter(|t| !t.is_empty()) else {
+        return Ok(());
+    };
+    croniq_config::timezone::parse(name).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ValidationError {
+                error: "unknown_timezone",
+                message: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(())
+}
+
 /// Validate free-form calendar rules by wrapping them in a dummy calendar
 /// block and running the Croniqfile parser plus semantic validation.
 /// Returns a human-readable error message on failure.
@@ -264,6 +289,7 @@ pub async fn handle_create(
             }),
         ));
     }
+    check_timezone_valid(req.timezone.as_deref())?;
     let store = state.store.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         Json(ValidationError {
@@ -401,6 +427,7 @@ pub async fn handle_update(
         existing.name = name;
     }
     if let Some(tz) = req.timezone {
+        check_timezone_valid(Some(tz.as_str()))?;
         existing.timezone = if tz.is_empty() { None } else { Some(tz) };
     }
     if let Some(rules) = req.rules {

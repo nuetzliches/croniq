@@ -146,7 +146,7 @@ fn bench_compute_next_fire_calendar(c: &mut Criterion) {
     // Calendar that excludes weekends — forces iteration in compute_next_fire
     let calendar = Calendar {
         name: "business_days".into(),
-        timezone: None,
+        tz: chrono_tz::UTC,
         includes: vec![],
         excludes: vec![CalendarRule::Weekly(vec![
             chrono::Weekday::Sat,

@@ -246,7 +246,9 @@ pub struct GetCalendarParams {
 pub struct CreateCalendarParams {
     /// Human-readable name (e.g. `"business-days"`). Used by jobs to reference the calendar.
     pub name: String,
-    /// IANA timezone name (e.g. `"Europe/Vienna"`). Optional; falls back to the job's timezone.
+    /// IANA timezone name (e.g. `"Europe/Vienna"`) — the zone this calendar's
+    /// rules are evaluated in, for every job that references it. Optional;
+    /// omitted means UTC, *not* the consulting job's zone.
     #[serde(default)]
     pub timezone: Option<String>,
     /// Calendar rules in Croniqfile DSL syntax — lines of `include`, `exclude`, `timezone`.

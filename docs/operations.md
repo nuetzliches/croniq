@@ -525,6 +525,60 @@ Two things are deliberately *not* boot failures:
 - **Warnings** — e.g. an interval shorter than the runner poll cycle. They are
   logged at `WARN` and the config loads.
 
+## Which timezone applies where
+
+Three things carry a zone, and they are resolved independently. Getting this
+wrong changes *when* jobs fire, so croniq says which zone it ended up with
+rather than leaving it implied.
+
+| what | zone it is read on | resolution order |
+|---|---|---|
+| a job's wall-clock schedule (`every day at 02:00`, `every weekday at …`, `every Nth of month at …`) | the job's | schedule option > job-level `timezone` > `defaults { timezone }` > UTC |
+| a job's `window HH:MM..HH:MM` directive, and `not_before` / `not_after` | the job's | as above |
+| a `calendar { }` block's rules — `weekly` / `monthly` / `annual` / `dates` **and** `window` | the **calendar's** | `calendar { timezone }` > `defaults { timezone }` > UTC |
+
+The calendar's zone is deliberately not inherited from whichever job consults
+it (issue #450). A calendar is a named, shared resource: "this holiday calendar
+is Austrian" has to hold for every job that references it, otherwise the same
+calendar would mean a different set of instants per consumer and neither
+`GET /v1/calendars` nor the dashboard could say which zone it is in. So a job
+in `America/New_York` firing at 22:00 that consults a `Europe/Vienna` calendar
+is asking about the *Vienna* day — which, at 22:00 New York time, is already
+tomorrow:
+
+```
+calendar business-days {
+  timezone Europe/Vienna
+  include weekly monday tuesday wednesday thursday friday
+}
+
+job report:nightly {
+  every day at 22:00 { calendar business-days }
+  timezone America/New_York   # ← covers the 22:00, not the calendar
+}
+```
+
+Friday 22:00 in New York is Saturday 04:00 in Vienna, so the gate stays shut
+and the job's next fire is the tick whose *Vienna* day is a weekday. Each zone
+also follows its own DST switch: the two are three weeks apart in spring, and
+during those weeks the same job time lands an hour differently on the
+calendar's clock.
+
+Neither zone falls back to the host's `TZ` — one Croniqfile fires at the same
+instant in every environment. What croniq does instead is name the zone it
+resolved:
+
+- `croniq validate` warns when a wall-clock job (issue #427) **or** a calendar
+  with rules (issue #450) has no zone from anywhere: *"its rules are
+  interpreted as UTC"*. A warning, never an error — exit stays `0`.
+- An unknown IANA name is an error in `validate`/`compile`, a `400` on the
+  write that introduced it, and a load fault at the server — never a silent
+  fallback (issue #426). The one exception is a `calendar_definitions.timezone`
+  row written before that column was validated: it is logged at `WARN` and
+  evaluated in UTC rather than pausing every job that consults the calendar.
+- The job detail shows the effective job zone next to next-fire, and the
+  calendars list shows each calendar's effective zone (`UTC` when unset).
+
 ### Reload vs. restart
 
 A reload (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`) re-reads the

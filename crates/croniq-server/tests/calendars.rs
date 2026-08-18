@@ -477,3 +477,92 @@ async fn unadopt_rejects_non_adopted_calendar() {
     assert_eq!(status, 409);
     assert_eq!(body["error"], "not_adopted");
 }
+
+// ─── Timezone validation on write (#450) ─────────────────────────────────────
+//
+// The calendar's zone decides which day its rules gate and when its `window`
+// rules open, so a typo here shifts every job that consults the calendar. This
+// column was the one timezone-bearing field #426 never reached.
+
+#[tokio::test]
+async fn create_rejects_unknown_timezone_with_did_you_mean() {
+    let state = build_state_with_policy("", true);
+    let app = server_router(Arc::clone(&state));
+    let (status, body) = send_json(
+        app,
+        "POST",
+        "/v1/calendars",
+        serde_json::json!({
+            "name": "biz",
+            "timezone": "Europe/Vienn",
+            "rules": "include weekly monday"
+        }),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"], "unknown_timezone");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("did you mean 'Europe/Vienna'?"),
+        "got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn update_rejects_unknown_timezone() {
+    let state = build_state_with_policy("", true);
+    let app = server_router(Arc::clone(&state));
+    let (status, created) = send_json(
+        app,
+        "POST",
+        "/v1/calendars",
+        serde_json::json!({"name": "biz", "timezone": "UTC", "rules": "include weekly monday"}),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let id = created["calendar_id"].as_str().unwrap().to_string();
+
+    let app2 = server_router(Arc::clone(&state));
+    let (status, body) = send_json(
+        app2,
+        "PUT",
+        &format!("/v1/calendars/{id}"),
+        serde_json::json!({"timezone": "Mars/Olympus"}),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"], "unknown_timezone");
+}
+
+#[tokio::test]
+async fn empty_timezone_still_clears_the_field() {
+    // "" is the API's "unset" convention and must not trip the new check.
+    let state = build_state_with_policy("", true);
+    let app = server_router(Arc::clone(&state));
+    let (status, created) = send_json(
+        app,
+        "POST",
+        "/v1/calendars",
+        serde_json::json!({
+            "name": "biz",
+            "timezone": "Europe/Vienna",
+            "rules": "include weekly monday"
+        }),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let id = created["calendar_id"].as_str().unwrap().to_string();
+
+    let app2 = server_router(Arc::clone(&state));
+    let (status, body) = send_json(
+        app2,
+        "PUT",
+        &format!("/v1/calendars/{id}"),
+        serde_json::json!({"timezone": ""}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(body["timezone"].is_null(), "got: {body}");
+}

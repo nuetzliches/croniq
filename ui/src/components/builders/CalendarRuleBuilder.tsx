@@ -19,7 +19,7 @@ const RULE_TYPE_LABELS: Record<(typeof RULE_TYPES)[number], string> = {
 // stays put while the user fills in the structured controls.
 const RULE_TYPE_HINTS: Record<(typeof RULE_TYPES)[number], string> = {
   weekly: 'Days when this rule applies.',
-  window: 'Hour range (UTC inside the calendar; respect the calendar timezone).',
+  window: "Hour range, read on the calendar's own timezone (below) — not the job's.",
   monthly: 'Days of month — pick numbers or "Last".',
   annual: 'A single calendar date (no year — fires every year on this day).',
   timezone: 'IANA name. Type to search; the browser picker filters as you type.',

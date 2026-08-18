@@ -111,6 +111,11 @@ defaults {
 # --- Kalender ---
 
 calendar business-days {
+  # Die Zone, in der die Regeln unten gelesen werden — fuer JEDEN Job, der
+  # diesen Kalender referenziert. Ein Feiertagskalender ist oesterreichisch,
+  # unabhaengig davon, in welcher Zone der konsultierende Job laeuft; deshalb
+  # steht die Zone hier und nicht am Job. Ohne Angabe erbt der Kalender
+  # `defaults { timezone }`, sonst gilt UTC — nie die Zone des Jobs.
   timezone {vars.default_tz}
   include weekly monday tuesday wednesday thursday friday
   exclude annual 01-01 01-06 05-01 08-15 10-26 11-01 12-08 12-25 12-26
@@ -167,6 +172,11 @@ job reports:monthly-summary {
   # fires at the same instant in every environment) — `croniq validate` warns
   # when a wall-clock schedule has no zone. An unknown IANA name is a hard
   # error everywhere, rather than a silent fallback to UTC.
+  #
+  # Gilt nur fuer die Zeiten DIESES Jobs. Der oben referenzierte Kalender
+  # `business-days` wird in SEINER Zone (Europe/Vienna) ausgewertet, nicht in
+  # Europe/London: 06:00 London ist 07:00 Wien, also derselbe Wochentag — bei
+  # groesseren Zonenabstaenden kann der Kalendertag aber ein anderer sein.
   timezone Europe/London
   timeout 1h
 }

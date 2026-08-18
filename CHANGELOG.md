@@ -8,6 +8,75 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`calendar { timezone … }` was accepted, validated, compiled, persisted and
+  displayed — and then ignored.** No evaluator ever read it. `Trigger::gate_allows`
+  localized calendar gates with the *job's* zone, so a calendar declaring its
+  own zone parsed, passed `validate`, survived `compile`, round-tripped through
+  `GET /v1/calendars`, showed up in the dashboard, and had no effect whatsoever
+  on when the gate opened. #449 deliberately shipped no diagnostic for it
+  because the field deserved to work rather than be forbidden; this is that
+  work (#450).
+
+  A calendar's rules — `weekly`, `monthly`, `annual`, `dates` **and** `window`
+  — are now evaluated on the calendar's own clock, resolved
+  `calendar { timezone … }` > `defaults { timezone … }` > UTC. The consulting
+  job's zone is deliberately **not** in that chain: a calendar is a named,
+  shared resource, so "this holiday calendar is Austrian" has to hold for every
+  job that references it. With the job's zone as the fallback, one calendar
+  object would denote a different set of instants per consumer, and neither
+  `GET /v1/calendars` nor the calendars page could answer "which zone is this
+  calendar in?". A job's own times — its wall-clock schedule, its `window`
+  directive, `not_before` / `not_after` — keep using the job's zone, unchanged.
+
+  So a New York job firing at 22:00 against a Vienna calendar is asking about
+  the *Vienna* day, which at that hour is already tomorrow: Friday 22:00 in New
+  York is Saturday 04:00 in Vienna and the gate stays shut. Each zone follows
+  its own DST switch too — the two are three weeks apart in spring, and in
+  those weeks the same job time lands an hour differently on the calendar's
+  clock.
+
+  Gate advancement (#391's O(days-to-opening) jump, not a tick walk) had to
+  change shape for this: with the calendar and the trigger `window` on
+  different clocks there is no single local timeline to intersect interval sets
+  on, since a Vienna 08:00..18:00 projected into New York is not the same
+  second-of-day set on every day. Each gate now reports its next opening in its
+  own zone and `next_gate_open` advances to the later of the two and re-asks,
+  which is the same answer the old intersection gave when the zones coincide.
+  `Calendar::allowed_intervals_on`'s date/time factoring stays valid and stays
+  pinned — read from inside the calendar's own zone it was always the right
+  model. One subtlety is now handled explicitly: resolving a local opening
+  during a fall-back's repeated hour picks the occurrence at or after the scan's
+  start, because the earlier one would move the scan backwards and stall it.
+
+  Two smaller gaps closed alongside it:
+
+  - `POST` / `PUT /v1/calendars` never validated `timezone` — the one
+    timezone-bearing column #426 did not reach. It now answers `400`
+    `unknown_timezone` with the same did-you-mean. A row written before this
+    check is logged at `WARN` and evaluated in UTC rather than failing the
+    calendar, since under `strict_calendars` an error there would pause every
+    job consulting it — a worse upgrade than running it in UTC out loud.
+  - `croniq validate` now warns about a calendar that has rules but no zone
+    from anywhere: *"its rules are interpreted as UTC, not in the zone of the
+    jobs that consult it"*. This is the half of #427 that was left unbuilt —
+    the `has_timezone` hook that issue computed and discarded was measuring the
+    wrong thing only because the runtime ignored the field. A warning, never an
+    error; `Croniqfile.example` declares a zone on its calendar, so it stays
+    silent there.
+
+  `croniq compile` now prints the **effective** calendar zone (a calendar
+  inheriting `defaults { timezone Europe/Vienna }` reports it instead of
+  `null`), and the calendars page shows each calendar's effective zone, `UTC`
+  when unset. A calendar created through the API is not part of any Croniqfile
+  and so does not inherit that file's `defaults { }` — it falls back to UTC,
+  which keeps its meaning from shifting when an unrelated file changes.
+
+  Upgrade note: for a deployment where a calendar declares a zone that differs
+  from the zone of a job consulting it, this **changes when that job fires** —
+  the field now does what it says. Deployments whose calendars declare no zone,
+  or where calendar and job zones agree (the usual single-zone Croniqfile), are
+  unaffected.
+
 - **The Java conformance suite ran a hardcoded subset of the shared case
   corpus, and silently.** Both Java suites filtered
   `sdks/conformance/cases/` and `sdks/conformance/cases-trigger/` through a

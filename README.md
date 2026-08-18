@@ -40,7 +40,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Pull-based runner protocol** — runners poll for work via HTTP long-poll. Scale runners independently. Built-in capability routing, instance guard, and lease renewal.
 
-**Calendar system** — include/exclude rules for weekdays, holidays, annual dates, and time windows. Jobs fire only when the calendar allows.
+**Calendar system** — include/exclude rules for weekdays, holidays, annual dates, and time windows. Jobs fire only when the calendar allows. Each calendar declares its own `timezone`, so one shared calendar means the same thing to every job that references it, whatever zone that job runs in.
 
 **Retry + dead letter** — exponential, linear, or fixed backoff with jitter. Failed executions go to a dead letter queue for inspection and one-click replay.
 
@@ -227,6 +227,11 @@ defaults {
 }
 
 calendar business-days {
+  # The zone the rules below are read in, for *every* job that references
+  # this calendar — a holiday calendar is Austrian no matter who consults
+  # it, so the zone belongs here and not on the job. Omitted means UTC
+  # (never "the job's zone"), and `croniq validate` warns about that.
+  timezone Europe/Vienna
   include weekly monday tuesday wednesday thursday friday
   exclude annual 01-01 12-25 12-26
 }
@@ -311,6 +316,8 @@ job billing:invoice {
   # so one Croniqfile fires at the same instant in every environment.
   # An unknown IANA name is an error in validate/compile and a load
   # fault at the server — never a silent fallback to UTC.
+  # This zone covers the job's own times only. A referenced `calendar`
+  # is evaluated in the calendar's zone, which it declares itself.
   timezone Europe/Vienna
 
   runner { require billing }

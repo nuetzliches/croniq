@@ -3,15 +3,24 @@
 //! A calendar determines whether a given datetime is "allowed" for job execution.
 //! Rules: `(all includes match) AND (no exclude matches)`. No includes = everything allowed.
 
-use crate::schedule::ast_weekday_to_chrono;
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use crate::schedule::{ast_weekday_to_chrono, resolve_local_at_or_after};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
+use chrono_tz::Tz;
 use croniq_config::calendar_args::{self, AnnualArg};
 
 /// A compiled calendar with evaluated rules.
 #[derive(Debug, Clone)]
 pub struct Calendar {
     pub name: String,
-    pub timezone: Option<String>,
+    /// The zone this calendar's rules are evaluated in (issue #450) — already
+    /// resolved, so there is no "unset" state to re-interpret at every gate
+    /// check. `CalendarConfig::timezone` folded in `defaults { timezone … }`;
+    /// nothing declared anywhere lands on UTC here.
+    ///
+    /// Deliberately *not* the consulting job's zone: a calendar is a named,
+    /// shared resource, and "this holiday calendar is Austrian" must hold for
+    /// every job that references it.
+    pub tz: Tz,
     pub includes: Vec<CalendarRule>,
     pub excludes: Vec<CalendarRule>,
 }
@@ -55,9 +64,24 @@ impl Calendar {
             }
         }
 
+        // A zone that does not parse falls back to UTC instead of failing the
+        // calendar, and is reported by whoever supplied it rather than here —
+        // this crate stays free of a logging dependency. Both suppliers screen
+        // the value first: a Croniqfile fails `validate` and aborts the load
+        // (#426), and a `calendar_definitions.timezone` row is warned about and
+        // cleared in `calendar_config_from_definition`. Pausing every job that
+        // consults a calendar with a legacy-bad zone would be a worse upgrade
+        // than running it in UTC (issue #450).
+        let tz = cfg
+            .timezone
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .and_then(|name| croniq_config::timezone::parse(name).ok())
+            .unwrap_or(chrono_tz::UTC);
+
         Ok(Calendar {
             name: cfg.name.clone(),
-            timezone: cfg.timezone.clone(),
+            tz,
             includes,
             excludes,
         })
@@ -126,6 +150,31 @@ impl Calendar {
     /// frequent the schedule is (#391).
     pub fn next_allowed_after(&self, from: NaiveDateTime) -> Option<NaiveDateTime> {
         next_instant_in(from, |d| self.allowed_intervals_on(d))
+    }
+
+    /// Whether the calendar is open at the UTC instant `at`.
+    ///
+    /// The only correct way to ask: the date and time the rules are compared
+    /// against are the calendar's own local ones (issue #450), never the
+    /// consulting job's.
+    pub fn is_allowed_at(&self, at: DateTime<Utc>) -> bool {
+        let local = at.with_timezone(&self.tz);
+        self.is_allowed(local.date_naive(), local.time())
+    }
+
+    /// Earliest UTC instant `>= from` at which the calendar is open, or `None`
+    /// when nothing opens within [`MAX_SCAN_DAYS`].
+    ///
+    /// Scans in the calendar's own zone, which is what keeps
+    /// [`Self::allowed_intervals_on`]'s date/time factoring valid: seen from
+    /// here a `window` really does contribute the same second-of-day set on
+    /// every day. (Projected into some *other* zone it would not — that is why
+    /// the trigger intersects the two gates by advancing instants rather than
+    /// by merging interval sets; see `Trigger::next_gate_open`.)
+    pub fn next_open_at_or_after(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let local = from.with_timezone(&self.tz).naive_local();
+        let open_local = next_instant_in(local, |d| self.allowed_intervals_on(d))?;
+        resolve_local_at_or_after(&self.tz, open_local, from)
     }
 }
 
@@ -396,7 +445,7 @@ mod tests {
     fn business_days_calendar() {
         let cal = Calendar {
             name: "business-days".into(),
-            timezone: Some("Europe/Vienna".into()),
+            tz: chrono_tz::Europe::Vienna,
             includes: vec![CalendarRule::Weekly(vec![
                 chrono::Weekday::Mon,
                 chrono::Weekday::Tue,
@@ -421,7 +470,7 @@ mod tests {
     fn maintenance_window_calendar() {
         let cal = Calendar {
             name: "maintenance".into(),
-            timezone: Some("UTC".into()),
+            tz: chrono_tz::UTC,
             includes: vec![
                 CalendarRule::Weekly(vec![chrono::Weekday::Sun]),
                 CalendarRule::Window(time(2, 0), time(6, 0)),
@@ -441,7 +490,7 @@ mod tests {
     fn no_includes_means_everything_allowed() {
         let cal = Calendar {
             name: "holidays-only".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![],
             excludes: vec![CalendarRule::Annual(vec![(1, 1)])],
         };
@@ -489,7 +538,7 @@ mod tests {
     fn weekly_config(args: Vec<String>) -> croniq_config::compile::CalendarConfig {
         croniq_config::compile::CalendarConfig {
             name: "biz".into(),
-            timezone: None,
+            timezone: Some("UTC".into()),
             rules: vec![croniq_config::compile::CalendarRuleConfig {
                 kind: "include".into(),
                 rule_type: "weekly".into(),
@@ -580,7 +629,7 @@ mod tests {
     fn business_hours() -> Calendar {
         Calendar {
             name: "business-hours".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![weekdays(), CalendarRule::Window(time(8, 0), time(18, 0))],
             excludes: vec![],
         }
@@ -632,7 +681,7 @@ mod tests {
     fn allowed_intervals_factor_is_allowed() {
         let cal = Calendar {
             name: "composite".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![weekdays(), CalendarRule::Window(time(8, 0), time(18, 0))],
             excludes: vec![
                 CalendarRule::Annual(vec![(1, 1)]),
@@ -694,7 +743,7 @@ mod tests {
     fn next_allowed_overnight_include() {
         let cal = Calendar {
             name: "nightly".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Window(time(22, 0), time(6, 0))],
             excludes: vec![],
         };
@@ -721,7 +770,7 @@ mod tests {
     fn next_allowed_year_wrap() {
         let cal = Calendar {
             name: "new-year-only".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Annual(vec![(1, 1)])],
             excludes: vec![],
         };
@@ -735,7 +784,7 @@ mod tests {
     fn next_allowed_monthly_31_skips_short_months() {
         let cal = Calendar {
             name: "day-31".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Monthly(vec![31])],
             excludes: vec![],
         };
@@ -750,7 +799,7 @@ mod tests {
     fn next_allowed_feb29_crosses_leap_years() {
         let cal = Calendar {
             name: "leap-day".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Annual(vec![(2, 29)])],
             excludes: vec![],
         };
@@ -764,7 +813,7 @@ mod tests {
     fn next_allowed_dates_all_past_is_none() {
         let cal = Calendar {
             name: "one-off".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Dates(vec![date(2026, 4, 6)])],
             excludes: vec![],
         };

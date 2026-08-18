@@ -158,7 +158,17 @@ components:
           type: string
           description: Real UUID for API-managed calendars; synthetic `dsl:{name}` for Croniqfile-defined ones.
         name: { type: string }
-        timezone: { type: string, nullable: true }
+        timezone:
+          type: string
+          nullable: true
+          description: >-
+            IANA zone the calendar's rules are evaluated in — its weekday/date
+            rules pick out days on this clock and its `window` rules open on it,
+            for every job that references the calendar. `null` means UTC; it
+            does **not** mean "the consulting job's zone". On a `dsl` row this
+            is the effective zone, with `defaults { timezone … }` already
+            folded in. Rejected with 400 `unknown_timezone` on write when it is
+            not an IANA name.
         rules: { type: string }
         managed_by:
           type: string

@@ -291,6 +291,33 @@ pub(crate) fn resolve_local(
     }
 }
 
+/// Like [`resolve_local`], but never returns an instant before `floor`.
+///
+/// The difference only shows in the repeated hour of a fall-back transition,
+/// where one local time maps to two instants and [`resolve_local`] always
+/// picks the earlier. A gate scan that starts *inside* that hour asks for a
+/// later local time and would get back an instant before where it started —
+/// and a gate loop that advances by "the next opening" would then stall
+/// forever (issue #450). Picking the later of the pair is exactly right here:
+/// both carry the requested wall-clock time, so the later one is the earliest
+/// occurrence at or after `floor`.
+pub(crate) fn resolve_local_at_or_after(
+    tz: &Tz,
+    naive: chrono::NaiveDateTime,
+    floor: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::MappedLocalTime;
+    if let MappedLocalTime::Ambiguous(earliest, latest) = tz.from_local_datetime(&naive) {
+        let earliest = earliest.with_timezone(&chrono::Utc);
+        return Some(if earliest >= floor {
+            earliest
+        } else {
+            latest.with_timezone(&chrono::Utc)
+        });
+    }
+    resolve_local(tz, naive)
+}
+
 pub(crate) fn ast_weekday_to_chrono(day: &AstWeekday) -> chrono::Weekday {
     match day {
         AstWeekday::Monday => chrono::Weekday::Mon,
