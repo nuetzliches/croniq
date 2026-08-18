@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -180,6 +181,36 @@ func assertHTTP(t *testing.T, exps []HTTPExpectation, recorded []RecordedRequest
 				t.Errorf("%s %s: body mismatch — %s\n  actual: %s",
 					e.Method, e.Path, msg, first.Body)
 			}
+		}
+
+		// body_absent, likewise against the first matching request.
+		assertBodyAbsent(t, e, first)
+	}
+}
+
+// assertBodyAbsent checks that no key listed in e.BodyAbsent appears at the
+// top level of the recorded request's JSON body. The trigger cases use it to
+// pin the omission of optionals the caller never supplied: a producer must not
+// emit a metadata/require/prefer/timeout/idempotency_key field it was not
+// given. A present-but-null key is still a violation — the contract is that
+// the field is absent from the wire, not that it is empty.
+func assertBodyAbsent(t *testing.T, e HTTPExpectation, req RecordedRequest) {
+	t.Helper()
+	if len(e.BodyAbsent) == 0 {
+		return
+	}
+	body := map[string]any{}
+	if req.Body != "" {
+		if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
+			t.Errorf("%s %s: body_absent needs a JSON object body, got %s",
+				e.Method, e.Path, req.Body)
+			return
+		}
+	}
+	for _, key := range e.BodyAbsent {
+		if _, present := body[key]; present {
+			t.Errorf("%s %s: key %q must be omitted but was present\n  actual: %s",
+				e.Method, e.Path, key, req.Body)
 		}
 	}
 }

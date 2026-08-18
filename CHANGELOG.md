@@ -216,6 +216,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   window, so a runner that overshoots after the lower bounds are met is still
   caught. Java was the only binding carrying a case-level allowlist.
 
+- **Every conformance binding silently ignored assertion keys it had not
+  implemented** (#460). None of the five bindings rejected a key its own case
+  model did not cover: .NET built its YamlDotNet deserializer with
+  `IgnoreUnmatchedProperties()`, Go used non-strict `yaml.Unmarshal`, Python and
+  Java picked keys out of the parsed map by name, and TypeScript did a bare
+  `load(text) as CaseSpec` with no runtime validation at all. An unrecognised
+  key was dropped, the case loaded cleanly, and the assertion it carried simply
+  was not there by the time the assertion loop ran — a green suite for an
+  unenforced contract. This is the failure mode of the Java `SCOPE` allowlist
+  (#453) one level down: that one skipped whole *cases* in silence, this one
+  skipped individual *assertion keys*.
+
+  All five bindings now fail at load time on a key they do not model, and each
+  carries negative tests that provoke the silence at every level a case nests
+  (top level, `runner_config`, handler, `server_script` entry, `respond`,
+  `expectations`, HTTP expectation, and the trigger-side `request` / `expect` /
+  `expect.response`) plus a positive counterweight so a broken fixture cannot
+  make those tests pass for the wrong reason. Mechanically: .NET drops
+  `IgnoreUnmatchedProperties()`, Go decodes with `KnownFields(true)`, and
+  Python, TypeScript and Java assert each node's key set against the vocabulary
+  the binding implements.
+
+  This is deliberately **not** JSON-Schema validation inside the bindings, which
+  is what the issue suggested. CI already validates the whole corpus against
+  `schema/case-schema.json` and `schema/trigger-case-schema.json` — the
+  `Conformance YAML schema` job runs `check-jsonschema` in all five SDK
+  workflows — and that answers a different question. Schema validation catches a
+  key the *schema* does not allow; it cannot catch a schema-legal key a
+  *binding* has not implemented, which is precisely the hole #460 was filed for.
+  Repeating the schema check in five languages would have added five
+  dependencies and left that hole open. The two checks are complementary, and
+  the per-binding key sets are expected to lag the schema wherever a capability
+  is not universal: `runner_config.max_consecutive_poll_conflicts` is in the
+  schema but only the .NET SDK has the option, so a case using it now fails
+  loudly in the other four instead of running with it ignored.
+
+  Strictness immediately surfaced a live instance in the Go binding, exactly the
+  scenario the issue predicted. `body_absent` — the trigger-case assertion that
+  pins the *omission* of unset optionals, so a producer cannot emit a
+  `metadata` / `require` / `prefer` / `timeout` / `idempotency_key` field it was
+  never given — existed in Go only as a comment in `trigger_spec.go`. Four
+  trigger cases declare it (`01-trigger-minimal`, `03-trigger-metadata`,
+  `04-trigger-require-prefer`, `05-trigger-timeout`); Go parsed them, dropped
+  the key, asserted nothing, and reported green. Go now models and asserts
+  `body_absent` against the first matching request, matching the .NET, Python,
+  TypeScript and Java semantics, with a test that fails when a listed key is
+  present. Java's `CaseLoader` also stopped carrying private copies of
+  `loadRoot` and `parseScript` and now routes through `YamlSupport` alongside
+  `TriggerCaseLoader`, so the YAML 1.1 `on:` workaround and the script-entry
+  vocabulary exist once rather than twice — two copies of a key list being the
+  drift this issue is about.
+
 ## [0.32.0] - 2026-08-18
 
 ### Added

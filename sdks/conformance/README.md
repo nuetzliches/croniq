@@ -230,6 +230,8 @@ Notes for binding authors:
 
 1. Pick the SDK's natural test-runner home (xUnit / pytest / `go test`).
 2. Implement a YAML loader that produces an in-memory case representation.
+   **The loader must reject any key it does not model** — see
+   *Loader strictness* below.
 3. Stand up a real HTTP mock server (WireMock.Net, `pytest-httpserver`,
    `httptest.Server` …). Replay `server_script` rules.
 4. Map `runner_config` to the SDK's options object; point `server_url` at the
@@ -242,6 +244,47 @@ Notes for binding authors:
 
 Bindings should publish a one-to-one mapping: **one test per YAML case**, so
 test-explorer output names the failing case directly.
+
+### Loader strictness
+
+A binding's loader **must fail at load time on a key it does not implement**,
+naming the key. This is not a style preference — it is the only thing that makes
+a schema addition visible to the bindings that have not caught up yet.
+
+The reason is that the natural implementation of every loader silently discards
+what it does not recognise: YamlDotNet has `IgnoreUnmatchedProperties()`,
+`yaml.Unmarshal` ignores unknown fields unless you ask for `KnownFields(true)`,
+a hand-rolled `d.get("known_key")` parser never looks at anything else, and
+`load(text) as CaseSpec` in TypeScript is a compile-time assertion that does
+nothing at runtime. With any of those, a case carrying an assertion key the
+binding never implemented **loads cleanly and passes by doing nothing**: the
+assertion is not evaluated, no test fails, and the suite is green precisely
+because the contract is not being enforced. That was true of all five bindings
+until [#460](https://github.com/nuetzliches/croniq/issues/460), and the Go
+binding was live-affected — it parsed `body_absent` in four trigger cases and
+asserted none of them.
+
+Note what this is *not*: it is not validation against `schema/*.json`. CI
+already does that for the whole corpus (the `Conformance YAML schema` job runs
+`check-jsonschema` against both schemas in every SDK workflow), and the two
+checks answer different questions:
+
+| Check | Catches |
+|---|---|
+| `check-jsonschema` in CI, once for the corpus | a key the **schema** does not allow — a typo, or a case drifting from the spec |
+| The loader's own key set, per binding | a schema-legal key the **binding** has not implemented |
+
+So a binding's key set is its own implementation surface, not a copy of the
+schema, and it is *expected* to lag the schema wherever a capability is not
+universal — `runner_config.max_consecutive_poll_conflicts` exists only in the
+.NET SDK, so the other four reject it, which is the desired outcome rather than
+a defect. Adding a schema validator inside a binding duplicates the first row
+and does nothing for the second.
+
+Each binding pairs its strictness with negative tests that provoke the silence
+at every level a case nests, plus one positive case asserting the known
+vocabulary still loads — without that counterweight a broken fixture would make
+every negative test pass for the wrong reason.
 
 ## Versioning
 

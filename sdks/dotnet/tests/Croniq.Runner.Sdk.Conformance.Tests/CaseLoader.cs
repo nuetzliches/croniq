@@ -11,15 +11,42 @@ namespace Croniq.Runner.Sdk.Conformance.Tests;
 /// </summary>
 internal static class CaseLoader
 {
-    private static readonly IDeserializer _yaml = new DeserializerBuilder()
+    /// <summary>
+    /// Builds the YAML deserializer for one <see cref="Load"/> call.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately built <b>without</b> <c>IgnoreUnmatchedProperties()</c>: a
+    /// key that <see cref="CaseSpec"/> does not model must be a load-time
+    /// error, not a silent drop (#460). Ignoring unmatched properties means a
+    /// case using an assertion key this binding never implemented loads
+    /// cleanly and then simply is not asserted — a green suite for an
+    /// unenforced contract, the same failure mode as the case-level allowlist
+    /// in #453 one level down.
+    ///
+    /// This is complementary to, not a duplicate of, the corpus-level
+    /// <c>check-jsonschema</c> run in CI: that catches a key the *schema* does
+    /// not allow, this catches a schema-legal key the *binding* has not
+    /// implemented.
+    ///
+    /// Built per call rather than cached in a static field: YamlDotNet
+    /// memoises type descriptors in a non-concurrent dictionary, so a shared
+    /// instance corrupts its own cache when two callers deserialise at once
+    /// ("Operations that change non-concurrent collections must have exclusive
+    /// access"). xUnit parallelises across test collections and a class is a
+    /// collection, so the moment a second test class started loading cases
+    /// that race became reachable. Constructing the deserializer is cheap next
+    /// to running a case, and it keeps the loader safe for any caller instead
+    /// of resting on how the tests happen to be organised — see
+    /// <c>CaseLoaderStrictnessTests.Load_is_safe_under_concurrent_use</c>.
+    /// </remarks>
+    private static IDeserializer BuildDeserializer() => new DeserializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
-        .IgnoreUnmatchedProperties()
         .Build();
 
     public static CaseSpec Load(string path)
     {
         var text = File.ReadAllText(path);
-        var spec = _yaml.Deserialize<CaseSpec>(text)
+        var spec = BuildDeserializer().Deserialize<CaseSpec>(text)
             ?? throw new InvalidOperationException($"failed to deserialise case '{path}'");
 
         // Normalise nested body trees (YamlDotNet hands them back as
