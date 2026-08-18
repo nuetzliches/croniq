@@ -38,7 +38,7 @@ pub mod router;
 pub mod types;
 
 // Convenient re-exports for the most common types.
-pub use api::{AppState, router as pull_api_router};
+pub use api::{AppState, LeaseRenewal, router as pull_api_router};
 pub use queue::WorkQueue;
 pub use registry::{RegisterOutcome, RunnerRegistry};
 pub use router::CapabilityRouter;
