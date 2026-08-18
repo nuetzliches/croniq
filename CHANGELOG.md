@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Dependency advisory scanning in CI.** A new `cargo-deny` job in the CI
+  workflow checks `Cargo.lock` against the RustSec advisory database and
+  enforces the MIT-compatible-licenses rule from `AGENTS.md` on every PR that
+  touches Rust files; policy lives in the new `deny.toml` at the repo root.
+  The UI job gained an `npm audit --omit=dev --audit-level=high` gate for the
+  production dependency tree. Because advisories appear without the code
+  changing, a weekly scheduled workflow (`security-audit.yml`) additionally
+  scans main's Rust tree and all three npm lockfiles (`ui/`,
+  `sdks/typescript/`, `sdks/conformance/bindings/typescript/`) regardless of
+  activity. One advisory is ignored with an inline justification:
+  RUSTSEC-2023-0071 (Marvin timing sidechannel in `rsa`, via `jsonwebtoken`)
+  has no patched release, and Croniq never decrypts attacker-supplied RSA
+  ciphertext, which the oracle needs.
+
 ### Security
 
 - **Issued credential scopes are bounded by the caller's own scopes.** The
@@ -79,6 +95,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matter which API a caller reaches for. Callers keep influencing routing
   through the documented `require` / `prefer` fields; non-reserved metadata is
   unaffected.
+- **Dependency advisories fixed by lockfile bumps.** The first cargo-deny run
+  surfaced six fixable advisories, all resolved by semver-compatible bumps in
+  `Cargo.lock`: `h2` 0.4.14 → 0.4.16 (unbounded empty DATA frames),
+  `tokio-postgres` 0.7.17 → 0.7.18 (panic on a short `DataRow`),
+  `postgres-protocol` 0.6.11 → 0.6.12 (unbounded SCRAM iteration count and a
+  panic decoding malformed `hstore` values — both only exploitable by a
+  malicious/untrusted database server), `anyhow` 1.0.102 → 1.0.104 (unsound
+  `Error::downcast_mut`), `crossbeam-epoch` 0.9.18 → 0.9.20 (invalid pointer
+  dereference in a `fmt::Pointer` impl), and the yanked `spin` 0.9.8 → 0.9.9.
+  On the UI side, `npm audit fix` bumped the transitive `nanoid` pin past
+  GHSA-2v37-7h3g-55p8 (infinite loop in custom generators with size 0), taking
+  `npm audit --omit=dev` in `ui/` to zero findings; the two SDK npm trees were
+  already clean.
+- **Download verification fails closed.** `install.sh` previously continued
+  with an unverified binary — warning only — when the release's `SHA256SUMS`
+  could not be fetched or no sha256 tool was present. Both cases are now hard
+  errors, with a new `--insecure-skip-verify` flag as the explicit escape
+  hatch (e.g. for releases that predate the checksum file). The Dockerfile's
+  `wasm-pack` fetch, previously an unverified `curl | tar xz` of a pinned
+  version, now downloads to a file and verifies a pinned SHA256 (per build
+  arch) before extracting.
 
 - **.NET SDK: the shell-exec handler can be scoped to explicit job keys, and
   its privilege directives fail closed

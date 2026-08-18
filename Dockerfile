@@ -33,15 +33,23 @@ RUN cargo build --release \
 FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS wasm-builder
 
 ARG WASM_PACK_VERSION=0.13.1
+# Pinned SHA256 of the release tarballs — the download is verified before
+# extraction so a tampered artefact fails the build instead of shipping.
+# When bumping WASM_PACK_VERSION, recompute both:
+#   curl -fsSL <release tarball url> | sha256sum
+ARG WASM_PACK_SHA256_X86_64=c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539
+ARG WASM_PACK_SHA256_AARCH64=2e65038769f8bbaa5fc237ad4bb523e692df99458cbd3e3d92525b89d8762379
 RUN set -eux; \
     case "$(uname -m)" in \
-      x86_64)  arch=x86_64 ;; \
-      aarch64) arch=aarch64 ;; \
+      x86_64)  arch=x86_64;  sha256="$WASM_PACK_SHA256_X86_64" ;; \
+      aarch64) arch=aarch64; sha256="$WASM_PACK_SHA256_AARCH64" ;; \
       *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${arch}-unknown-linux-musl.tar.gz"; \
-    curl -fsSL "$url" \
-      | tar xz -C /usr/local/bin --strip-components=1 --wildcards '*/wasm-pack'; \
+    curl -fsSL "$url" -o /tmp/wasm-pack.tar.gz; \
+    echo "${sha256}  /tmp/wasm-pack.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/wasm-pack.tar.gz -C /usr/local/bin --strip-components=1 --wildcards '*/wasm-pack'; \
+    rm /tmp/wasm-pack.tar.gz; \
     wasm-pack --version
 
 WORKDIR /build
