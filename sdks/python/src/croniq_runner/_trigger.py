@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from croniq_runner._protocol import TriggerRequest, TriggerResponse
+from croniq_runner._security import validate_server_url
 
 
 @dataclass(slots=True)
@@ -28,7 +29,13 @@ class TriggerClientOptions:
     """
 
     server_url: str = "http://localhost:4000"
-    """Base URL of the Croniq server."""
+    """Base URL of the Croniq server.
+
+    ``https://`` is required unless the host is loopback (``localhost``,
+    ``127.0.0.0/8``, ``::1``) — the trigger credential is attached to every
+    request and would otherwise travel in cleartext. See
+    :attr:`allow_insecure_http`.
+    """
 
     api_key: str | None = None
     """API key for ``Authorization: ApiKey <key>``. Takes precedence over bearer."""
@@ -38,6 +45,21 @@ class TriggerClientOptions:
 
     request_timeout_ms: int = 30_000
     """Per-request timeout for trigger calls."""
+
+    allow_insecure_http: bool = False
+    """Opt in to a cleartext ``http://`` :attr:`server_url` on a non-loopback host.
+
+    Off by default: without it such a URL is refused at construction time. When
+    enabled the SDK still emits one loud startup warning, because the trigger
+    credential then travels in cleartext on every call.
+    """
+
+    def __post_init__(self) -> None:
+        validate_server_url(
+            self.server_url,
+            allow_insecure_http=self.allow_insecure_http,
+            option_name="TriggerClientOptions",
+        )
 
 
 @dataclass(frozen=True, slots=True)

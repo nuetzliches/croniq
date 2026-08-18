@@ -126,6 +126,27 @@ The same registered handler serves both its Croniqfile schedule (safety-net / re
   }
   ```
 
+## Transport security
+
+The credential is attached to every request as an `Authorization` header. Over cleartext HTTP it travels in the clear — and through any HTTP proxy the environment configures.
+
+`CroniqRunnerOptions.Builder.build()` and `CroniqClientOptions.Builder.build()` therefore refuse a cleartext `serverUrl` unless the host is loopback:
+
+- accepted: any `https` URL, and `http` on `localhost`, `127.0.0.0/8` or `::1` — so the `http://localhost:4000` quickstart default keeps working;
+- refused: `http` on any other host, with an `IllegalArgumentException` naming the URL and the opt-in. Refusal happens in `build()`, so a misconfiguration fails fast instead of on the first poll.
+
+If a deployment genuinely has no TLS terminator (a lab or staging box), opt in explicitly — the SDK then works, but logs one loud SLF4J warning under `io.croniq.runner.config.ServerUrls`:
+
+```java
+var options = CroniqRunnerOptions.builder()
+    .serverUrl("http://croniq.internal:4000")
+    .apiKey(System.getenv("CRONIQ_API_KEY"))
+    .allowInsecureHttp(true) // the API key travels in cleartext
+    .build();
+```
+
+With the Spring Boot starter the same switch is `croniq.runner.allow-insecure-http: true`.
+
 ## Wire-protocol conformance
 
 The SDK is validated against the shared, language-neutral conformance suite at [`sdks/conformance/`](../conformance/) — the same 12 YAML cases that drive the .NET SDK. Future Python / Go / TypeScript SDKs will pass the same cases.

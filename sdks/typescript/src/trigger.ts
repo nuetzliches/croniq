@@ -10,13 +10,31 @@
 import { HttpError } from './client.js';
 import { AbortError } from './deferred.js';
 import { composeSignals, isAbortLikeError } from './http.js';
+import type { Logger } from './logger.js';
+import { consoleLogger } from './logger.js';
 import type { TriggerRequest, TriggerResponse } from './protocol.js';
+import { assertSecureServerUrl } from './security.js';
 import { trimTrailingSlashes } from './url.js';
 
 /** Options for {@link CroniqTriggerClient} / {@link createTriggerClient}. */
 export interface CroniqTriggerClientOptions {
-  /** Base URL of the Croniq server, e.g. `http://localhost:4000`. */
+  /**
+   * Base URL of the Croniq server, e.g. `http://localhost:4000`.
+   *
+   * `https://` is required unless the host is loopback (`localhost`,
+   * `127.0.0.0/8`, `::1`) — the trigger credential rides along on every request
+   * and would otherwise travel in cleartext. See {@link allowInsecureHttp}.
+   */
   serverUrl: string;
+
+  /**
+   * Opt in to a cleartext `http://` {@link serverUrl} on a non-loopback host.
+   *
+   * Off by default: without it the constructor throws. With it, the client
+   * still emits one loud warning — the credential then travels in cleartext on
+   * every trigger call. Default `false`.
+   */
+  allowInsecureHttp?: boolean | undefined;
 
   /**
    * API key for `Authorization: ApiKey {key}`. Takes precedence over
@@ -33,6 +51,12 @@ export interface CroniqTriggerClientOptions {
 
   /** Custom `fetch` implementation. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch | undefined;
+
+  /**
+   * Sink for SDK-level diagnostics (currently the insecure-transport warning).
+   * Defaults to a console logger that emits warn/error only.
+   */
+  logger?: Logger | undefined;
 }
 
 /** Optional arguments for a single {@link CroniqTriggerClient.trigger} call. */
@@ -132,6 +156,13 @@ export class CroniqTriggerClient {
     } catch {
       throw new TypeError(`CroniqTriggerClientOptions.serverUrl is not a valid URL: ${opts.serverUrl}`);
     }
+    // Fail fast on a cleartext base URL that would leak the credential (#440).
+    assertSecureServerUrl(
+      opts.serverUrl,
+      opts.allowInsecureHttp ?? false,
+      'CroniqTriggerClientOptions.serverUrl',
+      opts.logger ?? consoleLogger('warn'),
+    );
     this.#baseUrl = trimTrailingSlashes(opts.serverUrl);
     this.#apiKey = opts.apiKey;
     this.#bearerToken = opts.bearerToken;

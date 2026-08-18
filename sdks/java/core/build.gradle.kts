@@ -37,5 +37,7 @@ dependencies {
   testImplementation(libs.mockito.junit.jupiter)
   testImplementation(libs.wiremock)
   testImplementation(libs.awaitility)
-  testRuntimeOnly(libs.logback.classic)
+  // On the compile classpath (not just runtime) so ServerUrlsTest can attach a
+  // ListAppender and assert the insecure-transport warning is actually emitted.
+  testImplementation(libs.logback.classic)
 }

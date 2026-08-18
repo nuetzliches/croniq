@@ -17,7 +17,7 @@ public class OptionsBindingTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Croniq:Runner:ServerUrl"] = "http://example.test:4000",
+                ["Croniq:Runner:ServerUrl"] = "https://example.test:4000",
                 ["Croniq:Runner:ApiKey"] = "croniq_abc",
                 ["Croniq:Runner:MaxInflight"] = "12",
                 ["Croniq:Runner:Capabilities:0"] = "billing",
@@ -32,7 +32,7 @@ public class OptionsBindingTests
         var provider = services.BuildServiceProvider();
         var opts = provider.GetRequiredService<IOptions<CroniqRunnerOptions>>().Value;
 
-        opts.ServerUrl.ShouldBe("http://example.test:4000");
+        opts.ServerUrl.ShouldBe("https://example.test:4000");
         opts.ApiKey.ShouldBe("croniq_abc");
         opts.MaxInflight.ShouldBe(12);
         opts.Capabilities.ShouldContain("billing");

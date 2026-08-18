@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from croniq_runner._security import validate_server_url
+
 
 @dataclass(slots=True)
 class LogWriterOptions:
@@ -34,7 +36,12 @@ class RunnerOptions:
     """Configuration for a single Croniq runner instance."""
 
     server_url: str = "http://localhost:4000"
-    """Base URL of the Croniq server."""
+    """Base URL of the Croniq server.
+
+    ``https://`` is required unless the host is loopback (``localhost``,
+    ``127.0.0.0/8``, ``::1``) — the API key is attached to every request and
+    would otherwise travel in cleartext. See :attr:`allow_insecure_http`.
+    """
 
     runner_id: str | None = None
     """Stable runner identifier. Falls back to ``$RUNNER_ID`` / a generated value."""
@@ -73,3 +80,18 @@ class RunnerOptions:
     """Idle delay when the runner is at ``max_inflight`` capacity."""
 
     log_writer: LogWriterOptions = field(default_factory=LogWriterOptions)
+
+    allow_insecure_http: bool = False
+    """Opt in to a cleartext ``http://`` :attr:`server_url` on a non-loopback host.
+
+    Off by default: without it such a URL is refused at construction time. When
+    enabled the SDK still emits one loud startup warning, because the API key
+    then travels in cleartext on every poll.
+    """
+
+    def __post_init__(self) -> None:
+        validate_server_url(
+            self.server_url,
+            allow_insecure_http=self.allow_insecure_http,
+            option_name="RunnerOptions",
+        )

@@ -96,6 +96,11 @@ public static class CroniqClientServiceCollectionExtensions
         // ValidateOnStart() registered in each public overload above.
         services.AddSingleton<IValidateOptions<CroniqClientOptions>, CroniqClientOptionsValidator>();
 
+        // Transport security (#440): refuse a cleartext ServerUrl on a
+        // non-loopback host, so the trigger credential can't be shipped in the
+        // clear by an operator who only swapped the host in the default.
+        services.AddSingleton<IValidateOptions<CroniqClientOptions>, CroniqClientOptionsSecurityValidator>();
+
         services.AddHttpClient<ICroniqTriggerClient, CroniqTriggerClient>((sp, http) =>
         {
             var opts = sp.GetRequiredService<IOptions<CroniqClientOptions>>().Value;

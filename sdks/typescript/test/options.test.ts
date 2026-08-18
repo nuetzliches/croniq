@@ -32,13 +32,13 @@ describe('resolveOptions', () => {
   });
 
   it('rejects out-of-range maxInflight', () => {
-    expect(() => resolveOptions({ serverUrl: 'http://x', maxInflight: 0 }, noopLogger)).toThrow(RangeError);
-    expect(() => resolveOptions({ serverUrl: 'http://x', maxInflight: 1025 }, noopLogger)).toThrow(RangeError);
-    expect(() => resolveOptions({ serverUrl: 'http://x', maxInflight: 1.5 }, noopLogger)).toThrow(RangeError);
+    expect(() => resolveOptions({ serverUrl: 'http://localhost:4000', maxInflight: 0 }, noopLogger)).toThrow(RangeError);
+    expect(() => resolveOptions({ serverUrl: 'http://localhost:4000', maxInflight: 1025 }, noopLogger)).toThrow(RangeError);
+    expect(() => resolveOptions({ serverUrl: 'http://localhost:4000', maxInflight: 1.5 }, noopLogger)).toThrow(RangeError);
   });
 
   it('applies LogWriter defaults', () => {
-    const r = resolveOptions({ serverUrl: 'http://x' }, noopLogger);
+    const r = resolveOptions({ serverUrl: 'http://localhost:4000' }, noopLogger);
     expect(r.logWriter).toEqual({
       channelCapacity: 256,
       batchSizeThreshold: 32,
@@ -50,7 +50,7 @@ describe('resolveOptions', () => {
 
   it('respects LogWriter overrides', () => {
     const r = resolveOptions(
-      { serverUrl: 'http://x', logWriter: { batchSizeThreshold: 8, batchTimeThresholdMs: 50 } },
+      { serverUrl: 'http://localhost:4000', logWriter: { batchSizeThreshold: 8, batchTimeThresholdMs: 50 } },
       noopLogger,
     );
     expect(r.logWriter.batchSizeThreshold).toBe(8);
@@ -62,7 +62,7 @@ describe('resolveOptions', () => {
   it('clones capabilities and tags so caller-side mutation is isolated', () => {
     const caps = ['a'];
     const tags = ['x=y'];
-    const r = resolveOptions({ serverUrl: 'http://x', capabilities: caps, tags }, noopLogger);
+    const r = resolveOptions({ serverUrl: 'http://localhost:4000', capabilities: caps, tags }, noopLogger);
     caps.push('b');
     tags.push('p=q');
     expect(r.capabilities).toEqual(['a']);

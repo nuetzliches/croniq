@@ -26,7 +26,7 @@ public class AddCroniqRunnerIdempotencyTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Croniq:Runner:ServerUrl"] = "http://example.test:4000",
+                ["Croniq:Runner:ServerUrl"] = "https://example.test:4000",
                 ["Croniq:Runner:ApiKey"] = "croniq_abc",
                 ["Croniq:Runner:Capabilities:0"] = "worker",
                 ["Croniq:Runner:Tags:0"] = "lang=dotnet",
@@ -54,7 +54,7 @@ public class AddCroniqRunnerIdempotencyTests
         services.AddLogging();
         services.AddCroniqRunner(opts =>
         {
-            opts.ServerUrl = "http://example.test:4000";
+            opts.ServerUrl = "https://example.test:4000";
             opts.ApiKey = "croniq_abc";
         });
         services.AddCroniqRunner();
@@ -73,7 +73,7 @@ public class AddCroniqRunnerIdempotencyTests
         services.AddLogging();
         services.AddCroniqRunner(opts =>
         {
-            opts.ServerUrl = "http://example.test:4000";
+            opts.ServerUrl = "https://example.test:4000";
             opts.ApiKey = "croniq_abc";
         });
 
@@ -96,14 +96,14 @@ public class AddCroniqRunnerIdempotencyTests
         // so a comma-joined header turns into a hash lookup miss → 401.
         var monitor = new StubOptionsMonitor(new CroniqRunnerOptions
         {
-            ServerUrl = "http://example.test",
+            ServerUrl = "https://example.test",
             ApiKey = "croniq_abc",
         });
         var capture = new CaptureHandler();
         using var handler = new CroniqAuthHandler(monitor) { InnerHandler = capture };
         using var invoker = new HttpMessageInvoker(handler);
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "http://example.test/v1/poll");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "https://example.test/v1/poll");
         req.Headers.TryAddWithoutValidation("Authorization", "ApiKey stale_value");
 
         using var _ = await invoker.SendAsync(req, CancellationToken.None);

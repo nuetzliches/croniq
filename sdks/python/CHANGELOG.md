@@ -5,6 +5,25 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **HTTPS is required for a non-loopback `server_url`
+  ([#440](https://github.com/nuetzliches/croniq/issues/440)).** `server_url`
+  defaulted to `http://localhost:4000` and nothing checked the scheme, so
+  swapping in a real host shipped the API key as a cleartext `Authorization`
+  header on every poll — and, because httpx honours `HTTP_PROXY` by default,
+  through any configured proxy as well. `RunnerOptions` and
+  `TriggerClientOptions` now validate the URL in `__post_init__`, so a
+  misconfiguration fails fast instead of on the first poll. `https://` is
+  always accepted; `http://` only when the host is loopback (`localhost`,
+  `127.0.0.0/8`, `::1`), keeping the documented `http://localhost:4000`
+  quickstart working; anything else raises `ValueError` naming the URL and the
+  opt-in. The new `allow_insecure_http=True` option accepts a cleartext URL
+  deliberately and logs one loud warning on the `croniq_runner.security`
+  logger instead.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added

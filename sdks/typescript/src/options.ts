@@ -1,4 +1,5 @@
 import type { Logger } from './logger.js';
+import { assertSecureServerUrl } from './security.js';
 import { trimTrailingSlashes } from './url.js';
 
 export interface LogWriterOptions {
@@ -23,8 +24,23 @@ export interface ResolvedLogWriterOptions {
 }
 
 export interface CroniqRunnerOptions {
-  /** Base URL of the Croniq server, e.g. `http://localhost:4000`. */
+  /**
+   * Base URL of the Croniq server, e.g. `http://localhost:4000`.
+   *
+   * `https://` is required unless the host is loopback (`localhost`,
+   * `127.0.0.0/8`, `::1`) — the API key rides along on every request and would
+   * otherwise travel in cleartext. See {@link allowInsecureHttp}.
+   */
   serverUrl: string;
+
+  /**
+   * Opt in to a cleartext `http://` {@link serverUrl} on a non-loopback host.
+   *
+   * Off by default: without it such a URL is rejected by `resolveOptions`.
+   * With it, the SDK still emits one loud startup warning — the API key then
+   * travels in cleartext on every poll. Default `false`.
+   */
+  allowInsecureHttp?: boolean;
 
   /**
    * Stable runner identifier. If omitted, the SDK resolves it via
@@ -89,6 +105,7 @@ export interface CroniqRunnerOptions {
 
 export interface ResolvedRunnerOptions {
   serverUrl: string;
+  allowInsecureHttp: boolean;
   runnerId: string | undefined;
   runnerIdPrefix: string;
   runnerDataDir: string | undefined;
@@ -125,6 +142,12 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     throw new TypeError(`CroniqRunnerOptions.serverUrl is not a valid URL: ${input.serverUrl}`);
   }
 
+  const logger = input.logger ?? defaultLogger;
+
+  // Fail fast on a cleartext base URL that would leak the API key (#440).
+  const allowInsecureHttp = input.allowInsecureHttp ?? false;
+  assertSecureServerUrl(input.serverUrl, allowInsecureHttp, 'CroniqRunnerOptions.serverUrl', logger);
+
   const maxInflight = input.maxInflight ?? 5;
   if (!Number.isInteger(maxInflight) || maxInflight < 1 || maxInflight > 1024) {
     throw new RangeError(`CroniqRunnerOptions.maxInflight must be an integer in [1, 1024], got ${maxInflight}`);
@@ -140,6 +163,7 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
 
   return {
     serverUrl: trimTrailingSlashes(input.serverUrl),
+    allowInsecureHttp,
     runnerId: input.runnerId,
     runnerIdPrefix: input.runnerIdPrefix ?? 'runner',
     runnerDataDir: input.runnerDataDir,
@@ -154,6 +178,6 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     pollRetryDelayMs: input.pollRetryDelayMs ?? 5_000,
     capacityBackoffMs: input.capacityBackoffMs ?? 500,
     logWriter,
-    logger: input.logger ?? defaultLogger,
+    logger,
   };
 }

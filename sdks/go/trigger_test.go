@@ -229,7 +229,7 @@ func TestTriggerBlankJobKeyReturnsErrorWithoutCall(t *testing.T) {
 }
 
 func TestTriggerNilRequestReturnsError(t *testing.T) {
-	tc := NewTriggerClient("http://example.test")
+	tc := NewTriggerClient("https://example.test")
 	if _, err := tc.Trigger(context.Background(), nil); err == nil {
 		t.Fatal("expected an error for nil request, got nil")
 	}

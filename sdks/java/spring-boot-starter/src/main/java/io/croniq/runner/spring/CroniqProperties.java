@@ -35,8 +35,16 @@ public class CroniqProperties {
     private Duration pollRetryDelay = CroniqRunnerOptions.DEFAULT_POLL_RETRY_DELAY;
     private Duration capacityBackoff = CroniqRunnerOptions.DEFAULT_CAPACITY_BACKOFF;
 
+    /**
+     * Opt in to a cleartext {@code http} {@link #getServerUrl()} on a non-loopback host.
+     * Off by default: such a URL otherwise fails fast at startup, because the API key
+     * would be sent in the clear on every poll.
+     */
+    private boolean allowInsecureHttp;
+
     public CroniqRunnerOptions toOptions() {
         return CroniqRunnerOptions.builder()
+                .allowInsecureHttp(allowInsecureHttp)
                 .serverUrl(serverUrl)
                 .runnerId(runnerId)
                 .runnerIdPrefix(runnerIdPrefix)
@@ -174,5 +182,13 @@ public class CroniqProperties {
 
     public void setCapacityBackoff(Duration v) {
         this.capacityBackoff = v;
+    }
+
+    public boolean isAllowInsecureHttp() {
+        return allowInsecureHttp;
+    }
+
+    public void setAllowInsecureHttp(boolean v) {
+        this.allowInsecureHttp = v;
     }
 }

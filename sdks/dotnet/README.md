@@ -54,6 +54,30 @@ await builder.Build().RunAsync();
 }
 ```
 
+### Transport security
+
+The API key is attached to every request as an `Authorization` header. Over `http://` it travels in cleartext — and through any HTTP proxy the environment configures.
+
+`CroniqRunnerOptions` and `CroniqClientOptions` therefore refuse a cleartext `ServerUrl` during options validation (i.e. at host startup, thanks to `ValidateOnStart()`) unless the host is loopback:
+
+- accepted: any `https://` URL, and `http://` on `localhost`, `127.0.0.0/8` or `::1` — so the `http://localhost:4000` quickstart default keeps working;
+- refused: `http://` on any other host, with an `OptionsValidationException` naming the URL and the opt-in.
+
+If a deployment genuinely has no TLS terminator (a lab or staging box), opt in explicitly — the host then starts, but the SDK logs one loud warning under the `Croniq.Runner.Sdk.Security` category:
+
+```json
+{
+  "Croniq": {
+    "Runner": {
+      "ServerUrl": "http://croniq.internal:4000",
+      "AllowInsecureHttp": true
+    }
+  }
+}
+```
+
+The same `AllowInsecureHttp` switch exists on `Croniq:Client` for the trigger client.
+
 ## Features
 
 - **Generic Host integration** — `IHostedService` adapter, graceful shutdown via `IHostApplicationLifetime`.

@@ -24,6 +24,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **Runner SDKs require HTTPS for non-loopback base URLs.** All five runner
+  SDKs (.NET, Java, Python, Go, TypeScript) defaulted their base URL to
+  `http://localhost:4000` and validated nothing beyond parseability, so an
+  operator who kept the documented URL shape and swapped in a real host
+  shipped the runner's API key as a cleartext `Authorization` header on every
+  poll — roughly every 35 seconds, for the lifetime of the runner, with no
+  warning anywhere. Go, Python and TypeScript additionally honour `HTTP_PROXY`
+  by default (`http.DefaultTransport`, httpx's `trust_env`, undici), so the
+  key also traversed any configured proxy in the clear; and a plaintext base
+  URL is the precondition that lets a purely on-path attacker inject a
+  redirect or rewrite a poll response.
+
+  Every SDK now validates the base URL where the options are constructed — not
+  on the first request — so a misconfiguration fails fast. `https://` is
+  always accepted; `http://` is accepted only when the host is loopback
+  (`localhost`, `127.0.0.0/8`, `::1`, including the bracketed `[::1]` form),
+  which keeps the `http://localhost:4000` quickstart path working untouched;
+  any other scheme is rejected outright. A cleartext URL on a non-loopback
+  host is refused with a message that names the URL, the reason, and the
+  opt-in. That opt-in is explicit and per-SDK-idiomatic — .NET
+  `AllowInsecureHttp` (option property, also bindable from
+  `Croniq:Runner`/`Croniq:Client`), Java `allowInsecureHttp(true)` on the
+  options builder (`croniq.runner.allow-insecure-http` in the Spring starter),
+  Python `allow_insecure_http=True`, Go `croniq.WithInsecureHTTP()` (runner
+  option and client/trigger-client builder method), TypeScript
+  `allowInsecureHttp: true` — and when it is used, the SDK still emits one
+  loud startup warning stating that the API key travels in cleartext and is
+  readable by anyone on the network path, including HTTP proxies. Both the
+  runner client and the producer-side trigger client are covered in every SDK
+  that ships both. The Rust runner SDK (`croniq-runner-sdk`) has the same gap
+  and is tracked separately.
 - **Permissive CORS replaced by an explicit allowlist, and security headers
   added to every response.** The API router applied `CorsLayer::permissive()`
   to every route — `Access-Control-Allow-Origin: *` with any method and any

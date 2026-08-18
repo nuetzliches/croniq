@@ -20,9 +20,26 @@ public sealed class CroniqClientOptions
     /// <summary>Configuration section path: <c>Croniq:Client</c>.</summary>
     public const string SectionName = "Croniq:Client";
 
-    /// <summary>Base URL of the Croniq server, e.g. <c>http://localhost:4000</c>.</summary>
+    /// <summary>
+    /// Base URL of the Croniq server, e.g. <c>http://localhost:4000</c>.
+    /// <para>
+    /// <c>https://</c> is required unless the host is loopback
+    /// (<c>localhost</c>, <c>127.0.0.0/8</c>, <c>::1</c>) — the trigger
+    /// credential rides along on every request and would otherwise travel in
+    /// cleartext. See <see cref="AllowInsecureHttp"/>.
+    /// </para>
+    /// </summary>
     [Required, Url]
     public string ServerUrl { get; set; } = "http://localhost:4000";
+
+    /// <summary>
+    /// Opt in to a cleartext <c>http://</c> <see cref="ServerUrl"/> on a
+    /// non-loopback host. Off by default: such a URL otherwise fails options
+    /// validation at startup. With it the client works but logs one loud
+    /// warning — the credential then travels in cleartext on every trigger
+    /// call. Lab and staging only; never production.
+    /// </summary>
+    public bool AllowInsecureHttp { get; set; }
 
     /// <summary>
     /// API key used for <c>Authorization: ApiKey {key}</c>. Takes precedence

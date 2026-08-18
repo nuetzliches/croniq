@@ -41,6 +41,12 @@ type Options struct {
 	PollRetryDelay  time.Duration
 	CapacityBackoff time.Duration
 
+	// AllowInsecureHTTP opts in to a cleartext http:// ServerURL on a
+	// non-loopback host. Off by default: such a URL is otherwise refused
+	// by NewRunner, because the API key would be sent in the clear on
+	// every poll. Set via [WithInsecureHTTP].
+	AllowInsecureHTTP bool
+
 	// HTTPClient lets callers inject a custom http.Client. If nil, a
 	// default is created.
 	Client *Client
@@ -109,6 +115,15 @@ func WithCapacityBackoff(d time.Duration) Option {
 // custom transports, proxies, mTLS, recording, …).
 func WithHTTPClient(c *Client) Option { return func(o *Options) { o.Client = c } }
 
+// WithInsecureHTTP opts in to a cleartext http:// server URL on a
+// non-loopback host. Without it [NewRunner] refuses such a URL and
+// [Runner.Run] returns the error before the first poll; with it the runner
+// starts but logs one loud warning, because the API key then travels in
+// cleartext on every request (and through any HTTP proxy the environment
+// configures). Intended for lab and staging setups with no TLS terminator —
+// never for production.
+func WithInsecureHTTP() Option { return func(o *Options) { o.AllowInsecureHTTP = true } }
+
 // WithMiddleware appends a [Middleware] to the chain.
 func WithMiddleware(mw ...Middleware) Option {
 	return func(o *Options) { o.Middleware = append(o.Middleware, mw...) }
@@ -156,6 +171,11 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 	client := o.Client
 	if client == nil {
 		client = NewClient(o.ServerURL)
+	}
+	// Applied after the options are composed, so the base-URL check runs
+	// at construction time with the caller's opt-in already known.
+	if o.AllowInsecureHTTP {
+		client.WithInsecureHTTP()
 	}
 	switch {
 	case o.APIKey != "":
@@ -211,6 +231,12 @@ func (r *Runner) Client() *Client { return r.client }
 // all in-flight handlers have drained (or the drain timeout has elapsed,
 // in which case remaining handlers are cancelled hard).
 func (r *Runner) Run(ctx context.Context) error {
+	// Surface a base-URL that NewRunner refused before any credential
+	// reaches the wire (see [WithInsecureHTTP]).
+	if err := r.client.Err(); err != nil {
+		return err
+	}
+
 	slog.InfoContext(ctx, "runner starting",
 		"runner_id", r.opts.RunnerID,
 		"capabilities", r.opts.Capabilities,
