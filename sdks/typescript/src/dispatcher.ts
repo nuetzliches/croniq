@@ -102,7 +102,9 @@ export class ExecutionDispatcher {
         error = 'cancelled by server';
       } else {
         const ex = err instanceof Error ? err : new Error(String(err));
-        logger.warn(`handler for ${jobKey} (execution ${executionId}) threw`, {
+        // Identifiers travel as fields only, never interpolated into the
+        // message — see sanitize.ts. The same applies to every log call below.
+        logger.warn('job handler threw', {
           error: ex.message,
           job_key: jobKey,
           execution_id: executionId,
@@ -126,9 +128,10 @@ export class ExecutionDispatcher {
       try {
         await writer.dispose();
       } catch (err) {
-        logger.warn(`log_writer drain failed for execution ${executionId}`, {
+        logger.warn('log_writer drain failed', {
           error: String(err),
           execution_id: executionId,
+          job_key: jobKey,
         });
       }
     }
@@ -147,9 +150,10 @@ export class ExecutionDispatcher {
       if (error !== undefined) payload.error = error;
       await client.ack(payload, ackAC.signal);
     } catch (err) {
-      logger.error(`failed to ack execution ${executionId}`, {
+      logger.error('failed to ack execution', {
         error: String(err),
         execution_id: executionId,
+        job_key: jobKey,
       });
     }
   }
@@ -167,7 +171,7 @@ export class ExecutionDispatcher {
         await client.renew({ runner_id: runnerId, execution_id: executionId }, signal);
       } catch (err) {
         if (signal.aborted) return;
-        logger.debug(`lease renew failed for execution ${executionId}`, {
+        logger.debug('lease renew failed', {
           error: String(err),
           execution_id: executionId,
         });

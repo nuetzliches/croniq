@@ -54,6 +54,26 @@ def _parse_scheduled_for(raw: str | None) -> datetime | None:
         return None
 
 
+class _JobLoggerAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
+    """Attach the execution's identifiers to every record as fields.
+
+    The identifiers stay out of the message text — a ``job_key`` carrying CRLF
+    would otherwise forge a log record, and one carrying ANSI escapes would
+    reach the operator's terminal raw. Rendering them is the host ``logging``
+    configuration's job: a JSON formatter picks them up from the record, and a
+    plain ``%(message)s`` formatter ignores them, exactly as it does for any
+    other field an application attaches. The SDK does not escape them a second
+    time; :mod:`croniq_runner._identifiers` rejects hostile values on ingest so
+    the value on the record is already within a printable charset.
+    """
+
+    def process(self, msg, kwargs):  # type: ignore[no-untyped-def]
+        extra = dict(self.extra or {})
+        extra.update(kwargs.get("extra") or {})
+        kwargs["extra"] = extra
+        return msg, kwargs
+
+
 class ExecutionContext:
     """Context handed to a job handler for one execution.
 
@@ -92,7 +112,21 @@ class ExecutionContext:
         self.runner_id = runner_id
         self.runner_tags = runner_tags
         self.cancellation = cancellation
-        self.logger = logging.getLogger(f"croniq_runner.job.{job_key}")
+        # One fixed logger for every job, with the identifiers attached as
+        # fields. Deriving the logger *name* from ``job_key`` — as this did
+        # before #441 — hands the server control of a namespace: ``getLogger``
+        # caches every name forever (plus a ``PlaceHolder`` per dot-separated
+        # ancestor), so a server delivering many distinct keys grew the process
+        # without bound, and a key chosen to land under a namespace the
+        # operator configured with ``propagate=False`` evaded log filtering.
+        # Validating the key on ingest bounds its charset but not the *number*
+        # of distinct keys, so the cache stays unbounded either way — a single
+        # logger is both the simpler and the complete fix.
+        self.logger = _JobLoggerAdapter(
+            logging.getLogger("croniq_runner.job"),
+            {"job_key": job_key, "execution_id": execution_id, "runner_id": runner_id,
+             "attempt": attempt},
+        )
         self._enrichment = _Enrichment(job_key, runner_id, runner_tags)
         self._client = client
         self._log_writer_options = log_writer_options

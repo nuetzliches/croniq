@@ -13,7 +13,19 @@ import {
 import { resolveRunnerId } from './identity.js';
 import { consoleLogger, type Logger } from './logger.js';
 import { resolveOptions, type CroniqRunnerOptions, type ResolvedRunnerOptions } from './options.js';
-import type { PollRequest, PollResponse, RegisterJobRequest } from './protocol.js';
+import type {
+  PollRequest,
+  PollResponse,
+  RegisterJobRequest,
+  WorkAssignment,
+} from './protocol.js';
+import {
+  isSafeExecutionId,
+  previewForLog,
+  type RejectedField,
+  rejectAssignmentReason,
+  rejectionAckError,
+} from './sanitize.js';
 
 /**
  * The Croniq runner: polls the server for work, dispatches handlers
@@ -202,6 +214,14 @@ export class CroniqRunner {
       }
 
       for (const assignment of response.work) {
+        // Ingest guard: an assignment carrying a control character in either
+        // identifier never reaches a handler, a log record or a telemetry
+        // attribute. See sanitize.ts for the rule and why it is a denylist.
+        const rejected = rejectAssignmentReason(assignment.execution_id, assignment.job_key);
+        if (rejected !== undefined) {
+          await this.#rejectAssignment(assignment, rejected, signal);
+          continue;
+        }
         if (this.#inflight.has(assignment.execution_id)) continue;
         const ac = new AbortController();
         this.#inflight.set(assignment.execution_id, ac);
@@ -216,12 +236,69 @@ export class CroniqRunner {
     }
   }
 
+  /**
+   * Handle a work assignment refused by the ingest guard.
+   *
+   * The two cases differ in what the runner can still tell the server:
+   *
+   * - **Unsafe `execution_id`** — nothing. That value is what addresses an ack
+   *   or renew, so there is no way to report anything about this execution.
+   *   The assignment is dropped and the server's lease expires.
+   * - **Unsafe `job_key`, valid `execution_id`** — a failure ack. The handler
+   *   never runs, but the execution completes with an error naming the
+   *   offending field, so the operator sees a dead-lettered execution instead
+   *   of an execution that is silently requeued by the stale-claim reaper and
+   *   refused again on every later poll.
+   *
+   * Awaited rather than fire-and-forget: this path only triggers on malformed
+   * input, so pausing the loop for one small POST costs nothing and keeps the
+   * ordering observable.
+   */
+  async #rejectAssignment(
+    assignment: WorkAssignment,
+    field: RejectedField,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // Escaped and truncated explicitly: this is the one place a refused value
+    // is rendered, and it is hostile by definition.
+    const preview = previewForLog(assignment[field]);
+    const ackable = field === 'job_key';
+    this.#logger.warn('rejected work assignment with unsafe identifier', {
+      field,
+      value: preview,
+      acked: ackable,
+    });
+    if (!ackable) return;
+    try {
+      await this.#client.ack(
+        {
+          runner_id: this.#runnerId!,
+          execution_id: assignment.execution_id,
+          status: 'failure',
+          attempt: assignment.attempt,
+          duration_ms: 0,
+          error: rejectionAckError(field, assignment[field]),
+        },
+        signal,
+      );
+    } catch (err) {
+      this.#logger.warn('failed to ack a rejected work assignment', {
+        execution_id: assignment.execution_id,
+        error: String(err),
+      });
+    }
+  }
+
   #handleCancellations(cancelIds: string[]): void {
     if (cancelIds.length === 0) return;
     for (const id of cancelIds) {
+      // Cancel ids are server-supplied too. An unsafe one can never match an
+      // in-flight key (those were validated on ingest), but checking here
+      // keeps the value out of the log line below on any code path.
+      if (!isSafeExecutionId(id)) continue;
       const ac = this.#inflight.get(id);
       if (ac && !ac.signal.aborted) {
-        this.#logger.info(`server requested cancellation of execution ${id}`, { execution_id: id });
+        this.#logger.info('server requested cancellation', { execution_id: id });
         ac.abort();
       }
     }

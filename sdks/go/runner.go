@@ -315,10 +315,54 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) {
 
 		// Dispatch each assignment in its own goroutine.
 		for _, assignment := range resp.Work {
+			// Ingest guard: an assignment carrying a control character in
+			// either identifier never reaches a handler, a log attribute or a
+			// trace attribute. See identifiers.go for the rule and why it is a
+			// denylist.
+			if field := rejectAssignmentReason(assignment.ExecutionID, assignment.JobKey); field != "" {
+				r.rejectAssignment(ctx, assignment, field)
+				continue
+			}
 			wg.Add(1)
 			r.dispatch(ctx, assignment, wg)
 		}
 	}
+}
+
+// rejectAssignment handles a work assignment refused by the ingest guard.
+//
+// The two cases differ in what the runner can still tell the server:
+//
+//   - Unsafe execution_id — nothing. That value is what addresses an ack or
+//     renew, so there is no way to report anything about this execution. The
+//     assignment is dropped and the server's lease expires.
+//   - Unsafe job_key, valid execution_id — a failure ack. The handler never
+//     runs, but the execution completes with an error naming the offending
+//     field, so the operator sees a dead-lettered execution instead of one that
+//     is silently requeued by the stale-claim reaper and refused again on every
+//     later poll.
+//
+// Called inline rather than in a goroutine: this path only triggers on
+// malformed input, so pausing the loop for one small POST costs nothing and
+// keeps the ordering observable.
+func (r *Runner) rejectAssignment(ctx context.Context, a WorkAssignment, field string) {
+	offending := a.JobKey
+	ackable := true
+	if field == "execution_id" {
+		offending = a.ExecutionID
+		ackable = false
+	}
+	// The value is escaped and truncated: this is the one place a refused
+	// value is rendered, and it is hostile by definition.
+	slog.WarnContext(ctx, "rejected work assignment with unsafe identifier",
+		"field", field,
+		"value", previewForLog(offending),
+		"acked", ackable,
+	)
+	if !ackable {
+		return
+	}
+	r.ackResult(a, "failure", rejectionAckError(field, offending), 0)
 }
 
 // dispatch spawns a goroutine that runs the handler for one assignment,

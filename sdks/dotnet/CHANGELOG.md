@@ -24,6 +24,36 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
   deliberately and logs one loud warning under the
   `Croniq.Runner.Sdk.Security` category instead.
 
+- **`job_key` and `execution_id` no longer reach log messages, and are
+  validated on ingest
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).**
+  `ExecutionDispatcher` interpolated both identifiers into its message
+  templates ("handler for {JobKey} (execution {ExecutionId}) threw"), so a
+  server-supplied value carrying CRLF forged log records and one carrying ANSI
+  escapes reached the operator's terminal raw. Both now travel as `ILogger`
+  scope state with a constant message — the configured provider owns rendering,
+  and the SDK does not escape a second time. Set `IncludeScopes = true` on the
+  console formatter (or use any structured sink) to see them.
+  The runner additionally validates both identifiers before dispatching. A
+  `job_key` is refused only for containing a control character — C0, DEL or C1
+  — or exceeding 256 scalar values; every printable character in any script is
+  accepted, interior spaces included, because
+  `job "billing:monthly invoice" { … }` is legal DSL and `POST /v1/jobs`
+  constrains the key not at all. Execution ids keep a narrow
+  `a-z A-Z 0-9 - _ . :` charset up to 64 characters, which the server's v4 UUIDs
+  satisfy strictly. A refused assignment with a *valid* `execution_id` is acked
+  as a failure naming the offending field, so it dead-letters rather than
+  looping; one whose `execution_id` is itself unsafe is dropped, since nothing
+  safely addresses the server.
+- **The per-job logger category is gone
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).** The dispatcher
+  called `CreateLogger($"CroniqJob.{jobKey}")`, handing a server control of a
+  logger category. `ILoggerFactory` caches categories permanently, so a server
+  delivering many distinct keys grew the process without bound, and some sinks
+  map a category to a filename. The handler logger is now the fixed category
+  `CroniqJob` with `job_key` carried as scope state. Filtering rules written
+  against `CroniqJob.<key>` need to move to the `CroniqJob` category.
+
 ### Added
 
 - **Scoped shell-handler registration

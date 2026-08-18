@@ -104,8 +104,8 @@ export class StreamingLogWriter implements LogWriter {
 
     if (timedOut) {
       this.#logger.warn(
-        `log_writer drain timed out after ${this.#opts.shutdownTimeoutMs}ms (execution ${this.#executionId})`,
-        { execution_id: this.#executionId },
+        'log_writer drain timed out',
+        { execution_id: this.#executionId, timeout_ms: this.#opts.shutdownTimeoutMs },
       );
     }
   }
@@ -164,7 +164,10 @@ export class StreamingLogWriter implements LogWriter {
         }
       }
     } catch (err) {
-      this.#logger.error(`log_writer flusher crashed (execution ${this.#executionId})`, { error: String(err) });
+      this.#logger.error('log_writer flusher crashed', {
+        error: String(err),
+        execution_id: this.#executionId,
+      });
     } finally {
       // Reject any remaining flushers so callers don't hang.
       for (const r of this.#pendingFlushes) r.resolve();
@@ -184,7 +187,7 @@ export class StreamingLogWriter implements LogWriter {
         await this.#client.pushEvents(this.#executionId, chunk, ac.signal);
       } catch (err) {
         this.#logger.warn(
-          `log_writer: batch POST failed — ${chunk.length} events dropped (execution ${this.#executionId})`,
+          'log_writer: batch POST failed — events dropped',
           { error: String(err), execution_id: this.#executionId, dropped: chunk.length },
         );
       }
