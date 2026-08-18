@@ -6,6 +6,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Java conformance suite ran a hardcoded subset of the shared case
+  corpus, and silently.** Both Java suites filtered
+  `sdks/conformance/cases/` and `sdks/conformance/cases-trigger/` through a
+  `SCOPE` allowlist of filenames. A case not named in that set was not run at
+  all: no skip was reported, no test appeared in the report, the suite was
+  green and CI was green. The allowlist made sense while the Java SDK was
+  being built out in stages, but the SDK has been feature-complete against the
+  corpus for several releases and the default had the wrong polarity — the
+  cost of forgetting was silence rather than a failure. That trap fired twice
+  in the last release: cases 13/14 were added and implemented in all five SDKs
+  while Java ran neither (#452), and case 15 repeated it (#458). Both were
+  caught only by counting the cases by hand against the Gradle output, and
+  both were fixed by appending filenames, which left the trap armed.
+
+  The polarity is now inverted. Every YAML in the corpus runs by default, so a
+  newly added case is picked up automatically and has to pass. The only escape
+  hatch is an `UNSUPPORTED` map of `filename -> reason`, which is deliberately
+  expensive to use: an excluded case is reported as a *skipped* test whose
+  name carries the reason (Gradle's JUnit XML writer emits a bare `<skipped/>`
+  element and drops the abort message, so the reason lives in the display name
+  where every report format preserves it), and a dedicated guard test fails
+  the suite if an `UNSUPPORTED` entry names a file that is no longer in the
+  corpus, so the exclusion list cannot rot back into silence. An empty or
+  missing corpus directory is now an error rather than a vacuous pass in both
+  suites — previously the trigger suite emitted a green placeholder test when
+  it found no cases, which would have hidden a mistyped path completely.
+  `UNSUPPORTED` ships empty in both suites: nothing in either corpus is
+  inapplicable to Java.
+
+  This immediately surfaced one case the allowlist had been hiding since it
+  was added: `04a-cancel-at-max-inflight-1.yaml`, the control-slot polling
+  case from #176 that pins cancel delivery to a `max_inflight=1` runner that
+  is already at capacity. It was never in `SCOPE` and had never run under
+  Java. It passes — the Java SDK implements the contract correctly — but the
+  suite had not been proving it. The Java runner suite now executes all 16
+  runner cases and all 11 trigger cases.
+
+  Audited the other four bindings for the same defect while here: .NET, Go,
+  Python and TypeScript all enumerate the corpus dynamically
+  (`Directory.EnumerateFiles`, `os.ReadDir`, `Path.glob`, `readdirSync`) with
+  no allowlist anywhere, so all four already ran the full corpus including
+  `04a`, and all four fail loudly rather than skipping when they meet a
+  handler behavior they do not implement. All five bindings also genuinely
+  enforce `max_count` ceilings: each suppresses the wait loop's early exit for
+  any case carrying a ceiling assertion and burns the full `duration_max_ms`
+  window, so a runner that overshoots after the lower bounds are met is still
+  caught. Java was the only binding carrying a case-level allowlist.
+
 ## [0.32.0] - 2026-08-18
 
 ### Added
