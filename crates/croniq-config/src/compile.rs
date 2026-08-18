@@ -399,6 +399,14 @@ pub struct PullApiConfig {
     /// within this window coalesces to the existing execution. Duration
     /// string (`10m`, `600s`, `1h`); default `10m`.
     pub trigger_dedup_window: String,
+    /// Whether a `runner_id` in the work protocol is bound to the credential
+    /// that first claimed it. `"strict"` (default) binds on first use and
+    /// refuses later work requests that name a `runner_id` owned by another
+    /// credential; `"off"` restores the pre-binding behaviour where the
+    /// `runner_id` in the request body is trusted as-is. Only meaningful
+    /// while auth is configured — without it every caller is the same
+    /// anonymous identity. See the README's runner-protocol section.
+    pub runner_identity_binding: String,
 }
 
 /// How a job's executions are tracked and persisted.
@@ -659,6 +667,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     listen: ":9443".into(),
                     lease_ttl: "60s".into(),
                     trigger_dedup_window: "10m".into(),
+                    runner_identity_binding: "strict".into(),
                 };
                 for d in &p.directives {
                     match d.key.value.as_str() {
@@ -675,6 +684,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         "trigger_dedup_window" => {
                             if let Some(v) = first_arg(d, &vars) {
                                 cfg.trigger_dedup_window = v;
+                            }
+                        }
+                        "runner_identity_binding" => {
+                            if let Some(v) = first_arg(d, &vars) {
+                                cfg.runner_identity_binding = v;
                             }
                         }
                         _ => {}

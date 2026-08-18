@@ -35,6 +35,11 @@ pull_api {
   # while it is still queued/running, or for this long after it was
   # created. Default: 10m.
   # trigger_dedup_window 10m
+  # Bind each runner_id to the credential that first claimed it, so one
+  # runner's key cannot poll, complete, renew or log as another runner
+  # (first-writer-wins; DELETE /v1/runners/{id} releases a binding).
+  # "off" trusts the runner_id in the request body instead. Default: strict.
+  # runner_identity_binding strict
 }
 
 # HTTP MCP transport (Model Context Protocol). Mounted at /mcp on the same

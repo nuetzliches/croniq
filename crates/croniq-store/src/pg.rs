@@ -87,6 +87,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("021_execution_retention_indexes", PG_MIGRATION_021),
     ("022_scheduled_for", PG_MIGRATION_022),
     ("023_dead_letter_policy", PG_MIGRATION_023),
+    ("024_runner_identities", PG_MIGRATION_024),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -192,6 +193,19 @@ const PG_MIGRATION_023: &str = r#"
 ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_retention      TEXT;
 ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_operator_hint  TEXT;
 ALTER TABLE job_definitions ADD COLUMN IF NOT EXISTS dead_letter_replay_max_age TEXT;
+"#;
+
+// Binds a work-protocol `runner_id` to the credential that first claimed it,
+// so the work handlers can refuse requests that name someone else's runner.
+// See `migrations/024_runner_identities.sql` for the full rationale.
+const PG_MIGRATION_024: &str = r#"
+CREATE TABLE IF NOT EXISTS runner_identities (
+    runner_id TEXT PRIMARY KEY,
+    owner_id  TEXT NOT NULL,
+    bound_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runner_identities_owner
+    ON runner_identities(owner_id);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1083,6 +1097,51 @@ impl RunnerStore for PgStore {
             .execute(
                 "UPDATE runners SET last_poll_at = $1, inflight = $2, status = 'online' WHERE runner_id = $3",
                 &[&now, &inflight_json, &runner_id],
+            )
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn runner_identity_bind(
+        &self,
+        runner_id: &str,
+        owner_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<String, StoreError> {
+        // One statement, so the insert-or-read is atomic even across
+        // connections. The no-op `DO UPDATE SET` (rather than `DO NOTHING`)
+        // is what makes `RETURNING` yield the existing row on conflict.
+        let mut client = self.client.lock().unwrap();
+        let row = client
+            .query_one(
+                "INSERT INTO runner_identities (runner_id, owner_id, bound_at)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (runner_id)
+                   DO UPDATE SET owner_id = runner_identities.owner_id
+                 RETURNING owner_id",
+                &[&runner_id, &owner_id, &now],
+            )
+            .map_err(map_err)?;
+        Ok(row.get(0))
+    }
+
+    fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query(
+                "SELECT owner_id FROM runner_identities WHERE runner_id = $1",
+                &[&runner_id],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(|row| row.get(0)))
+    }
+
+    fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        client
+            .execute(
+                "DELETE FROM runner_identities WHERE runner_id = $1",
+                &[&runner_id],
             )
             .map_err(map_err)?;
         Ok(())

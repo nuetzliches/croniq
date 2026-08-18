@@ -32,7 +32,12 @@ const SERVER: &[&str] = &["listen", "data_dir", "db", "app_url", "execution_rete
 
 /// `pull_api { }`. The runner-token signing secret is deliberately absent —
 /// it lives in `CRONIQ_JWT_SECRET` / `$DATA_DIR/jwt.secret` (see [`REMOVED`]).
-const PULL_API: &[&str] = &["listen", "lease_ttl", "trigger_dedup_window"];
+const PULL_API: &[&str] = &[
+    "listen",
+    "lease_ttl",
+    "trigger_dedup_window",
+    "runner_identity_binding",
+];
 
 /// `mcp { }`
 const MCP: &[&str] = &["enabled", "allowed_hosts"];
@@ -315,7 +320,7 @@ mod tests {
             msgs,
             vec![
                 "unknown directive 'frobnicate' in `pull_api { }` \
-                 (known: lease_ttl, listen, trigger_dedup_window)"
+                 (known: lease_ttl, listen, runner_identity_binding, trigger_dedup_window)"
             ]
         );
     }

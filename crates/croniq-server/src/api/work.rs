@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
+use crate::api::runner_identity;
 
 // ─── Renew ───
 
@@ -33,6 +34,12 @@ pub async fn handle_renew(
     Json(req): Json<RenewRequest>,
 ) -> (StatusCode, Json<RenewResponse>) {
     if let Err(s) = require_scope(&ctx, Scope::WORK_RENEW) {
+        return (s, Json(RenewResponse { renewed: false }));
+    }
+    // A lease belongs to a runner, so only that runner's credential may extend
+    // it — otherwise a foreign caller could keep a dead runner looking alive
+    // and suppress the watchdog's requeue of its abandoned executions.
+    if let Err(s) = runner_identity::authorize_runner(&state, &ctx, &req.runner_id) {
         return (s, Json(RenewResponse { renewed: false }));
     }
     // Update the runner's last_poll_at to extend its liveness
@@ -81,6 +88,11 @@ pub async fn handle_events(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let exec_uuid = Uuid::parse_str(&execution_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // This endpoint is addressed by execution, not by runner, so the fence is
+    // the execution's claiming runner: only the credential that owns that
+    // runner may write to the execution's log. Without it, `work:events` plus
+    // any execution id is enough to inject or forge another runner's logs.
+    runner_identity::authorize_execution(&state, &ctx, exec_uuid)?;
 
     let now = Utc::now();
     let entries: Vec<ExecutionLogEntry> = events

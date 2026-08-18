@@ -364,6 +364,44 @@ async fn main() {
 }
 ```
 
+### Runner identity in the work protocol
+
+The pull-based work protocol carries the acting `runner_id` in the request body
+(`POST /v1/work/poll`, `…/ack`, `…/renew`, `…/{execution_id}/events`). Because
+`runner_id`s are operator-chosen names, that value alone is not evidence of who
+is calling — so the server binds it to the credential behind the request.
+
+**First-writer-wins.** The first work request naming a given `runner_id` binds
+it to the calling credential; later requests naming that `runner_id` must come
+from the same credential or get `403 Forbidden`. The `…/{execution_id}/events`
+endpoint is addressed by execution rather than by runner, so it is fenced on the
+runner that claimed the execution. Nothing is pre-provisioned, so no
+configuration changes before upgrading — and a deployment that shares one runner
+key across many runners keeps working, because every one of its runners resolves
+to the same credential.
+
+The credential is the owning API client (`client_id`), not the individual API
+key, so rotating a key does not disturb an existing binding. Handing a
+`runner_id` to a *different* credential is an explicit operator action:
+`DELETE /v1/runners/{id}` releases the binding, and the next poll re-binds.
+
+Binding is inert when it could not tell callers apart or record a decision —
+that is, when auth is not configured or no store is configured — and can be
+turned off:
+
+```croniqfile
+pull_api {
+  # "strict" (default): a runner_id belongs to the credential that first
+  # claimed it. "off" restores the previous behaviour, where the runner_id in
+  # the request body is trusted as-is — only appropriate when every holder of a
+  # work:* scope is equally trusted.
+  runner_identity_binding strict
+}
+```
+
+See [`docs/operations.md`](docs/operations.md) for what a `403` looks like from
+the operator's side and how to recover a mis-bound id.
+
 ---
 
 ## Generic shell runner

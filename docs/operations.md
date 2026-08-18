@@ -422,6 +422,44 @@ Is this a permanent change to how the rule should behave?
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
 
+## Runner identity ownership
+
+A `runner_id` is bound to the credential that first used it in the work
+protocol (first-writer-wins); see the README's *Runner identity in the work
+protocol* section for the semantics and the
+`pull_api { runner_identity_binding … }` switch. Operationally:
+
+- **Symptom of a mismatch**: work requests return `403 Forbidden` and the
+  server logs `work request refused — this runner_id is bound to a different
+  credential`, plus a `runner.identity_rejected` audit event (target = the
+  runner id). The refusal happens before the registry is touched, so the
+  incumbent runner is unaffected: its lease is not extended by the stranger,
+  its claims are not requeued, and it is not fenced out with `409`.
+- **Runner SDKs treat a `403` as a transient poll error** and keep retrying on
+  their poll interval, so a fenced-out runner shows up as one that never
+  receives work rather than one that exits. Check the server log or the audit
+  trail — the runner side may only log at `debug`.
+- **Two causes worth distinguishing.** Either two runners genuinely share a
+  `runner_id` and hold different credentials (give each its own id — the same
+  advice as for identity flapping above), or a `runner_id` is legitimately
+  moving to a new credential (a re-keyed runner pool, a runner migrated to
+  another team's client). For the second case, release the binding:
+
+  ```sh
+  curl -X DELETE http://localhost:4000/v1/runners/shell-runner-vps-prod \
+    -H "Authorization: ApiKey croniq_…"
+  ```
+
+  This deregisters the runner *and* frees its id, so the next poll binds it to
+  whoever polls first. Requires the `runners:write` scope.
+- **Upgrading an existing deployment** needs no preparation: the table starts
+  empty, so every runner binds itself on its first poll after the upgrade. The
+  window worth knowing about is that first poll — whoever polls first wins the
+  id. If an id is bound to the wrong credential, release it as above.
+- **A store failure fails closed**: if the binding cannot be read or written,
+  work requests get `503` rather than being waved through. Runners retry, so
+  this self-heals when the store recovers.
+
 ## Orphaned claims (issue #374)
 
 A `claimed` execution whose runner process vanished is recovered by

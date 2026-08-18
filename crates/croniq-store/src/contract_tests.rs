@@ -2483,3 +2483,54 @@ fn job_definition_dead_letter_policy_round_trips() {
     assert_eq!(loaded.dead_letter_operator_hint, None);
     assert_eq!(loaded.dead_letter_replay_max_age, None);
 }
+
+// ─── RunnerStore: identity binding ───
+
+#[test]
+fn runner_identity_binds_first_writer_and_holds() {
+    let store = create_memory_store().unwrap();
+
+    // First claim wins and is echoed back.
+    let owner = store
+        .runner_identity_bind("worker-1", "client-a", now())
+        .unwrap();
+    assert_eq!(owner, "client-a");
+
+    // A second credential claiming the same id reads back the incumbent
+    // rather than taking it over — this is the fence the work handlers use.
+    let owner = store
+        .runner_identity_bind("worker-1", "client-b", now())
+        .unwrap();
+    assert_eq!(owner, "client-a");
+
+    // Re-binding by the incumbent is idempotent.
+    let owner = store
+        .runner_identity_bind("worker-1", "client-a", now())
+        .unwrap();
+    assert_eq!(owner, "client-a");
+
+    assert_eq!(
+        store.runner_identity_owner("worker-1").unwrap().as_deref(),
+        Some("client-a")
+    );
+    assert_eq!(store.runner_identity_owner("worker-2").unwrap(), None);
+}
+
+#[test]
+fn runner_identity_release_frees_the_id() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .runner_identity_bind("worker-1", "client-a", now())
+        .unwrap();
+    store.runner_identity_release("worker-1").unwrap();
+    assert_eq!(store.runner_identity_owner("worker-1").unwrap(), None);
+
+    // Releasing an unbound id is a no-op, and the freed id can be claimed
+    // by a different credential — the operator-driven handover path.
+    store.runner_identity_release("worker-1").unwrap();
+    let owner = store
+        .runner_identity_bind("worker-1", "client-b", now())
+        .unwrap();
+    assert_eq!(owner, "client-b");
+}

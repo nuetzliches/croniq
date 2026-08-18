@@ -849,6 +849,9 @@ mod tests {
                 list_runners() -> Vec<Runner>;
                 remove_runner(runner_id: &str) -> ();
                 update_poll(runner_id: &str, inflight: &[Uuid], now: DateTime<Utc>) -> ();
+                runner_identity_bind(runner_id: &str, owner_id: &str, now: DateTime<Utc>) -> String;
+                runner_identity_owner(runner_id: &str) -> Option<String>;
+                runner_identity_release(runner_id: &str) -> ();
             }
         }
 

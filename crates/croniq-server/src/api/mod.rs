@@ -17,6 +17,7 @@ pub mod maintenance;
 pub mod oidc;
 pub mod password_reset;
 pub mod pat;
+pub mod runner_identity;
 pub mod runners_sse;
 pub mod schedules;
 pub mod stats;
@@ -203,6 +204,13 @@ pub struct ServerState {
     /// `GET /v1/jobs/states` and counted by `croniq_config_calendar_faults`.
     /// Empty under `policy { strict_calendars false }`.
     pub config_faults: Arc<std::sync::RwLock<HashMap<String, String>>>,
+    /// Whether a work-protocol `runner_id` is bound to the credential that
+    /// first claimed it, so one runner's credential cannot act as another
+    /// runner. `pull_api { runner_identity_binding "off" }` clears it. See
+    /// [`runner_identity`] for the binding semantics; note that binding is
+    /// additionally inert without auth or without a store, since neither
+    /// case can tell callers apart or record a decision.
+    pub runner_identity_binding: bool,
 }
 
 impl ServerState {
@@ -238,6 +246,7 @@ impl ServerState {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         })
     }
 
@@ -276,6 +285,7 @@ impl ServerState {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         })
     }
 
@@ -313,6 +323,7 @@ impl ServerState {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         })
     }
 
@@ -738,6 +749,20 @@ async fn handle_poll(
             }),
         );
     }
+    // Bind (or verify) this `runner_id` against the authenticated caller
+    // BEFORE touching the registry: registering is what triggers the takeover
+    // path below, which requeues the incumbent's in-flight executions and
+    // fences it out with 409. A caller that does not own the id must not get
+    // that far.
+    if let Err(s) = runner_identity::authorize_runner(&state, &ctx, &req.runner_id) {
+        return (
+            s,
+            Json(PollResponse {
+                work: vec![],
+                cancel: vec![],
+            }),
+        );
+    }
     // Update registry heartbeat. A new instance polling under an existing
     // `runner_id` takes the identity over inline (issues #190, #374) — the
     // old session's claims are requeued below. Only the most recently
@@ -1119,6 +1144,18 @@ async fn handle_complete(
     if let Err(s) = require_scope(&ctx, Scope::WORK_ACK) {
         return (s, Json(CompleteResponse { received: false }));
     }
+    // The store's completion CAS fences on `runner_id` (see
+    // `complete_execution`), but the value used to come straight from the
+    // request body — naming the victim's runner made the CAS *match*. Bind the
+    // body's `runner_id` to the caller first, so the fence value is one the
+    // caller is entitled to use.
+    if let Err(s) = runner_identity::authorize_runner(&state, &ctx, &req.runner_id) {
+        return (s, Json(CompleteResponse { received: false }));
+    }
+    // Ownership of the *execution* still matters: owning `runner_id` does not
+    // mean this execution was dispatched to it. The store CAS enforces that
+    // (state must be `claimed` with a matching `runner_id`); the release below
+    // only touches this runner's own in-flight list.
     {
         let mut reg = state.runner.registry.write().await;
         reg.release(&req.runner_id, &req.execution_id);
@@ -1174,8 +1211,13 @@ async fn handle_delete_runner(
     if let Err(s) = require_scope(&ctx, Scope::RUNNERS_WRITE) {
         return s;
     }
-    let mut reg = state.runner.registry.write().await;
-    reg.remove(&runner_id);
+    {
+        let mut reg = state.runner.registry.write().await;
+        reg.remove(&runner_id);
+    }
+    // Deregistering is the operator-driven handover: it frees the id so a
+    // different credential can claim it on its next poll.
+    runner_identity::release_runner(&state, &runner_id);
     StatusCode::NO_CONTENT
 }
 
@@ -1828,6 +1870,7 @@ mod tests {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         });
         (state, rx)
     }
@@ -2010,6 +2053,7 @@ mod tests {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -2090,6 +2134,7 @@ mod tests {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -2177,6 +2222,7 @@ mod tests {
             scheduler_heartbeat: None,
             trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
+            runner_identity_binding: true,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -3116,5 +3162,424 @@ mod tests {
         // Threshold (3 takeovers / 10 min) crossed at iid-D; iid-E's
         // takeover falls in the throttle window and must not re-fire.
         assert_eq!(audit_actions(&store, "runner.identity_flapping").len(), 1);
+    }
+
+    // ─── Runner identity binding (work protocol ownership fence) ───────────
+    //
+    // Every work handler used to take the acting `runner_id` from the request
+    // body and check only the caller's scope, so any credential with a
+    // `work:*` scope could act as any runner. These tests pin the fence: one
+    // runner's credential must not be able to hijack, complete, log to, or
+    // keep alive another runner's work. See `api::runner_identity`.
+
+    /// Store-backed state *with* auth configured — binding is deliberately
+    /// inert without auth (all callers share one anonymous identity) or
+    /// without a store (nowhere to record the binding), so both are needed
+    /// for the fence to engage.
+    fn make_bound_state() -> (
+        Arc<ServerState>,
+        crate::store::DynStore,
+        mpsc::UnboundedReceiver<CompletionEvent>,
+    ) {
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        let runner = AppState::new();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let jwt_config = JwtConfig {
+            secret: "runner-identity-test-secret".to_string(),
+            ..Default::default()
+        };
+        let mut state =
+            ServerState::with_auth(runner, tx, Some(jwt_config), Some(Arc::clone(&store)));
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.long_poll_timeout = Duration::from_millis(50);
+        }
+        (state, store, rx)
+    }
+
+    /// Mint an API-key-shaped token for `client_id` carrying every `work:*`
+    /// scope plus `runners:write`. Two different `client_id`s model two
+    /// runners holding their own credentials — the multi-runner deployment
+    /// the pull protocol is built for.
+    fn runner_token(state: &Arc<ServerState>, client_id: &str) -> String {
+        let jwt_config = state.jwt_config.as_ref().unwrap();
+        croniq_auth::jwt::issue_token_pair(
+            jwt_config,
+            &format!("{client_id}-key"),
+            client_id,
+            croniq_auth::CallerType::ApiKey,
+            None,
+            None,
+            croniq_auth::AuthMethod::ApiKey,
+            &[
+                "work:poll".into(),
+                "work:ack".into(),
+                "work:renew".into(),
+                "work:events".into(),
+                "runners:write".into(),
+            ],
+        )
+        .unwrap()
+        .access_token
+    }
+
+    async fn post_as(
+        app: Router,
+        uri: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    /// `max_inflight: 0` keeps the handler off the long-poll path so the call
+    /// returns immediately; the registration/binding side-effects still run.
+    fn poll_body(runner_id: &str, instance_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "runner_id": runner_id,
+            "capabilities": [],
+            "max_inflight": 0,
+            "inflight": [],
+            "instance_id": instance_id,
+        })
+    }
+
+    /// Seed an execution already claimed by `runner_id`, as a dispatch would
+    /// leave it.
+    fn seed_claimed_execution(
+        store: &crate::store::DynStore,
+        job_key: &str,
+        runner_id: &str,
+    ) -> uuid::Uuid {
+        let now = Utc::now();
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+        store.claim_execution(id, runner_id, now).unwrap();
+        id
+    }
+
+    /// (a) A foreign credential must not poll under someone else's
+    /// `runner_id`. The damage is not the empty poll response — it is the
+    /// takeover: registering a new `instance_id` under an existing
+    /// `runner_id` requeues the incumbent's in-flight executions (so they run
+    /// twice) and fences the real runner out with 409 on its next poll.
+    #[tokio::test]
+    async fn foreign_credential_cannot_poll_under_another_runner_id() {
+        let (state, store, _rx) = make_bound_state();
+        let victim = runner_token(&state, "client-a");
+        let attacker = runner_token(&state, "client-b");
+
+        // client-a claims `worker-1` by polling first, and holds work.
+        assert_eq!(
+            post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                &victim,
+                poll_body("worker-1", "iid-victim"),
+            )
+            .await
+            .0,
+            200
+        );
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        // client-b polls as `worker-1` with a fresh instance_id.
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &attacker,
+            poll_body("worker-1", "iid-attacker"),
+        )
+        .await;
+        assert_eq!(status, 403, "foreign runner_id poll must be refused");
+
+        // No takeover happened: the execution is untouched...
+        let loaded = store.get_execution(exec).unwrap().unwrap();
+        assert_eq!(loaded.state, ExecutionState::Claimed);
+        assert_eq!(loaded.runner_id.as_deref(), Some("worker-1"));
+        assert!(
+            audit_actions(&store, "runner.takeover").is_empty(),
+            "the refused poll must not reach the takeover path"
+        );
+
+        // ...and the real runner is not fenced out.
+        assert_eq!(
+            post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                &victim,
+                poll_body("worker-1", "iid-victim"),
+            )
+            .await
+            .0,
+            200,
+            "the legitimate runner must keep polling normally"
+        );
+    }
+
+    /// (b) A foreign credential must not complete another runner's execution.
+    /// The store CAS fences on `runner_id`, but the value used to come from
+    /// the request body — so naming the victim's runner made the CAS match and
+    /// forced the execution terminal (suppressing its retry, or fabricating a
+    /// failure).
+    #[tokio::test]
+    async fn foreign_credential_cannot_complete_another_runners_execution() {
+        let (state, store, mut rx) = make_bound_state();
+        let victim = runner_token(&state, "client-a");
+        let attacker = runner_token(&state, "client-b");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &victim,
+            poll_body("worker-1", "iid-victim"),
+        )
+        .await;
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/complete",
+            &attacker,
+            serde_json::json!({
+                "runner_id": "worker-1",
+                "execution_id": exec.to_string(),
+                "status": "failure",
+                "error": "forged",
+                "duration_ms": 1,
+            }),
+        )
+        .await;
+        assert_eq!(status, 403);
+
+        // Still claimed, and no completion event was forwarded to the
+        // processor (which is what would apply the terminal state).
+        let loaded = store.get_execution(exec).unwrap().unwrap();
+        assert_eq!(loaded.state, ExecutionState::Claimed);
+        assert_eq!(loaded.error, None);
+        assert!(rx.try_recv().is_err(), "no completion must be forwarded");
+    }
+
+    /// (c) A foreign credential must not append log events to another
+    /// runner's execution. This endpoint is addressed by execution id and had
+    /// no ownership check at all, so `work:events` plus an execution id was
+    /// enough to inject or forge log lines.
+    #[tokio::test]
+    async fn foreign_credential_cannot_write_events_to_another_runners_execution() {
+        let (state, store, _rx) = make_bound_state();
+        let victim = runner_token(&state, "client-a");
+        let attacker = runner_token(&state, "client-b");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &victim,
+            poll_body("worker-1", "iid-victim"),
+        )
+        .await;
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/work/{exec}/events"),
+            &attacker,
+            serde_json::json!([{ "level": "error", "message": "forged log line" }]),
+        )
+        .await;
+        assert_eq!(status, 403);
+        assert!(
+            store.read_logs(exec, 100).unwrap().is_empty(),
+            "no log entry may be written by a foreign credential"
+        );
+
+        // The owning runner's own events still land.
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/work/{exec}/events"),
+            &victim,
+            serde_json::json!([{ "level": "info", "message": "real log line" }]),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["accepted"], 1);
+        assert_eq!(store.read_logs(exec, 100).unwrap().len(), 1);
+    }
+
+    /// (d) A foreign credential must not renew another runner's lease —
+    /// keeping a dead runner's lease alive suppresses the watchdog requeue of
+    /// its abandoned executions.
+    #[tokio::test]
+    async fn foreign_credential_cannot_renew_another_runners_lease() {
+        let (state, _store, _rx) = make_bound_state();
+        let victim = runner_token(&state, "client-a");
+        let attacker = runner_token(&state, "client-b");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &victim,
+            poll_body("worker-1", "iid-victim"),
+        )
+        .await;
+        let exec = uuid::Uuid::new_v4();
+
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &attacker,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 403);
+        assert_eq!(body["renewed"], false);
+
+        // The owner can still renew its own lease.
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &victim,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["renewed"], true);
+    }
+
+    /// One credential shared by many runners — the pre-upgrade deployment
+    /// shape the binding must not break — keeps working: every `runner_id`
+    /// binds to the same owner, so every check matches. Restarts under a
+    /// fresh `instance_id` (the ordinary redeploy) still take over.
+    #[tokio::test]
+    async fn one_credential_may_own_many_runner_ids() {
+        let (state, store, _rx) = make_bound_state();
+        let shared = runner_token(&state, "client-a");
+
+        for runner_id in ["worker-1", "worker-2", "worker-3"] {
+            let (status, _) = post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                &shared,
+                poll_body(runner_id, "iid-1"),
+            )
+            .await;
+            assert_eq!(status, 200);
+            assert_eq!(
+                store.runner_identity_owner(runner_id).unwrap().as_deref(),
+                Some("client-a")
+            );
+        }
+
+        // A redeploy of worker-1 under the same credential takes its own
+        // identity over, exactly as before the binding existed.
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &shared,
+            poll_body("worker-1", "iid-2"),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(audit_actions(&store, "runner.takeover").len(), 1);
+    }
+
+    /// Deregistering a runner releases its binding, which is how an operator
+    /// hands a `runner_id` to a different credential.
+    #[tokio::test]
+    async fn deregistering_a_runner_frees_its_identity() {
+        let (state, store, _rx) = make_bound_state();
+        let first = runner_token(&state, "client-a");
+        let second = runner_token(&state, "client-b");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &first,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        assert_eq!(
+            status_of(
+                server_router(Arc::clone(&state)),
+                "DELETE",
+                "/v1/runners/worker-1",
+                None,
+                Some(&first),
+            )
+            .await,
+            204
+        );
+        assert_eq!(store.runner_identity_owner("worker-1").unwrap(), None);
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &second,
+            poll_body("worker-1", "iid-2"),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            store.runner_identity_owner("worker-1").unwrap().as_deref(),
+            Some("client-b")
+        );
+    }
+
+    /// The escape hatch (`pull_api { runner_identity_binding "off" }`)
+    /// restores the previous behaviour for deployments that need it.
+    #[tokio::test]
+    async fn binding_off_restores_body_supplied_runner_ids() {
+        let (mut state, store, _rx) = make_bound_state();
+        Arc::get_mut(&mut state).unwrap().runner_identity_binding = false;
+        let first = runner_token(&state, "client-a");
+        let second = runner_token(&state, "client-b");
+
+        for token in [&first, &second] {
+            let (status, _) = post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                token,
+                poll_body("worker-1", "iid-1"),
+            )
+            .await;
+            assert_eq!(status, 200);
+        }
+        // Nothing was recorded, so turning binding back on re-binds from
+        // scratch rather than locking anyone out.
+        assert_eq!(store.runner_identity_owner("worker-1").unwrap(), None);
     }
 }

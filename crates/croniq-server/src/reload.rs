@@ -104,6 +104,10 @@ impl BootOnlySettings {
                 "pull_api.trigger_dedup_window",
                 Some(p.trigger_dedup_window.clone()),
             );
+            put(
+                "pull_api.runner_identity_binding",
+                Some(p.runner_identity_binding.clone()),
+            );
         }
 
         if let Some(o) = rt.observability.as_ref() {

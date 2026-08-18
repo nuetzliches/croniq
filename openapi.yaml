@@ -1575,6 +1575,19 @@ paths:
             instance registering under the same runner_id. The deposed
             instance should back off and eventually exit (runner SDKs treat
             a streak of poll conflicts as fatal).
+        "403":
+          description: |
+            The `runner_id` in the request body is bound to a different
+            credential. A `runner_id` belongs to the credential that first
+            used it in the work protocol (first-writer-wins); give each
+            runner its own id, or release the binding with
+            `DELETE /v1/runners/{id}` to hand the id over. Not retryable
+            until one of those happens. Absent under
+            `pull_api { runner_identity_binding "off" }`.
+        "503":
+          description: |
+            The runner-identity binding could not be read or written. The
+            check fails closed rather than accepting the request; retry.
 
   /v1/work/ack:
     post:
@@ -1594,6 +1607,19 @@ paths:
                 attempt: { type: integer }
       responses:
         "200": { description: Acknowledged }
+        "403":
+          description: |
+            The `runner_id` in the request body is bound to a different
+            credential. A `runner_id` belongs to the credential that first
+            used it in the work protocol (first-writer-wins); give each
+            runner its own id, or release the binding with
+            `DELETE /v1/runners/{id}` to hand the id over. Not retryable
+            until one of those happens. Absent under
+            `pull_api { runner_identity_binding "off" }`.
+        "503":
+          description: |
+            The runner-identity binding could not be read or written. The
+            check fails closed rather than accepting the request; retry.
 
   /v1/work/renew:
     post:
@@ -1607,6 +1633,19 @@ paths:
                 execution_id: { type: string }
       responses:
         "200": { description: Renewed }
+        "403":
+          description: |
+            The `runner_id` in the request body is bound to a different
+            credential. A `runner_id` belongs to the credential that first
+            used it in the work protocol (first-writer-wins); give each
+            runner its own id, or release the binding with
+            `DELETE /v1/runners/{id}` to hand the id over. Not retryable
+            until one of those happens. Absent under
+            `pull_api { runner_identity_binding "off" }`.
+        "503":
+          description: |
+            The runner-identity binding could not be read or written. The
+            check fails closed rather than accepting the request; retry.
 
   /v1/work/{execution_id}/events:
     post:
@@ -1635,6 +1674,20 @@ paths:
               schema:
                 properties:
                   accepted: { type: integer }
+        "403":
+          description: |
+            The execution is claimed by a runner belonging to a different
+            credential, or is not claimed by any runner. This endpoint is
+            addressed by execution, so it is fenced on the runner that
+            claimed it — only that runner's credential may append to the
+            execution's log. Absent under
+            `pull_api { runner_identity_binding "off" }`.
+        "404":
+          description: No such execution.
+        "503":
+          description: |
+            The runner-identity binding could not be resolved. The check
+            fails closed rather than accepting the events; retry.
 
   /v1/api-clients:
     get:
