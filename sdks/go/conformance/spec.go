@@ -34,6 +34,8 @@ type RunnerConfigSpec struct {
 	DrainTimeoutMs    *int     `yaml:"drain_timeout_ms"`
 	PollRetryDelayMs  *int     `yaml:"poll_retry_delay_ms"`
 	CapacityBackoffMs *int     `yaml:"capacity_backoff_ms"`
+
+	MaxConsecutivePollConflicts *int `yaml:"max_consecutive_poll_conflicts"`
 }
 
 // HandlerSpec describes one handler to register, identified by job_key

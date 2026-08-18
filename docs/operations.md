@@ -803,7 +803,11 @@ complementary mechanisms — no operator action needed:
   `runner.takeover` audit event (target = the runner id). The deposed
   instance id is fenced — if the old process is actually still alive
   (duplicate deployment sharing one `runner_id`), its polls get
-  `409 Conflict` and the SDK exits after its conflict streak.
+  `409 Conflict` and the SDK exits after its conflict streak — three
+  consecutive conflicts by default, tunable per runner as
+  `max_consecutive_poll_conflicts` (issue #466 brought the budget to the Go,
+  Python, TypeScript and Java SDKs; the Rust and .NET ones had it already,
+  and the other four retried forever until then).
   Consequence for rolling deploys with overlap: the draining old instance's
   in-flight claims are requeued at takeover and may run twice — prefer
   stop-before-start, or give each replica its own `runner_id`.

@@ -174,6 +174,7 @@ The same registered handler serves both its Croniqfile schedule (safety-net / re
 | `drainTimeoutMs`      | `30_000`                                             | Graceful shutdown budget before hard-cancel.                             |
 | `pollRetryDelayMs`    | `5_000`                                              | Back-off after a failed poll.                                            |
 | `capacityBackoffMs`   | `500`                                                | Idle wait when at `maxInflight`.                                         |
+| `maxConsecutivePollConflicts` | `3`                                          | Consecutive poll `409`s before `PollInstanceConflictError`.              |
 | `logWriter`           | see below                                            | Streaming log-writer tunables.                                           |
 
 LogWriter sub-options: `channelCapacity` (256), `batchSizeThreshold` (32), `batchTimeThresholdMs` (200), `maxBatchPerPost` (100), `shutdownTimeoutMs` (5_000).

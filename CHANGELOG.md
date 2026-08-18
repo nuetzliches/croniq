@@ -44,6 +44,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Go SDK: a ceiling on consecutive poll conflicts
+  ([#466](https://github.com/nuetzliches/croniq/issues/466)).** New
+  `WithMaxConsecutivePollConflicts` / `Options.MaxConsecutivePollConflicts`
+  (default `3`) budgets consecutive `409 Conflict` responses to
+  `POST /v1/work/poll`. On exhaustion `Runner.Run` returns the new
+  `*PollInstanceConflictError`, which carries `RunnerID` and
+  `ConsecutiveCount` and names the remedy: stop the duplicate process or
+  rotate the `runner_id`. The counter resets on a successful poll or on any
+  non-409 failure (5xx, network, timeout), which say nothing about instance
+  ownership.
+
+  **Behaviour change.** A sustained `409` previously retried forever. One
+  conflict is still transient — a deposed instance may win its identity back,
+  and conformance case 11 pins that it is retried — but a *streak* of them is
+  a duplicate deployment, two processes started with the same fixed
+  `runner_id`, and retrying that forever left the misconfiguration behind a
+  warning that scrolled past. The runner now exits so the process can fail
+  non-zero and reach monitoring. Set the option to `100` to get close to the
+  old behaviour.
+
+  The same option landed in the Python, TypeScript and Java SDKs in this
+  release (see their changelogs); the Rust and .NET SDKs have had it since
+  [#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 1, and
+  that asymmetry is what #466 closes. The `403` half was already symmetric
+  (#437/#458).
+
+- **Conformance case `16-poll-409-conflict-ceiling.yaml`.** A server answering
+  `409` on every poll with `max_consecutive_poll_conflicts: 2`, and a
+  `max_count` on the poll expectation so a runner that retries forever fails.
+  `runner_config.max_consecutive_poll_conflicts` had been in
+  `schema/case-schema.json` since #134 while only .NET implemented it, so no
+  case could use it: as of #460/#467 the other four bindings reject a
+  schema-legal key they have not implemented, which is the correct behaviour
+  and also meant the corpus could not pin this contract until they had the
+  option. All five bindings now accept the key and pass the case — the first
+  corpus coverage the .NET implementation has had.
+
 - **The dashboard refreshes expired access tokens instead of signing you out.**
   A 401 mid-session now triggers one refresh and one retry of the original
   request; only a refresh that finds no session ends it. Access tokens live an

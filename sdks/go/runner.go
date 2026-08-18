@@ -21,6 +21,11 @@ const (
 	DefaultDrainTimeout    = 30 * time.Second
 	DefaultPollRetryDelay  = 5 * time.Second
 	DefaultCapacityBackoff = 500 * time.Millisecond
+
+	// DefaultMaxConsecutivePollConflicts caps how many consecutive
+	// 409 Conflict responses the poll loop tolerates before giving up.
+	// See [Options.MaxConsecutivePollConflicts].
+	DefaultMaxConsecutivePollConflicts = 3
 )
 
 // Options carries all runner-level configuration. Construct via
@@ -41,6 +46,18 @@ type Options struct {
 	DrainTimeout    time.Duration
 	PollRetryDelay  time.Duration
 	CapacityBackoff time.Duration
+
+	// MaxConsecutivePollConflicts caps the streak of consecutive
+	// 409 Conflict responses from POST /v1/work/poll that the runner
+	// tolerates. On exhaustion [Runner.Run] returns a
+	// [PollInstanceConflictError] instead of retrying forever, because a
+	// sustained 409 means a second process is registered under the same
+	// runner_id and no amount of retrying fixes that. The counter resets
+	// on a successful poll or on any non-409 failure (5xx, network,
+	// timeout), which say nothing about instance ownership. Defaults to
+	// [DefaultMaxConsecutivePollConflicts]; set via
+	// [WithMaxConsecutivePollConflicts].
+	MaxConsecutivePollConflicts int
 
 	// AllowInsecureHTTP opts in to a cleartext http:// ServerURL on a
 	// non-loopback host. Off by default: such a URL is otherwise refused
@@ -112,6 +129,14 @@ func WithCapacityBackoff(d time.Duration) Option {
 	return func(o *Options) { o.CapacityBackoff = d }
 }
 
+// WithMaxConsecutivePollConflicts sets how many consecutive 409 Conflict
+// poll responses the runner tolerates before returning a
+// [PollInstanceConflictError] from [Runner.Run]. Defaults to
+// [DefaultMaxConsecutivePollConflicts].
+func WithMaxConsecutivePollConflicts(n int) Option {
+	return func(o *Options) { o.MaxConsecutivePollConflicts = n }
+}
+
 // WithHTTPClient lets callers inject a fully-configured *Client (for
 // custom transports, proxies, mTLS, recording, …).
 func WithHTTPClient(c *Client) Option { return func(o *Options) { o.Client = c } }
@@ -164,9 +189,17 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 		DrainTimeout:    DefaultDrainTimeout,
 		PollRetryDelay:  DefaultPollRetryDelay,
 		CapacityBackoff: DefaultCapacityBackoff,
+
+		MaxConsecutivePollConflicts: DefaultMaxConsecutivePollConflicts,
 	}
 	for _, opt := range opts {
 		opt(&o)
+	}
+	// A zero value here means "unset" — a struct-literal caller who never
+	// heard of the option would otherwise get a runner that bails on its
+	// first 409. Negative values are meaningless for the same reason.
+	if o.MaxConsecutivePollConflicts <= 0 {
+		o.MaxConsecutivePollConflicts = DefaultMaxConsecutivePollConflicts
 	}
 
 	client := o.Client
@@ -258,10 +291,15 @@ func (r *Runner) Run(ctx context.Context) error {
 // retry can fix. Each iteration: enforce capacity, poll, process
 // cancellations, dispatch new assignments.
 //
-// The returned error is non-nil only for the fatal case — today a 403
-// ownership refusal ([OwnershipDeniedError]). Every other failure is
-// transient and retried after PollRetryDelay.
+// The returned error is non-nil only for the fatal cases: a 403 ownership
+// refusal ([OwnershipDeniedError]) or a streak of 409 conflicts that
+// exhausts MaxConsecutivePollConflicts ([PollInstanceConflictError]).
+// Every other failure is transient and retried after PollRetryDelay.
 func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
+	// Consecutive 409 Conflict responses on poll. Reset by a successful
+	// poll or by any non-409 failure — see MaxConsecutivePollConflicts.
+	consecutiveConflicts := 0
+
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -294,8 +332,9 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 			// another runner_id, so the next poll fails identically. Stop
 			// with an actionable error instead of retrying on the poll
 			// interval, which makes a fenced-out runner look merely idle.
-			// Distinct from the 409 arm below, which retries forever
-			// (see TestRunnerSurvives409PollAndKeepsPolling).
+			// Distinct from the 409 arm below, which retries until the
+			// streak exhausts MaxConsecutivePollConflicts (see
+			// TestRunnerSurvives409PollAndKeepsPolling).
 			if isOwnershipDenied(err) {
 				slog.ErrorContext(ctx, "fatal: poll refused with 403 Forbidden — this runner's credential does not own runner_id; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
 					"runner_id", r.opts.RunnerID,
@@ -312,10 +351,47 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 					Body:     body,
 				}
 			}
-			slog.WarnContext(ctx, "poll failed — backing off",
-				"error", err,
-				"retry_after", r.opts.PollRetryDelay,
-			)
+			// A 409 means a newer instance has taken this runner_id over
+			// (fencing, issue #374). One is transient — the deposed
+			// instance may win it back — so we back off and retry. A
+			// streak of them is a duplicate deployment, and retrying
+			// forever hides it behind a warning that scrolls past
+			// (issue #134 sub-item 1).
+			if isInstanceConflict(err) {
+				consecutiveConflicts++
+				if consecutiveConflicts >= r.opts.MaxConsecutivePollConflicts {
+					slog.ErrorContext(ctx, "fatal: poll refused with 409 Conflict on every attempt — another runner is registered with this runner_id; stop the duplicate process or rotate the runner_id",
+						"runner_id", r.opts.RunnerID,
+						"consecutive", consecutiveConflicts,
+						"error", err,
+					)
+					var se *ServerError
+					body := ""
+					if errors.As(err, &se) {
+						body = se.Body
+					}
+					return &PollInstanceConflictError{
+						RunnerID:         r.opts.RunnerID,
+						ConsecutiveCount: consecutiveConflicts,
+						Body:             body,
+					}
+				}
+				slog.WarnContext(ctx, "poll returned 409 Conflict — another runner instance may be active; retrying",
+					"runner_id", r.opts.RunnerID,
+					"consecutive", consecutiveConflicts,
+					"max_consecutive", r.opts.MaxConsecutivePollConflicts,
+					"retry_after", r.opts.PollRetryDelay,
+				)
+			} else {
+				// Non-409 transient (5xx, network, timeout) — unrelated to
+				// instance ownership, so a recovered outage must not
+				// accumulate with later conflicts.
+				consecutiveConflicts = 0
+				slog.WarnContext(ctx, "poll failed — backing off",
+					"error", err,
+					"retry_after", r.opts.PollRetryDelay,
+				)
+			}
 			select {
 			case <-ctx.Done():
 				return nil
@@ -323,6 +399,10 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 				continue
 			}
 		}
+
+		// Poll succeeded — the other instance must have died or released
+		// the identity, so the conflict streak starts over.
+		consecutiveConflicts = 0
 
 		// Process server-initiated cancellations before dispatching new
 		// work: the cancelled ids may still be in our inflight set and

@@ -276,10 +276,14 @@ checks answer different questions:
 
 So a binding's key set is its own implementation surface, not a copy of the
 schema, and it is *expected* to lag the schema wherever a capability is not
-universal — `runner_config.max_consecutive_poll_conflicts` exists only in the
-.NET SDK, so the other four reject it, which is the desired outcome rather than
-a defect. Adding a schema validator inside a binding duplicates the first row
-and does nothing for the second.
+universal: a binding that rejects a schema-legal key it never implemented is
+producing the desired outcome rather than a defect. That was the state of
+`runner_config.max_consecutive_poll_conflicts` until
+[#466](https://github.com/nuetzliches/croniq/issues/466) — declared in the
+schema, implemented only in .NET, and therefore refused by the other four,
+which is why case 16 could not be written until all five had the option.
+Adding a schema validator inside a binding duplicates the first row and does
+nothing for the second.
 
 Each binding pairs its strictness with negative tests that provoke the silence
 at every level a case nests, plus one positive case asserting the known

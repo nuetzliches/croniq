@@ -49,12 +49,52 @@ func (e *OwnershipDeniedError) Error() string {
 		e.Endpoint, e.RunnerID, e.Body)
 }
 
+// PollInstanceConflictError reports that POST /v1/work/poll answered
+// 409 Conflict MaxConsecutivePollConflicts times in a row: another
+// process is already registered under this runner_id and keeps winning
+// the identity (fencing, server issue #374).
+//
+// A single 409 is transient — a deposed instance may legitimately take
+// its identity back — so the runner backs off and retries. A streak of
+// them is not: it is a duplicate deployment, two processes started with
+// the same fixed runner_id. Retrying forever there logs a warning that
+// scrolls past and leaves the misconfiguration invisible, so
+// [Runner.Run] returns this error instead and the process can exit
+// non-zero (issue #134 sub-item 1). Callers can match it with
+// [errors.As].
+//
+// Distinct from [OwnershipDeniedError], which is a 403 and permanent
+// from the first response.
+type PollInstanceConflictError struct {
+	RunnerID string
+	// ConsecutiveCount is the streak length observed before bailing,
+	// equal to Options.MaxConsecutivePollConflicts at return time.
+	ConsecutiveCount int
+	Body             string
+}
+
+func (e *PollInstanceConflictError) Error() string {
+	return fmt.Sprintf(
+		"poll instance conflict — another runner is already registered with runner_id %q. "+
+			"Observed %d consecutive 409 Conflict responses on POST /v1/work/poll. "+
+			"Stop the duplicate process or rotate the runner_id: %s",
+		e.RunnerID, e.ConsecutiveCount, e.Body)
+}
+
 // isOwnershipDenied reports whether err is a 403 from a work endpoint —
 // the wire layer keeps every non-2xx as a *ServerError, so the runner loop
 // is where the status becomes a policy decision.
 func isOwnershipDenied(err error) bool {
 	var se *ServerError
 	return errors.As(err, &se) && se.Status == http.StatusForbidden
+}
+
+// isInstanceConflict reports whether err is a 409 from the poll endpoint —
+// the fencing refusal a duplicate deployment produces. Counted rather than
+// acted on immediately: see [PollInstanceConflictError].
+func isInstanceConflict(err error) bool {
+	var se *ServerError
+	return errors.As(err, &se) && se.Status == http.StatusConflict
 }
 
 // serverStatus extracts the HTTP status from err, or 0 when err is not a

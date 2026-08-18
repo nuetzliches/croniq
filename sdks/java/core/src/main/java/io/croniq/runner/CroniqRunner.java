@@ -83,6 +83,9 @@ public final class CroniqRunner implements AutoCloseable {
                 options.serverUrl(),
                 options.capabilities());
         selfRegister();
+        // Consecutive 409 Conflict responses on poll. Reset by a successful poll
+        // or by any non-409 failure — see maxConsecutivePollConflicts().
+        int consecutiveConflicts = 0;
         try {
             while (!stopped.get()) {
                 // Control-slot polling (issue #176): even at capacity we
@@ -120,14 +123,47 @@ public final class CroniqRunner implements AutoCloseable {
                                 runnerId);
                         throw new CroniqOwnershipDeniedException(runnerId, e);
                     }
+                    // A 409 means a newer instance has taken this runner_id over
+                    // (fencing, issue #374). One is transient — the deposed
+                    // instance may win it back — so we back off and retry. A
+                    // streak of them is a duplicate deployment, and retrying
+                    // forever hides it behind a warning that scrolls past
+                    // (issue #134 sub-item 1).
+                    if (e.isInstanceConflict()) {
+                        consecutiveConflicts++;
+                        if (consecutiveConflicts >= options.maxConsecutivePollConflicts()) {
+                            log.error(
+                                    "fatal: poll refused with 409 Conflict {} times in a row — another runner is"
+                                            + " registered with runner_id {}. Stop the duplicate process or rotate"
+                                            + " the runner_id",
+                                    consecutiveConflicts,
+                                    runnerId);
+                            throw new CroniqPollInstanceConflictException(runnerId, consecutiveConflicts, e);
+                        }
+                        log.warn(
+                                "Poll returned 409 Conflict ({}/{}) — another runner instance may be active;"
+                                        + " retrying after {}",
+                                consecutiveConflicts,
+                                options.maxConsecutivePollConflicts(),
+                                options.pollRetryDelay());
+                        sleep(options.pollRetryDelay());
+                        continue;
+                    }
+                    // Non-409 transient — unrelated to instance ownership, so a
+                    // recovered outage must not accumulate with later conflicts.
+                    consecutiveConflicts = 0;
                     log.warn("Poll failed with HTTP {} — backing off {}", e.statusCode(), options.pollRetryDelay());
                     sleep(options.pollRetryDelay());
                     continue;
                 } catch (Exception e) {
+                    consecutiveConflicts = 0;
                     log.warn("Poll failed: {} — backing off {}", e.toString(), options.pollRetryDelay());
                     sleep(options.pollRetryDelay());
                     continue;
                 }
+                // Poll succeeded — the other instance must have died or released
+                // the identity, so the conflict streak starts over.
+                consecutiveConflicts = 0;
                 if (response != null && response.cancel() != null) {
                     for (String id : response.cancel()) {
                         dispatcher.cancel(id);

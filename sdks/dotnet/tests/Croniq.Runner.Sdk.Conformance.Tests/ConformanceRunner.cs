@@ -72,11 +72,11 @@ internal static class ConformanceRunner
         }
         catch (PollInstanceConflictException)
         {
-            // Expected for case 11a (and any future case where the SDK is
-            // contractually allowed to bail out fatally). The HTTP-count
-            // assertions below still validate correctness: a case that
-            // doesn't anticipate this exit would fail on min_count/max_count
-            // mismatch.
+            // Expected for case 16: a streak of 409s exhausts the conflict
+            // ceiling, so the SDK is contractually required to stop. The
+            // HTTP-count assertions below still validate correctness: a case
+            // that doesn't anticipate this exit would fail on
+            // min_count/max_count mismatch.
         }
         catch (RunnerOwnershipDeniedException)
         {

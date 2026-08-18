@@ -33,7 +33,8 @@ public record CaseSpec(
             Integer renewIntervalMs,
             Integer drainTimeoutMs,
             Integer pollRetryDelayMs,
-            Integer capacityBackoffMs) {}
+            Integer capacityBackoffMs,
+            Integer maxConsecutivePollConflicts) {}
 
     public record HandlerSpec(
             String jobKey,

@@ -63,6 +63,40 @@ export function isOwnershipDenied(err: unknown): boolean {
 }
 
 /**
+ * `POST /v1/work/poll` answered `409 Conflict` `maxConsecutivePollConflicts`
+ * times in a row: another process is already registered under this
+ * `runner_id` and keeps winning the identity (fencing, server issue #374).
+ *
+ * A single 409 is transient — a deposed instance may legitimately take its
+ * identity back — so the runner backs off and retries. A streak of them is
+ * not: it is a duplicate deployment, two processes started with the same
+ * fixed `runnerId`. Retrying forever there leaves the misconfiguration behind
+ * a warning that scrolls past, so `CroniqRunner.run` rejects with this
+ * instead (issue #134 sub-item 1).
+ *
+ * Distinct from {@link RunnerOwnershipDeniedError}, which is a 403 and
+ * permanent from the first response.
+ */
+export class PollInstanceConflictError extends Error {
+  constructor(
+    public readonly runnerId: string,
+    public readonly consecutiveCount: number,
+  ) {
+    super(
+      `poll instance conflict — another runner is already registered with runner_id ` +
+        `'${runnerId}'. Observed ${consecutiveCount} consecutive 409 Conflict responses ` +
+        `on POST /v1/work/poll. Stop the duplicate process or rotate the runner_id.`,
+    );
+    this.name = 'PollInstanceConflictError';
+  }
+}
+
+/** True when `err` is a 409 from the poll endpoint — the fencing refusal. */
+export function isInstanceConflict(err: unknown): boolean {
+  return err instanceof HttpError && err.status === 409;
+}
+
+/**
  * HTTP client for the Croniq runner API. Adds `Authorization` per request
  * (ApiKey takes precedence over Bearer when both are set) and serialises
  * snake_case JSON in/out.

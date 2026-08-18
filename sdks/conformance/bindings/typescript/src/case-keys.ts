@@ -12,10 +12,11 @@
 // here would duplicate the first check and still leave the second hole open.
 //
 // The lists therefore mirror the interfaces in case-spec.ts / trigger-case-spec.ts,
-// and are expected to lag the schema wherever a capability is .NET-only:
-// runner_config's `max_consecutive_poll_conflicts` is in the schema but absent
-// here, because the TypeScript SDK has no such option. A case using it must
-// fail loudly rather than run with the option ignored.
+// and are expected to lag the schema wherever a capability is not universal: a
+// case using a key this binding never implemented must fail loudly rather than
+// run with the option ignored. (Every key the schema declares today happens to
+// be implemented here; the check earns its keep on the next schema addition,
+// not on the current corpus.)
 
 export const CASE_KEYS = [
   'name',
@@ -40,6 +41,7 @@ export const RUNNER_CONFIG_KEYS = [
   'drain_timeout_ms',
   'poll_retry_delay_ms',
   'capacity_backoff_ms',
+  'max_consecutive_poll_conflicts',
 ] as const;
 
 export const HANDLER_KEYS = [

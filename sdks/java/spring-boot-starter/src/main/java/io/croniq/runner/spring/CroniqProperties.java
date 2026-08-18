@@ -34,6 +34,7 @@ public class CroniqProperties {
     private Duration drainTimeout = CroniqRunnerOptions.DEFAULT_DRAIN_TIMEOUT;
     private Duration pollRetryDelay = CroniqRunnerOptions.DEFAULT_POLL_RETRY_DELAY;
     private Duration capacityBackoff = CroniqRunnerOptions.DEFAULT_CAPACITY_BACKOFF;
+    private int maxConsecutivePollConflicts = CroniqRunnerOptions.DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS;
 
     /**
      * Opt in to a cleartext {@code http} {@link #getServerUrl()} on a non-loopback host.
@@ -59,6 +60,7 @@ public class CroniqProperties {
                 .drainTimeout(drainTimeout)
                 .pollRetryDelay(pollRetryDelay)
                 .capacityBackoff(capacityBackoff)
+                .maxConsecutivePollConflicts(maxConsecutivePollConflicts)
                 .build();
     }
 
@@ -182,6 +184,14 @@ public class CroniqProperties {
 
     public void setCapacityBackoff(Duration v) {
         this.capacityBackoff = v;
+    }
+
+    public int getMaxConsecutivePollConflicts() {
+        return maxConsecutivePollConflicts;
+    }
+
+    public void setMaxConsecutivePollConflicts(int v) {
+        this.maxConsecutivePollConflicts = v;
     }
 
     public boolean isAllowInsecureHttp() {

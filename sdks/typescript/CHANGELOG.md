@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **A ceiling on consecutive poll conflicts ([#466](https://github.com/nuetzliches/croniq/issues/466)).** New `maxConsecutivePollConflicts` option (default `3`, range `[1, 100]`) budgets consecutive `409 Conflict` responses to `POST /v1/work/poll`. On exhaustion `run()` rejects with the new exported `PollInstanceConflictError`, which carries `runnerId` and `consecutiveCount` and names the remedy: stop the duplicate process or rotate the `runner_id`. The counter resets on a successful poll or on any non-409 failure (5xx, network, timeout), which say nothing about instance ownership.
+
+  **Behaviour change.** A sustained `409` previously retried forever. One conflict is still transient — a deposed instance may win its identity back, and conformance case 11 pins that it is retried — but a *streak* of them is a duplicate deployment, two processes started with the same fixed `runnerId`, and retrying that forever left the misconfiguration behind a warning that scrolled past. The runner now exits so the process can fail non-zero and reach monitoring, matching what the Rust and .NET SDKs have done since [#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 1. Set the option to `100` to get close to the old behaviour. The `403` half was already symmetric across the SDKs (#437/#458); this closes the `409` half.
+
+  Conformance case `16-poll-409-conflict-ceiling.yaml` pins the contract on the wire and now runs green in all five bindings — including .NET, whose implementation had no corpus coverage until now.
+
 ### Fixed
 
 - **A `403` on the work endpoints is fatal ([#437](https://github.com/nuetzliches/croniq/issues/437)).** Since server issue #436 bound a runner's identity to the authenticated caller, `/v1/work/*` answers `403` when the credential does not own the `runner_id` the request names. The poll loop retried that forever on `pollRetryDelayMs`, so a fenced-out runner looked idle rather than misconfigured. A `403` is permanent — no retry can clear it — so `run()` now rejects with the new exported `RunnerOwnershipDeniedError` on the first one. It carries `runnerId` and names both fixes: give the runner its own `runner_id`, or release the existing binding with `DELETE /v1/runners/{id}`. The drain step still runs first, so in-flight handlers get their grace period before the rejection surfaces.

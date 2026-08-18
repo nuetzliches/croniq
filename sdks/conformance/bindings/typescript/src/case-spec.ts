@@ -25,6 +25,7 @@ export interface RunnerConfig {
   drain_timeout_ms?: number;
   poll_retry_delay_ms?: number;
   capacity_backoff_ms?: number;
+  max_consecutive_poll_conflicts?: number;
 }
 
 export type HandlerBehavior = 'noop' | 'throw' | 'sleep' | 'log' | 'stream_logs';

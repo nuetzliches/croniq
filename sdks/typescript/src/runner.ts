@@ -5,7 +5,9 @@ import { anySignal } from './abort.js';
 import {
   CroniqClient,
   HttpError,
+  PollInstanceConflictError,
   RunnerOwnershipDeniedError,
+  isInstanceConflict,
   isOwnershipDenied,
 } from './client.js';
 import { sleep } from './deferred.js';
@@ -172,6 +174,10 @@ export class CroniqRunner {
   }
 
   async #pollLoop(signal: AbortSignal): Promise<void> {
+    // Consecutive 409 Conflict responses on poll. Reset by a successful poll
+    // or by any non-409 failure — see `maxConsecutivePollConflicts`.
+    let consecutiveConflicts = 0;
+
     while (!signal.aborted) {
       // Control-slot polling (issue #176): even at capacity we still poll
       // so the server can deliver cancels via PollResponse.cancel. The
@@ -206,10 +212,38 @@ export class CroniqRunner {
           );
           throw new RunnerOwnershipDeniedError(this.#runnerId!);
         }
-        const detail = err instanceof HttpError
-          ? { status: err.status, status_text: err.statusText }
-          : { error: String(err) };
-        this.#logger.warn(`poll failed — backing off ${this.#options.pollRetryDelayMs}ms`, detail);
+        // A 409 means a newer instance has taken this runner_id over
+        // (fencing, issue #374). One is transient — the deposed instance may
+        // win it back — so we back off and retry. A streak of them is a
+        // duplicate deployment, and retrying forever hides it behind a
+        // warning that scrolls past (issue #134 sub-item 1).
+        if (isInstanceConflict(err)) {
+          consecutiveConflicts += 1;
+          if (consecutiveConflicts >= this.#options.maxConsecutivePollConflicts) {
+            this.#logger.error(
+              `fatal: poll refused with 409 Conflict ${consecutiveConflicts} times in a row — ` +
+                'another runner is registered with this runner_id. Stop the duplicate process ' +
+                'or rotate the runner_id',
+              { runner_id: this.#runnerId! },
+            );
+            throw new PollInstanceConflictError(this.#runnerId!, consecutiveConflicts);
+          }
+          this.#logger.warn(
+            `poll returned 409 Conflict (${consecutiveConflicts}/` +
+              `${this.#options.maxConsecutivePollConflicts}) — another runner instance may be ` +
+              `active; retrying after ${this.#options.pollRetryDelayMs}ms`,
+            { runner_id: this.#runnerId! },
+          );
+        } else {
+          // Non-409 transient (5xx, network, timeout) — unrelated to instance
+          // ownership, so a recovered outage must not accumulate with later
+          // conflicts.
+          consecutiveConflicts = 0;
+          const detail = err instanceof HttpError
+            ? { status: err.status, status_text: err.statusText }
+            : { error: String(err) };
+          this.#logger.warn(`poll failed — backing off ${this.#options.pollRetryDelayMs}ms`, detail);
+        }
         try {
           await sleep(this.#options.pollRetryDelayMs, signal);
         } catch {
@@ -217,6 +251,10 @@ export class CroniqRunner {
         }
         continue;
       }
+
+      // Poll succeeded — the other instance must have died or released the
+      // identity, so the conflict streak starts over.
+      consecutiveConflicts = 0;
 
       this.#handleCancellations(response.cancel);
 

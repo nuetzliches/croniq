@@ -1,0 +1,52 @@
+name: "Poll conflicting forever stops the runner at the conflict ceiling"
+description: |
+  The other half of case 11. A 409 on poll means a newer instance has taken
+  this runner_id over (fencing, issue #374), and case 11 pins that a single
+  one is transient: the runner backs off and polls again, because a deposed
+  instance may legitimately win its identity back.
+
+  A *streak* of them is a different animal. Two processes started with the
+  same fixed runner_id conflict on every poll, forever, and a runner that
+  retries forever reports that as a warning on the poll interval — which
+  scrolls past and leaves a real operator misconfiguration invisible. So
+  the runner budgets consecutive 409s via
+  runner_config.max_consecutive_poll_conflicts (default 3) and, on
+  exhaustion, stops with a fatal error naming the runner_id (issue #134
+  sub-item 1). How that error surfaces is language-specific and asserted in
+  each SDK's own tests — the wire has no way to see it.
+
+  Server returns 409 on every poll and the ceiling is set to 2, so the
+  runner should poll exactly twice and stop. With poll_retry_delay_ms=100
+  inside a 2 s window a runner that retries forever would produce roughly
+  twenty, so max_count is the observable proof that the budget is enforced;
+  min_count pins the other side, that the runner did not bail on the first
+  409 the way it must for a 403 (case 15).
+
+runner_config:
+  runner_id: "conformance-409-ceiling"
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 1000
+  max_consecutive_poll_conflicts: 2
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 409
+      body:
+        error: "runner instance conflict"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+      max_count: 2
+      body_match:
+        runner_id: "conformance-409-ceiling"

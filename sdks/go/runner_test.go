@@ -271,10 +271,108 @@ func TestRunnerSurvives409PollAndKeepsPolling(t *testing.T) {
 	}
 }
 
+func TestRunnerStopsAfterConsecutive409Polls(t *testing.T) {
+	// The other half of TestRunnerSurvives409PollAndKeepsPolling: a single
+	// 409 is transient and retried, but a streak of them is a duplicate
+	// deployment — two processes started with the same fixed runner_id —
+	// and retrying that forever hides the misconfiguration behind a
+	// warning that scrolls past (issue #134 sub-item 1).
+	rs := newRecordingServer()
+	defer rs.close()
+
+	// One canned response, no follow-up: the recording server repeats the
+	// last reply, so every poll conflicts.
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 409, body: `{"error":"runner instance conflict"}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(50*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+		WithMaxConsecutivePollConflicts(3),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Run(ctx) }()
+
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return — the runner kept polling past the conflict ceiling")
+	}
+
+	var conflict *PollInstanceConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected *PollInstanceConflictError, got %v", err)
+	}
+	if conflict.RunnerID != "test-runner" {
+		t.Errorf("expected the error to name the runner_id, got %q", conflict.RunnerID)
+	}
+	if conflict.ConsecutiveCount != 3 {
+		t.Errorf("ConsecutiveCount = %d, want 3", conflict.ConsecutiveCount)
+	}
+	if !strings.Contains(conflict.Error(), "rotate the runner_id") {
+		t.Errorf("expected the error to name the remedy, got %q", conflict.Error())
+	}
+	if got := rs.count("POST", "/v1/work/poll"); got != 3 {
+		t.Errorf("expected exactly 3 polls (the configured ceiling), got %d", got)
+	}
+}
+
+func TestRunnerConflictStreakResetsOnNon409(t *testing.T) {
+	// The streak counts *consecutive* conflicts. A 500 in between is
+	// unrelated to instance ownership — a server restart, a proxy hiccup —
+	// so it must clear the counter rather than letting an unlucky mix of
+	// failures add up to a fatal error.
+	rs := newRecordingServer()
+	defer rs.close()
+
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 409, body: `{"error":"runner instance conflict"}`},
+		cannedResp{status: 500, body: `{"error":"boom"}`},
+		cannedResp{status: 409, body: `{"error":"runner instance conflict"}`},
+		cannedResp{status: 200, body: `{"work":[],"cancel":[]}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(50*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+		WithMaxConsecutivePollConflicts(2),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rs.count("POST", "/v1/work/poll") >= 4 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected the runner to survive 409/500/409 with a ceiling of 2, got %v", err)
+	}
+	if got := rs.count("POST", "/v1/work/poll"); got < 4 {
+		t.Errorf("expected at least 4 polls, got %d", got)
+	}
+}
+
 func TestRunnerStopsOnPoll403(t *testing.T) {
 	// Counterpart to TestRunnerSurvives409PollAndKeepsPolling: a 409 is
-	// transient and retried forever, a 403 is permanent and must stop the
-	// runner on the first occurrence (issue #437).
+	// transient and retried until the conflict ceiling, a 403 is permanent
+	// and must stop the runner on the first occurrence (issue #437).
 	rs := newRecordingServer()
 	defer rs.close()
 
