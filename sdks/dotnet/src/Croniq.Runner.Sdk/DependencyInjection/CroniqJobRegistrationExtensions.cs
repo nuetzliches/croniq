@@ -88,15 +88,90 @@ public static class CroniqJobRegistrationExtensions
     }
 
     /// <summary>
-    /// Register a default shell-exec handler that decodes <c>__runner_exec</c>
-    /// metadata and spawns a subprocess. Equivalent to the Rust
-    /// <c>croniq-shell-runner</c> crate.
+    /// Register the shell-exec handler (decodes <c>__runner_exec</c> metadata
+    /// and spawns a subprocess) as the <b>catch-all default</b>: every job key
+    /// the server dispatches to this runner is executed as a subprocess.
+    /// Equivalent to running the generic Rust <c>croniq-shell-runner</c>, and
+    /// therefore a deliberate opt-in that trusts the server with shell-exec
+    /// over any job it routes here. Prefer the scoped
+    /// <see cref="AddCroniqShellHandler(ICroniqRunnerBuilder, string[])"/>
+    /// overload, which grants the capability only for the job keys listed.
     /// </summary>
-    public static ICroniqRunnerBuilder AddCroniqShellHandler(this ICroniqRunnerBuilder builder)
+    public static ICroniqRunnerBuilder AddCroniqShellHandler(this ICroniqRunnerBuilder builder) =>
+        AddShellHandlerCore(builder, configure: null, jobKeys: []);
+
+    /// <summary>
+    /// Register the shell-exec handler for the given job keys only
+    /// (preferred). Jobs with other keys are unaffected — the server-supplied
+    /// <c>__runner_exec</c> payload is executed as a subprocess exclusively
+    /// for the keys listed here.
+    /// </summary>
+    public static ICroniqRunnerBuilder AddCroniqShellHandler(this ICroniqRunnerBuilder builder, params string[] jobKeys)
+    {
+        ValidateJobKeys(jobKeys);
+        return AddShellHandlerCore(builder, configure: null, jobKeys);
+    }
+
+    /// <summary>
+    /// Register the shell-exec handler as the catch-all default (see
+    /// <see cref="AddCroniqShellHandler(ICroniqRunnerBuilder)"/>) with
+    /// explicit <see cref="CroniqShellHandlerOptions"/> configuration.
+    /// Prefer a scoped overload where possible.
+    /// </summary>
+    public static ICroniqRunnerBuilder AddCroniqShellHandler(this ICroniqRunnerBuilder builder, Action<CroniqShellHandlerOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        return AddShellHandlerCore(builder, configure, jobKeys: []);
+    }
+
+    /// <summary>
+    /// Register the shell-exec handler for the given job keys only
+    /// (preferred), with explicit <see cref="CroniqShellHandlerOptions"/>
+    /// configuration.
+    /// </summary>
+    public static ICroniqRunnerBuilder AddCroniqShellHandler(this ICroniqRunnerBuilder builder, Action<CroniqShellHandlerOptions> configure, params string[] jobKeys)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        ValidateJobKeys(jobKeys);
+        return AddShellHandlerCore(builder, configure, jobKeys);
+    }
+
+    private static ICroniqRunnerBuilder AddShellHandlerCore(ICroniqRunnerBuilder builder, Action<CroniqShellHandlerOptions>? configure, string[] jobKeys)
     {
         builder.Services.TryAddScoped<CroniqShellHandler>();
-        builder.Services.AddSingleton(new HandlerRegistration(JobKey: string.Empty, Schedule: null, Timeout: null, Description: null, HandlerType: typeof(CroniqShellHandler), HandlerDelegate: null, IsDefault: true));
+        builder.Services.AddOptions<CroniqShellHandlerOptions>();
+        if (configure is not null)
+        {
+            builder.Services.Configure(configure);
+        }
+
+        if (jobKeys.Length == 0)
+        {
+            builder.Services.AddSingleton(new HandlerRegistration(JobKey: string.Empty, Schedule: null, Timeout: null, Description: null, HandlerType: typeof(CroniqShellHandler), HandlerDelegate: null, IsDefault: true));
+        }
+        else
+        {
+            foreach (var jobKey in jobKeys)
+            {
+                builder.Services.AddSingleton(new HandlerRegistration(jobKey, Schedule: null, Timeout: null, Description: null, HandlerType: typeof(CroniqShellHandler), HandlerDelegate: null, IsDefault: false));
+            }
+        }
         return builder;
+    }
+
+    private static void ValidateJobKeys(string[] jobKeys)
+    {
+        ArgumentNullException.ThrowIfNull(jobKeys);
+        if (jobKeys.Length == 0)
+        {
+            throw new ArgumentException(
+                "At least one job key is required. Use the parameterless AddCroniqShellHandler() overload to opt into the catch-all registration.",
+                nameof(jobKeys));
+        }
+        foreach (var jobKey in jobKeys)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(jobKey, nameof(jobKeys));
+        }
     }
 
     /// <summary>

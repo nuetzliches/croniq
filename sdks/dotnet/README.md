@@ -65,7 +65,7 @@ await builder.Build().RunAsync();
 - **Self-registration** — `AddCroniqJob<T>("key", schedule: "5m")` calls `POST /v1/jobs/register` on startup.
 - **Health checks** — `services.AddHealthChecks().AddCroniqRunnerHealthCheck()`.
 - **OpenTelemetry** — opt-in via `tracerBuilder.AddCroniqRunnerInstrumentation()` (separate package).
-- **Shell-exec decoder** — handles DSL `runner shell { … }` / `runner exec { … }` jobs by decoding `__runner_exec` metadata and spawning a subprocess; stdout/stderr is streamed via the log writer.
+- **Shell-exec handler** — handles DSL `runner shell { … }` / `runner exec { … }` jobs by decoding `__runner_exec` metadata and spawning a subprocess; stdout/stderr is streamed via the log writer. Register it scoped to explicit job keys (preferred) or as an opt-in catch-all — see [Shell-exec jobs](#shell-exec-jobs-runner-shell--runner-exec).
 - **Producer-side trigger client** — `AddCroniqClient(...)` + `ICroniqTriggerClient.TriggerAsync(...)` wrap `POST /v1/trigger` with separate credentials (`jobs:trigger` scope) and optional idempotency keys.
 - **Trim- and AOT-compatible** — the package declares `IsAotCompatible`/`IsTrimmable` and passes the trim/AOT analyzers. The DI/options layer stays reflection-free: source-generated JSON (`JsonSerializerContext`), source-generated `IConfiguration` binding, and source-generated `[OptionsValidator]` validation (no reflection-based `ValidateDataAnnotations`). Register interface handlers with `AddCroniqJob<T>(...)` and the trimmer preserves their constructors automatically.
 
@@ -109,6 +109,31 @@ Notes:
 - `AddCroniqClient` is independent of `AddCroniqRunner` — register either or both. Like the runner registration, it is idempotent.
 - Triggering requires the `jobs:trigger` (or `admin`) scope, which runner poll keys typically do not carry — the client therefore uses **its own credentials** (`Croniq:Client` section) instead of the runner's.
 - `idempotencyKey` enables server-side dedup of at-least-once producers (repeat triggers with the same key coalesce onto the existing execution and return `Deduplicated = true`); servers without support ignore the field.
+
+## Shell-exec jobs (`runner shell` / `runner exec`)
+
+The SDK ships a handler for DSL `runner shell { … }` / `runner exec { … }` jobs: it decodes the `__runner_exec` metadata the Croniqfile compiler attaches to the work assignment and spawns a subprocess, streaming stdout/stderr through the log writer. Because the command comes from the server, registering this handler is an explicit trust decision — **prefer scoping it to the job keys you actually intend to run through a shell**:
+
+```csharp
+builder.Services.AddCroniqRunner(...)
+    .AddCroniqShellHandler("deploy:run", "deploy:cleanup"); // shell-exec for these keys only
+```
+
+The parameterless form registers the handler as the catch-all default — any job key the server dispatches to this runner is executed as a subprocess. That is the .NET equivalent of running the generic Rust `croniq-shell-runner` and remains supported as a deliberate opt-in:
+
+```csharp
+    .AddCroniqShellHandler(); // catch-all: every dispatched job becomes a subprocess
+```
+
+Guard rails:
+
+- **Quoting** — on POSIX the command string is handed to `/bin/sh -c` as a single argv entry via `ArgumentList` (no escaping round-trip); on Windows it is passed through to `cmd.exe /c` verbatim, because `cmd` parses the remainder of the line itself.
+- **`user` directive fails closed** — .NET cannot switch the subprocess user, so a payload that sets `user` fails the execution with `user directive is not supported by the .NET shell handler` instead of silently running as the runner's own user. Run the runner process as the desired user, or use the Rust `croniq-shell-runner`, which honours numeric uids.
+- **Environment guard** — payload-supplied `env` names that can hijack process resolution or library loading (`PATH`, `PATHEXT`, `COMSPEC`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, anything starting with `DYLD_`) or collide with the SDK's own configuration namespace (anything starting with `CRONIQ_`) fail the execution. The comparison is case-insensitive. If the runner fully trusts its server, opt out explicitly:
+
+```csharp
+    .AddCroniqShellHandler(o => o.AllowUnsafeEnvironment = true, "deploy:run");
+```
 
 ## Capabilities vs Tags
 

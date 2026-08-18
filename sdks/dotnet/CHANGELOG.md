@@ -4,6 +4,43 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Added
+
+- **Scoped shell-handler registration
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).**
+  `AddCroniqShellHandler("deploy:run", …)` registers the shell-exec handler
+  for the listed job keys only, instead of as the catch-all for every job key
+  the server dispatches. The parameterless overload keeps its catch-all
+  semantics as a documented opt-in; the scoped form is now the recommended
+  registration. New `CroniqShellHandlerOptions` (configurable via
+  `AddCroniqShellHandler(o => …, keys)` overloads) carries
+  `AllowUnsafeEnvironment` (default `false`).
+
+### Fixed
+
+- **POSIX shell commands are no longer corrupted by quoting
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).** The handler
+  interpolated the command into `/bin/sh -c "…"`, escaping `"` but not `\`, so
+  commands containing escaped quotes or ending in a backslash reached `sh`
+  altered. The command now travels as a single argv entry via
+  `ProcessStartInfo.ArgumentList`, mirroring the Rust shell runner. The
+  Windows branch deliberately keeps the raw `cmd.exe /c <command>`
+  pass-through (with a pinning test), because `cmd` parses the remainder of
+  the line itself and argv-quoting would corrupt it.
+- **The `user` directive fails closed instead of being silently ignored
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).** .NET cannot
+  switch the subprocess user, so a payload that sets `user` now fails the
+  execution with `user directive is not supported by the .NET shell handler`
+  rather than running the command as the runner's own user.
+- **Payload-supplied `env` names that hijack process resolution or library
+  loading are rejected
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).** `PATH`,
+  `PATHEXT`, `COMSPEC`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*` and
+  `CRONIQ_*` (case-insensitive) fail the execution unless
+  `CroniqShellHandlerOptions.AllowUnsafeEnvironment` is set.
+
 ## [0.5.0] - 2026-07-18
 
 ### Added

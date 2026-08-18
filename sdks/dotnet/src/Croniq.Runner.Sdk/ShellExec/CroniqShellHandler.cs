@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Runner.Sdk.ShellExec;
 
@@ -11,10 +12,19 @@ namespace Croniq.Runner.Sdk.ShellExec;
 /// writer. Exit code 0 means success; any other code throws and is reported
 /// as a failed execution.
 ///
-/// Registered via <c>AddCroniqShellHandler()</c>, either as a per-job
-/// handler or as the catch-all default.
+/// Registered via <c>AddCroniqShellHandler(...)</c> — preferably scoped to
+/// the job keys the application intends to run through a shell, or as the
+/// catch-all default via the parameterless overload.
+///
+/// Fail-closed behaviour: a payload that sets the <c>user</c> directive
+/// fails the execution (.NET cannot switch the subprocess user), and
+/// payload-supplied <c>env</c> names that can hijack process resolution or
+/// library loading are rejected unless
+/// <see cref="CroniqShellHandlerOptions.AllowUnsafeEnvironment"/> is set.
 /// </summary>
-public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICroniqJobHandler
+public sealed class CroniqShellHandler(
+    ILogger<CroniqShellHandler> logger,
+    IOptions<CroniqShellHandlerOptions> options) : ICroniqJobHandler
 {
     public async Task HandleAsync(CroniqExecutionContext context, CancellationToken cancellationToken)
     {
@@ -23,8 +33,12 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
             throw new CroniqHandlerException($"shell-exec metadata missing or invalid: {error}");
         }
 
-        var psi = BuildStartInfo(exec);
-        logger.LogDebug("spawning subprocess for {JobKey}: {File} {Args}", context.JobKey, psi.FileName, psi.Arguments);
+        var psi = BuildStartInfo(exec, options.Value);
+        logger.LogDebug(
+            "spawning subprocess for {JobKey}: {File} {Args}",
+            context.JobKey,
+            psi.FileName,
+            psi.ArgumentList.Count > 0 ? string.Join(' ', psi.ArgumentList) : psi.Arguments);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
@@ -67,22 +81,47 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
         }
     }
 
-    private static ProcessStartInfo BuildStartInfo(RunnerExec exec)
+    internal static ProcessStartInfo BuildStartInfo(RunnerExec exec, CroniqShellHandlerOptions options) =>
+        BuildStartInfo(exec, options, RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
+
+    /// <summary>
+    /// Pure <see cref="ProcessStartInfo"/> construction, factored out (with an
+    /// explicit <paramref name="isWindows"/> switch) so unit tests can pin the
+    /// quoting behaviour of both platform branches without spawning anything.
+    /// </summary>
+    internal static ProcessStartInfo BuildStartInfo(RunnerExec exec, CroniqShellHandlerOptions options, bool isWindows)
     {
         ProcessStartInfo psi;
         switch (exec)
         {
             case RunnerExec.Shell sh:
                 {
-                    var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-                    psi = isWindows
-                        ? new ProcessStartInfo("cmd.exe", $"/c {sh.Command}")
-                        : new ProcessStartInfo("/bin/sh", $"-c \"{sh.Command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"");
+                    RejectUserDirective(sh.User);
+                    if (isWindows)
+                    {
+                        // Deliberate raw pass-through: `cmd.exe /c` parses the
+                        // remainder of its command line itself, so the whole
+                        // string is one cmd command line — exactly like the
+                        // POSIX branch hands one string to `sh -c`. Routing the
+                        // command through ArgumentList would layer Win32
+                        // argv-quoting on top of cmd's own parsing and corrupt
+                        // commands containing quotes.
+                        psi = new ProcessStartInfo("cmd.exe") { Arguments = "/c " + sh.Command };
+                    }
+                    else
+                    {
+                        // ArgumentList hands the command to sh as a single argv
+                        // entry — no quoting/escaping round-trip. Mirrors the
+                        // Rust shell runner's `Command::new("sh").arg("-c").arg(cmd)`.
+                        psi = new ProcessStartInfo("/bin/sh");
+                        psi.ArgumentList.Add("-c");
+                        psi.ArgumentList.Add(sh.Command);
+                    }
                     if (!string.IsNullOrEmpty(sh.Workdir))
                     {
                         psi.WorkingDirectory = sh.Workdir;
                     }
-                    ApplyEnv(psi, sh.Env);
+                    ApplyEnv(psi, sh.Env, options);
                     break;
                 }
             case RunnerExec.Exec ex:
@@ -91,6 +130,7 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
                     {
                         throw new CroniqHandlerException("exec.argv is empty");
                     }
+                    RejectUserDirective(ex.User);
                     psi = new ProcessStartInfo(ex.Argv[0]);
                     for (var i = 1; i < ex.Argv.Count; i++)
                     {
@@ -100,7 +140,7 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
                     {
                         psi.WorkingDirectory = ex.Workdir;
                     }
-                    ApplyEnv(psi, ex.Env);
+                    ApplyEnv(psi, ex.Env, options);
                     break;
                 }
             default:
@@ -113,7 +153,34 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
         return psi;
     }
 
-    private static void ApplyEnv(ProcessStartInfo psi, IReadOnlyDictionary<string, string>? env)
+    /// <summary>
+    /// .NET cannot setuid, so a payload that asks for a different user must
+    /// fail the job rather than silently run as the runner's own user (the
+    /// Rust shell runner honours numeric uids on unix; see #431 for its
+    /// fail-open shape). An empty string counts as "not set", mirroring the
+    /// Rust implementation.
+    /// </summary>
+    private static void RejectUserDirective(string? user)
+    {
+        if (!string.IsNullOrEmpty(user))
+        {
+            throw new CroniqHandlerException(
+                $"user directive is not supported by the .NET shell handler: cannot run as '{user}'. " +
+                "Run the runner process itself as the desired user, or use the Rust croniq-shell-runner, which honours numeric uids.");
+        }
+    }
+
+    /// <summary>
+    /// Env names whose value redirects which binaries or libraries get loaded.
+    /// Compared case-insensitively (Windows env names are case-insensitive,
+    /// and a conservative guard should not depend on the platform).
+    /// </summary>
+    private static readonly string[] BlockedEnvNames = ["PATH", "PATHEXT", "COMSPEC", "LD_PRELOAD", "LD_LIBRARY_PATH"];
+
+    /// <summary>Blocked prefixes: dyld injection (macOS) and the SDK's own configuration namespace.</summary>
+    private static readonly string[] BlockedEnvPrefixes = ["DYLD_", "CRONIQ_"];
+
+    private static void ApplyEnv(ProcessStartInfo psi, IReadOnlyDictionary<string, string>? env, CroniqShellHandlerOptions options)
     {
         if (env is null)
         {
@@ -121,8 +188,33 @@ public sealed class CroniqShellHandler(ILogger<CroniqShellHandler> logger) : ICr
         }
         foreach (var kvp in env)
         {
+            if (!options.AllowUnsafeEnvironment && IsBlockedEnvName(kvp.Key))
+            {
+                throw new CroniqHandlerException(
+                    $"payload env variable '{kvp.Key}' is blocked: it can hijack process resolution or library loading. " +
+                    "Set CroniqShellHandlerOptions.AllowUnsafeEnvironment = true to accept it.");
+            }
             psi.Environment[kvp.Key] = kvp.Value;
         }
+    }
+
+    private static bool IsBlockedEnvName(string name)
+    {
+        foreach (var blocked in BlockedEnvNames)
+        {
+            if (string.Equals(name, blocked, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        foreach (var prefix in BlockedEnvPrefixes)
+        {
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void TerminateProcess(Process process)
