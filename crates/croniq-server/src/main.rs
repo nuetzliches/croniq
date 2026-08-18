@@ -962,9 +962,15 @@ async fn main() -> Result<()> {
 
     tracing::info!(address = %addr, "croniq-server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `into_make_service_with_connect_info` is what puts the socket peer
+    // address in the request extensions; without it the per-IP login
+    // throttle (issue #428) has nothing to key on and stays inert.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     tracing::info!("croniq-server stopped gracefully");
 
     // Flush in-flight OTLP spans/logs before the process exits.

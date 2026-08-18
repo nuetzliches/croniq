@@ -46,9 +46,15 @@ if [ ! -f "$DB_FILE" ]; then
   if [ -n "$CRONIQ_ADMIN_PASSWORD" ]; then
     ADMIN_PASS="$CRONIQ_ADMIN_PASSWORD"
     PASS_GENERATED=0
-    if [ "$ADMIN_PASS" = "admin" ] && [ "${CRONIQ_DEMO_MODE:-0}" != "1" ]; then
-      echo "ERROR: CRONIQ_ADMIN_PASSWORD='admin' is not allowed outside demo mode." >&2
-      echo "       Set a strong password or add CRONIQ_DEMO_MODE=1 for local development." >&2
+    # `croniq init` enforces the server-wide password policy (8–72 bytes,
+    # issue #428) and fails with a clear message, so length is not
+    # re-checked here — one source of truth. This guard stays for the
+    # classic weak value, which the length rule alone would not catch if
+    # the policy ever loosened.
+    if [ "$ADMIN_PASS" = "admin" ]; then
+      echo "ERROR: CRONIQ_ADMIN_PASSWORD='admin' is not accepted." >&2
+      echo "       Set a strong password of at least 8 characters." >&2
+      echo "       The demo stack uses 'demo-admin' (see docker-compose.yml)." >&2
       exit 1
     fi
   else

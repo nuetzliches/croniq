@@ -107,16 +107,48 @@ pub fn enroll_user(account: &str) -> Result<TotpEnrolment, TotpError> {
 /// Verify a 6-digit TOTP code against the user's stored seed
 /// (base32-encoded after AES-GCM unwrap).
 pub fn verify_code(secret_b32: &str, code: &str) -> Result<bool, TotpError> {
+    Ok(verify_code_with_step(secret_b32, code)?.is_some())
+}
+
+/// Like [`verify_code`], but on success returns the 30-second time step
+/// the code belongs to. The login path records the highest consumed step
+/// per user and rejects any code from a step at or below it, so a code
+/// observed in transit cannot be replayed within its ±[`TOTP_SKEW`]
+/// validity window (issue #428).
+pub fn verify_code_with_step(secret_b32: &str, code: &str) -> Result<Option<u64>, TotpError> {
     if code.len() != TOTP_DIGITS || !code.chars().all(|c| c.is_ascii_digit()) {
-        return Ok(false);
+        return Ok(None);
     }
     let secret = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
         .map_err(|_| TotpError::InvalidSecret)?;
     let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret)
         .map_err(|e| TotpError::Construct(e.to_string()))?;
-    totp.check_current(code)
-        .map_err(|e| TotpError::Construct(e.to_string()))
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| TotpError::Construct(e.to_string()))?
+        .as_secs();
+    let current_step = now / TOTP_STEP_SECS;
+    // Same acceptance window as `check_current` (± TOTP_SKEW steps), but
+    // generating each candidate explicitly so the matched step is known.
+    let first = current_step.saturating_sub(TOTP_SKEW as u64);
+    let mut matched: Option<u64> = None;
+    for step in first..=current_step + TOTP_SKEW as u64 {
+        let candidate = totp.generate(step * TOTP_STEP_SECS);
+        // Constant-time comparison; every candidate in the window is
+        // checked even after a match, so timing does not reveal which
+        // step (if any) the submitted code hit.
+        let equal = candidate.len() == code.len()
+            && candidate
+                .bytes()
+                .zip(code.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if equal && matched.is_none() {
+            matched = Some(step);
+        }
+    }
+    Ok(matched)
 }
 
 /// Generate a single 8-char lowercase alphanumeric recovery code.
@@ -199,6 +231,50 @@ mod tests {
         let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret).unwrap();
         let code = totp.generate_current().unwrap();
         assert!(verify_code(&e.secret_b32, &code).unwrap());
+    }
+
+    #[test]
+    fn verify_with_step_reports_the_matched_time_step() {
+        let e = enroll_user("a").unwrap();
+        let secret = Secret::Encoded(e.secret_b32.clone()).to_bytes().unwrap();
+        let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret).unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let current_step = now / TOTP_STEP_SECS;
+
+        // The current code maps to the current step (allow one step of
+        // drift in case the test straddles a 30 s boundary).
+        let code = totp.generate(current_step * TOTP_STEP_SECS);
+        let matched = verify_code_with_step(&e.secret_b32, &code)
+            .unwrap()
+            .expect("current code must verify");
+        assert!(matched == current_step || matched == current_step + 1);
+
+        // The previous step's code is inside the skew window and maps to
+        // exactly that earlier step.
+        let prev = totp.generate((current_step - 1) * TOTP_STEP_SECS);
+        if prev != code {
+            let matched_prev = verify_code_with_step(&e.secret_b32, &prev)
+                .unwrap()
+                .expect("previous-step code is inside the skew window");
+            assert_eq!(matched_prev, current_step - 1);
+        }
+
+        // A code from far outside the window does not verify.
+        let stale = totp.generate((current_step - 10) * TOTP_STEP_SECS);
+        if stale != code && stale != prev {
+            assert_eq!(verify_code_with_step(&e.secret_b32, &stale).unwrap(), None);
+        }
+
+        // Malformed input short-circuits to None.
+        assert_eq!(verify_code_with_step(&e.secret_b32, "12345").unwrap(), None);
+        assert_eq!(
+            verify_code_with_step(&e.secret_b32, "abcdef").unwrap(),
+            None
+        );
     }
 
     #[test]

@@ -56,7 +56,19 @@ describe('classifyLoginFailure', () => {
   })
 
   it('reports a 403 as an inactive account', () => {
-    expect(classifyLoginFailure(apiError(403)).kind).toBe('inactive')
+    const f = classifyLoginFailure(apiError(403))
+    expect(f.kind).toBe('inactive')
+    // A locked account is a 401 now, so the message must not promise to
+    // explain lockouts (issue #428).
+    expect(f.message).not.toMatch(/locked/i)
+  })
+
+  it('reports a 429 as throttled rather than bad credentials', () => {
+    // The per-IP login limiter: retrying immediately cannot help, so this
+    // must not read as "wrong password".
+    const f = classifyLoginFailure(apiError(429))
+    expect(f.kind).toBe('throttled')
+    expect(f.message).toMatch(/too many sign-in attempts/i)
   })
 
   it('parses the legacy "<status>: <body>" message format', () => {

@@ -10,7 +10,7 @@ use chrono::Utc;
 use croniq_auth::api_key::hash_api_key;
 use croniq_auth::crypto::wrap_totp_secret;
 use croniq_auth::jwt_secret;
-use croniq_auth::password::hash_password;
+use croniq_auth::password::{hash_password, validate_password};
 use croniq_auth::totp::{enroll_user, hash_recovery_code};
 use croniq_store::models::{
     ApiClient, ApiKey, PasswordCredential, RecoveryCode, Role, TotpSecret, User,
@@ -23,7 +23,7 @@ use uuid::Uuid;
 use super::secret_output::CredentialSink;
 
 /// Recovery code baked into the demo seed so a marketing walkthrough
-/// can reach the MFA step at `admin/admin` and complete it with a
+/// can reach the MFA step at `admin/demo-admin` and complete it with a
 /// fixed code. Mirrored from issue #137 — never use outside the demo
 /// image.
 const DEMO_MFA_RECOVERY_CODE: &str = "123456";
@@ -64,13 +64,14 @@ pub fn init(
             eprintln!("Enter admin password: ");
             let mut buf = String::new();
             std::io::stdin().read_line(&mut buf).into_diagnostic()?;
-            let p = buf.trim().to_string();
-            if p.is_empty() {
-                return Err(miette!("Password cannot be empty"));
-            }
-            p
+            buf.trim().to_string()
         }
     };
+    // The very first admin password is held to exactly the same policy as
+    // every later one (`POST /v1/users`, change-password, password reset,
+    // invitation accept) — one shared constant in croniq-auth, no
+    // "non-empty is good enough" first-run exception (issue #428).
+    validate_password(&password).map_err(|e| miette!("{e}"))?;
 
     std::fs::create_dir_all(data_dir).into_diagnostic()?;
     let db_path = data_dir.join("croniq.db");
@@ -153,8 +154,9 @@ pub fn init(
         None
     };
 
-    // Demo-only: pre-enable TOTP so a marketing walkthrough of admin/admin
-    // hits the MFA step instead of jumping straight to the dashboard. Real
+    // Demo-only: pre-enable TOTP so a marketing walkthrough of the demo
+    // admin login hits the MFA step instead of jumping straight to the
+    // dashboard. Real
     // TOTP codes are time-based, so we bake "123456" into one of the
     // recovery codes — operators in the demo image type that at the
     // recovery prompt. The TOTP secret is generated normally so anyone who
@@ -293,12 +295,56 @@ mod tests {
     }
 
     #[test]
+    fn init_rejects_a_password_below_the_shared_minimum() {
+        // `croniq init` used to accept any non-empty password, so the very
+        // first admin password could be weaker than any later one (#428).
+        let dir = tempdir();
+        let err = init(
+            &dir,
+            "admin",
+            Some("short"),
+            None,
+            None,
+            false,
+            &mut CredentialSink::new(true),
+        )
+        .expect_err("a 5-character password must be refused");
+        assert!(
+            err.to_string().contains("at least 8"),
+            "the error names the minimum: {err}"
+        );
+        assert!(
+            !dir.join("croniq.db").exists(),
+            "validation runs before any DB is created"
+        );
+    }
+
+    #[test]
+    fn init_rejects_a_password_past_bcrypts_truncation_limit() {
+        let dir = tempdir();
+        let err = init(
+            &dir,
+            "admin",
+            Some(&"x".repeat(73)),
+            None,
+            None,
+            false,
+            &mut CredentialSink::new(true),
+        )
+        .expect_err("73 bytes exceeds bcrypt's 72-byte limit");
+        assert!(
+            err.to_string().contains("72"),
+            "the error names the limit: {err}"
+        );
+    }
+
+    #[test]
     fn default_init_does_not_seed_mfa() {
         let dir = tempdir();
         init(
             &dir,
             "admin",
-            Some("pw"),
+            Some("demo-admin"),
             None,
             None,
             false,
@@ -320,7 +366,7 @@ mod tests {
         init(
             &dir,
             "admin",
-            Some("pw"),
+            Some("demo-admin"),
             None,
             None,
             true,

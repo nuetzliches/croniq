@@ -11,9 +11,10 @@
 #   RUNNER_REPLICAS   — demo runner count (default: 2)
 #   RUNNER_FAIL_RATE  — fraction 0.0–1.0 of jobs that fail (default: 0.05)
 #
-# The demo stack uses a fixed admin password (admin/admin) and a fixed API key
-# so the runners can authenticate without manual setup. Do NOT reuse either
-# outside the local demo.
+# The demo stack uses a fixed admin login (admin/demo-admin) and a fixed API
+# key so the runners can authenticate without manual setup. Do NOT reuse either
+# outside the local demo. The password meets the server-wide minimum length
+# (8 characters) that `croniq init` enforces — see issue #428.
 
 services:
   server:
@@ -30,12 +31,12 @@ services:
       RUST_LOG: info
       CRONIQ_DATA_DIR: /var/lib/croniq
       CRONIQ_ADMIN_USER: admin
-      CRONIQ_ADMIN_PASSWORD: admin
+      CRONIQ_ADMIN_PASSWORD: demo-admin
       CRONIQ_DEMO_MODE: "1"
       # Pre-enable TOTP for the seeded admin so a marketing walkthrough
-      # hits the MFA step. Login: admin / admin → recovery code `123456`
-      # at the prompt (10 single-use slots per container reseed). Comment
-      # out to land on the dashboard directly after admin/admin.
+      # hits the MFA step. Login: admin / demo-admin → recovery code
+      # `123456` at the prompt (10 single-use slots per container reseed).
+      # Comment out to land on the dashboard directly after logging in.
       CRONIQ_DEMO_MFA: "1"
       # Optional: seed a default admin API client on first run. Must start
       # with the `croniq_` prefix — the entrypoint fails fast if it doesn't.

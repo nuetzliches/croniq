@@ -54,6 +54,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   new *HTTP hardening* section in [`docs/operations.md`](docs/operations.md),
   which also documents the standing advice to keep the unauthenticated
   `/metrics` listener on an internal interface.
+- **The login surface is hardened against enumeration, guessing, and
+  lockout abuse.** Four measures, none of which changes a request or
+  response schema apart from the new `429` (issue #428):
+
+  *The second factor now has an attempt limit.* Password login has always
+  had an account lockout, but the TOTP step had no equivalent: a caller
+  holding a valid password plus an `mfa_token` could try 6-digit codes
+  unthrottled for the token's full 5-minute TTL, against the ~3 codes that
+  the ±1-step skew window keeps live at any moment. Five failed second
+  factors now invalidate the `mfa_token` itself, forcing a fresh password
+  login; the budget is per token rather than per account, so it cannot be
+  used to lock a victim out of their own second factor. Malformed requests
+  (neither code nor recovery code) and server faults do not count against
+  it. `mfa_token`s additionally carry a unique `jti` claim so that two
+  logins in the same second no longer produce the identical token —
+  without it, invalidating one would have followed the user into the next
+  attempt.
+
+  *A verified TOTP code can no longer be replayed.* The highest consumed
+  30-second time step is recorded per user, and a code from a step at or
+  below it is rejected, so a code observed in transit is dead the moment
+  it is used rather than staying valid for the rest of its window.
+  Recovery codes were already single-use.
+
+  *The username timing oracle is closed.* An unknown username returned
+  `401` immediately, before any hashing, while an existing one paid for a
+  bcrypt cost-12 verification — a difference an attacker can measure. The
+  no-such-user branch now burns one bcrypt verification against a constant
+  hash, mirroring the symmetry `password-reset/request` already had with
+  its unconditional `202`. A locked account answers the same generic `401`
+  as a wrong password too; it previously answered `403`, which confirmed
+  the account exists, since only existing accounts can be locked.
+
+  *`POST /v1/auth/login` and `/v1/auth/login/totp` are throttled per source
+  address.* The per-account lockout is the right defence against online
+  brute force, but on its own it is also a denial-of-service lever: anyone
+  who guesses a username — `admin` being the obvious one — could keep that
+  account locked with five bad logins every 15 minutes. A self-contained
+  in-memory sliding window (30 attempts per 5 minutes, keyed by the socket
+  peer address) now answers `429` beyond the budget, complementing rather
+  than replacing the lockout. `X-Forwarded-For` is deliberately not
+  parsed — it is attacker-controlled on a directly exposed server — so
+  deployments behind a reverse proxy see the proxy's address here and
+  should throttle at the proxy instead.
+
+- **Password length rules are consistent across every entry point.** User
+  create, change-password, password-reset confirm, and invitation accept
+  required 8 characters while `croniq init` accepted anything non-empty,
+  so the very first admin password could be weaker than any password set
+  later. All five now share one constant pair in `croniq-auth`
+  (`PASSWORD_MIN_LEN` / `PASSWORD_MAX_BYTES`) instead of four scattered
+  literals. The new explicit upper bound of 72 bytes makes bcrypt's silent
+  truncation visible: a longer password is refused with a clear message
+  rather than quietly having its tail ignored. The demo Docker stack moves
+  from `admin/admin` to `admin/demo-admin` to satisfy the same rule — the
+  minimum is enforced with no demo-mode exception.
+
 - **Issued credential scopes are bounded by the caller's own scopes.** The
   four endpoints that mint credentials — `POST /v1/users/me/tokens`,
   `POST /v1/api-clients`, `PUT /v1/api-clients/{id}` and `POST /v1/api-keys`,

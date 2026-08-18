@@ -17,6 +17,7 @@ export type LoginFailureKind =
   | 'server'
   | 'credentials'
   | 'inactive'
+  | 'throttled'
   | 'unknown'
 
 export interface LoginFailure {
@@ -64,9 +65,21 @@ export function classifyLoginFailure(err: unknown, hadCode = false): LoginFailur
     }
   }
   if (status === 403) {
+    // A locked account answers 401 like any other bad credential, so that a
+    // 403 cannot be used to probe which usernames exist (issue #428). What
+    // is left here is a deactivated account, which is only reachable once
+    // the password itself was correct.
     return {
       kind: 'inactive',
-      message: 'Account is locked or inactive. Contact an admin.',
+      message: 'Account is inactive. Contact an admin.',
+    }
+  }
+  // Per-IP login throttle (issue #428). Distinct from a wrong password: no
+  // number of retries will help until the window slides.
+  if (status === 429) {
+    return {
+      kind: 'throttled',
+      message: 'Too many sign-in attempts from this address. Wait a few minutes and try again.',
     }
   }
   // 502/503/504 come from a proxy or an upstream that isn't answering, so the

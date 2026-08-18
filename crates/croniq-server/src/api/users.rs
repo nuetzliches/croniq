@@ -20,7 +20,7 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use croniq_auth::context::Scope;
-use croniq_auth::password::{hash_password, verify_password};
+use croniq_auth::password::{hash_password, validate_password, verify_password};
 use croniq_auth::{CallerContext, CallerType};
 use croniq_store::models::{PasswordCredential, Role, User};
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ pub async fn handle_create(
     Json(req): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserView>), StatusCode> {
     require_user_admin(&ctx)?;
-    if req.username.trim().is_empty() || req.password.len() < 8 {
+    if req.username.trim().is_empty() || validate_password(&req.password).is_err() {
         return Err(StatusCode::BAD_REQUEST);
     }
     let store = state
@@ -353,7 +353,7 @@ pub async fn handle_change_password(
     let Ok(user_id) = require_self_user(&ctx) else {
         return StatusCode::UNAUTHORIZED;
     };
-    if req.new_password.len() < 8 {
+    if validate_password(&req.new_password).is_err() {
         return StatusCode::BAD_REQUEST;
     }
     let Some(store) = state.store.as_ref() else {
