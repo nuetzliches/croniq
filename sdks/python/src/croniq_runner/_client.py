@@ -41,10 +41,12 @@ class CroniqClient:
             write=10.0,
             pool=10.0,
         )
+        # No ``headers=`` here: auth is applied per request instead (see
+        # :meth:`_auth_headers`), so an injected client gets the configured
+        # credential too.
         self._http = http or httpx.AsyncClient(
             base_url=options.server_url.rstrip("/"),
             timeout=default_timeout,
-            headers=self._auth_headers(),
         )
         self._owns_client = http is None
 
@@ -54,6 +56,18 @@ class CroniqClient:
         return payload.model_dump(mode="json", exclude_none=True)  # type: ignore[no-any-return]
 
     def _auth_headers(self) -> dict[str, str]:
+        """Authorization header for one request. ApiKey wins over bearer.
+
+        Applied per request rather than baked into the ``httpx.AsyncClient``
+        at construction. Injecting a client (``http=``) is a documented path
+        for mTLS, proxies and custom transports; baking the header in meant an
+        injected client carried no credential at all, so every runner request
+        went out unauthenticated — and if that client happened to carry its own
+        broader ``Authorization``, :attr:`RunnerOptions.api_key` was silently
+        ignored and the runner authenticated as somebody else. Per-request
+        headers also override any header the injected client sets, so it can't
+        smuggle in a second credential. Matches :class:`TriggerClient`.
+        """
         if self._options.api_key:
             return {"Authorization": f"ApiKey {self._options.api_key}"}
         if self._options.bearer_token:
@@ -85,16 +99,25 @@ class CroniqClient:
             write=10.0,
             pool=10.0,
         )
-        resp = await self._http.post("/v1/work/poll", json=self._dump(request), timeout=timeout)
+        resp = await self._http.post(
+            "/v1/work/poll",
+            json=self._dump(request),
+            headers=self._auth_headers(),
+            timeout=timeout,
+        )
         resp.raise_for_status()
         return PollResponse.model_validate(resp.json())
 
     async def ack(self, request: AckRequest) -> None:
-        resp = await self._http.post("/v1/work/ack", json=self._dump(request))
+        resp = await self._http.post(
+            "/v1/work/ack", json=self._dump(request), headers=self._auth_headers()
+        )
         resp.raise_for_status()
 
     async def renew(self, request: RenewRequest) -> None:
-        resp = await self._http.post("/v1/work/renew", json=self._dump(request))
+        resp = await self._http.post(
+            "/v1/work/renew", json=self._dump(request), headers=self._auth_headers()
+        )
         resp.raise_for_status()
 
     async def push_events(self, execution_id: str, events: list[WorkEvent]) -> None:
@@ -102,11 +125,13 @@ class CroniqClient:
             return
         body = [self._dump(ev) for ev in events]
         path = f"/v1/work/{quote(execution_id, safe='')}/events"
-        resp = await self._http.post(path, json=body)
+        resp = await self._http.post(path, json=body, headers=self._auth_headers())
         resp.raise_for_status()
 
     async def register_job(self, request: RegisterJobRequest) -> RegisterJobResponse | None:
-        resp = await self._http.post("/v1/jobs/register", json=self._dump(request))
+        resp = await self._http.post(
+            "/v1/jobs/register", json=self._dump(request), headers=self._auth_headers()
+        )
         resp.raise_for_status()
         # Some server versions return 200 with no body; treat empty as None.
         if not resp.content:

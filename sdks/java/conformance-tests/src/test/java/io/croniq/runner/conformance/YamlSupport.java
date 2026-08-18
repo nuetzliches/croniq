@@ -9,7 +9,9 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
  * Generic SnakeYAML load + type-coercion helpers shared by the case loaders.
@@ -23,11 +25,22 @@ final class YamlSupport {
 
     private YamlSupport() {}
 
-    /** Load a YAML document, normalise its keys to strings, and return the top-level map. */
+    /**
+     * Load a YAML document, normalise its keys to strings, and return the top-level map.
+     *
+     * <p>Constructed with an explicit {@link SafeConstructor}: only standard YAML
+     * scalars, sequences and mappings are built, never arbitrary Java types.
+     * SnakeYAML 2.x's default {@code TagInspector} already refuses global tags
+     * (the CVE-2022-1471 fix) and these fixtures are repo-local, so a bare
+     * {@code new Yaml()} is not exploitable today — but that rests on a
+     * version-dependent default, and pinning the property here keeps it true if
+     * the dependency moves or a fixture ever arrives from outside the repo.
+     */
     @SuppressWarnings("unchecked")
     static Map<String, Object> loadRoot(Path file) throws IOException {
         try (InputStream in = Files.newInputStream(file)) {
-            Object root = normaliseKeys(new Yaml().load(in));
+            Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+            Object root = normaliseKeys(yaml.load(in));
             if (!(root instanceof Map)) {
                 throw new IOException("Top-level YAML must be a map: " + file);
             }

@@ -57,6 +57,28 @@ the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   and `attempt` to every record. Logging configuration written against
   `croniq_runner.job.<key>` needs to move to `croniq_runner.job`.
 
+- **An injected HTTP client no longer discards the configured credential
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).** `CroniqClient`
+  baked the `Authorization` header into the `httpx.AsyncClient` it built for
+  itself, so passing `http=` — the documented path for mTLS, proxies and custom
+  transports — produced a client carrying no credential at all, and every
+  runner request went out unauthenticated. Against a correct server that fails
+  closed (401, then the retry loop), but if the injected client carried its own
+  broader `Authorization`, `RunnerOptions.api_key` was silently ignored and the
+  runner authenticated with the wrong credential. Auth is now applied per
+  request at all five call sites — `poll`, `ack`, `renew`, `push_events`,
+  `register_job` — matching what `TriggerClient` already did, which also means
+  the configured credential overrides any `Authorization` the injected client
+  sets rather than losing to it.
+
+- **The quickstart reads the API key from the environment
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).** `README.md` and
+  the `croniq_runner` / `TriggerClient` docstrings showed
+  `api_key="croniq_..."` inline while the Go and TypeScript samples used
+  `os.Getenv` / `process.env`. They now read `os.environ["CRONIQ_API_KEY"]`
+  and `os.environ["CRONIQ_TRIGGER_KEY"]`, so copy-pasting the sample does not
+  land a literal key in source control. Documentation only.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added

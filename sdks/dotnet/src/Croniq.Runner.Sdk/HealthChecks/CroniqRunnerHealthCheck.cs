@@ -12,6 +12,12 @@ namespace Croniq.Runner.Sdk.HealthChecks;
 ///   <item><description><see cref="HealthStatus.Degraded"/> — within <see cref="UnhealthyThreshold"/> but past <see cref="HealthyThreshold"/>.</description></item>
 ///   <item><description><see cref="HealthStatus.Unhealthy"/> — past <see cref="UnhealthyThreshold"/>, never started, or last error recorded.</description></item>
 /// </list>
+/// <para><b>The description is public.</b> Health endpoints are commonly
+/// exposed without authentication, and a custom or dashboard response writer
+/// renders the description verbatim. Everything written here is therefore
+/// either a fixed literal, a duration, or the fixed failure category from
+/// <c>CroniqRunner.DescribePollFailure</c> — never raw exception text, which
+/// would leak the resolved Croniq host and port to an anonymous reader.</para>
 /// </summary>
 public sealed class CroniqRunnerHealthCheck : IHealthCheck
 {
@@ -58,9 +64,9 @@ public sealed class CroniqRunnerHealthCheck : IHealthCheck
         if (since <= UnhealthyThreshold)
         {
             return Task.FromResult(HealthCheckResult.Degraded(
-                $"last poll {since.TotalSeconds:0}s ago (error: {_probe.LastPollError ?? "n/a"})"));
+                $"last poll {since.TotalSeconds:0}s ago (reason: {_probe.LastPollFailureReason ?? "n/a"})"));
         }
         return Task.FromResult(HealthCheckResult.Unhealthy(
-            $"no successful poll for {since.TotalSeconds:0}s (error: {_probe.LastPollError ?? "n/a"})"));
+            $"no successful poll for {since.TotalSeconds:0}s (reason: {_probe.LastPollFailureReason ?? "n/a"})"));
     }
 }

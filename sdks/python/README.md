@@ -19,6 +19,8 @@ Python 3.11+ required (`asyncio.TaskGroup`, `tomllib`).
 
 ```python
 import asyncio
+import os
+
 from croniq_runner import Runner, RunnerOptions
 
 async def hello(ctx):
@@ -28,7 +30,7 @@ async def hello(ctx):
 async def main():
     runner = Runner(RunnerOptions(
         server_url="http://localhost:4000",
-        api_key="croniq_...",
+        api_key=os.environ["CRONIQ_API_KEY"],
         capabilities=["billing"],
         tags=["lang=python", "env=dev"],
         max_inflight=5,
@@ -38,6 +40,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+The key comes from the environment on purpose — matching the Go and
+TypeScript samples. A literal `api_key="croniq_..."` in a snippet like this
+gets copy-pasted into source control more often than not.
 
 Stop the runner with `Ctrl-C` or by calling `runner.request_drain()` from
 another coroutine — in-flight handlers get up to `drain_timeout_ms` to finish
@@ -133,7 +139,7 @@ explicitly — the SDK then starts, but logs one loud warning on the
 ```python
 RunnerOptions(
     server_url="http://croniq.internal:4000",
-    api_key="croniq_...",
+    api_key=os.environ["CRONIQ_API_KEY"],
     allow_insecure_http=True,  # the API key travels in cleartext
 )
 ```
@@ -164,12 +170,15 @@ the `jobs:trigger` (or `admin`) scope that runner poll keys typically lack.
 
 ```python
 import asyncio
+import os
+
 from croniq_runner import TriggerClient, TriggerClientOptions
 
 async def main():
     async with TriggerClient(TriggerClientOptions(
         server_url="http://localhost:4000",
-        api_key="croniq_...",  # jobs:trigger (or admin) scope — not a runner key
+        # jobs:trigger (or admin) scope — not a runner key
+        api_key=os.environ["CRONIQ_TRIGGER_KEY"],
     )) as client:
         result = await client.trigger(
             "billing:invoice",

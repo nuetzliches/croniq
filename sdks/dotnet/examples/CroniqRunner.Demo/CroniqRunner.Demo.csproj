@@ -6,6 +6,10 @@
     <AssemblyName>CroniqRunner.Demo</AssemblyName>
     <IsPackable>false</IsPackable>
     <UserSecretsId>croniq-runner-demo</UserSecretsId>
+    <!-- Opts this project into the OpenTelemetry NuGetAudit suppressions in
+         Directory.Build.props. Only projects that actually reference an
+         OpenTelemetry package set this. -->
+    <CroniqUsesOpenTelemetry>true</CroniqUsesOpenTelemetry>
   </PropertyGroup>
 
   <ItemGroup>

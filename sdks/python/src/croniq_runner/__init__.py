@@ -19,13 +19,15 @@ without a major-version bump:
 
 Quick start::
 
+    import os
+
     from croniq_runner import Runner, RunnerOptions
 
     async def hello(ctx):
         ctx.logger.info("hello from %s", ctx.job_key)
 
     runner = Runner(RunnerOptions(server_url="http://localhost:4000",
-                                   api_key="croniq_..."))
+                                   api_key=os.environ["CRONIQ_API_KEY"]))
     runner.add_handler("hello:world", hello)
     await runner.run()
 """

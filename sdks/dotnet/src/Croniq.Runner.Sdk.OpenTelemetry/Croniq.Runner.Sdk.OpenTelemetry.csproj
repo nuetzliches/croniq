@@ -5,6 +5,10 @@
     <RootNamespace>Croniq.Runner.Sdk.OpenTelemetry</RootNamespace>
     <AssemblyName>Croniq.Runner.Sdk.OpenTelemetry</AssemblyName>
     <Description>OpenTelemetry tracing and metrics instrumentation for the Croniq Runner SDK. Provides ActivitySource and Meter constants plus TracerProviderBuilder/MeterProviderBuilder extensions.</Description>
+    <!-- Opts this project into the OpenTelemetry NuGetAudit suppressions in
+         Directory.Build.props. Only projects that actually reference an
+         OpenTelemetry package set this. -->
+    <CroniqUsesOpenTelemetry>true</CroniqUsesOpenTelemetry>
   </PropertyGroup>
 
   <ItemGroup>

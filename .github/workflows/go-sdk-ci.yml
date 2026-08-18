@@ -92,10 +92,17 @@ jobs:
           cache: true
           cache-dependency-path: |
             sdks/go/go.sum
+            sdks/go/conformance/go.sum
             sdks/go/otel/go.sum
 
       - name: go vet (core)
         working-directory: sdks/go
+        run: go vet ./...
+
+      - name: go vet (conformance)
+        # Its own module since #443 — `./...` under sdks/go no longer
+        # descends into it, so every step it needs is spelled out.
+        working-directory: sdks/go/conformance
         run: go vet ./...
 
       - name: go vet (otel)
@@ -106,15 +113,20 @@ jobs:
         working-directory: sdks/go
         run: go build ./...
 
+      - name: go build (conformance)
+        working-directory: sdks/go/conformance
+        run: go build ./...
+
       - name: go build (otel)
         working-directory: sdks/go/otel
         run: go build ./...
 
-      - name: go test (core, excluding conformance)
+      - name: go test (core)
         working-directory: sdks/go
-        # Run the fast unit tests separately from the conformance suite
-        # so a long conformance hang doesn't mask a unit-test failure.
-        run: go test -race -timeout 60s $(go list ./... | grep -v /conformance)
+        # The conformance suite lives in its own module and runs in the
+        # `conformance` job below, so a long conformance hang can't mask a
+        # unit-test failure here.
+        run: go test -race -timeout 60s ./...
 
       - name: go test (otel)
         working-directory: sdks/go/otel
@@ -133,11 +145,15 @@ jobs:
           cache: true
           cache-dependency-path: |
             sdks/go/go.sum
+            sdks/go/conformance/go.sum
             sdks/go/otel/go.sum
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
       - name: Run staticcheck (core)
         working-directory: sdks/go
+        run: staticcheck ./...
+      - name: Run staticcheck (conformance)
+        working-directory: sdks/go/conformance
         run: staticcheck ./...
       - name: Run staticcheck (otel)
         working-directory: sdks/go/otel
@@ -154,10 +170,15 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: sdks/go/go.sum
+          cache-dependency-path: |
+            sdks/go/go.sum
+            sdks/go/conformance/go.sum
       - name: Run conformance suite
-        working-directory: sdks/go
-        run: go test -race -timeout 120s ./conformance/... -v
+        # Its own module since #443, so the core SDK's published go.mod
+        # stays stdlib-only. The repo-root go.work resolves the core SDK
+        # from the checkout rather than the proxy.
+        working-directory: sdks/go/conformance
+        run: go test -race -timeout 120s ./... -v
 
   required:
     # Aggregator for branch-protection. Add ONE check to the protected
