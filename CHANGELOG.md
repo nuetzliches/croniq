@@ -6,41 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Security
-
-- **The dashboard's refresh token is out of `localStorage`** (#454). A password
-  or SSO login now delivers it as a `croniq_refresh` cookie
-  (`HttpOnly; Secure; SameSite=Strict; Path=/v1/auth`) and the access token
-  lives in memory only, so neither an XSS nor a compromised npm dependency
-  executing at runtime can read the credential that is good for seven days.
-  `token_generation` (#431) had already narrowed the access token's blast
-  radius, which left the refresh token as the more valuable of the two things
-  sitting in `localStorage`.
-
-  The CSRF-free property that motivated the previous design is intact:
-  `SameSite=Strict` keeps the cookie off every cross-site request, only
-  `POST /v1/auth/refresh` accepts it, and the token it mints lands in a
-  response body a foreign page cannot read (CORS is origin-locked as of
-  #429/#446). Every other API call still authenticates with an `Authorization`
-  header.
-
-  Mechanics worth knowing:
-
-  * Cookie delivery is **opt-in per request** (`"refresh_cookie": true` on
-    `/v1/auth/login`, `/v1/auth/login/totp` and
-    `/v1/auth/login/enroll/totp/confirm`). Non-browser clients — the CLI, curl,
-    the SDKs — are untouched and keep receiving `refresh_token` in the body.
-  * A **cookie-sourced refresh never returns `refresh_token` in the body**.
-    Without that rule the cookie would buy nothing: a script could POST to the
-    refresh endpoint, have the browser attach the `HttpOnly` cookie for it, and
-    read the rotated token out of the response.
-  * `POST /v1/auth/refresh` and `/v1/auth/logout` now accept the token from the
-    cookie when the body carries none; logout revokes it server-side and clears
-    the cookie in the same response.
-  * `Secure` is set only on positive evidence of HTTPS (`Origin`,
-    `X-Forwarded-Proto`, or an `https://` `app_url`) — browsers refuse to send
-    a `Secure` cookie over plain HTTP, so guessing would lock operators out
-    rather than harden anything.
+## [0.33.0] - 2026-08-19
 
 ### Added
 
@@ -89,17 +55,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refresh cookie, which is why they briefly show a spinner rather than the
   login page.
 
-### Fixed
-
-- **SSO login no longer ends on a page of raw JSON.** The IdP redirects the
-  browser to `GET /v1/auth/oidc/callback`, which answered with a
-  `TokenResponse` body — leaving the user looking at JSON while the dashboard
-  never received the tokens, and `oidc.post_login_redirect` parsed but never
-  used. A browser navigation now gets the refresh cookie and a 302 to
-  `post_login_redirect`; a caller that explicitly asks for
-  `Accept: application/json` still gets the JSON body. No token ever appears in
-  a URL, in browser history, or in a proxy log.
-
 ### Changed
 
 - **A cross-origin dashboard build must acknowledge its weaker token storage.**
@@ -113,6 +68,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dashboard keeps its tokens*.
 
 ### Fixed
+
+- **SSO login no longer ends on a page of raw JSON.** The IdP redirects the
+  browser to `GET /v1/auth/oidc/callback`, which answered with a
+  `TokenResponse` body — leaving the user looking at JSON while the dashboard
+  never received the tokens, and `oidc.post_login_redirect` parsed but never
+  used. A browser navigation now gets the refresh cookie and a 302 to
+  `post_login_redirect`; a caller that explicitly asks for
+  `Accept: application/json` still gets the JSON body. No token ever appears in
+  a URL, in browser history, or in a proxy log.
+
 
 - **An API client's refresh token was minted but never stored, so it could not
   be redeemed** (#463). `POST /v1/api-clients/{id}/tokens` returned a full
@@ -304,6 +269,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `TriggerCaseLoader`, so the YAML 1.1 `on:` workaround and the script-entry
   vocabulary exist once rather than twice — two copies of a key list being the
   drift this issue is about.
+
+### Security
+
+- **The dashboard's refresh token is out of `localStorage`** (#454). A password
+  or SSO login now delivers it as a `croniq_refresh` cookie
+  (`HttpOnly; Secure; SameSite=Strict; Path=/v1/auth`) and the access token
+  lives in memory only, so neither an XSS nor a compromised npm dependency
+  executing at runtime can read the credential that is good for seven days.
+  `token_generation` (#431) had already narrowed the access token's blast
+  radius, which left the refresh token as the more valuable of the two things
+  sitting in `localStorage`.
+
+  The CSRF-free property that motivated the previous design is intact:
+  `SameSite=Strict` keeps the cookie off every cross-site request, only
+  `POST /v1/auth/refresh` accepts it, and the token it mints lands in a
+  response body a foreign page cannot read (CORS is origin-locked as of
+  #429/#446). Every other API call still authenticates with an `Authorization`
+  header.
+
+  Mechanics worth knowing:
+
+  * Cookie delivery is **opt-in per request** (`"refresh_cookie": true` on
+    `/v1/auth/login`, `/v1/auth/login/totp` and
+    `/v1/auth/login/enroll/totp/confirm`). Non-browser clients — the CLI, curl,
+    the SDKs — are untouched and keep receiving `refresh_token` in the body.
+  * A **cookie-sourced refresh never returns `refresh_token` in the body**.
+    Without that rule the cookie would buy nothing: a script could POST to the
+    refresh endpoint, have the browser attach the `HttpOnly` cookie for it, and
+    read the rotated token out of the response.
+  * `POST /v1/auth/refresh` and `/v1/auth/logout` now accept the token from the
+    cookie when the body carries none; logout revokes it server-side and clears
+    the cookie in the same response.
+  * `Secure` is set only on positive evidence of HTTPS (`Origin`,
+    `X-Forwarded-Proto`, or an `https://` `app_url`) — browsers refuse to send
+    a `Secure` cookie over plain HTTP, so guessing would lock operators out
+    rather than harden anything.
 
 ## [0.32.0] - 2026-08-18
 
