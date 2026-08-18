@@ -77,18 +77,20 @@ def test_blank_url_is_rejected() -> None:
 
 
 def test_opt_in_accepts_cleartext_url_and_warns(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="croniq_runner.security"):
-        options = RunnerOptions(
-            server_url="http://croniq.example.com:4000", allow_insecure_http=True
-        )
+    url = "http://croniq.example.com:4000"
 
-    assert options.server_url == "http://croniq.example.com:4000"
+    with caplog.at_level(logging.WARNING, logger="croniq_runner.security"):
+        options = RunnerOptions(server_url=url, allow_insecure_http=True)
+
+    assert options.server_url == url
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
-    message = warnings[0].getMessage()
-    assert "SECURITY" in message
-    assert "cleartext" in message
-    assert "http://croniq.example.com:4000" in message
+    assert "SECURITY" in warnings[0].getMessage()
+    assert "cleartext" in warnings[0].getMessage()
+    # Assert on the interpolation argument rather than searching the rendered
+    # message for a URL substring — the latter trips CodeQL's
+    # py/incomplete-url-substring-sanitization heuristic, and this is stricter.
+    assert warnings[0].args == (url,)
 
 
 def test_opt_in_accepts_cleartext_trigger_url_and_warns(
