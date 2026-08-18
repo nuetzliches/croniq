@@ -9,7 +9,9 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
  * Loads a YAML conformance case from disk into a typed {@link CaseSpec}.
@@ -26,7 +28,14 @@ final class CaseLoader {
 
     static CaseSpec load(Path file) throws IOException {
         try (InputStream in = Files.newInputStream(file)) {
-            Yaml yaml = new Yaml();
+            // SafeConstructor, explicitly: it constructs only the standard YAML
+            // scalar/sequence/mapping types and refuses arbitrary Java types.
+            // SnakeYAML 2.x's default TagInspector already rejects global tags
+            // (the CVE-2022-1471 fix) and these fixtures are repo-local, so
+            // `new Yaml()` is not exploitable today — but that safety is a
+            // version-dependent default, and the property we want here is
+            // version-independent. See YamlSupport.loadRoot for the same call.
+            Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
             Object root = yaml.load(in);
             // SnakeYAML 2.x still treats bare YAML 1.1 keywords (`on`, `off`,
             // `yes`, `no`) as booleans even though it nominally defaults to

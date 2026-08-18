@@ -1,16 +1,22 @@
 go 1.25.0
 
-// Local workspace for cross-module development of the Go runner SDK
-// and its OpenTelemetry adapter. Without this file, the otel
-// sub-module's `require github.com/nuetzliches/croniq/sdks/go` would
-// only resolve against published versions on proxy.golang.org —
-// breaking local edits to the core SDK that the otel package needs to
-// pick up immediately.
+// Local workspace for cross-module development of the Go runner SDK,
+// its OpenTelemetry adapter, and the conformance harness. Without this
+// file, each sub-module's `require github.com/nuetzliches/croniq/sdks/go`
+// would only resolve against published versions on proxy.golang.org —
+// breaking local edits to the core SDK that they need to pick up
+// immediately.
 //
 // `go.work` is honoured by `go build`/`go test` only when invoked
 // inside this directory tree; it has no effect on downstream consumers
-// of either module.
+// of any of these modules.
+//
+// Only ./sdks/go and ./sdks/go/otel are ever published (see
+// .github/workflows/go-sdk-release.yml). ./sdks/go/conformance is a
+// test-only module that exists so its yaml.v3 dependency stays out of the
+// published core SDK's go.mod — see the comment in its own go.mod.
 use (
 	./sdks/go
+	./sdks/go/conformance
 	./sdks/go/otel
 )

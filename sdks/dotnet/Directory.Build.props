@@ -43,12 +43,27 @@
     <None Include="$(MSBuildThisFileDirectory)croniq-icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
-  <ItemGroup Label="NuGetAudit suppressions">
+  <ItemGroup Label="NuGetAudit suppressions" Condition="'$(CroniqUsesOpenTelemetry)' == 'true'">
     <!--
       Known OpenTelemetry-related advisories. None have a fixed version available
       against OpenTelemetry 1.14.0 (latest stable). Tracked upstream — we surface
       the suppressions explicitly so a future audit pass signals when they can be
-      dropped. Applied to every project (incl. examples) via Directory.Build.props.
+      dropped.
+
+      SCOPED, deliberately. These used to apply to every project in the tree,
+      including Croniq.Runner.Sdk, which pulls in no OpenTelemetry package at
+      all — a suppression on a project that cannot hit the advisory only
+      degrades that project's audit signal, and would silently swallow the same
+      GHSA arriving later through an unrelated dependency. Projects that really
+      do consume OpenTelemetry opt in by setting
+
+        <CroniqUsesOpenTelemetry>true</CroniqUsesOpenTelemetry>
+
+      in their .csproj. That works from Directory.Build.props (which is imported
+      BEFORE the project body) only because this is an ItemGroup: items evaluate
+      after ALL properties, so the condition sees the project's final value. The
+      same condition on a PropertyGroup here would silently never match — see
+      the note above and Directory.Build.targets.
     -->
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-g94r-2vxg-569j" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-4625-4j76-fww9" />

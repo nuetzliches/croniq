@@ -45,6 +45,16 @@ project follows [Semantic Versioning](https://semver.org/).
   safely addresses the server. New public helper
   `io.croniq.runner.internal.IdentifierGuard` holds the rules.
 
+- **The conformance harness pins SnakeYAML's `SafeConstructor`
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).** `CaseLoader`
+  and `YamlSupport` loaded the shared YAML fixtures through a bare
+  `new Yaml()`. Not exploitable as shipped — SnakeYAML 2.x's default
+  `TagInspector` rejects global tags (the CVE-2022-1471 fix) and the input is
+  repo-local fixtures rather than network data — but that safety is a
+  version-dependent default, so both now construct
+  `new Yaml(new SafeConstructor(new LoaderOptions()))`, which is not. Test
+  harness only; no published artifact changed.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added — logical fire time

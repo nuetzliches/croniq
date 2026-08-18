@@ -87,7 +87,8 @@ class TriggerClient:
 
         async with TriggerClient(TriggerClientOptions(
             server_url="http://localhost:4000",
-            api_key="croniq_...",  # jobs:trigger scope
+            # jobs:trigger scope; read from the environment, never inlined
+            api_key=os.environ["CRONIQ_TRIGGER_KEY"],
         )) as client:
             result = await client.trigger("billing:invoice")
             print(result.execution_id, result.queued, result.deduplicated)

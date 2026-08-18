@@ -429,6 +429,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   case-insensitive) are rejected unless the new
   `CroniqShellHandlerOptions.AllowUnsafeEnvironment` opt-out is set.
 
+- **SDK hygiene bundle: health-check host disclosure, auth on injected HTTP
+  clients, SnakeYAML `SafeConstructor`, dependency scoping
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).** Six
+  individually-minor findings from a security review of `sdks/`, none urgent on
+  its own, all cheap to close.
+
+  *The .NET health check no longer echoes exception text.* `CroniqRunner`
+  passed `ex.Message` from a failed poll into the runner state probe, and
+  `CroniqRunnerHealthCheck` rendered it into the result description.
+  `HttpRequestException` and `SocketException` messages routinely embed the
+  resolved host and port ("No such host is known. (croniq.internal:4000)"), so
+  an unauthenticated reader of `/health` learned the internal Croniq hostname.
+  No credential was ever exposed — API keys never appear in these messages —
+  and the stock ASP.NET Core response writer emits only the aggregate status,
+  so this surfaced only behind a custom or dashboard response writer, which is
+  common enough to be worth closing. A new `CroniqRunner.DescribePollFailure`
+  now derives a fixed category from the exception *type* — `connection failed`,
+  `http status <code>`, `poll timed out`, `poll failed` — and only that reaches
+  the description; the full `ex.Message` is unchanged in the log line, which is
+  operator-only. The probe's property was renamed `LastPollError` →
+  `LastPollFailureReason` (both `internal`) so the invariant is readable at the
+  type.
+
+  *The Python SDK applies auth per request, so an injected HTTP client keeps
+  the configured credential.* `CroniqClient` baked the `Authorization` header
+  into the `httpx.AsyncClient` it constructed, which meant passing `http=` — the
+  documented path for mTLS, proxies and custom transports — produced a client
+  with no credential at all. Against a correct server that fails closed (401,
+  then the retry loop), but if the injected client carried its own broader
+  `Authorization`, `RunnerOptions.api_key` was silently ignored and the runner
+  authenticated as somebody else. `TriggerClient` already did this correctly,
+  with a comment explaining why; `CroniqClient` now follows it, applying
+  `_auth_headers()` at each of the five call sites, which also means the
+  configured credential overrides any header the injected client sets.
+
+  *The Python quickstart reads its key from the environment.* `README.md` and
+  the `croniq_runner` / `TriggerClient` docstrings showed
+  `api_key="croniq_..."` inline while the Go and TypeScript samples used
+  `os.Getenv` / `process.env`; they now use `os.environ["CRONIQ_API_KEY"]` and
+  `os.environ["CRONIQ_TRIGGER_KEY"]`, so a copy-paste does not land a literal
+  key in source control.
+
+  *The Java conformance harness pins `SafeConstructor`.* `CaseLoader` and
+  `YamlSupport` used a bare `new Yaml()`. Not exploitable as shipped —
+  SnakeYAML 2.x's default `TagInspector` rejects global tags (the CVE-2022-1471
+  fix) and the input is repo-local fixtures — but that safety is a
+  version-dependent default, so both now construct
+  `new Yaml(new SafeConstructor(new LoaderOptions()))`, which is
+  version-independent.
+
+  *The published Go SDK is stdlib-only.* `gopkg.in/yaml.v3` sat in
+  `sdks/go/go.mod` although only the conformance harness imported it, so every
+  consumer inherited a dependency no importable package could reach — dead
+  weight in their module graph and live surface in their advisory scans. The
+  harness moved to its own never-published module at `sdks/go/conformance/`
+  (added to `go.work`, wired into the CI and release workflows, carrying a
+  `replace` that `otel/go.mod` deliberately may not). `sdks/go/go.mod` now has
+  an empty `require` block and an empty `go.sum`.
+
+  *The .NET audit suppressions are scoped to the projects that need them.*
+  `Directory.Build.props` applied four OpenTelemetry `NuGetAuditSuppress`
+  entries to every project in the tree, including `Croniq.Runner.Sdk`, which
+  references no OpenTelemetry package — a suppression on a project that cannot
+  hit the advisory only degrades that project's audit signal, and would
+  silently swallow the same GHSA arriving later through an unrelated
+  dependency. The list stays in one place but is now conditioned on a
+  `CroniqUsesOpenTelemetry` property that only the OTel SDK project and the
+  demo app set.
+
+  The issue's closing suggestion — negative conformance cases for hostile
+  server responses — was already delivered as cases 13 and 14 with #441/#452.
+
 ### Fixed
 
 - **`POST /v1/work/renew` is a real per-execution lease

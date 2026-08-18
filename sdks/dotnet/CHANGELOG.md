@@ -54,6 +54,36 @@ The .NET SDK uses its own version track separate from the Croniq server. SDK ver
   `CroniqJob` with `job_key` carried as scope state. Filtering rules written
   against `CroniqJob.<key>` need to move to the `CroniqJob` category.
 
+- **The health-check description no longer echoes exception text
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).** A failed poll
+  put `ex.Message` into the runner state probe and `CroniqRunnerHealthCheck`
+  rendered it into the result description. `HttpRequestException` and
+  `SocketException` messages routinely embed the resolved host and port
+  ("No such host is known. (croniq.internal:4000)"), so an unauthenticated
+  reader of `/health` learned the internal Croniq hostname. No credential was
+  ever exposed — API keys never appear in these messages — and the stock
+  ASP.NET Core response writer emits only the aggregate status, so this
+  surfaced only behind a custom or dashboard response writer. The description
+  now carries a fixed category derived from the exception *type* —
+  `connection failed`, `http status <code>`, `poll timed out` or `poll failed`,
+  produced by the new `internal CroniqRunner.DescribePollFailure` — while the
+  full `ex.Message` stays in the log line, which is operator-only. The wording
+  changed from `(error: …)` to `(reason: …)`; anything parsing the description
+  string should be checked. `IRunnerStateProbe.LastPollError` was renamed
+  `LastPollFailureReason` (both `internal`, so no public API changed) to make
+  the invariant readable at the type.
+
+- **The OpenTelemetry audit suppressions no longer apply to the main SDK
+  ([#443](https://github.com/nuetzliches/croniq/issues/443)).**
+  `Directory.Build.props` applied four `NuGetAuditSuppress` entries to every
+  project in the tree, but `Croniq.Runner.Sdk` references no OpenTelemetry
+  package — a suppression on a project that cannot hit the advisory only
+  degrades that project's audit signal, and would silently swallow the same
+  GHSA arriving later through an unrelated dependency. The list stays in one
+  place but is now conditioned on a `CroniqUsesOpenTelemetry` property that
+  only `Croniq.Runner.Sdk.OpenTelemetry` and the demo app set. Build-time
+  configuration only; no shipped assembly changed.
+
 ### Added
 
 - **Scoped shell-handler registration

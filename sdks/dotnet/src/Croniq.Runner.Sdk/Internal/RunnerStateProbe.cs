@@ -8,7 +8,15 @@ internal interface IRunnerStateProbe
 {
     DateTimeOffset? LastSuccessfulPollAt { get; }
     DateTimeOffset? LastPollFailureAt { get; }
-    string? LastPollError { get; }
+
+    /// <summary>
+    /// Fixed category describing why the last poll failed — never raw
+    /// exception text. Rendered into the (frequently unauthenticated)
+    /// health-check description, so it must not carry hostnames, ports, URLs
+    /// or any other deployment detail. Produced by
+    /// <c>CroniqRunner.DescribePollFailure</c>.
+    /// </summary>
+    string? LastPollFailureReason { get; }
     int InflightCount { get; }
     bool HasStarted { get; }
     bool IsDraining { get; }
@@ -18,14 +26,14 @@ internal sealed class RunnerStateProbe : IRunnerStateProbe
 {
     private DateTimeOffset? _lastSuccessfulPollAt;
     private DateTimeOffset? _lastPollFailureAt;
-    private string? _lastPollError;
+    private string? _lastPollFailureReason;
     private int _inflight;
     private bool _hasStarted;
     private bool _isDraining;
 
     public DateTimeOffset? LastSuccessfulPollAt => _lastSuccessfulPollAt;
     public DateTimeOffset? LastPollFailureAt => _lastPollFailureAt;
-    public string? LastPollError => _lastPollError;
+    public string? LastPollFailureReason => _lastPollFailureReason;
     public int InflightCount => Volatile.Read(ref _inflight);
     public bool HasStarted => _hasStarted;
     public bool IsDraining => _isDraining;
@@ -36,13 +44,19 @@ internal sealed class RunnerStateProbe : IRunnerStateProbe
     public void MarkSuccessfulPoll(DateTimeOffset at)
     {
         _lastSuccessfulPollAt = at;
-        _lastPollError = null;
+        _lastPollFailureReason = null;
     }
 
-    public void MarkPollFailure(DateTimeOffset at, string error)
+    /// <param name="at">When the failure was observed.</param>
+    /// <param name="reason">
+    /// A fixed category from <c>CroniqRunner.DescribePollFailure</c>. Never
+    /// pass <c>ex.Message</c> — this value reaches the public health-check
+    /// description.
+    /// </param>
+    public void MarkPollFailure(DateTimeOffset at, string reason)
     {
         _lastPollFailureAt = at;
-        _lastPollError = error;
+        _lastPollFailureReason = reason;
     }
 
     public void IncrementInflight() => Interlocked.Increment(ref _inflight);

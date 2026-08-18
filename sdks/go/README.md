@@ -186,8 +186,16 @@ Span name: `croniq.execute {job_key}`. Attributes: `croniq.job.key`, `croniq.exe
 The SDK is validated against the shared, language-agnostic conformance suite at [`sdks/conformance/`](../conformance/) — the same YAML cases that gate the .NET SDK. Run them locally:
 
 ```sh
-cd sdks/go && go test ./conformance/...
+cd sdks/go/conformance && go test ./...
 ```
+
+The harness is a **separate module** (`sdks/go/conformance/go.mod`), never
+tagged or published. That is what keeps the core SDK's published `go.mod`
+free of `gopkg.in/yaml.v3`: the loaders need it to read the shared YAML
+fixtures, but nothing a consumer can import ever reaches them, so they don't
+belong in the dependency graph a `go get` produces. The repo-root
+[`go.work`](../../go.work) resolves the core SDK from the checkout, so local
+edits are picked up without a committed `replace` in anything published.
 
 When the wire protocol gains a new behaviour the YAML case is added to `sdks/conformance/cases/` first — every SDK author then sees the same definition-of-done. Producer (trigger) cases live alongside in `sdks/conformance/cases-trigger/` and drive the `TriggerClient` instead of a runner loop.
 

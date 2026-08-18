@@ -203,6 +203,36 @@ public sealed class CroniqRunner : IAsyncDisposable
         return false;
     }
 
+    /// <summary>
+    /// Maps a poll exception to a fixed, non-identifying reason string.
+    /// </summary>
+    /// <remarks>
+    /// <para>The returned value is surfaced publicly by
+    /// <c>CroniqRunnerHealthCheck</c>, and a health endpoint is routinely
+    /// exposed unauthenticated. <see cref="HttpRequestException"/> and
+    /// <see cref="System.Net.Sockets.SocketException"/> messages embed the
+    /// resolved host and port ("No such host is known. (croniq.internal:4000)"),
+    /// so echoing <c>ex.Message</c> there hands an anonymous reader the
+    /// internal Croniq hostname. Only the exception *type* — plus the HTTP
+    /// status code, which describes the response and not the deployment —
+    /// crosses into the description; the full message stays in the log line,
+    /// which is operator-only.</para>
+    /// </remarks>
+    internal static string DescribePollFailure(Exception ex) => ex switch
+    {
+        // Ordered most specific first: an HttpRequestException that carries a
+        // status code came back from the server, so the status is the useful
+        // fact. Without one it never got a response at all.
+        HttpRequestException { StatusCode: not null } http =>
+            $"http status {(int)http.StatusCode.Value}",
+        HttpRequestException => "connection failed",
+        System.Net.Sockets.SocketException => "connection failed",
+        // The poll long-polls, so a client-side timeout is expected enough to
+        // deserve its own category rather than the catch-all.
+        TaskCanceledException or OperationCanceledException => "poll timed out",
+        _ => "poll failed",
+    };
+
     private async Task PollLoopAsync(CancellationToken ct)
     {
         // Tracks consecutive `409 Conflict` responses on poll. See
@@ -234,7 +264,9 @@ public sealed class CroniqRunner : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _stateProbe.MarkPollFailure(_timeProvider.GetUtcNow(), ex.Message);
+                // Category only — never ex.Message. See DescribePollFailure.
+                // The full message is preserved in the log calls below.
+                _stateProbe.MarkPollFailure(_timeProvider.GetUtcNow(), DescribePollFailure(ex));
 
                 // Detect 409 Conflict — server says another runner is
                 // already registered with this runner_id. After enough

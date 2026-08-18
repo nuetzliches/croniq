@@ -12,9 +12,17 @@ The Croniq Go SDK ships as **two independent modules**:
 | `github.com/nuetzliches/croniq/sdks/go` | `sdks/go/vX.Y.Z` | [`sdks/go/`](.) |
 | `github.com/nuetzliches/croniq/sdks/go/otel` | `sdks/go/otel/vX.Y.Z` | [`sdks/go/otel/`](otel/) |
 
-Two modules instead of one is deliberate: the core stays
-dependency-light (single yaml dep in the conformance suite); only users
-who want tracing pull in the OpenTelemetry SDK.
+Two modules instead of one is deliberate: the core is **stdlib-only**, with
+an empty `require` block and an empty `go.sum`; only users who want tracing
+pull in the OpenTelemetry SDK.
+
+A third module, [`sdks/go/conformance/`](conformance/), is **never tagged and
+never published**. It exists so its `gopkg.in/yaml.v3` requirement — needed
+to read the shared conformance fixtures — stays out of the core SDK's
+published `go.mod`, where it used to sit even though no importable package
+reached it. Do not tag it; the release workflow only recognises
+`sdks/go/v*` and `sdks/go/otel/v*`. Because it is unpublished it may (and
+does) carry a `replace` pointing at `../`, unlike `otel/go.mod`.
 
 ## How cross-module local dev works
 
@@ -26,6 +34,7 @@ the repo root to redirect that require to the in-tree source:
 ```
 use (
     ./sdks/go
+    ./sdks/go/conformance
     ./sdks/go/otel
 )
 ```
@@ -37,8 +46,10 @@ validate step **rejects any `replace` directive in
 [otel/go.mod](otel/go.mod)** so the asymmetry stays committed in
 `go.work`, not in the published module.
 
-Run tests from the repo root (`go test ./sdks/go/...`) to use the
-workspace; both modules resolve to in-tree source automatically.
+Run tests from inside each module directory to use the workspace; the core
+SDK resolves to in-tree source automatically from both the otel and the
+conformance module. (`go test ./sdks/go/...` from the repo root only covers
+the core module — nested modules are excluded from a parent's `./...`.)
 
 ## Cutting a release
 

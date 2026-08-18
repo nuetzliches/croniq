@@ -81,6 +81,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             sdks/go/go.sum
+            sdks/go/conformance/go.sum
             sdks/go/otel/go.sum
 
       - name: Forbid `replace` in otel/go.mod on release
@@ -115,8 +116,12 @@ jobs:
 
       - name: Run conformance suite (core only)
         if: needs.resolve.outputs.module == 'core'
-        working-directory: sdks/go
-        run: go test -race -timeout=120s ./conformance/...
+        # Separate, never-published module since #443 — it holds the
+        # yaml.v3 dependency that used to sit in the core SDK's go.mod.
+        # It resolves the core SDK from this checkout via the repo-root
+        # go.work, so it still gates the tag being released.
+        working-directory: sdks/go/conformance
+        run: go test -race -timeout=120s ./...
 
       - name: Warm up proxy.golang.org for ${{ needs.resolve.outputs.tag }}
         # Triggering the Go module proxy to fetch the tag is what makes
