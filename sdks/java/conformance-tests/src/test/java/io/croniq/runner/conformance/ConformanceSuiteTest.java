@@ -38,7 +38,10 @@ class ConformanceSuiteTest {
             "07-auth-apikey-header.yaml",
             "08-self-register-schedule.yaml",
             "09-streaming-logs-flush-before-ack.yaml",
-            "10-streaming-logs-time-threshold.yaml");
+            "10-streaming-logs-time-threshold.yaml",
+            // #441: hostile server-supplied identifiers
+            "13-hostile-identifiers-rejected.yaml",
+            "14-hostile-execution-id-dropped.yaml");
 
     static Stream<Arguments> cases() throws Exception {
         if (!Files.isDirectory(CASES_DIR)) {
