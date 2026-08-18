@@ -137,6 +137,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`POST /v1/work/renew` is a real per-execution lease
+  ([#438](https://github.com/nuetzliches/croniq/issues/438)).** The handler
+  accepted a `RenewRequest { runner_id, execution_id }` but never read
+  `execution_id`: it only bumped the runner's registry-wide `last_poll_at`, so
+  a per-runner heartbeat was wearing a per-execution lease API. Two things
+  followed from that. `{"renewed": true}` came back for executions the caller
+  did not hold, that had already finished, or that never existed — the
+  response asserted a renewal of something the server had not looked at. And
+  because the watchdog's stale-claim reaper exempted every claim a live runner
+  had listed as inflight, one renew kept the reaper off *all* of that runner's
+  claims: a runner genuinely wedged on some executions still looked healthy
+  for them as long as its renew timer ticked for one other.
+
+  Renew now verifies the named execution: it must exist (`404` otherwise), be
+  `claimed`, and be held by the calling runner (`409` otherwise — a renew that
+  races the runner's own completion lands here, which is harmless and never
+  retryable). Only then is that one execution's lease refreshed. Leases are
+  tracked per execution alongside the runner registry, stamped at dispatch and
+  refreshed by both renew and any poll that lists the execution as inflight;
+  the reaper's liveness exemption now reads that per-execution record and
+  requires it to belong to the claim's own runner, so an execution a runner
+  stopped renewing is reaped on schedule while its siblings keep running. The
+  runner's liveness heartbeat is still refreshed on a successful renew, since
+  a renew does prove the process is alive.
+
+  No request or response schema changed and no runner configuration changes:
+  the SDKs already renew once per in-flight execution, which is exactly what
+  the endpoint now expects. A renew arriving after its execution finished
+  changes from `200` to `409`; all SDKs discard the renew result, so this is
+  invisible to handlers (SDK-side logging of it is tracked separately). Lease
+  state is in memory and refills from the next poll after a server restart,
+  well inside the reaper's grace window. `openapi.yaml` documents the new
+  semantics and the `404` / `409` responses; see also *Orphaned claims* in
+  [`docs/operations.md`](docs/operations.md).
 - **.NET SDK: POSIX shell commands reach `sh` verbatim
   ([#442](https://github.com/nuetzliches/croniq/issues/442)).** The shell
   handler interpolated the command into `/bin/sh -c "…"`, escaping `"` but

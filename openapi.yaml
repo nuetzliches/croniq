@@ -1635,16 +1635,50 @@ paths:
 
   /v1/work/renew:
     post:
-      summary: Renew a work item lease
+      summary: Renew the lease on one claimed execution
+      description: |
+        Extends the lease on the **single execution** named by
+        `execution_id`, on behalf of the runner named by `runner_id`. The
+        execution must exist, be `claimed`, and be held by that runner.
+
+        The renewed lease is what exempts a claim from the watchdog's
+        stale-claim reaper, and the exemption is per execution: renewing one
+        execution does not keep the reaper off the runner's other claims.
+        Runners with several executions in flight must therefore renew each
+        of them (the SDKs run one renew timer per execution).
+
+        A successful renew also refreshes the runner's own liveness
+        heartbeat, since it proves the process is alive.
       requestBody:
         content:
           application/json:
             schema:
+              required: [runner_id, execution_id]
               properties:
                 runner_id: { type: string }
-                execution_id: { type: string }
+                execution_id: { type: string, format: uuid }
       responses:
-        "200": { description: Renewed }
+        "200":
+          description: |
+            The lease on `execution_id` was renewed. `renewed` is `true` only
+            when that execution was actually consulted and its lease
+            extended.
+          content:
+            application/json:
+              schema:
+                properties:
+                  renewed: { type: boolean }
+        "404":
+          description: |
+            No such execution — `execution_id` names nothing the server
+            knows (or is not a valid execution id). Not retryable.
+        "409":
+          description: |
+            The execution exists but its lease is not this runner's to
+            extend: it is no longer `claimed` (completed, cancelled, or
+            requeued by the watchdog), or it is claimed by a different
+            runner. Ordinary and harmless when a renew races the runner's
+            own completion — SDKs may ignore it — but it is never retryable.
         "403":
           description: |
             The `runner_id` in the request body is bound to a different
@@ -1656,8 +1690,9 @@ paths:
             `pull_api { runner_identity_binding "off" }`.
         "503":
           description: |
-            The runner-identity binding could not be read or written. The
-            check fails closed rather than accepting the request; retry.
+            The runner-identity binding, or the execution's claim state,
+            could not be read. Both checks fail closed rather than accepting
+            the request; retry.
 
   /v1/work/{execution_id}/events:
     post:

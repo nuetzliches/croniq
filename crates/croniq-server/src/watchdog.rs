@@ -501,6 +501,12 @@ impl WatchdogLoop {
             }
 
             for exec_id in &requeued_ids {
+                // Hygiene: a dead runner has not renewed within the grace
+                // window anyway (a renew bumps the heartbeat), but drop any
+                // leftover lease record with the claim it belonged to.
+                self.runner
+                    .clear_lease(runner_id, &exec_id.to_string())
+                    .await;
                 result.requeued.push(*exec_id);
             }
             result.dead_runners.push(runner_id.clone());
@@ -841,25 +847,19 @@ impl WatchdogLoop {
             return;
         }
 
-        // Snapshot the inflight sets of all live (non-Dead) runners once.
-        // A claim that its runner still reports as inflight is being worked
-        // on (slow-but-alive handler) — reaping it would double-run a
-        // singleton. Orphans never show up here: a restarted session polls
-        // with an empty inflight list, and a vanished runner goes Dead.
-        let live_inflight: HashMap<String, HashSet<String>> = {
-            let reg = self.runner.registry.read().await;
-            reg.all()
-                .filter(|r| {
-                    r.status_at_with_ttl(now, self.runner.lease_ttl_secs) != RunnerStatus::Dead
-                })
-                .map(|r| {
-                    (
-                        r.runner_id.clone(),
-                        r.inflight.iter().cloned().collect::<HashSet<String>>(),
-                    )
-                })
-                .collect()
-        };
+        // Snapshot the per-execution lease renewals once (issue #438). A
+        // claim whose lease its OWN runner refreshed within the grace window
+        // — at dispatch, via a poll that reports it inflight, or via an
+        // explicit `POST /v1/work/renew` — is being worked on
+        // (slow-but-alive handler); reaping it would double-run a singleton.
+        // Unlike the pre-#438 exemption (the last inflight set reported by
+        // any live runner), this is strictly per-execution: renewing one
+        // execution does not keep the reaper off the same runner's other
+        // claims, and a wedged runner whose renew timer still fires for one
+        // execution no longer shields work it stopped reporting. Orphans
+        // never show up here: a restarted session neither reports nor renews
+        // them, so their entries (if any) age out of the window.
+        let leases = self.runner.lease_renewals.read().await.clone();
 
         let mut reaped: Vec<(Option<String>, uuid::Uuid)> = Vec::new();
         let mut enqueued = 0usize;
@@ -882,9 +882,11 @@ impl WatchdogLoop {
             }
 
             if let Some(rid) = execution.runner_id.as_deref()
-                && live_inflight
-                    .get(rid)
-                    .is_some_and(|inflight| inflight.contains(&execution.id.to_string()))
+                && leases.get(&execution.id.to_string()).is_some_and(|lease| {
+                    lease.runner_id == rid
+                        && now.signed_duration_since(lease.renewed_at).num_seconds()
+                            < grace_secs as i64
+                })
             {
                 continue;
             }
@@ -939,13 +941,19 @@ impl WatchdogLoop {
 
         // Drop the reaped executions from their (possibly still registered)
         // runner's inflight bookkeeping so registry capacity stats don't
-        // count them twice once the work is re-claimed.
+        // count them twice once the work is re-claimed. Their lease records
+        // go too — the lease belonged to the claim that just ended.
         {
             let mut reg = self.runner.registry.write().await;
             for (rid, id) in &reaped {
                 if let Some(rid) = rid {
                     reg.release(rid, &id.to_string());
                 }
+            }
+        }
+        for (rid, id) in &reaped {
+            if let Some(rid) = rid {
+                self.runner.clear_lease(rid, &id.to_string()).await;
             }
         }
 
@@ -1527,7 +1535,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_claim_reaper_skips_claim_reported_inflight_by_live_runner() {
+    async fn stale_claim_reaper_skips_claim_with_fresh_lease() {
         let store = make_store();
         let runner = make_runner();
 
@@ -1538,19 +1546,12 @@ mod tests {
             Utc::now() - ChronoDuration::hours(1),
         );
 
-        // Live runner still reports the execution inflight — a
+        // The claim's own runner refreshed its lease recently — the effect
+        // of a poll reporting it inflight or a `POST /v1/work/renew` — so a
         // slow-but-alive handler must not be double-run.
-        {
-            let mut reg = runner.registry.write().await;
-            let _ = reg.register_or_update(
-                "app-runner",
-                vec!["billing".into()],
-                3,
-                vec![exec_id.to_string()],
-                None,
-                vec![],
-            );
-        }
+        runner
+            .touch_leases("app-runner", &[exec_id.to_string()], Utc::now())
+            .await;
 
         let watchdog = WatchdogLoop::new(
             vec![make_job("test:job")],
@@ -1562,6 +1563,133 @@ mod tests {
         assert!(result.stale_claims.is_empty());
         let exec = store.get_execution(exec_id).unwrap().unwrap();
         assert_eq!(exec.state, ExecutionState::Claimed);
+    }
+
+    /// Issue #438: the liveness exemption is per execution. A runner that
+    /// keeps renewing ONE of its claims (which also keeps its registry
+    /// heartbeat fresh, so it never goes Dead) no longer shields the claims
+    /// it stopped reporting or renewing.
+    #[tokio::test]
+    async fn stale_claim_reaper_exempts_only_the_renewed_execution() {
+        let store = make_store();
+        let runner = make_runner();
+        let now = Utc::now();
+
+        let renewed = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            now - ChronoDuration::hours(1),
+        );
+        let wedged = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            now - ChronoDuration::hours(1),
+        );
+
+        // Registry state of a wedged runner: alive (fresh heartbeat, kept so
+        // by the renew), still listing both executions from its last poll —
+        // pre-#438 this exempted BOTH claims.
+        {
+            let mut reg = runner.registry.write().await;
+            let _ = reg.register_or_update(
+                "app-runner",
+                vec!["billing".into()],
+                3,
+                vec![renewed.to_string(), wedged.to_string()],
+                None,
+                vec![],
+            );
+        }
+        // But only one execution's lease was refreshed recently.
+        runner
+            .touch_leases("app-runner", &[renewed.to_string()], now)
+            .await;
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(
+            result.stale_claims,
+            vec![wedged],
+            "only the un-renewed claim is reaped"
+        );
+        assert_eq!(
+            store.get_execution(renewed).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+        assert_eq!(
+            store.get_execution(wedged).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_ignores_expired_lease() {
+        let store = make_store();
+        let runner = make_runner();
+        let now = Utc::now();
+
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            now - ChronoDuration::hours(1),
+        );
+
+        // Lease last refreshed 30 min ago — far outside the grace window
+        // (240 s at the default lease_ttl), so it exempts nothing.
+        runner
+            .touch_leases(
+                "app-runner",
+                &[exec_id.to_string()],
+                now - ChronoDuration::minutes(30),
+            )
+            .await;
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.stale_claims, vec![exec_id]);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_ignores_lease_from_a_different_runner() {
+        let store = make_store();
+        let runner = make_runner();
+        let now = Utc::now();
+
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            now - ChronoDuration::hours(1),
+        );
+
+        // A lease record from a runner that is NOT the claim's holder must
+        // not keep the claim alive — only the claiming runner's own renewals
+        // count (same fencing as the renew endpoint itself).
+        runner
+            .touch_leases("other-runner", &[exec_id.to_string()], now)
+            .await;
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.stale_claims, vec![exec_id]);
     }
 
     #[tokio::test]

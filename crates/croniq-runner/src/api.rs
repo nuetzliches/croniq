@@ -25,6 +25,21 @@ use crate::{
 
 // ─── Shared state ─────────────────────────────────────────────────────────────
 
+/// A per-execution lease-liveness record (issue #438).
+///
+/// Kept in memory like the registry's `inflight` bookkeeping: after a server
+/// restart the map refills within one poll/renew interval, well inside the
+/// stale-claim reaper's grace window.
+#[derive(Debug, Clone)]
+pub struct LeaseRenewal {
+    /// The runner that refreshed the lease. The stale-claim reaper only
+    /// honours the record when it matches the execution's claiming runner,
+    /// so a runner cannot keep a foreign claim alive by naming it.
+    pub runner_id: String,
+    /// When the lease was last refreshed.
+    pub renewed_at: DateTime<Utc>,
+}
+
 /// State shared across all request handlers.
 #[derive(Debug)]
 pub struct AppState {
@@ -51,6 +66,14 @@ pub struct AppState {
     /// stale entry (whose runner died before reporting) can be pruned and
     /// never leaks the map.
     pub ephemeral_inflight: RwLock<HashMap<String, DateTime<Utc>>>,
+    /// Per-execution lease liveness (issue #438): execution id → the runner
+    /// that holds it and when its lease was last refreshed. Refreshed by
+    /// every poll for each execution the runner reports inflight, and by
+    /// `POST /v1/work/renew` for the single execution named there. The
+    /// watchdog's stale-claim reaper exempts a claim only while its OWN
+    /// entry is fresh — renewing one execution does not keep the reaper off
+    /// the runner's other claims.
+    pub lease_renewals: RwLock<HashMap<String, LeaseRenewal>>,
 }
 
 impl AppState {
@@ -62,6 +85,7 @@ impl AppState {
             lease_ttl_secs: 120,
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
+            lease_renewals: RwLock::new(HashMap::new()),
         })
     }
 
@@ -73,6 +97,7 @@ impl AppState {
             lease_ttl_secs,
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
+            lease_renewals: RwLock::new(HashMap::new()),
         })
     }
 
@@ -139,6 +164,58 @@ impl AppState {
             m.remove(id);
         }
     }
+
+    /// Grace window for per-execution lease liveness, shared with the
+    /// stale-claim reaper's threshold (issue #374): a lease refreshed within
+    /// this window counts as live.
+    pub fn lease_grace_secs(&self) -> u64 {
+        (2 * self.lease_ttl_secs).max(120)
+    }
+
+    /// Refresh the per-execution lease of each id in `execution_ids` on
+    /// behalf of `runner_id` (issue #438). Called on every poll with the
+    /// runner's reported inflight list, at dispatch for freshly assigned
+    /// work, and by `POST /v1/work/renew` with the one execution it names.
+    ///
+    /// Opportunistically prunes entries older than the grace window first —
+    /// a lease that old exempts nothing any more, so dropping it keeps the
+    /// map bounded by recently-live executions.
+    pub async fn touch_leases(
+        &self,
+        runner_id: &str,
+        execution_ids: &[String],
+        now: DateTime<Utc>,
+    ) {
+        if execution_ids.is_empty() {
+            return;
+        }
+        let grace = ChronoDuration::seconds(self.lease_grace_secs() as i64);
+        let mut leases = self.lease_renewals.write().await;
+        leases.retain(|_, lease| now.signed_duration_since(lease.renewed_at) < grace);
+        for id in execution_ids {
+            leases.insert(
+                id.clone(),
+                LeaseRenewal {
+                    runner_id: runner_id.to_string(),
+                    renewed_at: now,
+                },
+            );
+        }
+    }
+
+    /// Drop the lease record of a finished or reaped execution. Only removes
+    /// the entry when `runner_id` matches the recorded holder, so an ack that
+    /// the completion CAS is about to reject (wrong runner) cannot strip a
+    /// live execution of its reaper exemption.
+    pub async fn clear_lease(&self, runner_id: &str, execution_id: &str) {
+        let mut leases = self.lease_renewals.write().await;
+        if leases
+            .get(execution_id)
+            .is_some_and(|lease| lease.runner_id == runner_id)
+        {
+            leases.remove(execution_id);
+        }
+    }
 }
 
 impl Default for AppState {
@@ -150,6 +227,7 @@ impl Default for AppState {
             lease_ttl_secs: 120,
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
+            lease_renewals: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -566,6 +644,43 @@ mod tests {
         )
         .await;
         assert!(resp2["cancel"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn touch_leases_records_holder_and_prunes_expired_entries() {
+        // Default lease_ttl 120 s ⇒ grace window 240 s.
+        let state = make_state().await;
+        let now = chrono::Utc::now();
+
+        let stale_at = now - chrono::Duration::seconds(500);
+        state
+            .touch_leases("r1", &["exec-old".into()], stale_at)
+            .await;
+        state.touch_leases("r2", &["exec-new".into()], now).await;
+
+        let leases = state.lease_renewals.read().await;
+        assert!(
+            !leases.contains_key("exec-old"),
+            "entries older than the grace window are pruned on the next touch"
+        );
+        let lease = leases.get("exec-new").expect("fresh lease recorded");
+        assert_eq!(lease.runner_id, "r2");
+        assert_eq!(lease.renewed_at, now);
+    }
+
+    #[tokio::test]
+    async fn clear_lease_only_removes_the_holders_own_entry() {
+        let state = make_state().await;
+        let now = chrono::Utc::now();
+        state.touch_leases("r1", &["exec-1".into()], now).await;
+
+        // A different runner (e.g. an ack the completion CAS will reject)
+        // must not strip the live execution of its lease.
+        state.clear_lease("r2", "exec-1").await;
+        assert!(state.lease_renewals.read().await.contains_key("exec-1"));
+
+        state.clear_lease("r1", "exec-1").await;
+        assert!(!state.lease_renewals.read().await.contains_key("exec-1"));
     }
 
     #[tokio::test]

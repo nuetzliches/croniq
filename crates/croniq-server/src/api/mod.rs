@@ -802,6 +802,16 @@ async fn handle_poll(
         }
     };
 
+    // Every poll doubles as a per-execution lease refresh for the executions
+    // the runner reports inflight (issue #438): the stale-claim reaper
+    // exempts a claim only while its own lease is fresh, so a slow-but-alive
+    // handler stays protected poll by poll instead of riding on runner-wide
+    // liveness.
+    state
+        .runner
+        .touch_leases(&req.runner_id, &req.inflight, Utc::now())
+        .await;
+
     if let RegisterOutcome::TookOver {
         previous_instance_id,
     } = &outcome
@@ -1066,12 +1076,25 @@ async fn try_dequeue_for(
     }
     drop(q);
 
-    let mut reg = state.runner.registry.write().await;
-    items
-        .into_iter()
-        .filter(|item| reg.claim(runner_id, &item.execution_id))
-        .map(WorkAssignment::from)
-        .collect()
+    let assignments: Vec<WorkAssignment> = {
+        let mut reg = state.runner.registry.write().await;
+        items
+            .into_iter()
+            .filter(|item| reg.claim(runner_id, &item.execution_id))
+            .map(WorkAssignment::from)
+            .collect()
+    };
+
+    // A dispatch starts the execution's lease (issue #438): the claim is
+    // live from the moment it is handed out, before the runner's first
+    // inflight report or explicit renew.
+    let assigned_ids: Vec<String> = assignments.iter().map(|a| a.execution_id.clone()).collect();
+    state
+        .runner
+        .touch_leases(runner_id, &assigned_ids, Utc::now())
+        .await;
+
+    assignments
 }
 
 /// Read the `__max_concurrent` limit from a work item's metadata.
@@ -1160,6 +1183,15 @@ async fn handle_complete(
         let mut reg = state.runner.registry.write().await;
         reg.release(&req.runner_id, &req.execution_id);
     }
+    // The execution is done from this runner's point of view — drop its
+    // per-execution lease record (issue #438). `clear_lease` only removes
+    // the entry when this runner is the recorded holder, so an ack the
+    // completion CAS will reject cannot strip a live claim of its reaper
+    // exemption.
+    state
+        .runner
+        .clear_lease(&req.runner_id, &req.execution_id)
+        .await;
 
     let event = CompletionEvent {
         runner_id: req.runner_id.clone(),
@@ -3443,9 +3475,13 @@ mod tests {
     /// (d) A foreign credential must not renew another runner's lease —
     /// keeping a dead runner's lease alive suppresses the watchdog requeue of
     /// its abandoned executions.
+    ///
+    /// Renewed for #438: the renew names a real execution the victim's runner
+    /// actually holds. The earlier version renewed a random UUID and pinned
+    /// the accidental 200 that came out of `execution_id` being ignored.
     #[tokio::test]
     async fn foreign_credential_cannot_renew_another_runners_lease() {
-        let (state, _store, _rx) = make_bound_state();
+        let (state, store, _rx) = make_bound_state();
         let victim = runner_token(&state, "client-a");
         let attacker = runner_token(&state, "client-b");
 
@@ -3456,7 +3492,7 @@ mod tests {
             poll_body("worker-1", "iid-victim"),
         )
         .await;
-        let exec = uuid::Uuid::new_v4();
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
 
         let (status, body) = post_as(
             server_router(Arc::clone(&state)),
@@ -3467,6 +3503,15 @@ mod tests {
         .await;
         assert_eq!(status, 403);
         assert_eq!(body["renewed"], false);
+        assert!(
+            !state
+                .runner
+                .lease_renewals
+                .read()
+                .await
+                .contains_key(&exec.to_string()),
+            "a refused renew must not record a lease"
+        );
 
         // The owner can still renew its own lease.
         let (status, body) = post_as(
@@ -3478,6 +3523,175 @@ mod tests {
         .await;
         assert_eq!(status, 200);
         assert_eq!(body["renewed"], true);
+    }
+
+    // ─── #438: renew is a per-execution lease ──────────────────────────────
+    //
+    // `handle_renew` used to ignore `execution_id` entirely and just bump the
+    // runner's registry-wide `last_poll_at`, so `{"renewed": true}` came back
+    // for executions the caller did not hold, that were already terminal, or
+    // that never existed. These tests pin the per-execution contract.
+
+    /// A successful renew records a lease for exactly the named execution,
+    /// attributed to the claiming runner — that record is what the watchdog's
+    /// stale-claim reaper honours.
+    #[tokio::test]
+    async fn renew_records_a_per_execution_lease() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        let other = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        let before = Utc::now();
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &owner,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["renewed"], true);
+
+        let leases = state.runner.lease_renewals.read().await;
+        let lease = leases
+            .get(&exec.to_string())
+            .expect("the renewed execution has a lease record");
+        assert_eq!(lease.runner_id, "worker-1");
+        assert!(lease.renewed_at >= before);
+        // The runner's OTHER claim does not ride along on this renew — the
+        // whole point of #438.
+        assert!(
+            !leases.contains_key(&other.to_string()),
+            "renewing one execution must not extend the runner's other claims"
+        );
+    }
+
+    /// An execution that does not exist cannot have a lease renewed: 404,
+    /// not the old blanket 200.
+    #[tokio::test]
+    async fn renew_of_unknown_execution_is_not_found() {
+        let (state, _store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+
+        let unknown = uuid::Uuid::new_v4();
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &owner,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": unknown.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 404);
+        assert_eq!(body["renewed"], false);
+        assert!(
+            state.runner.lease_renewals.read().await.is_empty(),
+            "no lease may be recorded for an execution that does not exist"
+        );
+    }
+
+    /// One credential owning several runners passes the #436 identity fence,
+    /// so the per-execution fence is what stops `worker-1` renewing a lease
+    /// `worker-2` holds: 409, the lease is not this runner's to extend.
+    #[tokio::test]
+    async fn renew_of_execution_held_by_another_runner_conflicts() {
+        let (state, store, _rx) = make_bound_state();
+        let shared = runner_token(&state, "client-a");
+
+        for runner_id in ["worker-1", "worker-2"] {
+            post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                &shared,
+                poll_body(runner_id, "iid-1"),
+            )
+            .await;
+        }
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-2");
+
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &shared,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["renewed"], false);
+        assert!(
+            !state
+                .runner
+                .lease_renewals
+                .read()
+                .await
+                .contains_key(&exec.to_string()),
+            "worker-1 must not be able to extend worker-2's lease"
+        );
+
+        // worker-2, which actually holds it, still can.
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &shared,
+            serde_json::json!({ "runner_id": "worker-2", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 200);
+    }
+
+    /// A renew that lands after the execution went terminal — the ordinary
+    /// race between the SDK's renew timer and its own completion — gets 409
+    /// rather than claiming to have renewed a lease that no longer exists.
+    #[tokio::test]
+    async fn renew_of_completed_execution_conflicts() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        store
+            .complete_execution(
+                exec,
+                Some("worker-1"),
+                ExecutionState::Completed,
+                Some(5),
+                None,
+                None,
+                Utc::now(),
+            )
+            .unwrap();
+
+        let (status, body) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/work/renew",
+            &owner,
+            serde_json::json!({ "runner_id": "worker-1", "execution_id": exec.to_string() }),
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["renewed"], false);
     }
 
     /// One credential shared by many runners — the pre-upgrade deployment

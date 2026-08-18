@@ -495,10 +495,27 @@ complementary mechanisms — no operator action needed:
   `claimed` after the job `timeout` (default `5m`) plus a grace window of
   `max(2 × lease_ttl, 120 s)` is requeued with the same attempt number,
   regardless of runner liveness — this also catches claims orphaned across a
-  server restart. Claims that a live runner still reports inflight are exempt.
+  server restart. Claims with a **fresh lease** are exempt, so a
+  slow-but-alive handler is never double-run.
   Each reap logs a `watchdog: requeued stale claimed execution` warning and an
   `execution.stale_claim_requeued` audit event; recurring reaps for the same
   job are the signal to investigate that runner's stability.
+
+  **Leases are per execution** (issue #438). An execution's lease is stamped
+  when the work is dispatched and refreshed by either of two things the
+  runner does: a poll that lists the execution in its `inflight` array, or a
+  `POST /v1/work/renew` naming it. A lease refreshed inside the same
+  `max(2 × lease_ttl, 120 s)` window exempts *that* execution and nothing
+  else — a runner wedged on some of its claims no longer keeps the reaper off
+  all of them because one renew timer is still ticking. The renew endpoint
+  enforces the same shape: it verifies the named execution exists, is
+  `claimed`, and is held by the calling runner, answering `404` / `409`
+  instead of reporting success for an execution it did not consult. Runner
+  SDKs run one renew timer per execution, so no runner configuration changes.
+
+  Lease state is in memory: after a server restart it is empty and refills
+  from the runners' next polls, well inside the grace window, so a restart
+  cannot cause a premature reap.
 - **Queued-reconcile sweep** (same watchdog cadence): a row that is `queued`
   in the store but missing from the in-memory dispatch queue (e.g. a requeue
   that could not be re-enqueued right away, or a server restart between store

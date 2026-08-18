@@ -6,7 +6,7 @@ use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
-use croniq_store::models::ExecutionLogEntry;
+use croniq_store::models::{ExecutionLogEntry, ExecutionState};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -27,32 +27,102 @@ pub struct RenewResponse {
     pub renewed: bool,
 }
 
-/// `POST /v1/work/renew` — renew a lease on a claimed execution.
+/// `POST /v1/work/renew` — renew the caller's lease on ONE claimed execution.
+///
+/// Per-execution semantics (issue #438): the named execution must exist
+/// (`404` otherwise), be `claimed`, and be held by the runner the caller acts
+/// as (`409` otherwise — the lease is not this runner's to extend). On
+/// success exactly that execution's lease timestamp is refreshed, which is
+/// the liveness exemption the watchdog's stale-claim reaper honours; the
+/// runner's other claims do not ride along on the renew. The runner's
+/// registry heartbeat is still bumped, because a renew does prove the
+/// process is alive.
 pub async fn handle_renew(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<RenewRequest>,
 ) -> (StatusCode, Json<RenewResponse>) {
+    fn refused(status: StatusCode) -> (StatusCode, Json<RenewResponse>) {
+        (status, Json(RenewResponse { renewed: false }))
+    }
+
     if let Err(s) = require_scope(&ctx, Scope::WORK_RENEW) {
-        return (s, Json(RenewResponse { renewed: false }));
+        return refused(s);
     }
     // A lease belongs to a runner, so only that runner's credential may extend
     // it — otherwise a foreign caller could keep a dead runner looking alive
     // and suppress the watchdog's requeue of its abandoned executions.
     if let Err(s) = runner_identity::authorize_runner(&state, &ctx, &req.runner_id) {
-        return (s, Json(RenewResponse { renewed: false }));
+        return refused(s);
     }
-    // Update the runner's last_poll_at to extend its liveness
-    let mut reg = state.runner.registry.write().await;
-    if let Some(runner) = reg.get_mut(&req.runner_id) {
-        runner.last_poll_at = Utc::now();
-        (StatusCode::OK, Json(RenewResponse { renewed: true }))
-    } else {
-        (
-            StatusCode::NOT_FOUND,
-            Json(RenewResponse { renewed: false }),
-        )
+
+    let now = Utc::now();
+
+    // Consult the named execution: `renewed: true` must mean exactly that —
+    // this execution exists, is claimed by this runner, and its lease was
+    // extended. Without a store there is no claim state to consult (bare
+    // dev/test servers, where the stale-claim reaper does not run either),
+    // so only the heartbeat semantics below remain.
+    if let Some(store) = state.store.as_ref() {
+        let Ok(exec_uuid) = Uuid::parse_str(&req.execution_id) else {
+            // A malformed id names no execution.
+            return refused(StatusCode::NOT_FOUND);
+        };
+        match store.get_execution(exec_uuid) {
+            Ok(Some(execution)) => {
+                if execution.state != ExecutionState::Claimed
+                    || execution.runner_id.as_deref() != Some(req.runner_id.as_str())
+                {
+                    // Completed, cancelled, requeued by the watchdog, or held
+                    // by a different runner: the lease is gone (or never was
+                    // this runner's). Not retryable — the runner should stop
+                    // renewing; a completion it still reports is judged by
+                    // the completion CAS on its own.
+                    return refused(StatusCode::CONFLICT);
+                }
+            }
+            Ok(None) => {
+                // Ephemeral executions (issue #263) intentionally have no
+                // store row but are real dispatched work whose renew timer
+                // runs like any other — recognise them instead of refusing.
+                let ephemeral = state
+                    .runner
+                    .ephemeral_inflight
+                    .read()
+                    .await
+                    .contains_key(&req.execution_id);
+                if !ephemeral {
+                    return refused(StatusCode::NOT_FOUND);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    execution_id = %req.execution_id,
+                    error = %e,
+                    "renew: could not load execution — refusing (retryable)"
+                );
+                return refused(StatusCode::SERVICE_UNAVAILABLE);
+            }
+        }
     }
+
+    // Refresh THIS execution's lease — the stale-claim reaper's per-execution
+    // liveness exemption (issue #438).
+    state
+        .runner
+        .touch_leases(&req.runner_id, std::slice::from_ref(&req.execution_id), now)
+        .await;
+
+    // A successful renew still proves the runner process is alive: keep its
+    // registry heartbeat fresh so the dead-runner sweep does not requeue the
+    // session's claims. Absence from the registry (e.g. right after a server
+    // restart, before the next poll re-registers) does not invalidate the
+    // store-backed claim verified above.
+    if let Some(runner) = state.runner.registry.write().await.get_mut(&req.runner_id) {
+        runner.last_poll_at = now;
+    }
+
+    (StatusCode::OK, Json(RenewResponse { renewed: true }))
 }
 
 // ─── Events ───
