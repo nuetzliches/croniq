@@ -80,6 +80,49 @@ jobs:
         # test-only code (we hit ~25 of them on first sweep).
         run: cargo clippy --workspace --all-targets --features croniq-server/otlp -- -D warnings
 
+  deny:
+    # Dependency advisory + license scanning (#430). CodeQL analyses
+    # first-party code but never checks dependencies against an advisory
+    # database, so a new RUSTSEC advisory against a transitive crate would
+    # land silently without this job. The licenses check enforces the
+    # "MIT-compatible licenses only" rule from AGENTS.md; policy lives in
+    # deny.toml at the repo root. A weekly scheduled run also exists
+    # (security-audit.yml) because advisories appear without the code
+    # changing — this per-PR job only catches what a PR introduces.
+    name: Rust (cargo-deny advisories + licenses)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Needed to list the PR's changed files via the API below.
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check whether Rust-relevant files changed
+        # Not a required status check, so skipping on non-Rust PRs is safe
+        # (unlike the paths-ignore trap documented on the pull_request
+        # trigger above). Push builds on main always run — cheap, and they
+        # double as the freshest advisory scan between scheduled runs.
+        id: filter
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename')
+          if echo "$files" | grep -qE '\.rs$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^\.github/workflows/ci\.yml$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No Rust-relevant changes — skipping cargo-deny."
+          fi
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        if: github.event_name != 'pull_request' || steps.filter.outputs.run == 'true'
+        with:
+          # bans/sources also pass today, but only advisories + licenses are
+          # policy gates (#430); keeping the CI surface to the two checks we
+          # actually mean lets deny.toml evolve the rest without red PRs.
+          command: check advisories licenses
+
   postgres:
     # The Postgres store backend lives behind the off-by-default
     # `croniq-store/postgres` feature, which the `rust` job above never
@@ -260,6 +303,12 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci || npm install
+      - name: Audit production dependencies
+        # Fails on high/critical advisories in the production dependency
+        # tree (#430 — a high-severity nanoid advisory sat unnoticed here).
+        # Dev-only tooling advisories don't gate merges; the weekly
+        # security-audit.yml run covers the npm trees on a schedule too.
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run test

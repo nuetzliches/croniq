@@ -1,0 +1,81 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/)
+#
+# Two checks run in CI (see .github/workflows/ci.yml and
+# security-audit.yml):
+#   * advisories — Cargo.lock against the RustSec advisory database.
+#   * licenses   — enforces the "MIT-compatible licenses only" rule from
+#     AGENTS.md across the whole dependency tree.
+#
+# Run locally with `cargo deny check advisories licenses` (or download the
+# prebuilt binary from EmbarkStudios/cargo-deny releases if `cargo install`
+# demands a newer rustc than the toolchain on hand).
+
+[graph]
+# Croniq ships on Linux/macOS/Windows (release.yml targets); scan the union
+# of their dependency trees rather than only the host platform's.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+]
+all-features = true
+
+[advisories]
+# Fail on any advisory: vulnerabilities, unmaintained crates (only when they
+# are direct dependencies — transitive unmaintained crates are the parent
+# crate's problem to solve), unsound code, and yanked versions.
+version = 2
+unmaintained = "workspace"
+yanked = "deny"
+# Every ignore needs an inline `reason` so the justification lives next to
+# the exception.
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = """
+Marvin Attack timing sidechannel in the `rsa` crate. No patched version
+exists (the fix is a long-running constant-time rewrite). Pulled in via
+jsonwebtoken -> rsa for RS256/RS384/RS512 JWT support. Croniq only
+*verifies/signs* JWTs with locally-held keys; it never performs RSA
+decryption with a private key on attacker-supplied ciphertext, which is the
+operation the timing oracle needs. Revisit when rsa ships the
+constant-time implementation.
+""" },
+]
+
+[licenses]
+# AGENTS.md: "Dependencies — MIT-compatible licenses only." Everything below
+# is a permissive license compatible with MIT. Crates dual/tri-licensed with
+# a copyleft arm (e.g. r-efi's `MIT OR Apache-2.0 OR LGPL-2.1-or-later`)
+# pass because cargo-deny resolves SPDX OR-expressions — one allowed arm is
+# enough; the copyleft arm itself is never added here.
+version = 2
+allow = [
+    "MIT",
+    "MIT-0",
+    "0BSD",              # quoted_printable (via lettre, smtp feature)
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",              # foldhash
+    "BSL-1.0",           # ryu (Boost Software License — permissive, not "BSL/Business Source")
+    "CC0-1.0",           # notify (public-domain dedication)
+    "CDLA-Permissive-2.0", # webpki-roots (root-store data, permissive)
+    "Unicode-3.0",       # ICU4X crates (icu_*, zerovec, yoke, …)
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate-version and wildcard policing is out of scope for the advisory
+# scanning this file was added for (#430); keep them non-fatal so a full
+# `cargo deny check` stays green. `wildcards = "deny"` cannot be enabled
+# yet: the workspace crates reference each other via versionless `path`
+# dependencies and are not marked `publish = false`, which the wildcard ban
+# treats as public crates with wildcard requirements.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

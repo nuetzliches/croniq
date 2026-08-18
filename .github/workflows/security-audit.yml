@@ -1,0 +1,59 @@
+name: Security audit
+
+# Scheduled dependency-advisory scan (#430). The per-PR jobs in ci.yml only
+# run when a change lands — but advisories appear against existing
+# dependencies without the code changing, and those would otherwise stay
+# silent until the next unrelated Rust/UI PR happened to trip the gate.
+# This workflow scans main on a weekly cadence regardless of activity.
+#
+# License checking is deliberately absent here: the license surface only
+# changes when Cargo.lock changes, and that path is covered per-PR in
+# ci.yml.
+
+on:
+  schedule:
+    # Weekly, Monday 05:30 UTC — early enough in the week that a red run is
+    # seen and handled, offset from the top of the hour to dodge the
+    # GitHub-wide cron thundering herd.
+    - cron: '30 5 * * 1'
+  # Manual trigger for ad-hoc scans (e.g. after a public advisory drops).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  rust-advisories:
+    name: Rust dependency advisories (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # Advisories only — policy (targets, ignores with justification)
+          # lives in deny.toml at the repo root.
+          command: check advisories
+
+  npm-audit:
+    name: npm audit (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every package-lock.json in the repo. `npm audit` works from the
+        # lockfile alone — no install step needed, so this is cheap.
+        dir:
+          - ui
+          - sdks/typescript
+          - sdks/conformance/bindings/typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Audit production dependencies
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --omit=dev --audit-level=high

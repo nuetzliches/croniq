@@ -6,12 +6,29 @@
 #   CRONIQ_VERSION   — specific version to install (default: latest)
 #   INSTALL_DIR      — where to place binaries (default: /usr/local/bin)
 #   CRONIQ_BINARIES  — space-separated list (default: "croniq-server croniq croniq-mcp")
+#
+# Flags (pass after `sh -s --` when piping from curl):
+#   --insecure-skip-verify — proceed without SHA256 verification. Only for
+#     environments where the SHA256SUMS file is unreachable or no sha256
+#     tool exists; the downloaded binaries are NOT integrity-checked.
 
 set -e
 
 REPO="nuetzliches/croniq"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARIES="${CRONIQ_BINARIES:-croniq-server croniq croniq-mcp}"
+
+SKIP_VERIFY=0
+for arg in "$@"; do
+  case "$arg" in
+    --insecure-skip-verify) SKIP_VERIFY=1 ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      echo "Supported flags: --insecure-skip-verify" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # ── Detect OS + architecture ─────────────────────────────────────────────────
 
@@ -65,29 +82,37 @@ trap 'rm -rf "$TMP"' EXIT
 echo "Downloading Croniq v${CRONIQ_VERSION} for ${TARGET}..."
 curl -fsSL --progress-bar "${BASE_URL}/${ARCHIVE}" -o "$TMP/$ARCHIVE"
 
-# Verify SHA256 checksum when a suitable tool is available
-if command -v sha256sum >/dev/null 2>&1; then
-  SHA256_CMD="sha256sum"
-elif command -v shasum >/dev/null 2>&1; then
-  SHA256_CMD="shasum -a 256"
+# Verify the SHA256 checksum. Verification is fail-closed: a missing
+# SHA256SUMS file or a missing sha256 tool aborts the install instead of
+# continuing with an unverified binary. `--insecure-skip-verify` is the
+# explicit escape hatch for the rare environment where that is acceptable
+# (e.g. installing an old release from before SHA256SUMS was published).
+if [ "$SKIP_VERIFY" = "1" ]; then
+  echo "WARNING: --insecure-skip-verify given — installing WITHOUT checksum verification." >&2
 else
-  SHA256_CMD=""
-fi
-
-if [ -n "$SHA256_CMD" ]; then
-  # SHA256SUMS is published starting with the release that shipped this
-  # installer. For older releases the file is absent; fall back to an
-  # unverified install with a loud warning so the install path still works.
-  if curl -fsSL "${BASE_URL}/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
-    echo "Verifying checksum..."
-    # Run the check in a subshell so the working directory change is scoped
-    (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
-    echo "Checksum verified."
+  if command -v sha256sum >/dev/null 2>&1; then
+    SHA256_CMD="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then
+    SHA256_CMD="shasum -a 256"
   else
-    echo "Warning: SHA256SUMS not available for v${CRONIQ_VERSION} — skipping checksum verification." >&2
+    echo "Error: neither sha256sum nor shasum is available, so the download cannot be verified." >&2
+    echo "Install one of them, or re-run with --insecure-skip-verify to proceed without verification:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh -s -- --insecure-skip-verify" >&2
+    exit 1
   fi
-else
-  echo "Warning: sha256sum/shasum not found — skipping checksum verification." >&2
+
+  if ! curl -fsSL "${BASE_URL}/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
+    echo "Error: failed to fetch ${BASE_URL}/SHA256SUMS — refusing to install an unverified binary." >&2
+    echo "Releases before the checksum file was published, or a network problem, can cause this." >&2
+    echo "Re-run with --insecure-skip-verify to proceed without verification:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh -s -- --insecure-skip-verify" >&2
+    exit 1
+  fi
+
+  echo "Verifying checksum..."
+  # Run the check in a subshell so the working directory change is scoped
+  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
+  echo "Checksum verified."
 fi
 
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
