@@ -79,6 +79,17 @@ class RunnerOptions:
     capacity_backoff_ms: int = 500
     """Idle delay when the runner is at ``max_inflight`` capacity."""
 
+    max_consecutive_poll_conflicts: int = 3
+    """How many consecutive ``409 Conflict`` poll responses to tolerate.
+
+    On exhaustion :meth:`Runner.run` raises
+    :class:`~croniq_runner.PollInstanceConflictError` instead of retrying
+    forever: a sustained ``409`` means a second process is registered under
+    the same ``runner_id`` and no amount of retrying fixes that. The counter
+    resets on a successful poll or on any non-409 failure (5xx, network,
+    timeout), which say nothing about instance ownership.
+    """
+
     log_writer: LogWriterOptions = field(default_factory=LogWriterOptions)
 
     allow_insecure_http: bool = False
@@ -95,3 +106,12 @@ class RunnerOptions:
             allow_insecure_http=self.allow_insecure_http,
             option_name="RunnerOptions",
         )
+        # Guarded where the neighbouring tunables are not, because the
+        # out-of-range value here is fatal rather than merely odd: 0 would
+        # make the runner exit on its very first 409, which reads as a
+        # crash-loop rather than a misconfiguration.
+        if not 1 <= self.max_consecutive_poll_conflicts <= 100:
+            raise ValueError(
+                "RunnerOptions.max_consecutive_poll_conflicts must be in [1, 100], "
+                f"got {self.max_consecutive_poll_conflicts}"
+            )

@@ -116,6 +116,7 @@ Any other exception's `str(exc)` is forwarded as the error message.
 | `drain_timeout_ms` | `30_000` | Wait budget for handlers on shutdown |
 | `poll_retry_delay_ms` | `5_000` | Back-off after a failed poll |
 | `capacity_backoff_ms` | `500` | Idle delay at `max_inflight` |
+| `max_consecutive_poll_conflicts` | `3` | Consecutive poll `409`s before `PollInstanceConflictError` |
 | `log_writer` | `LogWriterOptions()` | Streaming-log tunables |
 
 ### Transport security

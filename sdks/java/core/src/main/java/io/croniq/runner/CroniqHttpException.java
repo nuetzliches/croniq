@@ -51,4 +51,14 @@ public class CroniqHttpException extends IOException {
     public boolean isOwnershipDenied() {
         return statusCode == 403;
     }
+
+    /**
+     * True when the server fenced this runner instance out — {@code 409} on the poll
+     * endpoint, meaning a newer instance registered under the same {@code runner_id}
+     * (issue #374). Transient on its own; only a streak of them is fatal, see
+     * {@link CroniqPollInstanceConflictException}.
+     */
+    public boolean isInstanceConflict() {
+        return statusCode == 409;
+    }
 }

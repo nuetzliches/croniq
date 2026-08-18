@@ -13,6 +13,7 @@ without a major-version bump:
     LogWriter           — streaming log channel (use via `ExecutionContext.log_writer`)
     WorkEvent           — structured log event for `LogWriter.write`
     HandlerError        — handler raises this to control the failure message
+    PollInstanceConflictError — poll kept conflicting: a duplicate runner_id (409)
     RunnerOwnershipDeniedError — a work endpoint refused this runner's credential (403)
     TriggerClient       — producer client for firing jobs via POST /v1/trigger
     TriggerClientOptions— trigger-client configuration (its own credentials)
@@ -34,7 +35,11 @@ Quick start::
 """
 
 from croniq_runner._context import ExecutionContext
-from croniq_runner._errors import HandlerError, RunnerOwnershipDeniedError
+from croniq_runner._errors import (
+    HandlerError,
+    PollInstanceConflictError,
+    RunnerOwnershipDeniedError,
+)
 from croniq_runner._log_writer import LogLevel, LogWriter
 from croniq_runner._options import LogWriterOptions, RunnerOptions
 from croniq_runner._protocol import WorkEvent
@@ -47,6 +52,7 @@ __all__ = [
     "LogLevel",
     "LogWriter",
     "LogWriterOptions",
+    "PollInstanceConflictError",
     "Runner",
     "RunnerOptions",
     "RunnerOwnershipDeniedError",

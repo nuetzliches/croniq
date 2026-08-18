@@ -11,6 +11,7 @@ import httpx
 
 from croniq_runner import (
     HandlerError,
+    PollInstanceConflictError,
     Runner,
     RunnerOptions,
     RunnerOwnershipDeniedError,
@@ -276,6 +277,102 @@ async def test_runner_stops_on_poll_403() -> None:
         raise AssertionError("expected RunnerOwnershipDeniedError")
 
     assert polls == 1, f"expected exactly 1 poll (403 is fatal), got {polls}"
+
+
+async def test_runner_stops_after_consecutive_poll_409s() -> None:
+    """A streak of 409s is a duplicate deployment — the runner must bail.
+
+    A single conflict is transient (the deposed instance may win its identity
+    back) and case 11 pins that it is retried. A sustained one is two
+    processes sharing a fixed runner_id, and retrying forever leaves the
+    misconfiguration behind a warning that scrolls past (issue #134
+    sub-item 1).
+    """
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            polls += 1
+            return httpx.Response(409, json={"error": "runner instance conflict"})
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=20,
+        drain_timeout_ms=500,
+        runner_id="r-duplicate",
+        max_consecutive_poll_conflicts=3,
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    try:
+        await asyncio.wait_for(runner.run(), timeout=2.0)
+    except PollInstanceConflictError as exc:
+        assert exc.runner_id == "r-duplicate"
+        assert exc.consecutive_count == 3
+        assert "rotate the runner_id" in str(exc)
+    else:
+        raise AssertionError("expected PollInstanceConflictError")
+
+    assert polls == 3, f"expected exactly 3 polls (the configured ceiling), got {polls}"
+
+
+async def test_poll_conflict_streak_resets_on_non_409() -> None:
+    """Only *consecutive* conflicts count towards the ceiling.
+
+    A 500 in between is unrelated to instance ownership — a server restart, a
+    proxy hiccup — so it clears the counter rather than letting an unlucky mix
+    of failures add up to a fatal error.
+    """
+    statuses = [409, 500, 409, 200]
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            status = statuses[min(polls, len(statuses) - 1)]
+            polls += 1
+            if status == 200:
+                return httpx.Response(200, json={"work": [], "cancel": []})
+            return httpx.Response(status, json={"error": "nope"})
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=20,
+        drain_timeout_ms=500,
+        runner_id="r-flaky",
+        max_consecutive_poll_conflicts=2,
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    async def stopper() -> None:
+        while polls < 4:
+            await asyncio.sleep(0.01)
+        runner.request_drain()
+
+    await asyncio.wait_for(asyncio.gather(runner.run(), stopper()), timeout=2.0)
+
+    assert polls >= 4, f"expected at least 4 polls, got {polls}"
+
+
+def test_max_consecutive_poll_conflicts_rejects_zero() -> None:
+    """0 would make the runner exit on its first 409 — refuse it up front."""
+    try:
+        RunnerOptions(server_url="https://test.invalid", max_consecutive_poll_conflicts=0)
+    except ValueError as exc:
+        assert "max_consecutive_poll_conflicts" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_runner_id_property_unavailable_before_run() -> None:

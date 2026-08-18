@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.fail;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.croniq.runner.CroniqOwnershipDeniedException;
+import io.croniq.runner.CroniqPollInstanceConflictException;
 import io.croniq.runner.CroniqRunner;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import java.time.Duration;
@@ -37,11 +38,12 @@ final class ConformanceRunner {
                     runner.run();
                 } catch (InterruptedException ignored) {
                     // expected on close()
-                } catch (CroniqOwnershipDeniedException ignored) {
-                    // Expected for case 15: a 403 on poll is permanent, so the
-                    // SDK is contractually required to stop. The HTTP-count
-                    // assertions are what prove it actually did — a case that
-                    // doesn't anticipate this exit still fails on
+                } catch (CroniqOwnershipDeniedException | CroniqPollInstanceConflictException ignored) {
+                    // Expected for cases 15 and 16: a 403 on poll is permanent
+                    // and a streak of 409s exhausts the conflict ceiling, so
+                    // the SDK is contractually required to stop in both. The
+                    // HTTP-count assertions are what prove it actually did — a
+                    // case that doesn't anticipate this exit still fails on
                     // min_count/max_count.
                 }
             });
@@ -121,6 +123,9 @@ final class ConformanceRunner {
         }
         if (rc.capacityBackoffMs() != null) {
             b.capacityBackoff(Duration.ofMillis(rc.capacityBackoffMs()));
+        }
+        if (rc.maxConsecutivePollConflicts() != null) {
+            b.maxConsecutivePollConflicts(rc.maxConsecutivePollConflicts());
         }
         return b.build();
     }

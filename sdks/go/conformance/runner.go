@@ -109,6 +109,9 @@ func buildRunner(t *testing.T, spec *Spec, baseURL string) *croniq.Runner {
 	if cfg.CapacityBackoffMs != nil {
 		opts = append(opts, croniq.WithCapacityBackoff(time.Duration(*cfg.CapacityBackoffMs)*time.Millisecond))
 	}
+	if cfg.MaxConsecutivePollConflicts != nil {
+		opts = append(opts, croniq.WithMaxConsecutivePollConflicts(*cfg.MaxConsecutivePollConflicts))
+	}
 
 	return croniq.NewRunner(baseURL, runnerID, opts...)
 }

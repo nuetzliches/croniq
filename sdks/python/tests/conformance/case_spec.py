@@ -109,6 +109,7 @@ class RunnerConfigSpec:
     drain_timeout_ms: int | None = None
     poll_retry_delay_ms: int | None = None
     capacity_backoff_ms: int | None = None
+    max_consecutive_poll_conflicts: int | None = None
 
 
 @dataclass(slots=True)
@@ -138,10 +139,11 @@ class CaseSpec:
 # implemented it. Repeating the schema check here would add a dependency
 # and still leave that hole open.
 #
-# The sets are therefore expected to *lag* the schema when a capability is
-# .NET-only: runner_config's max_consecutive_poll_conflicts is in the schema
-# but not here, because the Python SDK has no such option. A case using it
-# must fail loudly rather than run with the option ignored.
+# The sets are therefore expected to *lag* the schema wherever a capability
+# is not universal — a case using a key this binding never implemented must
+# fail loudly rather than run with the option ignored. (Every key the schema
+# declares today happens to be implemented here; the check earns its keep on
+# the next schema addition, not on the current corpus.)
 
 _CASE_KEYS = frozenset(
     {
@@ -168,6 +170,7 @@ _RUNNER_CONFIG_KEYS = frozenset(
         "drain_timeout_ms",
         "poll_retry_delay_ms",
         "capacity_backoff_ms",
+        "max_consecutive_poll_conflicts",
     }
 )
 _HANDLER_KEYS = frozenset(
@@ -255,6 +258,7 @@ def _to_runner_config(d: dict[str, Any]) -> RunnerConfigSpec:
         drain_timeout_ms=d.get("drain_timeout_ms"),
         poll_retry_delay_ms=d.get("poll_retry_delay_ms"),
         capacity_backoff_ms=d.get("capacity_backoff_ms"),
+        max_consecutive_poll_conflicts=d.get("max_consecutive_poll_conflicts"),
     )
 
 

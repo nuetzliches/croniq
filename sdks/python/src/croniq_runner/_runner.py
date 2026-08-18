@@ -22,7 +22,9 @@ from croniq_runner._context import (
 from croniq_runner._errors import (
     HandlerError,
     NoHandlerRegisteredError,
+    PollInstanceConflictError,
     RunnerOwnershipDeniedError,
+    is_instance_conflict,
     is_ownership_denied,
 )
 from croniq_runner._identifiers import (
@@ -185,6 +187,10 @@ class Runner:
 
     async def _poll_loop(self) -> None:
         opts = self._options
+        # Consecutive 409 Conflict responses on poll. Reset by a successful
+        # poll or by any non-409 failure — see
+        # RunnerOptions.max_consecutive_poll_conflicts.
+        consecutive_conflicts = 0
         while not self._drain_event.is_set():
             # Control-slot polling (issue #176): even at capacity we still
             # poll so the server can deliver cancels via PollResponse.cancel.
@@ -218,9 +224,46 @@ class Runner:
                         extra={"runner_id": self._runner_id or ""},
                     )
                     raise RunnerOwnershipDeniedError(self._runner_id or "") from exc
-                _log.warning("poll failed (%s) — backing off %dms", exc, opts.poll_retry_delay_ms)
+                # A 409 means a newer instance has taken this runner_id over
+                # (fencing, issue #374). One is transient — the deposed
+                # instance may win it back — so we back off and retry. A
+                # streak of them is a duplicate deployment, and retrying
+                # forever hides it behind a warning that scrolls past
+                # (issue #134 sub-item 1).
+                if is_instance_conflict(exc):
+                    consecutive_conflicts += 1
+                    if consecutive_conflicts >= opts.max_consecutive_poll_conflicts:
+                        _log.error(
+                            "fatal: poll refused with 409 Conflict %d times in a row — another "
+                            "runner is registered with this runner_id. Stop the duplicate "
+                            "process or rotate the runner_id",
+                            consecutive_conflicts,
+                            extra={"runner_id": self._runner_id or ""},
+                        )
+                        raise PollInstanceConflictError(
+                            self._runner_id or "", consecutive_conflicts
+                        ) from exc
+                    _log.warning(
+                        "poll returned 409 Conflict (%d/%d) — another runner instance may be "
+                        "active; retrying after %dms",
+                        consecutive_conflicts,
+                        opts.max_consecutive_poll_conflicts,
+                        opts.poll_retry_delay_ms,
+                    )
+                else:
+                    # Non-409 transient (5xx, network, timeout) — unrelated to
+                    # instance ownership, so a recovered outage must not
+                    # accumulate with later conflicts.
+                    consecutive_conflicts = 0
+                    _log.warning(
+                        "poll failed (%s) — backing off %dms", exc, opts.poll_retry_delay_ms
+                    )
                 await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
                 continue
+
+            # Poll succeeded — the other instance must have died or released
+            # the identity, so the conflict streak starts over.
+            consecutive_conflicts = 0
 
             self._handle_cancellations(response.cancel)
 

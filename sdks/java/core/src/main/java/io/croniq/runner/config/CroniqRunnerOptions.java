@@ -24,6 +24,7 @@ public final class CroniqRunnerOptions {
     public static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(30);
     public static final Duration DEFAULT_POLL_RETRY_DELAY = Duration.ofSeconds(5);
     public static final Duration DEFAULT_CAPACITY_BACKOFF = Duration.ofMillis(500);
+    public static final int DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS = 3;
 
     private final URI serverUrl;
     private final String runnerId;
@@ -39,6 +40,7 @@ public final class CroniqRunnerOptions {
     private final Duration drainTimeout;
     private final Duration pollRetryDelay;
     private final Duration capacityBackoff;
+    private final int maxConsecutivePollConflicts;
     private final boolean allowInsecureHttp;
 
     private CroniqRunnerOptions(Builder b) {
@@ -57,6 +59,7 @@ public final class CroniqRunnerOptions {
         this.drainTimeout = b.drainTimeout;
         this.pollRetryDelay = b.pollRetryDelay;
         this.capacityBackoff = b.capacityBackoff;
+        this.maxConsecutivePollConflicts = b.maxConsecutivePollConflicts;
     }
 
     /**
@@ -131,6 +134,22 @@ public final class CroniqRunnerOptions {
         return capacityBackoff;
     }
 
+    /**
+     * How many consecutive {@code 409 Conflict} responses from
+     * {@code POST /v1/work/poll} the runner tolerates before {@link
+     * io.croniq.runner.CroniqRunner#run()} throws {@link
+     * io.croniq.runner.CroniqPollInstanceConflictException}.
+     *
+     * <p>A sustained {@code 409} means a second process is registered under the same
+     * {@code runner_id} and no amount of retrying fixes that. The counter resets on a
+     * successful poll or on any non-409 failure (5xx, network, timeout), which say
+     * nothing about instance ownership. Defaults to
+     * {@link #DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS}.
+     */
+    public int maxConsecutivePollConflicts() {
+        return maxConsecutivePollConflicts;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -151,6 +170,7 @@ public final class CroniqRunnerOptions {
                 .renewInterval(renewInterval)
                 .drainTimeout(drainTimeout)
                 .pollRetryDelay(pollRetryDelay)
+                .maxConsecutivePollConflicts(maxConsecutivePollConflicts)
                 .capacityBackoff(capacityBackoff);
     }
 
@@ -168,6 +188,7 @@ public final class CroniqRunnerOptions {
         private Duration renewInterval = DEFAULT_RENEW_INTERVAL;
         private Duration drainTimeout = DEFAULT_DRAIN_TIMEOUT;
         private Duration pollRetryDelay = DEFAULT_POLL_RETRY_DELAY;
+        private int maxConsecutivePollConflicts = DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS;
         private Duration capacityBackoff = DEFAULT_CAPACITY_BACKOFF;
         private boolean allowInsecureHttp;
 
@@ -261,6 +282,19 @@ public final class CroniqRunnerOptions {
 
         public Builder capacityBackoff(Duration v) {
             this.capacityBackoff = Objects.requireNonNull(v, "capacityBackoff");
+            return this;
+        }
+
+        /**
+         * Range-checked like {@link #maxInflight(int)}: 0 would make the runner exit on
+         * its very first {@code 409}, which reads as a crash-loop rather than the
+         * duplicate deployment it actually is.
+         */
+        public Builder maxConsecutivePollConflicts(int v) {
+            if (v < 1 || v > 100) {
+                throw new IllegalArgumentException("maxConsecutivePollConflicts must be in [1, 100], got " + v);
+            }
+            this.maxConsecutivePollConflicts = v;
             return this;
         }
 

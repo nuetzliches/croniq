@@ -96,6 +96,18 @@ export interface CroniqRunnerOptions {
   /** Idle delay when the runner is at `maxInflight` capacity. Default 500 ms. */
   capacityBackoffMs?: number;
 
+  /**
+   * How many consecutive `409 Conflict` responses from `POST /v1/work/poll`
+   * the runner tolerates before `run()` rejects with a
+   * `PollInstanceConflictError`. Default 3, range [1, 100].
+   *
+   * A sustained 409 means a second process is registered under the same
+   * `runnerId` and no amount of retrying fixes that. The counter resets on a
+   * successful poll or on any non-409 failure (5xx, network, timeout), which
+   * say nothing about instance ownership.
+   */
+  maxConsecutivePollConflicts?: number;
+
   /** Streaming log-writer tunables. */
   logWriter?: LogWriterOptions;
 
@@ -119,6 +131,7 @@ export interface ResolvedRunnerOptions {
   drainTimeoutMs: number;
   pollRetryDelayMs: number;
   capacityBackoffMs: number;
+  maxConsecutivePollConflicts: number;
   logWriter: ResolvedLogWriterOptions;
   logger: Logger;
 }
@@ -153,6 +166,17 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     throw new RangeError(`CroniqRunnerOptions.maxInflight must be an integer in [1, 1024], got ${maxInflight}`);
   }
 
+  const maxConsecutivePollConflicts = input.maxConsecutivePollConflicts ?? 3;
+  if (
+    !Number.isInteger(maxConsecutivePollConflicts) ||
+    maxConsecutivePollConflicts < 1 ||
+    maxConsecutivePollConflicts > 100
+  ) {
+    throw new RangeError(
+      `CroniqRunnerOptions.maxConsecutivePollConflicts must be an integer in [1, 100], got ${maxConsecutivePollConflicts}`,
+    );
+  }
+
   const logWriter: ResolvedLogWriterOptions = {
     channelCapacity: input.logWriter?.channelCapacity ?? DEFAULT_LOG_WRITER.channelCapacity,
     batchSizeThreshold: input.logWriter?.batchSizeThreshold ?? DEFAULT_LOG_WRITER.batchSizeThreshold,
@@ -177,6 +201,7 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     drainTimeoutMs: input.drainTimeoutMs ?? 30_000,
     pollRetryDelayMs: input.pollRetryDelayMs ?? 5_000,
     capacityBackoffMs: input.capacityBackoffMs ?? 500,
+    maxConsecutivePollConflicts,
     logWriter,
     logger,
   };

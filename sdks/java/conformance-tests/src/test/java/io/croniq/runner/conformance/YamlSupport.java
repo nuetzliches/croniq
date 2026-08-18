@@ -68,10 +68,11 @@ final class YamlSupport {
      * {@code check-jsonschema} run in CI: that catches a key the <em>schema</em>
      * does not allow, this catches a schema-legal key the <em>binding</em> has
      * not implemented. The sets are therefore expected to lag the schema
-     * wherever a capability is .NET-only — {@code runner_config}'s
-     * {@code max_consecutive_poll_conflicts} is in the schema but not here,
-     * because the Java SDK has no such option, and a case using it must fail
-     * loudly rather than run with the option ignored.
+     * wherever a capability is not universal: a case using a key this binding
+     * never implemented must fail loudly rather than run with the option
+     * ignored. (Every key the schema declares today happens to be implemented
+     * here; the check earns its keep on the next schema addition, not on the
+     * current corpus.)
      */
     static void requireKnownKeys(Map<String, Object> m, Set<String> allowed, String ctx) {
         if (m == null) {
