@@ -658,9 +658,30 @@ pub fn calendar_config_from_definition(
         .ok_or_else(|| "rules did not produce a calendar".to_string())?;
     cfg.name = def.name.clone();
     // A `timezone` directive inside the rules text wins; otherwise fall back
-    // to the definition's own timezone column.
+    // to the definition's own timezone column. There is no `defaults { }` in
+    // the synthetic block above, so a store calendar that declares nothing
+    // lands on UTC — a row created through the API is not part of any
+    // Croniqfile and must not silently change meaning when that file's
+    // `defaults { timezone … }` does (issue #450).
     if cfg.timezone.is_none() {
         cfg.timezone = def.timezone.clone();
+    }
+    // The zone became load-bearing in #450, and the column predates any
+    // validation on it (`POST`/`PUT /v1/calendars` now rejects a bad value,
+    // but rows written before that were stored unchecked). Report and clear it
+    // rather than failing the calendar: under `strict_calendars` an error here
+    // would pause every job consulting it, which is a worse upgrade than
+    // falling back to UTC out loud.
+    if let Some(name) = cfg.timezone.as_deref().filter(|t| !t.is_empty())
+        && let Err(e) = croniq_config::timezone::parse(name)
+    {
+        tracing::warn!(
+            calendar = %def.name,
+            timezone = %name,
+            error = %e,
+            "stored calendar timezone is not an IANA zone name — its rules are evaluated in UTC"
+        );
+        cfg.timezone = None;
     }
     Ok(cfg)
 }
@@ -2073,5 +2094,50 @@ mod tests {
         column_only.timezone = Some("Europe/Berlin".into());
         let cfg = calendar_config_from_definition(&column_only).unwrap();
         assert_eq!(cfg.timezone.as_deref(), Some("Europe/Berlin"));
+    }
+
+    /// A stored zone that is not an IANA name is cleared, not fatal (#450).
+    /// `POST`/`PUT /v1/calendars` rejects such a value now, but rows written
+    /// before that check existed have to keep loading: under
+    /// `strict_calendars` a compile error here would pause every job that
+    /// consults the calendar, which is a worse upgrade than UTC plus a WARN.
+    #[test]
+    fn invalid_stored_calendar_timezone_falls_back_instead_of_failing() {
+        let mut bad = cal_def("legacy", "include weekly weekday");
+        bad.timezone = Some("Europe/Wien".into());
+        let cfg = calendar_config_from_definition(&bad).unwrap();
+        assert_eq!(cfg.timezone, None);
+
+        let resolved = resolve_calendars(&[], &[bad], true);
+        assert!(resolved.errors.is_empty(), "got: {:?}", resolved.errors);
+        assert_eq!(
+            resolved.calendars.get("legacy").map(|c| c.tz),
+            Some(chrono_tz::UTC)
+        );
+    }
+
+    /// A store calendar is not part of any Croniqfile, so it must not pick up
+    /// that file's `defaults { timezone … }` — the synthetic block it is
+    /// compiled in has no defaults, and the resolved zone stays UTC (#450).
+    #[test]
+    fn store_calendar_does_not_inherit_croniqfile_defaults() {
+        let dsl = load_str(
+            "defaults { timezone Europe/Vienna }\ncalendar dslcal { include weekly monday }",
+        )
+        .unwrap()
+        .runtime
+        .calendars;
+        let stored = vec![cal_def("apical", "include weekly monday")];
+        let resolved = resolve_calendars(&dsl, &stored, true);
+
+        // The DSL calendar inherits it; the API one does not.
+        assert_eq!(
+            resolved.calendars.get("dslcal").map(|c| c.tz),
+            Some(chrono_tz::Europe::Vienna)
+        );
+        assert_eq!(
+            resolved.calendars.get("apical").map(|c| c.tz),
+            Some(chrono_tz::UTC)
+        );
     }
 }

@@ -191,11 +191,17 @@ export function CalendarsPage() {
                   <input {...register('name', { required: 'Required' })} placeholder="Calendar name (e.g. eu-business-hours)" className={inputCls} />
                   {errors.name && <p className="text-xs text-destructive mt-1">{errors.name.message}</p>}
                 </div>
-                <TimezoneInput
-                  {...register('timezone')}
-                  className={inputCls}
-                  showDetectedHint
-                />
+                <div>
+                  <TimezoneInput
+                    {...register('timezone')}
+                    className={inputCls}
+                    showDetectedHint
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    The zone this calendar&apos;s rules are read in, for every job that
+                    references it. Leave empty for UTC — it does not follow the job.
+                  </p>
+                </div>
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-medium text-foreground">Rules (optional)</label>
@@ -291,9 +297,20 @@ export function CalendarsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-medium">{cal.name}</span>
-                        {cal.timezone && (
-                          <span className="text-xs text-muted-foreground">{cal.timezone}</span>
-                        )}
+                        {/* The zone the rules are actually evaluated in (#450).
+                            Unset means UTC, so spell that out rather than
+                            leaving the reader to guess — or to assume it
+                            follows whichever job consults the calendar. */}
+                        <span
+                          className="text-xs text-muted-foreground"
+                          title={
+                            cal.timezone
+                              ? `Rules are evaluated in ${cal.timezone}, for every job that references this calendar.`
+                              : 'No timezone set — rules are evaluated in UTC, not in the timezone of the jobs that reference this calendar.'
+                          }
+                        >
+                          {cal.timezone ?? 'UTC'}
+                        </span>
                         {isDsl && (
                           <Badge variant="neutral" className="font-mono">dsl</Badge>
                         )}

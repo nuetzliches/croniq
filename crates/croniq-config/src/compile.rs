@@ -638,6 +638,9 @@ impl Default for DeadLetterConfig {
 #[derive(Debug, Clone, Serialize)]
 pub struct CalendarConfig {
     pub name: String,
+    /// The zone the calendar's rules are evaluated in — **effective**, not as
+    /// written: for a Croniqfile calendar `compile_calendar` has already
+    /// folded in `defaults { timezone … }`. `None` means UTC.
     pub timezone: Option<String>,
     pub rules: Vec<CalendarRuleConfig>,
 }
@@ -808,7 +811,9 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
             }
             Item::Calendar(cal) => {
-                calendars.push(compile_calendar(cal, &vars));
+                // `default_timezone` is read in-pass, exactly like the job arm
+                // below: a `defaults { }` block must precede what it applies to.
+                calendars.push(compile_calendar(cal, &vars, default_timezone.as_deref()));
             }
             Item::Job(job) => {
                 jobs.push(compile_job(
@@ -1652,8 +1657,27 @@ fn compile_dead_letter_block(
     cfg
 }
 
-fn compile_calendar(cal: &CalendarBlock, vars: &HashMap<String, String>) -> CalendarConfig {
-    let mut timezone = None;
+/// Compile one `calendar { }` block.
+///
+/// `default_timezone` is `defaults { timezone … }`. A calendar's rules are
+/// evaluated in the calendar's **own** zone (issue #450), so the compiled
+/// `timezone` is the *effective* one, resolved here:
+///
+/// ```text
+/// calendar { timezone … }  >  defaults { timezone … }  >  UTC (left as None)
+/// ```
+///
+/// The job's zone is deliberately not in that chain: a calendar is a named,
+/// shared resource, and its meaning must not depend on which job consults it
+/// — otherwise `GET /v1/calendars` and the UI cannot state which zone a
+/// calendar is in. Resolving here rather than in the scheduler also makes
+/// `croniq compile` a complete description of the gate.
+fn compile_calendar(
+    cal: &CalendarBlock,
+    vars: &HashMap<String, String>,
+    default_timezone: Option<&str>,
+) -> CalendarConfig {
+    let mut timezone = default_timezone.map(str::to_string);
     let mut rules = Vec::new();
 
     for rule in &cal.rules {
@@ -3194,5 +3218,60 @@ mod tests {
             .expect("smtp survives format round-trip");
         assert_eq!(smtp.port, Some(2525));
         assert_eq!(smtp.security.as_deref(), Some("none"));
+    }
+
+    // ─── Effective calendar timezone (#450) ───
+    //
+    // `CalendarConfig::timezone` is the zone the calendar's rules are
+    // *evaluated* in, resolved here so `croniq compile` states it and the
+    // scheduler never has to re-derive it.
+
+    fn only_calendar(src: &str) -> CalendarConfig {
+        let ast = Parser::parse(src).unwrap();
+        compile(&ast).calendars.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn calendar_inherits_defaults_timezone() {
+        let cal = only_calendar(
+            r#"
+            defaults { timezone Europe/Vienna }
+            calendar biz { include weekly monday }
+        "#,
+        );
+        assert_eq!(cal.timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn calendar_own_timezone_wins_over_defaults() {
+        let cal = only_calendar(
+            r#"
+            defaults { timezone Europe/Vienna }
+            calendar biz { timezone America/New_York; include weekly monday }
+        "#,
+        );
+        assert_eq!(cal.timezone.as_deref(), Some("America/New_York"));
+    }
+
+    #[test]
+    fn calendar_without_any_timezone_stays_unset() {
+        // `None` is the scheduler's UTC — deliberately not the consulting
+        // job's zone, which is why no job appears in this file at all.
+        let cal = only_calendar(r#"calendar biz { include weekly monday }"#);
+        assert_eq!(cal.timezone, None);
+    }
+
+    #[test]
+    fn calendar_inherits_a_defaults_timezone_placeholder() {
+        // The `Croniqfile.example` shape: `defaults { timezone {vars.x} }`
+        // resolves before the calendar inherits it.
+        let cal = only_calendar(
+            r#"
+            vars { default_tz Europe/Vienna }
+            defaults { timezone {vars.default_tz} }
+            calendar biz { include weekly monday }
+        "#,
+        );
+        assert_eq!(cal.timezone.as_deref(), Some("Europe/Vienna"));
     }
 }

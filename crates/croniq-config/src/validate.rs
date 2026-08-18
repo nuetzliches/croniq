@@ -162,7 +162,7 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
             // Falls through to the catch-all when the caller owns calendar
             // failures itself — see `Options::check_calendars`.
             Item::Calendar(cal) if opts.check_calendars => {
-                validate_calendar(cal, &mut diags);
+                validate_calendar(cal, default_timezone, &mut diags);
             }
             _ => {}
         }
@@ -256,9 +256,9 @@ fn validate_timezone_value(dir: &Directive, diags: &mut Vec<Diagnostic>) -> bool
 /// - **not** `once at <datetime>`: an offset-less `once` value is parsed as UTC
 ///   by `Schedule::from_ast` and a `timezone` declaration would *not* change
 ///   it, so telling the operator to declare one would be a false promise.
-/// - **not** a referenced `calendar { }`: its rules are also evaluated in the
-///   job's zone, but a job with a calendar always has a schedule of its own,
-///   and that schedule already decides whether this warning fires.
+/// - **not** a referenced `calendar { }`: since #450 its rules are evaluated
+///   in the *calendar's* zone, so a missing job zone says nothing about the
+///   gate. `validate_calendar` warns about a zone-less calendar itself.
 fn validate_timezone(job: &JobBlock, default_timezone: bool, diags: &mut Vec<Diagnostic>) {
     let mut has_timezone = default_timezone;
 
@@ -318,15 +318,22 @@ fn validate_timezone(job: &JobBlock, default_timezone: bool, diags: &mut Vec<Dia
     }
 }
 
-fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
-    // A calendar's own `timezone` is checked for validity here, but it can
-    // never produce the #427 UTC warning: the runtime never reads it. The gate
-    // is evaluated in the *job's* zone (`Trigger::gate_allows`), so
-    // "this calendar has no timezone" says nothing about which zone its rules
-    // are compared against — the job decides that, and `validate_timezone`
-    // warns there. Hence the `has_timezone` hook this function used to compute
-    // and discard is gone rather than finished: it was measuring the wrong
-    // thing.
+/// Diagnostics for one `calendar { }` block.
+///
+/// Timezone half (issues #427, #450): a calendar's rules are evaluated in the
+/// calendar's own zone, resolved `calendar { timezone … }` > `defaults
+/// { timezone … }` > UTC. So "this calendar declares no zone" *is* a statement
+/// about which zone its rules are compared against, and it earns the same UTC
+/// warning a wall-clock job gets. That is why the `has_timezone` hook #427
+/// computed and discarded is finished here rather than deleted: before #450
+/// the runtime never read the field, so back then it really was measuring the
+/// wrong thing.
+///
+/// `default_timezone` is whether a `defaults { timezone … }` block declared
+/// **before** this calendar set one, matching how `compile_calendar` inherits
+/// it.
+fn validate_calendar(cal: &CalendarBlock, default_timezone: bool, diags: &mut Vec<Diagnostic>) {
+    let mut has_timezone = default_timezone;
     for rule in &cal.rules {
         if rule.rule_type.value == "timezone" {
             // Stored as a synthetic Include rule by the parser — same shape as
@@ -336,8 +343,24 @@ fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
                 args: rule.args.clone(),
                 span: rule.span,
             };
-            validate_timezone_value(&dir, diags);
+            has_timezone |= validate_timezone_value(&dir, diags);
         }
+    }
+
+    // Every rule kind is zone-sensitive: the date rules pick out days and the
+    // `window` rules pick out times, both read off the calendar's local clock.
+    // A calendar with no rules allows everything, so it is not.
+    if !has_timezone && !cal.rules.is_empty() {
+        diags.push(Diagnostic {
+            severity: Severity::Warning,
+            message: format!(
+                "calendar '{}' declares no timezone: its rules are interpreted as UTC, not in \
+                 the zone of the jobs that consult it; declare 'timezone' to be explicit — in \
+                 the calendar body or in `defaults {{ }}`",
+                cal.name.value
+            ),
+            span: cal.name.span.into(),
+        });
     }
 
     // Rule arguments are checked with the same `calendar_args` parsers the
@@ -1413,6 +1436,56 @@ mod tests {
     fn invalid_calendar_timezone_errors() {
         let diags = validate_src(r#"calendar biz { timezone "Europe/Wien" }"#);
         assert_eq!(timezone_errors(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    // ─── The calendar UTC warning (#450, the #427 half that was missing) ───
+
+    fn calendar_utc_warnings(diags: &[Diagnostic]) -> Vec<&str> {
+        warnings(diags)
+            .into_iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| m.starts_with("calendar '"))
+            .collect()
+    }
+
+    #[test]
+    fn calendar_without_timezone_warns() {
+        // The job declares its own zone, so #427 stays quiet — and that is
+        // exactly the case where the calendar being UTC is a surprise.
+        let diags = validate_src(
+            r#"
+            calendar biz { include weekly monday }
+            job a:b { every day at 02:00 { timezone Europe/Vienna; calendar biz } }
+        "#,
+        );
+        let msgs = calendar_utc_warnings(&diags);
+        assert_eq!(msgs.len(), 1, "got: {diags:?}");
+        assert!(msgs[0].contains("interpreted as UTC"), "got: {}", msgs[0]);
+        assert!(errors(&diags).is_empty(), "unexpected errors: {diags:?}");
+    }
+
+    #[test]
+    fn calendar_timezone_from_defaults_suppresses_the_warning() {
+        let diags = validate_src(
+            r#"
+            defaults { timezone Europe/Vienna }
+            calendar biz { include weekly monday }
+        "#,
+        );
+        assert!(calendar_utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn calendar_own_timezone_suppresses_the_warning() {
+        let diags = validate_src(r#"calendar biz { timezone UTC; include weekly monday }"#);
+        assert!(calendar_utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn empty_calendar_does_not_warn() {
+        // No rules ⇒ gates nothing ⇒ no zone can change its behaviour.
+        let diags = validate_src(r#"calendar biz { }"#);
+        assert!(calendar_utc_warnings(&diags).is_empty(), "got: {diags:?}");
     }
 
     #[test]

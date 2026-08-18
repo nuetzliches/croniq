@@ -228,23 +228,24 @@ impl Trigger {
         }
     }
 
-    /// True when the calendar and window gate permit firing at `at`
-    /// (localized to the trigger's timezone).
+    /// True when the calendar and window gate permit firing at `at`.
+    ///
+    /// The two gates are read on **different clocks** (issue #450): the
+    /// calendar on its own (`Calendar::tz`), because a shared calendar means
+    /// the same thing to every job that consults it; the trigger-level
+    /// `window` on the job's, because it is a property of this job. They
+    /// coincide for the usual single-zone Croniqfile.
     pub fn gate_allows(&self, at: DateTime<Utc>) -> bool {
-        let local = at.with_timezone(&self.timezone);
-        let date = local.date_naive();
-        let time = local.time();
-
         let calendar_ok = self
             .calendar
             .as_ref()
-            .map(|c| c.is_allowed(date, time))
+            .map(|c| c.is_allowed_at(at))
             .unwrap_or(true);
 
         let window_ok = self
             .window
             .as_ref()
-            .map(|w| w.contains(time))
+            .map(|w| w.contains(at.with_timezone(&self.timezone).time()))
             .unwrap_or(true);
 
         calendar_ok && window_ok
@@ -255,13 +256,11 @@ impl Trigger {
     /// to explain why a job is intentionally idle (#391), e.g.
     /// `calendar 'business-hours'` or `window 08:00..18:00`.
     pub fn gate_closed_reason(&self, at: DateTime<Utc>) -> Option<String> {
-        let local = at.with_timezone(&self.timezone);
-        let date = local.date_naive();
-        let time = local.time();
+        let time = at.with_timezone(&self.timezone).time();
 
         let mut reasons = Vec::new();
         if let Some(c) = &self.calendar
-            && !c.is_allowed(date, time)
+            && !c.is_allowed_at(at)
         {
             reasons.push(format!("calendar '{}'", c.name));
         }
@@ -281,23 +280,54 @@ impl Trigger {
         }
     }
 
-    /// Earliest local instant `>= from_local` where both the calendar and
-    /// the trigger-level window are open. `None` = never within the scan
-    /// horizon (genuinely exhausted).
-    fn next_gate_open(&self, from_local: chrono::NaiveDateTime) -> Option<chrono::NaiveDateTime> {
-        crate::calendar::next_instant_in(from_local, |date| {
-            let mut set = match &self.calendar {
-                Some(c) => c.allowed_intervals_on(date),
-                None => vec![(0, 86_400)],
-            };
-            if let Some(w) = &self.window {
-                set = crate::calendar::intersect_intervals(
-                    &set,
-                    &crate::calendar::window_intervals(w.start, w.end),
-                );
+    /// Earliest UTC instant `>= from` where both the calendar and the
+    /// trigger-level window are open. `None` = never within the scan horizon
+    /// (genuinely exhausted).
+    ///
+    /// The two gates live on different clocks since #450, so there is no
+    /// single local timeline to intersect interval sets on — a Vienna
+    /// 08:00..18:00 window projected into New York is not the same
+    /// second-of-day set on every day, and moves at each zone's DST switch.
+    /// Instead each gate answers "your next opening at or after `t`" in its
+    /// own zone, and this advances `t` to the later of the two and re-asks:
+    ///
+    /// - a round that does not advance means both gates are open at `t`, which
+    ///   is the answer;
+    /// - a round that does advance skips only a span that at least one gate
+    ///   keeps closed throughout, so no opening can be missed.
+    ///
+    /// Same result as the old single-zone interval intersection when the zones
+    /// coincide, and still O(days-to-opening) — the day-jumping happens inside
+    /// each gate's own scan, not by iterating here.
+    fn next_gate_open(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        // Each round advances past at least one gate boundary. Both gates have
+        // O(1) boundaries per day, so this only has to out-last the boundaries
+        // of a single day; the day-scale search is `next_instant_in`'s job and
+        // is bounded by MAX_SCAN_DAYS. The horizon check below is what actually
+        // terminates a gate pair that never overlaps.
+        const MAX_ROUNDS: u32 = 512;
+        let horizon = from + Duration::days(crate::calendar::MAX_SCAN_DAYS as i64);
+
+        let mut t = from;
+        for _ in 0..MAX_ROUNDS {
+            if t > horizon {
+                return None;
             }
-            set
-        })
+            let cal_open = match &self.calendar {
+                Some(c) => c.next_open_at_or_after(t)?,
+                None => t,
+            };
+            let window_open = match &self.window {
+                Some(w) => next_window_open_at_or_after(&self.timezone, w, t)?,
+                None => t,
+            };
+            let next = cal_open.max(window_open);
+            if next <= t {
+                return Some(t);
+            }
+            t = next;
+        }
+        None
     }
 
     /// Compute the next valid fire time, respecting calendar and window constraints.
@@ -319,9 +349,7 @@ impl Trigger {
                 return Some(candidate);
             }
 
-            let local = candidate.with_timezone(&self.timezone).naive_local();
-            let open_local = self.next_gate_open(local)?; // None => genuinely exhausted
-            let open_utc = crate::schedule::resolve_local(&self.timezone, open_local)?;
+            let open_utc = self.next_gate_open(candidate)?; // None => genuinely exhausted
 
             candidate = match &self.schedule {
                 // No wall-clock anchor: the first fire after a closed gate is
@@ -343,6 +371,21 @@ impl Trigger {
 
         None // No gate-open schedule tick within the scan horizon
     }
+}
+
+/// Earliest UTC instant `>= from` at which a trigger-level `window` is open,
+/// evaluated in the job's zone. `None` when the window can never open
+/// (`start == end` matches nothing, mirroring `TimeWindow::contains`).
+fn next_window_open_at_or_after(
+    tz: &Tz,
+    window: &TimeWindow,
+    from: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let local = from.with_timezone(tz).naive_local();
+    let open_local = crate::calendar::next_instant_in(local, |_| {
+        crate::calendar::window_intervals(window.start, window.end)
+    })?;
+    crate::schedule::resolve_local_at_or_after(tz, open_local, from)
 }
 
 fn parse_time(s: &str) -> Option<NaiveTime> {
@@ -470,7 +513,7 @@ mod tests {
 
         let calendar = Calendar {
             name: "no-weekends".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Weekly(vec![
                 chrono::Weekday::Mon,
                 chrono::Weekday::Tue,
@@ -553,7 +596,7 @@ mod tests {
         use crate::calendar::CalendarRule;
         crate::calendar::Calendar {
             name: "business-hours".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![
                 CalendarRule::Weekly(vec![
                     chrono::Weekday::Mon,
@@ -601,7 +644,7 @@ mod tests {
         use crate::calendar::CalendarRule;
         let calendar = crate::calendar::Calendar {
             name: "weekdays".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Weekly(vec![
                 chrono::Weekday::Mon,
                 chrono::Weekday::Tue,
@@ -649,7 +692,7 @@ mod tests {
         use crate::calendar::CalendarRule;
         let calendar = crate::calendar::Calendar {
             name: "mondays".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![
                 CalendarRule::Weekly(vec![chrono::Weekday::Mon]),
                 CalendarRule::Window(
@@ -704,7 +747,7 @@ mod tests {
         use crate::calendar::CalendarRule;
         let calendar = crate::calendar::Calendar {
             name: "daytime".into(),
-            timezone: None,
+            tz: chrono_tz::UTC,
             includes: vec![CalendarRule::Window(
                 NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
                 NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
@@ -786,5 +829,215 @@ mod tests {
         // Monday noon: open.
         assert!(gated.gate_closed_reason(utc(2026, 3, 30, 12, 0)).is_none());
         assert!(gated.gate_allows(utc(2026, 3, 30, 12, 0)));
+    }
+
+    // ─── The calendar's own zone (#450) ───
+    //
+    // A calendar is evaluated on its own clock, the trigger-level `window` on
+    // the job's. Every case below uses a Vienna calendar and a New York job,
+    // where the two clocks disagree by 5 or 6 hours depending on the date, so
+    // an assertion that passes under the old job-zone behaviour cannot pass
+    // here by accident.
+
+    fn vienna() -> Tz {
+        chrono_tz::Europe::Vienna
+    }
+
+    fn new_york() -> Tz {
+        chrono_tz::America::New_York
+    }
+
+    fn cal_in(tz: Tz, includes: Vec<crate::calendar::CalendarRule>) -> crate::calendar::Calendar {
+        crate::calendar::Calendar {
+            name: "business-days".into(),
+            tz,
+            includes,
+            excludes: vec![],
+        }
+    }
+
+    fn weekdays() -> crate::calendar::CalendarRule {
+        crate::calendar::CalendarRule::Weekly(vec![
+            chrono::Weekday::Mon,
+            chrono::Weekday::Tue,
+            chrono::Weekday::Wed,
+            chrono::Weekday::Thu,
+            chrono::Weekday::Fri,
+        ])
+    }
+
+    fn window_rule(from_h: u32, to_h: u32) -> crate::calendar::CalendarRule {
+        crate::calendar::CalendarRule::Window(
+            NaiveTime::from_hms_opt(from_h, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(to_h, 0, 0).unwrap(),
+        )
+    }
+
+    /// A Vienna `weekly monday..friday` calendar gates the **Vienna** day, so a
+    /// New York job at 22:00 is already on the calendar's next day: Friday
+    /// 22:00 in New York is Saturday 04:00 in Vienna and stays shut. Under the
+    /// old job-zone evaluation this instant was a Friday and passed.
+    #[test]
+    fn calendar_gates_its_own_weekday_not_the_jobs() {
+        let trigger = Trigger::with_bounds(
+            "test:job".into(),
+            Schedule::Daily {
+                time: NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            },
+            new_york(),
+            Some(cal_in(vienna(), vec![weekdays()])),
+            None,
+            MisfirePolicy::FireNow,
+            None,
+            None,
+            utc(2026, 6, 5, 12, 0),
+        );
+
+        // Friday 22:00 New York = Saturday 04:00 Vienna — closed.
+        assert!(!trigger.gate_allows(utc(2026, 6, 6, 2, 0)));
+        // Sunday 22:00 New York = Monday 04:00 Vienna — open.
+        assert!(trigger.gate_allows(utc(2026, 6, 8, 2, 0)));
+        // So the next fire skips Friday, Saturday and Sunday-as-seen-locally
+        // and lands on the tick whose Vienna day is a Monday.
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 6, 8, 2, 0)));
+    }
+
+    /// A Vienna `window 08:00..18:00` opens at 02:00 New York in summer, not at
+    /// 08:00 New York.
+    #[test]
+    fn calendar_window_opens_on_the_calendars_clock() {
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 3600 },
+            new_york(),
+            Some(cal_in(vienna(), vec![window_rule(8, 18)])),
+            None,
+            MisfirePolicy::FireNow,
+            utc(2026, 6, 10, 3, 0), // 05:00 Vienna — before the window
+        );
+
+        // 06:00 UTC = 08:00 Vienna = 02:00 New York.
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 6, 10, 6, 0)));
+        assert!(trigger.gate_allows(utc(2026, 6, 10, 6, 0)));
+        // 16:00 UTC = 18:00 Vienna: half-open, so already shut — while it is
+        // only 12:00 in New York.
+        assert!(!trigger.gate_allows(utc(2026, 6, 10, 16, 0)));
+    }
+
+    /// The two zones' DST switches are three weeks apart in 2026 (New York on
+    /// 03-08, Vienna on 03-29), so between them the gap is 5 hours instead of
+    /// 6. The *same* wall-clock job time therefore falls inside a Vienna
+    /// window in March and outside it in June — which no single-zone
+    /// evaluation, and no fixed-offset shortcut, can reproduce.
+    #[test]
+    fn calendar_window_follows_each_zones_own_dst() {
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Daily {
+                time: NaiveTime::from_hms_opt(3, 0, 0).unwrap(),
+            },
+            new_york(),
+            Some(cal_in(vienna(), vec![window_rule(8, 9)])),
+            None,
+            MisfirePolicy::FireNow,
+            utc(2026, 3, 9, 12, 0),
+        );
+
+        // 03:00 EDT on 03-10 = 07:00 UTC = 08:00 CET — inside [08:00, 09:00).
+        assert!(trigger.gate_allows(utc(2026, 3, 10, 7, 0)));
+        // 03:00 EDT on 06-10 = 07:00 UTC = 09:00 CEST — Vienna has moved on by
+        // an hour, so the same job time is now shut out.
+        assert!(!trigger.gate_allows(utc(2026, 6, 10, 7, 0)));
+    }
+
+    /// Calendar and trigger `window` are intersected across two clocks: Vienna
+    /// business hours (08:00..18:00 = 02:00..12:00 New York in summer) and a
+    /// New York `08:00..18:00` window overlap only from 08:00 to 12:00 New
+    /// York time.
+    #[test]
+    fn calendar_and_window_intersect_across_zones() {
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 3600 },
+            new_york(),
+            Some(cal_in(vienna(), vec![window_rule(8, 18)])),
+            Some(TimeWindow {
+                start: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+            }),
+            MisfirePolicy::FireNow,
+            utc(2026, 6, 10, 3, 0),
+        );
+
+        // First common opening: 12:00 UTC = 08:00 New York = 14:00 Vienna.
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 6, 10, 12, 0)));
+        // 11:00 UTC: Vienna open (13:00) but New York not yet (07:00).
+        assert!(!trigger.gate_allows(utc(2026, 6, 10, 11, 0)));
+        // 16:00 UTC: New York open (12:00) but Vienna shut (18:00).
+        assert!(!trigger.gate_allows(utc(2026, 6, 10, 16, 0)));
+        // 15:59 UTC = 11:59 New York / 17:59 Vienna — the last open minute.
+        assert!(trigger.gate_allows(utc(2026, 6, 10, 15, 59)));
+    }
+
+    /// A gate scan that starts inside a fall-back's repeated hour must not be
+    /// handed an opening that lies *before* it. Vienna's 2026 fall-back
+    /// repeats 02:00–03:00 local: 02:15 exists at 00:15 UTC (CEST) and again
+    /// at 01:15 UTC (CET). Asking from 01:00 UTC has to yield the second one —
+    /// the first would move the scan backwards and stall `next_gate_open`
+    /// forever.
+    #[test]
+    fn ambiguous_local_opening_never_moves_the_scan_backwards() {
+        let cal = cal_in(
+            vienna(),
+            vec![crate::calendar::CalendarRule::Window(
+                NaiveTime::from_hms_opt(2, 15, 0).unwrap(),
+                NaiveTime::from_hms_opt(2, 45, 0).unwrap(),
+            )],
+        );
+
+        // Both instants really are 02:15 Vienna, one hour apart.
+        assert!(cal.is_allowed_at(utc(2026, 10, 25, 0, 15)));
+        assert!(cal.is_allowed_at(utc(2026, 10, 25, 1, 15)));
+
+        // From 00:00 UTC the first pass is the answer.
+        assert_eq!(
+            cal.next_open_at_or_after(utc(2026, 10, 25, 0, 0)),
+            Some(utc(2026, 10, 25, 0, 15))
+        );
+        // From 01:00 UTC — inside the repeated hour, past the first pass —
+        // the second one is.
+        assert_eq!(
+            cal.next_open_at_or_after(utc(2026, 10, 25, 1, 0)),
+            Some(utc(2026, 10, 25, 1, 15))
+        );
+
+        // And the trigger built on it makes progress rather than hanging.
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 60 },
+            new_york(),
+            Some(cal),
+            None,
+            MisfirePolicy::FireNow,
+            utc(2026, 10, 25, 1, 0),
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 10, 25, 1, 15)));
+    }
+
+    /// A calendar in the job's own zone must behave exactly as before #450 —
+    /// the common single-zone Croniqfile is untouched.
+    #[test]
+    fn same_zone_calendar_is_unchanged() {
+        let trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 3600 },
+            vienna(),
+            Some(cal_in(vienna(), vec![weekdays(), window_rule(8, 18)])),
+            None,
+            MisfirePolicy::FireNow,
+            utc(2026, 6, 8, 3, 0), // Monday 05:00 Vienna
+        );
+        // 06:00 UTC = 08:00 Vienna.
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 6, 8, 6, 0)));
     }
 }
