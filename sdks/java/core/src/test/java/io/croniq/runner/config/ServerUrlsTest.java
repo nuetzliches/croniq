@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +38,7 @@ class ServerUrlsTest {
 
     @BeforeEach
     void attachAppender() {
-        securityLogger = (Logger) LoggerFactory.getLogger(ServerUrls.class);
+        securityLogger = logbackLoggerFor(ServerUrls.class);
         appender = new ListAppender<>();
         appender.start();
         securityLogger.addAppender(appender);
@@ -188,6 +190,26 @@ class ServerUrlsTest {
     void isLoopbackHostRejectsNullAndBlank() {
         assertThat(ServerUrls.isLoopbackHost(null)).isFalse();
         assertThat(ServerUrls.isLoopbackHost("")).isFalse();
+    }
+
+    /**
+     * Resolves the logback logger backing {@code type}.
+     *
+     * <p>Not a plain cast of {@code LoggerFactory.getLogger(...)}: SLF4J 2 hands a
+     * {@code SubstituteLogger} to any thread that calls in while another thread is still
+     * initialising the binding, and Gradle runs this module's test classes concurrently —
+     * so the cast failed intermittently on CI. Wait for the real {@link LoggerContext}
+     * instead.
+     */
+    private static Logger logbackLoggerFor(Class<?> type) {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (!(LoggerFactory.getILoggerFactory() instanceof LoggerContext)) {
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("SLF4J did not bind logback-classic in time");
+            }
+            Thread.onSpinWait();
+        }
+        return ((LoggerContext) LoggerFactory.getILoggerFactory()).getLogger(type);
     }
 
     private List<String> warnings() {
