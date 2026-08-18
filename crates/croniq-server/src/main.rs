@@ -509,7 +509,7 @@ async fn main() -> Result<()> {
                     let job_config = job_config_from_definition(def, None);
                     jobs.push(job_config);
                     triggers.insert(def.job_key.clone(), built.trigger);
-                    if let Some(reason) = built.calendar_fault {
+                    if let Some(reason) = built.config_fault {
                         server_state
                             .config_faults
                             .write()

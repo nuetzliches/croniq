@@ -56,6 +56,22 @@ fn check_calendar_known(
     ))
 }
 
+/// Reject a `timezone` that is not an IANA zone name (issue #426).
+///
+/// The loader already fails such a trigger closed (it loads paused with a
+/// `config_error`), but a row that can never run should not be accepted in the
+/// first place — the caller learns about the typo at the request that made it
+/// rather than from a paused job hours later. An empty string means "unset",
+/// matching `check_calendar_known`.
+fn check_timezone_valid(timezone: Option<&str>) -> Result<(), (StatusCode, Json<ValidationError>)> {
+    let Some(name) = timezone.filter(|t| !t.is_empty()) else {
+        return Ok(());
+    };
+    croniq_config::timezone::parse(name)
+        .map_err(|e| verr(StatusCode::BAD_REQUEST, "unknown_timezone", e.to_string()))?;
+    Ok(())
+}
+
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
     pub job_key: Option<String>,
@@ -172,6 +188,7 @@ pub async fn handle_create(
 
     let resolved = state.resolved_calendars().await;
     check_calendar_known(req.calendar.as_deref(), &resolved)?;
+    check_timezone_valid(req.timezone.as_deref())?;
 
     let now = Utc::now();
     let trigger = TriggerDefinition {
@@ -207,7 +224,7 @@ pub async fn handle_create(
             job: Box::new(job_config),
             trigger: Box::new(built.trigger),
         });
-        state.set_config_fault(&trigger.job_key, built.calendar_fault);
+        state.set_config_fault(&trigger.job_key, built.config_fault);
     }
 
     Ok((StatusCode::CREATED, Json(trigger)))
@@ -309,6 +326,7 @@ pub async fn handle_update(
 
     let resolved = state.resolved_calendars().await;
     check_calendar_known(existing.calendar.as_deref(), &resolved)?;
+    check_timezone_valid(existing.timezone.as_deref())?;
 
     let now = Utc::now();
     existing.updated_at = now;
@@ -341,7 +359,7 @@ pub async fn handle_update(
                     job: Box::new(job_config),
                     trigger: Box::new(built.trigger),
                 });
-                state.set_config_fault(&existing.job_key, built.calendar_fault);
+                state.set_config_fault(&existing.job_key, built.config_fault);
             }
         } else {
             // A disabled schedule can't be faulted — it isn't running at all.

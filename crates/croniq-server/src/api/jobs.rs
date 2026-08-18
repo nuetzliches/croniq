@@ -128,6 +128,14 @@ pub struct JobScheduleState {
     /// Lowercase trigger status: `active` / `paused` / `disabled` / `exhausted`.
     pub status: JobStatus,
     pub next_fire_at: Option<chrono::DateTime<Utc>>,
+    /// The IANA zone `next_fire_at` is computed in — the *effective* zone, read
+    /// off the live trigger rather than off the config text, so it is filled in
+    /// even when the job inherits it from `defaults { }` or declares nothing at
+    /// all (issue #427: `every day at 03:00` with no zone anywhere runs at
+    /// 03:00 UTC, and nothing used to say so). `None` only when the live
+    /// trigger snapshot is unavailable — store-only mode, or a job registered
+    /// after boot — never as a stand-in for "UTC".
+    pub timezone: Option<String>,
     pub last_fired_at: Option<chrono::DateTime<Utc>>,
     pub fire_count: u64,
     /// `true` when the trigger is active but its next scheduled fire is in
@@ -195,14 +203,31 @@ pub async fn handle_list_states(
     // std RwLock must not be held across an await. An absent map (store-only
     // mode) or a job missing from it (registered after boot, refreshed on
     // reload) degrades to "no gate info": `suppressed_by` stays None.
-    let suppressed: std::collections::HashMap<String, String> = match state.triggers.as_ref() {
-        Some(triggers) => triggers
-            .read()
-            .await
-            .iter()
-            .filter_map(|(key, trigger)| trigger.gate_closed_reason(now).map(|r| (key.clone(), r)))
-            .collect(),
-        None => std::collections::HashMap::new(),
+    //
+    // The effective timezone comes from the same snapshot and in the same pass:
+    // it is the zone the trigger actually computes fire times in, which is the
+    // only honest answer once `defaults { }` inheritance and the UTC default
+    // are in play (issue #427).
+    let (suppressed, timezones): (
+        std::collections::HashMap<String, String>,
+        std::collections::HashMap<String, String>,
+    ) = match state.triggers.as_ref() {
+        Some(triggers) => {
+            let guard = triggers.read().await;
+            (
+                guard
+                    .iter()
+                    .filter_map(|(key, trigger)| {
+                        trigger.gate_closed_reason(now).map(|r| (key.clone(), r))
+                    })
+                    .collect(),
+                guard
+                    .iter()
+                    .map(|(key, trigger)| (key.clone(), trigger.timezone.name().to_string()))
+                    .collect(),
+            )
+        }
+        None => Default::default(),
     };
 
     let faults = state.config_faults.read().unwrap();
@@ -221,10 +246,12 @@ pub async fn handle_list_states(
             } else {
                 None
             };
+            let timezone = timezones.get(&s.job_key).cloned();
             JobScheduleState {
                 job_key: s.job_key,
                 status: s.status,
                 next_fire_at: s.next_fire_at,
+                timezone,
                 last_fired_at: s.last_fired_at,
                 fire_count: s.fire_count,
                 overdue,
@@ -546,6 +573,21 @@ pub async fn handle_register(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let now = Utc::now();
 
+    // Reject an unknown IANA zone at the request that introduced it (issue
+    // #426). The loader would fail the resulting trigger closed anyway, but a
+    // registration that can never fire should not report success — a runner
+    // that registers `Europe/Berln` at boot must find out at boot.
+    if let Some(tz) = req.timezone.as_deref().filter(|t| !t.is_empty())
+        && let Err(e) = croniq_config::timezone::parse(tz)
+    {
+        tracing::warn!(
+            job_key = %req.job_key,
+            reason = %e,
+            "job registration rejected: invalid timezone"
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     // DSL precedence — check the in-memory Croniqfile map, not the store,
     // since DSL entries are not persisted.
     if is_dsl_managed(&state, &req.job_key).await {
@@ -627,8 +669,8 @@ pub async fn handle_register(
                 job: Box::new(job_config),
                 trigger: Box::new(built.trigger),
             });
-            let faulted = built.calendar_fault.is_some();
-            state.set_config_fault(&trigger_def.job_key, built.calendar_fault);
+            let faulted = built.config_fault.is_some();
+            state.set_config_fault(&trigger_def.job_key, built.config_fault);
             if faulted {
                 "registered_calendar_fault"
             } else {
@@ -815,7 +857,7 @@ pub async fn handle_adopt(
                 job: Box::new(job_config),
                 trigger: Box::new(built.trigger),
             });
-            state.set_config_fault(&trigger_def.job_key, built.calendar_fault);
+            state.set_config_fault(&trigger_def.job_key, built.config_fault);
         }
     }
 

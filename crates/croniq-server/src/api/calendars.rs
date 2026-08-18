@@ -160,7 +160,7 @@ async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize
                 job: Box::new(job_config),
                 trigger: Box::new(built.trigger),
             });
-            state.set_config_fault(&def.job_key, built.calendar_fault);
+            state.set_config_fault(&def.job_key, built.config_fault);
             rebuilt += 1;
         }
     }

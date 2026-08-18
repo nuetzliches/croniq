@@ -503,6 +503,16 @@ components:
           enum: [active, paused, disabled, exhausted]
           description: Lowercase trigger status.
         next_fire_at: { type: string, format: date-time, nullable: true }
+        timezone:
+          type: string
+          nullable: true
+          description: >
+            IANA zone `next_fire_at` is computed in — the *effective* zone,
+            read off the live trigger rather than the config, so it is filled
+            in when the job inherits it from `defaults { }` or declares nothing
+            at all (in which case it reads `UTC`, issue #427). `null` only when
+            the live trigger snapshot is unavailable (store-only mode, or a job
+            registered after boot) — never as a stand-in for UTC.
         last_fired_at: { type: string, format: date-time, nullable: true }
         fire_count: { type: integer }
         overdue:

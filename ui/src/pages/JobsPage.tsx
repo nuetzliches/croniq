@@ -456,6 +456,12 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   }, [scheduleState, forecastData, jobKey])
   const overdue = scheduleState?.overdue ?? false
   const suppressedBy = scheduleState?.suppressed_by ?? null
+  // The zone `next_fire_at` is actually computed in (issue #427). The live
+  // trigger is the only source that resolves `defaults { }` inheritance and the
+  // UTC default; the trigger row is the fallback for servers that don't send it
+  // yet, and it can legitimately be null (then nothing is claimed).
+  const effectiveTimezone =
+    scheduleState?.timezone ?? schedules.data?.[0]?.timezone ?? null
 
   if (job.isLoading || !job.data) {
     return <div className="dim center" style={{ padding: 40 }}>Loading…</div>
@@ -583,6 +589,7 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
         nextFire={nextFire}
         overdue={overdue}
         suppressedBy={suppressedBy}
+        timezone={effectiveTimezone}
         schedule={schedules.data?.[0] ?? null}
       />
 
@@ -777,6 +784,7 @@ function KpiRow({
   nextFire,
   overdue,
   suppressedBy,
+  timezone,
   schedule,
 }: {
   runsLast24: Execution[]
@@ -786,6 +794,12 @@ function KpiRow({
   overdue: boolean
   /** Gate keeping the job intentionally idle (#391), e.g. `calendar 'biz'`. */
   suppressedBy: string | null
+  /**
+   * Effective IANA zone the fire times are computed in (#427). Shown next to
+   * every next-fire reading, because a job that declares no zone runs in UTC
+   * and used to say nothing at all about it. `null` ⇒ unknown, show nothing.
+   */
+  timezone: string | null
   schedule: TriggerDefinition | null
 }) {
   const sr = stats && stats.total > 0 ? stats.success_rate * 100 : null
@@ -810,6 +824,14 @@ function KpiRow({
     if (secs < 3600) return `in ${Math.floor(secs / 60)}m ${secs % 60}s`
     return `in ${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
   }, [nextFire, now])
+
+  // The effective zone rides along with every next-fire reading (#427): a
+  // wall-clock schedule with no `timezone` anywhere fires in UTC, and the only
+  // way an operator could tell was to compare a fire against the clock.
+  const zoneSuffix = timezone ? ` · ${timezone}` : ''
+  const zoneTitle = timezone
+    ? `Fire times are computed in ${timezone}`
+    : undefined
 
   return (
     <div className="grid cols-4">
@@ -875,15 +897,17 @@ function KpiRow({
           overdue && nextFire ? (
             <span className="mono" style={{ fontSize: 11, color: 'var(--error)' }}>
               due {formatRelative(nextFire)}
+              {zoneSuffix}
             </span>
           ) : suppressedBy && nextFire ? (
             <span className="mono dim" style={{ fontSize: 11 }}>
               next run {fireRel ?? formatRelative(nextFire)}
+              {zoneSuffix}
             </span>
-          ) : schedule ? (
-            <span className="mono dim" style={{ fontSize: 11 }}>
-              {schedule.cron_expression ?? '—'}
-              {schedule.timezone ? ` · ${schedule.timezone}` : ''}
+          ) : schedule || timezone ? (
+            <span className="mono dim" style={{ fontSize: 11 }} title={zoneTitle}>
+              {schedule?.cron_expression ?? '—'}
+              {zoneSuffix}
             </span>
           ) : (
             <span className="muted">no schedule</span>

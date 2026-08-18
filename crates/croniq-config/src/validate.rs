@@ -79,17 +79,28 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     // so per-job ephemeral detection matches compile_job: a defaults block only
     // affects jobs declared after it, and later blocks/directives win.
     let mut default_ephemeral = false;
+    // Same item-order tracking for `defaults { timezone … }` — a job declared
+    // before the block does not inherit it, so the UTC warning below must not
+    // consider it covered (issue #427).
+    let mut default_timezone = false;
 
     // Second pass: validate everything
     for item in &ast.items {
         match item {
             Item::Defaults(def) => {
                 for dob in &def.directives {
-                    if let DirectiveOrBlock::Directive(dir) = dob
-                        && dir.key.value == "execution_mode"
-                        && let Some(arg) = dir.args.first()
-                    {
-                        default_ephemeral = arg.value == "ephemeral";
+                    if let DirectiveOrBlock::Directive(dir) = dob {
+                        match dir.key.value.as_str() {
+                            "execution_mode" => {
+                                if let Some(arg) = dir.args.first() {
+                                    default_ephemeral = arg.value == "ephemeral";
+                                }
+                            }
+                            "timezone" => {
+                                default_timezone = validate_timezone_value(dir, &mut diags);
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -138,6 +149,9 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 if let Some(ref sched) = job.schedule {
                     validate_schedule_kind(sched, &mut diags);
                 }
+
+                // Timezone values + the UTC-default warning (issues #426, #427)
+                validate_timezone(job, default_timezone, &mut diags);
 
                 // Validate runner constraints
                 validate_runner_constraints(job, &mut diags);
@@ -193,13 +207,138 @@ fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
-    let has_timezone = cal.rules.iter().any(|r| {
-        r.rule_type.value == "timezone" || r.args.first().is_some_and(|a| a.value.contains('/'))
-    });
+/// Check one `timezone` directive's value and report whether it declares a zone
+/// at all.
+///
+/// The return value is "an operator wrote a zone here", not "the zone is
+/// valid" — an invalid zone already has its own error, and stacking the
+/// #427 UTC warning on top of it would just be noise.
+///
+/// Placeholder values (`{vars.tz}`, `{env.TZ}`) resolve at compile time, so
+/// they count as declared and are not checked here.
+fn validate_timezone_value(dir: &Directive, diags: &mut Vec<Diagnostic>) -> bool {
+    let Some(arg) = dir.args.first() else {
+        return false;
+    };
+    if arg.is_placeholder {
+        return true;
+    }
+    if let Err(err) = crate::timezone::parse(&arg.value) {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: err.to_string(),
+            span: arg.span.into(),
+        });
+    }
+    true
+}
 
-    // Timezone is expected but not strictly required (inherits from defaults)
-    let _ = has_timezone;
+/// Timezone diagnostics for one job (issues #426 and #427):
+///
+/// 1. every `timezone` value the job can carry — the schedule option, the
+///    job-level directive — must name a real IANA zone;
+/// 2. a job whose fire times are *wall-clock* and that has no effective zone
+///    from anywhere gets a warning that it will run in UTC.
+///
+/// `default_timezone` is whether a `defaults { timezone … }` block declared
+/// **before** this job set one, matching how `compile_job` inherits it.
+///
+/// What counts as wall-clock, and why the list is exactly this:
+///
+/// - `every day|<weekday>|<n>th of month at HH:MM` — the local time is
+///   resolved in the trigger's zone, so the zone moves the fire.
+/// - a job-level `window HH:MM..HH:MM` — the gate is evaluated in the *job's*
+///   zone (`Trigger::gate_allows` localizes with `Trigger.timezone`), so an
+///   interval job with a window is zone-sensitive even though its schedule is
+///   not.
+/// - **not** `every N seconds|minutes|hours`: interval arithmetic is
+///   zone-independent.
+/// - **not** `once at <datetime>`: an offset-less `once` value is parsed as UTC
+///   by `Schedule::from_ast` and a `timezone` declaration would *not* change
+///   it, so telling the operator to declare one would be a false promise.
+/// - **not** a referenced `calendar { }`: its rules are also evaluated in the
+///   job's zone, but a job with a calendar always has a schedule of its own,
+///   and that schedule already decides whether this warning fires.
+fn validate_timezone(job: &JobBlock, default_timezone: bool, diags: &mut Vec<Diagnostic>) {
+    let mut has_timezone = default_timezone;
+
+    // Job-level directive (`timezone Europe/Vienna` in the body, issue #426)
+    // and the job-level `window` that makes an interval job zone-sensitive.
+    let mut window_span: Option<crate::lexer::Span> = None;
+    for dob in &job.directives {
+        let DirectiveOrBlock::Directive(d) = dob else {
+            continue;
+        };
+        match d.key.value.as_str() {
+            "timezone" => has_timezone |= validate_timezone_value(d, diags),
+            "window" => window_span = Some(d.key.span),
+            _ => {}
+        }
+    }
+
+    // Schedule option (`every day at 02:00 { timezone … }`) — the most specific
+    // spelling, and the last one compile_job applies.
+    if let Some(ref sched) = job.schedule {
+        for opt in &sched.options {
+            if opt.key.value == "timezone" {
+                has_timezone |= validate_timezone_value(opt, diags);
+            }
+        }
+    }
+
+    if has_timezone {
+        return;
+    }
+
+    let wall_clock_span = match job.schedule.as_ref() {
+        Some(sched)
+            if matches!(
+                sched.kind,
+                ScheduleKind::Daily { .. }
+                    | ScheduleKind::Weekdays { .. }
+                    | ScheduleKind::Monthly { .. }
+            ) =>
+        {
+            Some(sched.span)
+        }
+        _ => window_span,
+    };
+
+    if let Some(span) = wall_clock_span {
+        diags.push(Diagnostic {
+            severity: Severity::Warning,
+            message: format!(
+                "job '{}' declares no timezone: wall-clock times are interpreted as UTC; \
+                 declare 'timezone' to be explicit — in the job body, in `defaults {{ }}`, \
+                 or as a schedule option",
+                job.key.raw
+            ),
+            span: span.into(),
+        });
+    }
+}
+
+fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
+    // A calendar's own `timezone` is checked for validity here, but it can
+    // never produce the #427 UTC warning: the runtime never reads it. The gate
+    // is evaluated in the *job's* zone (`Trigger::gate_allows`), so
+    // "this calendar has no timezone" says nothing about which zone its rules
+    // are compared against — the job decides that, and `validate_timezone`
+    // warns there. Hence the `has_timezone` hook this function used to compute
+    // and discard is gone rather than finished: it was measuring the wrong
+    // thing.
+    for rule in &cal.rules {
+        if rule.rule_type.value == "timezone" {
+            // Stored as a synthetic Include rule by the parser — same shape as
+            // a directive, so the same value check applies.
+            let dir = Directive {
+                key: rule.rule_type.clone(),
+                args: rule.args.clone(),
+                span: rule.span,
+            };
+            validate_timezone_value(&dir, diags);
+        }
+    }
 
     // Rule arguments are checked with the same `calendar_args` parsers the
     // scheduler's compile step uses, so `validate` errors exactly where the
@@ -1224,6 +1363,194 @@ mod tests {
             !has_ephemeral_guard_error(&diags),
             "execution_mode queued must un-reject the guard, got: {diags:?}"
         );
+    }
+
+    // ── invalid IANA timezone (issue #426) ────────────────────────────────────
+
+    /// Error messages mentioning an unknown zone, for the assertions below.
+    fn timezone_errors(diags: &[Diagnostic]) -> Vec<&str> {
+        errors(diags)
+            .into_iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| m.starts_with("unknown timezone"))
+            .collect()
+    }
+
+    #[test]
+    fn invalid_timezone_in_defaults_errors() {
+        let diags = validate_src(
+            r#"
+            defaults { timezone Europe/Berln }
+            job billing:invoice { every day at 02:00 }
+        "#,
+        );
+        let msgs = timezone_errors(&diags);
+        assert_eq!(msgs.len(), 1, "got: {diags:?}");
+        assert!(
+            msgs[0].contains("did you mean 'Europe/Berlin'?"),
+            "got: {}",
+            msgs[0]
+        );
+    }
+
+    #[test]
+    fn invalid_timezone_as_schedule_option_errors() {
+        let diags =
+            validate_src(r#"job billing:invoice { every day at 02:00 { timezone Mars/Olympus } }"#);
+        assert_eq!(timezone_errors(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    #[test]
+    fn invalid_job_level_timezone_errors() {
+        let diags = validate_src(
+            r#"job billing:invoice { every day at 02:00
+                                     timezone Europe/Vienn }"#,
+        );
+        assert_eq!(timezone_errors(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    #[test]
+    fn invalid_calendar_timezone_errors() {
+        let diags = validate_src(r#"calendar biz { timezone "Europe/Wien" }"#);
+        assert_eq!(timezone_errors(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    #[test]
+    fn valid_timezones_produce_no_diagnostics() {
+        let diags = validate_src(
+            r#"
+            defaults { timezone UTC }
+            calendar biz { timezone "America/New_York"; include weekly monday }
+            job a:b {
+                every day at 02:00 { timezone Australia/Sydney; calendar biz }
+                timezone Europe/Vienna
+            }
+        "#,
+        );
+        assert!(errors(&diags).is_empty(), "unexpected: {diags:?}");
+    }
+
+    #[test]
+    fn placeholder_timezone_is_not_checked() {
+        // `{vars.tz}` resolves at compile time — nothing to validate statically,
+        // and it still counts as "a zone is declared" for the #427 warning.
+        let diags = validate_src(
+            r#"
+            vars { tz "Europe/Vienna" }
+            defaults { timezone {vars.tz} }
+            job a:b { every day at 02:00 }
+        "#,
+        );
+        assert!(errors(&diags).is_empty(), "unexpected: {diags:?}");
+        assert!(utc_warnings(&diags).is_empty(), "unexpected: {diags:?}");
+    }
+
+    // ── UTC-default warning (issue #427) ──────────────────────────────────────
+
+    fn utc_warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+        warnings(diags)
+            .into_iter()
+            .filter(|d| d.message.contains("interpreted as UTC"))
+            .collect()
+    }
+
+    #[test]
+    fn daily_schedule_without_timezone_warns() {
+        let diags = validate_src(r#"job billing:invoice { every day at 03:00 }"#);
+        assert!(errors(&diags).is_empty(), "must not be an error: {diags:?}");
+        let warns = utc_warnings(&diags);
+        assert_eq!(warns.len(), 1, "got: {diags:?}");
+        assert!(
+            warns[0]
+                .message
+                .contains("declare 'timezone' to be explicit"),
+            "got: {}",
+            warns[0].message
+        );
+    }
+
+    #[test]
+    fn weekday_and_monthly_schedules_without_timezone_warn() {
+        let diags = validate_src(
+            r#"
+            job a:weekly { every monday at 03:00 }
+            job a:monthly { every 1st of month at 06:00 }
+        "#,
+        );
+        assert_eq!(utc_warnings(&diags).len(), 2, "got: {diags:?}");
+    }
+
+    #[test]
+    fn interval_schedule_without_timezone_is_quiet() {
+        // Interval arithmetic is zone-independent — nothing to warn about.
+        let diags = validate_src(r#"job etl:sync { every 15 minutes }"#);
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn once_schedule_without_timezone_is_quiet() {
+        // An offset-less `once` value is parsed as UTC regardless of the job's
+        // timezone, so suggesting a `timezone` here would be a false promise.
+        let diags = validate_src(r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#);
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn window_on_an_interval_job_without_timezone_warns() {
+        // The window gate is evaluated in the *job's* zone, so an interval job
+        // with a window is zone-sensitive even though its schedule is not.
+        let diags = validate_src(r#"job etl:sync { every 15 minutes; window 08:00..18:00 }"#);
+        assert_eq!(utc_warnings(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    #[test]
+    fn defaults_timezone_silences_the_warning() {
+        let diags = validate_src(
+            r#"
+            defaults { timezone Europe/Vienna }
+            job billing:invoice { every day at 03:00 }
+        "#,
+        );
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn job_level_timezone_silences_the_warning() {
+        let diags = validate_src(
+            r#"job billing:invoice { every day at 03:00
+                                     timezone Europe/Vienna }"#,
+        );
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn schedule_option_timezone_silences_the_warning() {
+        let diags = validate_src(
+            r#"job billing:invoice { every day at 03:00 { timezone Europe/Vienna } }"#,
+        );
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn defaults_timezone_after_a_job_does_not_silence_it() {
+        // compile_job inherits `defaults` in item order, so a block declared
+        // after the job does not apply to it — the warning must agree.
+        let diags = validate_src(
+            r#"
+            job billing:invoice { every day at 03:00 }
+            defaults { timezone Europe/Vienna }
+        "#,
+        );
+        assert_eq!(utc_warnings(&diags).len(), 1, "got: {diags:?}");
+    }
+
+    #[test]
+    fn an_invalid_timezone_does_not_also_warn_about_utc() {
+        // One diagnostic per problem: the zone is wrong, not missing.
+        let diags =
+            validate_src(r#"job billing:invoice { every day at 03:00 { timezone Europe/Berln } }"#);
+        assert_eq!(timezone_errors(&diags).len(), 1, "got: {diags:?}");
+        assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
     }
 
     #[test]

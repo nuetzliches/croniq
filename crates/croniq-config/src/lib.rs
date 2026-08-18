@@ -11,4 +11,5 @@ pub mod parser;
 pub mod placeholders;
 pub mod plural;
 pub mod schedule;
+pub mod timezone;
 pub mod validate;

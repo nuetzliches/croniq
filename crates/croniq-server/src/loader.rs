@@ -42,6 +42,14 @@ pub enum LoadError {
     #[error("schedule error in job '{job}': {reason}")]
     Schedule { job: String, reason: String },
 
+    /// A `timezone` value that is not an IANA zone name (issue #426). Before
+    /// this the loader fell back to `UTC`, so a one-character typo moved every
+    /// wall-clock fire of the job by the zone's offset — permanently, with a
+    /// green `croniq validate` and nothing in the log. Fails the boot instead:
+    /// the alternative is running the wrong schedule and not knowing.
+    #[error("invalid timezone in job '{job}': {reason}")]
+    Timezone { job: String, reason: String },
+
     /// Semantic validation failed (issue #402). Carries every error-severity
     /// diagnostic, not just the first, so one boot attempt reports the whole
     /// list. Locations are omitted deliberately: after `import` resolution the
@@ -274,12 +282,21 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             })?,
         };
 
-        // Resolve timezone (default UTC)
-        let tz: chrono_tz::Tz = job_cfg
-            .timezone
-            .as_deref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(chrono_tz::UTC);
+        // Resolve the timezone. An unparseable zone aborts the load (issue
+        // #426) — `validate_ast` above already rejects it for a Croniqfile, so
+        // reaching this arm means the zone came from a path the validator does
+        // not see; either way it must not degrade to UTC silently. No zone
+        // declared anywhere is a different thing entirely: UTC is then the
+        // documented default, and `validate` warns about it (issue #427).
+        let tz: chrono_tz::Tz = match job_cfg.timezone.as_deref() {
+            Some(name) => {
+                croniq_config::timezone::parse(name).map_err(|e| LoadError::Timezone {
+                    job: job_cfg.key.clone(),
+                    reason: e.to_string(),
+                })?
+            }
+            None => chrono_tz::UTC,
+        };
 
         // Misfire policy: default FireNow (never skip a billing run)
         let misfire = MisfirePolicy::FireNow;
@@ -768,14 +785,20 @@ pub fn resolve_calendars(
 }
 
 /// A runtime trigger built from a persisted `TriggerDefinition`, plus the
-/// calendar fault that paused it (if any).
+/// config fault that paused it (if any).
 pub struct BuiltTrigger {
     pub trigger: Trigger,
-    /// `Some(reason)` when the definition's calendar reference did not
-    /// resolve under `strict_calendars` — the trigger is returned already
-    /// paused (fail closed, mirroring the DSL path / issue #361). Callers
-    /// surface the reason through `ServerState.config_faults`.
-    pub calendar_fault: Option<String>,
+    /// `Some(reason)` when the definition could not be honoured as written and
+    /// the trigger is returned already **paused** (fail closed, mirroring the
+    /// DSL path / issue #361). Callers surface the reason through
+    /// `ServerState.config_faults`. Two conditions raise it:
+    ///
+    /// - the `calendar` reference did not resolve under `strict_calendars`;
+    /// - the `timezone` is not an IANA zone name (issue #426). A stored row
+    ///   cannot abort a boot the way a Croniqfile can, so it pauses instead —
+    ///   firing a wall-clock schedule in the wrong zone is worse than not
+    ///   firing it visibly.
+    pub config_fault: Option<String>,
 }
 
 /// Build a runtime Trigger from a persisted TriggerDefinition.
@@ -792,11 +815,17 @@ pub fn trigger_from_definition(
     let cron_expr = def.cron_expression.as_deref()?;
     let schedule = schedule_from_expr(cron_expr)?;
 
-    let tz: chrono_tz::Tz = def
-        .timezone
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
+    // An unparseable zone pauses the trigger instead of silently becoming UTC
+    // (issue #426). UTC is still what the paused trigger carries — it has to
+    // carry something — but it can no longer fire, so the wrong-zone fires that
+    // used to happen here don't.
+    let (tz, timezone_fault) = match def.timezone.as_deref() {
+        Some(name) => match croniq_config::timezone::parse(name) {
+            Ok(tz) => (tz, None),
+            Err(e) => (chrono_tz::UTC, Some(e.to_string())),
+        },
+        None => (chrono_tz::UTC, None),
+    };
 
     let window = def.window.as_deref().and_then(TimeWindow::parse);
 
@@ -818,14 +847,21 @@ pub fn trigger_from_definition(
     );
 
     // Fail closed: an unresolved calendar reference must not fire un-gated
-    // (same contract as the DSL path in `load_from_compiled`).
-    if calendar_fault.is_some() {
+    // (same contract as the DSL path in `load_from_compiled`), and neither must
+    // a schedule whose declared zone is unknown. Both reasons are reported when
+    // both apply — fixing one and re-registering must not reveal the other as a
+    // surprise.
+    let config_fault = match (calendar_fault, timezone_fault) {
+        (Some(cal), Some(tz)) => Some(format!("{cal}; {tz}")),
+        (cal, tz) => cal.or(tz),
+    };
+    if config_fault.is_some() {
         trigger.pause();
     }
 
     Some(BuiltTrigger {
         trigger,
-        calendar_fault,
+        config_fault,
     })
 }
 
@@ -1788,7 +1824,7 @@ mod tests {
         let now = fixed_utc(2026, 3, 28, 12, 0); // Saturday
         let built = trigger_from_definition(&def, &resolved, now).unwrap();
 
-        assert!(built.calendar_fault.is_none());
+        assert!(built.config_fault.is_none());
         assert!(built.trigger.calendar.is_some());
         assert_eq!(built.trigger.state, TriggerState::Armed);
         // Gate skips the weekend to Monday 00:00.
@@ -1828,8 +1864,121 @@ mod tests {
         let def = trigger_def("api:tick", "1m", Some("bad"));
         let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
         assert_eq!(built.trigger.state, TriggerState::Paused);
-        let reason = built.calendar_fault.expect("fault");
+        let reason = built.config_fault.expect("fault");
         assert!(reason.contains("failed to compile"), "reason: {reason}");
+    }
+
+    // ── Issue #426: an invalid IANA zone must not become UTC ─────────────────
+
+    #[test]
+    fn dsl_invalid_timezone_fails_the_load() {
+        // The #426 repro: `Europe/Berln` used to load clean and run in UTC.
+        let src = r#"
+            defaults { timezone Europe/Berln }
+            job billing:invoice { every day at 02:00 }
+        "#;
+        match load_str(src) {
+            Ok(_) => panic!("an unknown timezone must not load"),
+            // The validator sees it first on the DSL path, which is the
+            // better error (it lists every problem at once) — either variant
+            // is a hard failure, which is what this asserts.
+            Err(LoadError::Validate { messages }) => {
+                assert!(
+                    messages.iter().any(|m| m.contains("unknown timezone")),
+                    "got: {messages:?}"
+                );
+                assert!(
+                    messages.iter().any(|m| m.contains("Europe/Berlin")),
+                    "the suggestion must name the intended zone, got: {messages:?}"
+                );
+            }
+            Err(LoadError::Timezone { job, reason }) => {
+                assert_eq!(job, "billing:invoice");
+                assert!(reason.contains("unknown timezone"), "got: {reason}");
+            }
+            Err(other) => panic!("expected a timezone failure, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn dsl_job_level_timezone_reaches_the_trigger() {
+        // Issue #426, the other half: the job-body spelling used to compile to
+        // `null` and leave the trigger in UTC.
+        let src = r#"
+            job billing:invoice {
+                every day at 02:00
+                timezone Europe/Vienna
+            }
+        "#;
+        let cfg = load_str(src).expect("job-level timezone must load");
+        assert_eq!(
+            cfg.triggers["billing:invoice"].timezone,
+            chrono_tz::Tz::Europe__Vienna
+        );
+    }
+
+    #[test]
+    fn dsl_schedule_option_timezone_beats_the_job_level_one() {
+        let src = r#"
+            defaults { timezone UTC }
+            job billing:invoice {
+                every day at 02:00 { timezone America/New_York }
+                timezone Europe/Vienna
+            }
+        "#;
+        let cfg = load_str(src).expect("must load");
+        assert_eq!(
+            cfg.triggers["billing:invoice"].timezone,
+            chrono_tz::Tz::America__New_York
+        );
+    }
+
+    #[test]
+    fn dsl_without_any_timezone_still_loads_as_utc() {
+        // UTC-by-default stays the documented behaviour (issue #427) — only the
+        // *invalid* zone is a failure, and the missing one is a validate
+        // warning, which must not block the boot.
+        let src = r#"job billing:invoice { every day at 02:00 }"#;
+        let cfg = load_str(src).expect("no timezone anywhere must still load");
+        assert_eq!(cfg.triggers["billing:invoice"].timezone, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn stored_trigger_with_invalid_timezone_faults_closed() {
+        // A persisted row cannot abort a boot, so it pauses instead: firing a
+        // wall-clock schedule in the wrong zone is worse than not firing.
+        let resolved = resolve_calendars(&[], &[], true);
+        let mut def = trigger_def("api:tick", "every day at 02:00", None);
+        def.timezone = Some("Europe/Berln".into());
+
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert_eq!(built.trigger.state, TriggerState::Paused);
+        let reason = built.config_fault.expect("fault");
+        assert!(reason.contains("unknown timezone"), "reason: {reason}");
+    }
+
+    #[test]
+    fn stored_trigger_reports_both_calendar_and_timezone_faults() {
+        let resolved = resolve_calendars(&[], &[], true);
+        let mut def = trigger_def("api:tick", "every day at 02:00", Some("ghost"));
+        def.timezone = Some("Europe/Berln".into());
+
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        let reason = built.config_fault.expect("fault");
+        assert!(reason.contains("not defined"), "reason: {reason}");
+        assert!(reason.contains("unknown timezone"), "reason: {reason}");
+    }
+
+    #[test]
+    fn stored_trigger_with_valid_timezone_is_not_faulted() {
+        let resolved = resolve_calendars(&[], &[], true);
+        let mut def = trigger_def("api:tick", "every day at 02:00", None);
+        def.timezone = Some("Europe/Vienna".into());
+
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert!(built.config_fault.is_none());
+        assert_eq!(built.trigger.timezone, chrono_tz::Tz::Europe__Vienna);
+        assert_eq!(built.trigger.state, TriggerState::Armed);
     }
 
     #[test]
@@ -1838,7 +1987,7 @@ mod tests {
         let def = trigger_def("api:tick", "1m", Some("ghost"));
         let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
         assert_eq!(built.trigger.state, TriggerState::Paused);
-        assert!(built.calendar_fault.unwrap().contains("not defined"));
+        assert!(built.config_fault.unwrap().contains("not defined"));
     }
 
     #[test]
@@ -1848,7 +1997,7 @@ mod tests {
         let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
         assert_ne!(built.trigger.state, TriggerState::Paused);
         assert!(built.trigger.calendar.is_none());
-        assert!(built.calendar_fault.is_none());
+        assert!(built.config_fault.is_none());
     }
 
     #[test]
@@ -1857,7 +2006,7 @@ mod tests {
         let def = trigger_def("api:tick", "1m", Some(""));
         let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
         assert!(built.trigger.calendar.is_none());
-        assert!(built.calendar_fault.is_none());
+        assert!(built.config_fault.is_none());
     }
 
     #[test]

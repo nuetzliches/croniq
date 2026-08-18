@@ -16,11 +16,20 @@
 //! `example_croniqfile_has_no_unknown_directives` test in this module guards
 //! that direction by validating the shipped `Croniqfile.example`.
 //!
-//! Out of scope on purpose: `job { }` and `alerts { }`. Job-level directives
-//! and alert channel/rule bodies carry their own validation in
-//! [`crate::validate`], and alert channel *kind* directives (`shell`,
-//! `webhook`, `email`) are matched positionally rather than from a fixed key
-//! set.
+//! `job { }` joined the tables in issue #426: its body had the same hole one
+//! level down — `timezone Europe/Vienna` written as a bare job directive
+//! compiled to nothing, and so did every other typo, because
+//! [`crate::validate`] only ever inspected *specific* job directives
+//! (`singleton`, `max_concurrent`, the `runner` blocks) and never the key set
+//! as a whole. Only the job body's own directives and sub-block *names* are
+//! checked here; the bodies of `runner … { }` and `metadata { }` are not
+//! (the first has per-qualifier rules in [`crate::validate`], the second takes
+//! operator-chosen keys).
+//!
+//! Out of scope on purpose: `alerts { }`. Channel/rule bodies carry their own
+//! validation in [`crate::validate`], and alert channel *kind* directives
+//! (`shell`, `webhook`, `email`) are matched positionally rather than from a
+//! fixed key set.
 
 use crate::ast::*;
 use crate::validate::{Diagnostic, Severity};
@@ -81,6 +90,43 @@ const DEFAULTS_BLOCKS: &[(&str, &[&str])] = &[
         &["enabled", "retention", "operator_hint", "replay_max_age"],
     ),
 ];
+
+/// `job { }` scalar directives — see `compile::compile_job`'s directive match.
+///
+/// `timezone` is in the list because issue #426 made the job-level spelling
+/// real: it is what operators reach for, and `defaults { }` already accepts the
+/// same bare keyword.
+///
+/// Not here, and not typos: `calendar`, `not_before`, `not_after` and
+/// `timezone` are also *schedule options* — `every day at 02:00 { calendar biz }`
+/// — which live on the schedule line, not in the job body. Of those only
+/// `timezone` is meaningful as a job directive; the other three stay
+/// schedule-only, so writing them bare in the body is an unknown directive with
+/// a message that says where they belong.
+const JOB: &[&str] = &[
+    "description",
+    "timezone",
+    "timeout",
+    "window",
+    "execution_mode",
+    "catch_up",
+    "queue_ttl",
+    "max_queue_depth",
+    "keep_last",
+    "singleton",
+    "max_concurrent",
+    "tags",
+];
+
+/// Sub-blocks a `job { }` accepts. Bodies are checked only where the key set is
+/// fixed: `retry` / `dead_letter` share their tables with `defaults { }`,
+/// `metadata { }` takes arbitrary operator keys, and `runner … { }` is
+/// validated per qualifier in [`crate::validate`].
+const JOB_BLOCKS: &[&str] = &["runner", "retry", "dead_letter", "metadata"];
+
+/// Schedule-only option keys, for a diagnostic that points at the schedule line
+/// instead of reading like a typo.
+const SCHEDULE_ONLY: &[&str] = &["calendar", "not_before", "not_after"];
 
 /// `observability { }` sub-blocks. The outer block takes no directives — the
 /// parser already rejects those — so only the names and bodies need checking.
@@ -157,9 +203,73 @@ pub(crate) fn validate_blocks(ast: &Croniqfile, diags: &mut Vec<Diagnostic>) {
                     check_named_block("auth", AUTH_BLOCKS, nb, diags);
                 }
             }
-            // `vars { }` entries are operator-chosen names; `job { }`,
-            // `alerts { }`, `calendar { }` and `import` are validated elsewhere.
+            Item::Job(job) => check_job_body(job, diags),
+            // `vars { }` entries are operator-chosen names; `alerts { }`,
+            // `calendar { }` and `import` are validated elsewhere.
             _ => {}
+        }
+    }
+}
+
+/// Check a `job { }` body: directive keys against [`JOB`], sub-block names
+/// against [`JOB_BLOCKS`], and the two sub-blocks whose key set is fixed.
+fn check_job_body(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
+    let label = format!("job {}", job.key.raw);
+    for dob in &job.directives {
+        match dob {
+            DirectiveOrBlock::Directive(d) => {
+                let key = d.key.value.as_str();
+                if JOB.contains(&key) {
+                    continue;
+                }
+                if SCHEDULE_ONLY.contains(&key) {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "`{key}` is a schedule option, not a job directive — move it into the \
+                             schedule line's braces, e.g. `every day at 02:00 {{ {key} … }}` \
+                             (job '{}')",
+                            job.key.raw
+                        ),
+                        span: d.key.span.into(),
+                    });
+                    continue;
+                }
+                diags.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: format!(
+                        "unknown directive '{key}' in `{label} {{ }}`{}",
+                        hint(key, JOB)
+                    ),
+                    span: d.key.span.into(),
+                });
+            }
+            DirectiveOrBlock::Block(nb) => {
+                let name = nb.name.value.as_str();
+                if !JOB_BLOCKS.contains(&name) {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "unknown block '{name} {{ }}' in `{label} {{ }}`{}",
+                            hint(name, JOB_BLOCKS)
+                        ),
+                        span: nb.name.span.into(),
+                    });
+                    continue;
+                }
+                // `retry` / `dead_letter` inherit their key sets from
+                // `defaults { }` — the same compile helpers back both — so a
+                // typo inside a job's block is caught exactly as it is there.
+                if let Some((_, keys)) = DEFAULTS_BLOCKS.iter().find(|(n, _)| *n == name) {
+                    let path = format!("{label}.{name}");
+                    for inner in &nb.directives {
+                        if let DirectiveOrBlock::Directive(d) = inner {
+                            check_directive(&path, keys, d, diags);
+                        }
+                    }
+                }
+            }
+            DirectiveOrBlock::Comment(_) => {}
         }
     }
 }
@@ -271,7 +381,9 @@ fn closest<'a>(got: &str, known: &[&'a str]) -> Option<&'a str> {
 }
 
 /// Levenshtein distance, two-row DP. Inputs here are short directive keys.
-fn edit_distance(a: &str, b: &str) -> usize {
+/// Shared with [`crate::timezone`], which suggests the intended IANA zone for
+/// a typo'd `timezone` value the same way.
+pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();
     let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
     let mut curr = vec![0usize; b_chars.len() + 1];
@@ -388,6 +500,106 @@ mod tests {
         assert!(msgs[0].contains("TOTP"), "got: {}", msgs[0]);
         // Must not read as a typo — the value has to be migrated, not fixed.
         assert!(!msgs[0].contains("did you mean"), "got: {}", msgs[0]);
+    }
+
+    // ── job { } bodies (issue #426) ───────────────────────────────────────────
+
+    #[test]
+    fn job_level_timezone_is_accepted() {
+        // The spelling issue #426 made real: bare `timezone` in a job body.
+        let msgs = errors("job a:b { every day at 02:00\n timezone Europe/Vienna }");
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    #[test]
+    fn typo_in_job_body_errors_with_suggestion() {
+        let msgs = errors("job a:b { every day at 02:00\n timezon Europe/Vienna }");
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert_eq!(
+            msgs[0],
+            "unknown directive 'timezon' in `job a:b { }` — did you mean 'timezone'?"
+        );
+    }
+
+    #[test]
+    fn unrelated_job_directive_lists_the_known_set() {
+        let msgs = errors("job a:b { every 5 minutes\n frobnicate yes }");
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(
+            msgs[0].contains("(known: catch_up, description,"),
+            "got: {}",
+            msgs[0]
+        );
+    }
+
+    #[test]
+    fn schedule_option_written_as_a_job_directive_says_where_it_belongs() {
+        // `calendar biz` in the body is a no-op, and reads like a typo of
+        // nothing — the fix is to move it, so the message says so.
+        let msgs = errors("job a:b { every day at 02:00 { timezone UTC }\n calendar biz }");
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(
+            msgs[0].contains("is a schedule option, not a job directive"),
+            "got: {}",
+            msgs[0]
+        );
+        assert!(
+            msgs[0].contains("every day at 02:00 { calendar"),
+            "got: {}",
+            msgs[0]
+        );
+    }
+
+    #[test]
+    fn known_job_directives_and_blocks_are_silent() {
+        let msgs = errors(
+            r#"
+            calendar biz { include weekly monday }
+            job billing:invoice {
+              description "…"; timezone Europe/Vienna; timeout 15m
+              every weekday at 02:00 { calendar biz; not_before 2026-01-01T00:00:00Z
+                                       not_after 2027-01-01T00:00:00Z }
+              window 02:00..06:00
+              execution_mode queued; catch_up all; queue_ttl 1h
+              max_queue_depth 10; keep_last 500; max_concurrent 2
+              tags billing nightly
+              runner { require billing; prefer eu-central; sticky }
+              retry exponential { max_attempts 3; base 2s; cap 30s; delay 1s; step 2s; jitter 0.25 }
+              dead_letter { enabled true; retention 30d; operator_hint "page"; replay_max_age 7d }
+              metadata { team billing; priority high }
+            }
+        "#,
+        );
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    #[test]
+    fn unknown_job_sub_block_errors() {
+        let msgs = errors("job a:b { every 5 minutes\n runners { require x } }");
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(
+            msgs[0].contains("unknown block 'runners { }' in `job a:b { }`"),
+            "got: {}",
+            msgs[0]
+        );
+    }
+
+    #[test]
+    fn typo_inside_a_job_retry_block_errors() {
+        // `retry` / `dead_letter` share their key sets with `defaults { }`.
+        let msgs = errors("job a:b { every 5 minutes\n retry { max_attemptss 3 } }");
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(
+            msgs[0].contains("unknown directive 'max_attemptss' in `job a:b.retry { }`"),
+            "got: {}",
+            msgs[0]
+        );
+    }
+
+    #[test]
+    fn metadata_keys_are_operator_chosen_and_not_checked() {
+        let msgs = errors("job a:b { every 5 minutes\n metadata { anything goes } }");
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
     }
 
     #[test]
