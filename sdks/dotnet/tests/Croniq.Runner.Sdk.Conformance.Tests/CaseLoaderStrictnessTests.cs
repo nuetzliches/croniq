@@ -63,6 +63,32 @@ public sealed class CaseLoaderStrictnessTests
         spec.Expectations.Http.Count.ShouldBe(1);
     }
 
+    /// <summary>
+    /// The loader must tolerate concurrent callers.
+    /// </summary>
+    /// <remarks>
+    /// xUnit parallelises across test collections, and a class is a collection:
+    /// adding this test class alongside <see cref="ConformanceTests"/> meant two
+    /// collections calling <c>CaseLoader.Load</c> at once for the first time. A
+    /// single shared <c>IDeserializer</c> did not survive that — YamlDotNet threw
+    /// <c>Exception during deserialization</c> wrapping *"Operations that change
+    /// non-concurrent collections must have exclusive access"* from its internal
+    /// type-descriptor cache. It reproduced on CI, not on an 8-core dev box, so
+    /// this test provokes the race directly rather than relying on scheduling
+    /// luck. Deleting it would let the loader silently regress to a shared
+    /// instance whose failure only appears in CI.
+    /// </remarks>
+    [Fact]
+    public void Load_is_safe_under_concurrent_use()
+    {
+        var path = WriteTemp(MinimalCase);
+
+        var specs = new CaseSpec[64];
+        Parallel.For(0, specs.Length, i => specs[i] = CaseLoader.Load(path));
+
+        specs.ShouldAllBe(spec => spec.Name == "strictness probe");
+    }
+
     private static string ReplaceOnce(string text, string anchor, string replacement)
     {
         var idx = text.IndexOf(anchor, StringComparison.Ordinal);

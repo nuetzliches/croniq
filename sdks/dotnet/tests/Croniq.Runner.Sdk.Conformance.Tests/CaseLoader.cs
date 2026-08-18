@@ -11,6 +11,9 @@ namespace Croniq.Runner.Sdk.Conformance.Tests;
 /// </summary>
 internal static class CaseLoader
 {
+    /// <summary>
+    /// Builds the YAML deserializer for one <see cref="Load"/> call.
+    /// </summary>
     /// <remarks>
     /// Deliberately built <b>without</b> <c>IgnoreUnmatchedProperties()</c>: a
     /// key that <see cref="CaseSpec"/> does not model must be a load-time
@@ -24,15 +27,26 @@ internal static class CaseLoader
     /// <c>check-jsonschema</c> run in CI: that catches a key the *schema* does
     /// not allow, this catches a schema-legal key the *binding* has not
     /// implemented.
+    ///
+    /// Built per call rather than cached in a static field: YamlDotNet
+    /// memoises type descriptors in a non-concurrent dictionary, so a shared
+    /// instance corrupts its own cache when two callers deserialise at once
+    /// ("Operations that change non-concurrent collections must have exclusive
+    /// access"). xUnit parallelises across test collections and a class is a
+    /// collection, so the moment a second test class started loading cases
+    /// that race became reachable. Constructing the deserializer is cheap next
+    /// to running a case, and it keeps the loader safe for any caller instead
+    /// of resting on how the tests happen to be organised — see
+    /// <c>CaseLoaderStrictnessTests.Load_is_safe_under_concurrent_use</c>.
     /// </remarks>
-    private static readonly IDeserializer _yaml = new DeserializerBuilder()
+    private static IDeserializer BuildDeserializer() => new DeserializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
         .Build();
 
     public static CaseSpec Load(string path)
     {
         var text = File.ReadAllText(path);
-        var spec = _yaml.Deserialize<CaseSpec>(text)
+        var spec = BuildDeserializer().Deserialize<CaseSpec>(text)
             ?? throw new InvalidOperationException($"failed to deserialise case '{path}'");
 
         // Normalise nested body trees (YamlDotNet hands them back as
