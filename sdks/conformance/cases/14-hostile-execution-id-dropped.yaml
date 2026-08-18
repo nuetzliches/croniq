@@ -1,0 +1,65 @@
+name: "Hostile execution_id is dropped without an ack"
+description: |
+  The companion to case 13. Here the job_key is perfectly ordinary and the
+  execution_id is the field carrying CRLF and ANSI escapes (issue #441).
+
+  execution_id is the value that addresses every follow-up call — ack and
+  renew both take it. When it is untrustworthy there is nothing the runner can
+  safely say about this execution, so unlike case 13 it must NOT ack: sending
+  the identifier back would just relay the payload, and there is no reason to
+  believe it names a real execution. The assignment is dropped and the
+  server-side lease expires on its own.
+
+  As in case 13, a catch-all default handler is registered — the registration
+  that makes an arbitrary key reachable — and must not run. The runner must
+  keep polling afterwards.
+
+runner_config:
+  capabilities: ["billing"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 2000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 2000
+
+handlers:
+  - job_key: "billing:invoice"
+    is_default: true
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          # CR, LF and an ANSI erase-display sequence inside the execution id.
+          - execution_id: "exec\x1b[2J\r\n001"
+            job_key: "billing:invoice"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "1m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    # The loop keeps running: the rejected assignment does not stop polling.
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+    # Nothing addresses the server here, so nothing is sent back.
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 0
+    - method: POST
+      path: /v1/work/renew
+      exact_count: 0

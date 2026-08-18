@@ -1,4 +1,5 @@
 import type { WorkEventLevel } from './protocol.js';
+import { escapeControlChars } from './sanitize.js';
 
 export type LogLevel = WorkEventLevel;
 
@@ -32,9 +33,16 @@ export function consoleLogger(minLevel: LogLevel = 'warn', prefix?: string): Log
 
   const emit = (level: LogLevel, message: string, fields?: Record<string, unknown>): void => {
     if (ORDER[level] < threshold) return;
+    // The message is escaped before it reaches the console: it is the one part
+    // of a record that is plain text, and a handler's exception message — or,
+    // before #441, a server-supplied identifier — can carry CRLF or ANSI
+    // escapes. `fields` needs no such treatment because JSON.stringify already
+    // escapes the C0 range, ESC included. This mirrors Go, whose slog handlers
+    // escape control characters in every rendered value.
+    const safe = escapeControlChars(message);
     const line = fields && Object.keys(fields).length > 0
-      ? `${tag}${level}: ${message} ${JSON.stringify(fields)}`
-      : `${tag}${level}: ${message}`;
+      ? `${tag}${level}: ${safe} ${JSON.stringify(fields)}`
+      : `${tag}${level}: ${safe}`;
     // Map to console method, but funnel everything to stderr for warn/error
     // so application stdout stays clean for actual job output.
     // eslint-disable-next-line no-console

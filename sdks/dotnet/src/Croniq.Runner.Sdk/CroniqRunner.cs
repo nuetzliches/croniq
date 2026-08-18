@@ -301,6 +301,18 @@ public sealed class CroniqRunner : IAsyncDisposable
 
             foreach (var assignment in response.Work)
             {
+                // Ingest guard (#441): an assignment carrying a control
+                // character in either identifier never reaches a handler, a log
+                // record, a logger category or a telemetry attribute. See
+                // IdentifierGuard for the rule and why it is a denylist.
+                var rejected = IdentifierGuard.RejectAssignmentReason(
+                    assignment.ExecutionId, assignment.JobKey);
+                if (rejected is not null)
+                {
+                    await RejectAssignmentAsync(assignment, rejected).ConfigureAwait(false);
+                    continue;
+                }
+
                 // Standalone CTS — intentionally NOT linked to the outer poll
                 // token. Host-shutdown stops new polls but in-flight handlers
                 // run to natural completion (matching the Rust SDK's drain
@@ -331,6 +343,60 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Handle a work assignment refused by the ingest guard.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two cases differ in what the runner can still tell the server. An
+    /// unsafe <c>execution_id</c> is what addresses an ack or renew, so there is
+    /// no way to report anything about this execution: the assignment is
+    /// dropped and the server's lease expires. An unsafe <c>job_key</c> with a
+    /// valid <c>execution_id</c> is acked as a failure — the handler never runs,
+    /// but the execution completes with an error naming the offending field, so
+    /// the operator sees a dead-lettered execution instead of one that is
+    /// silently requeued by the stale-claim reaper and refused again on every
+    /// later poll.
+    /// </para>
+    /// <para>
+    /// Awaited rather than fire-and-forget: this path only triggers on
+    /// malformed input, so pausing the loop for one small POST costs nothing and
+    /// keeps the ordering observable.
+    /// </para>
+    /// </remarks>
+    private async Task RejectAssignmentAsync(WorkAssignment assignment, string field)
+    {
+        var ackable = field != "execution_id";
+        var offending = ackable ? assignment.JobKey : assignment.ExecutionId;
+        // Escaped and truncated explicitly: this is the one place a refused
+        // value is rendered, and it is hostile by definition.
+        _logger.LogWarning(
+            "rejected work assignment with unsafe identifier {Field} (acked: {Acked}): {Value}",
+            field,
+            ackable,
+            IdentifierGuard.PreviewForLog(offending));
+        if (!ackable)
+        {
+            return;
+        }
+        try
+        {
+            await _client.AckAsync(
+                new AckRequest(
+                    _resolvedRunnerId!,
+                    assignment.ExecutionId,
+                    "failure",
+                    IdentifierGuard.RejectionAckError(field, offending),
+                    0,
+                    assignment.Attempt),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "failed to ack a rejected work assignment");
+        }
+    }
+
     private void HandleCancellations(IReadOnlyList<string> cancelIds)
     {
         if (cancelIds.Count == 0)
@@ -339,12 +405,21 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
         foreach (var id in cancelIds)
         {
+            // Cancel ids are server-supplied too. An unsafe one can never match
+            // an in-flight key (those were validated on ingest), but checking
+            // here keeps the value out of the record below on any code path.
+            if (!IdentifierGuard.IsSafeExecutionId(id))
+            {
+                continue;
+            }
             if (_inflight.TryGetValue(id, out var cts))
             {
                 try
                 {
                     cts.Cancel();
-                    _logger.LogInformation("server requested cancellation of execution {ExecutionId}", id);
+                    using var cancelScope = _logger.BeginScope(
+                        new Dictionary<string, object> { ["execution_id"] = id });
+                    _logger.LogInformation("server requested cancellation");
                 }
                 catch (ObjectDisposedException)
                 {

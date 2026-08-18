@@ -55,6 +55,66 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runner client and the producer-side trigger client are covered in every SDK
   that ships both. The Rust runner SDK (`croniq-runner-sdk`) has the same gap
   and is tracked separately.
+
+- **Runner SDKs pass server-supplied identifiers as structured log fields, and
+  validate them on ingest
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).** Four of the five
+  runner SDKs interpolated `job_key` and `execution_id` directly into log
+  *messages* — a TypeScript template literal reading "handler for &lt;jobKey&gt;
+  (execution &lt;executionId&gt;) threw", and its Python, .NET and Java
+  equivalents. A value containing CRLF
+  forged log records; one containing ANSI escapes reached the operator's
+  terminal raw. The threat actor is a malicious or compromised Croniq server,
+  but not only: in a multi-tenant deployment anyone who can name a job key in
+  the Croniqfile controls a string that round-trips to every runner unchanged.
+  Impact is audit-trail integrity and terminal spoofing, not code execution.
+  Both identifiers now travel as structured fields in Python
+  (`logging` `extra=`), TypeScript (the `fields` map), .NET (an `ILogger`
+  scope) and Java (SLF4J `MDC`); Go, which already did this via `slog`
+  attributes, is unchanged. Where the SDK renders text itself — the TypeScript
+  console logger, which wrote `message` verbatim — control characters are now
+  escaped before the write, mirroring what Go's built-in `slog` handlers do;
+  where the SDK delegates to a host framework, that framework owns rendering
+  and the SDK does not escape a second time.
+- **Runner SDKs refuse work assignments whose identifiers carry control
+  characters, closing an unbounded logger-namespace growth
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).** Every SDK now
+  validates `job_key` and `execution_id` on ingest, before either can reach a
+  handler, a log record or a telemetry attribute. The `job_key` rule is a
+  *denylist*, not an allowlist: it rejects the scalar values a terminal
+  interprets rather than prints — C0 (`U+0000`–`U+001F`, covering NUL, CR, LF
+  and the ESC that introduces every ANSI sequence), DEL (`U+007F`), and C1
+  (`U+0080`–`U+009F`) — bounded to 256 scalar values, and accepts every other
+  printable character in any script, interior spaces included. An allowlist
+  built from the Croniqfile lexer's unquoted-identifier set would have been
+  wrong: `parse_job_key` also accepts a `QuotedString` and then enforces only
+  the "two or three colon-separated parts" rule, so `job "billing:monthly
+  invoice" { … }` is legal DSL today and `POST /v1/jobs` constrains the key not
+  at all — refusing such a key would strand a valid configuration. Execution
+  ids, which the server only ever emits as v4 UUIDs, keep a narrow
+  `a-z A-Z 0-9 - _ . :` charset bounded to 64 characters. Neither length bound
+  existed server-side (both columns are plain `TEXT`), so they are the SDKs'
+  own. What the runner does with a refused assignment depends on which field is
+  at fault: an unsafe `execution_id` is what would address an ack or renew, so
+  there is nothing safe to report and the assignment is dropped; an unsafe
+  `job_key` with a valid `execution_id` is acked as a *failure* naming the
+  offending field, so the operator gets a dead-lettered execution instead of one
+  the stale-claim reaper requeues and every later poll refuses again. This also
+  fixes the second-order problem the same values caused: the Python SDK built a
+  logger name per job key (`logging.getLogger(f"croniq_runner.job.{job_key}")`)
+  and the .NET SDK a logger category (`CreateLogger($"CroniqJob.{jobKey}")`).
+  Both caches are permanent and unbounded, so a server delivering many distinct
+  keys grew client memory without bound — reachable whenever a catch-all handler
+  is registered, since that accepts any key — and let a server place its records
+  under a namespace the operator had configured with `propagate=False`, evading
+  log filtering. Validation bounds the charset but not the *number* of distinct
+  keys, so both SDKs now use a single fixed logger with the job key attached as
+  a field instead. Two new conformance cases pin the behaviour across every SDK:
+  `13-hostile-identifiers-rejected.yaml` (a `job_key` carrying CRLF and ANSI
+  escapes is never dispatched — not even to a catch-all default handler — and
+  is acked as a failure, with no lease renewal) and
+  `14-hostile-execution-id-dropped.yaml` (an unsafe `execution_id` produces no
+  ack at all). In both, the poll loop keeps running.
 - **Permissive CORS replaced by an explicit allowlist, and security headers
   added to every response.** The API router applied `CorsLayer::permissive()`
   to every route — `Access-Control-Allow-Origin: *` with any method and any

@@ -49,15 +49,33 @@ internal sealed class ExecutionDispatcher(
         var attempt = assignment.Attempt;
         var scheduledFor = ParseScheduledFor(assignment.ScheduledFor);
         var executionTimeout = ParseTimeout(assignment.Timeout) ?? TimeSpan.FromMinutes(5);
-        var handlerLogger = loggerFactory.CreateLogger($"CroniqJob.{jobKey}");
+        // One fixed category for every job, with the identifiers carried as
+        // scope state. Deriving the category from `jobKey` — as this did before
+        // #441 — handed the server control of a logger namespace: the
+        // ILoggerFactory category cache is permanent, so a server delivering
+        // many distinct keys grew the process without bound, and some sinks map
+        // a category to a filename. Validating the key on ingest bounds its
+        // charset but not the *number* of distinct keys, so the cache stays
+        // unbounded either way — a single category is both the simpler and the
+        // complete fix.
+        var handlerLogger = loggerFactory.CreateLogger("CroniqJob");
 
-        using var scopedLogger = handlerLogger.BeginScope(new Dictionary<string, object>
+        var identifierScope = new Dictionary<string, object>
         {
             ["execution_id"] = executionId,
             ["job_key"] = jobKey,
             ["runner_id"] = runnerId,
             ["attempt"] = attempt,
-        });
+        };
+        using var scopedLogger = handlerLogger.BeginScope(identifierScope);
+        // The dispatcher's own diagnostics below carry the same identifiers as
+        // scope state rather than interpolating them into a message. Rendering
+        // is the configured ILogger provider's job — a structured sink picks the
+        // properties up, and the console formatter shows them when
+        // `IncludeScopes` is on. The SDK does not escape them a second time;
+        // IdentifierGuard has already rejected anything outside a printable
+        // charset. The scope flows to RenewLoopAsync, which starts inside it.
+        using var dispatcherScope = _logger.BeginScope(identifierScope);
 
         var enrichment = new LogEnrichment(jobKey, runnerId, runnerTags);
         var writerLogger = loggerFactory.CreateLogger<LogWriter>();
@@ -121,7 +139,7 @@ internal sealed class ExecutionDispatcher(
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "handler for {JobKey} (execution {ExecutionId}) threw", jobKey, executionId);
+            _logger.LogWarning(ex, "job handler threw");
             status = "failure";
             error = ex.Message;
         }
@@ -170,7 +188,7 @@ internal sealed class ExecutionDispatcher(
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "log_writer drain failed for execution {ExecutionId}", executionId);
+                _logger.LogWarning(ex, "log_writer drain failed");
             }
         }
 
@@ -182,7 +200,7 @@ internal sealed class ExecutionDispatcher(
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "failed to ack execution {ExecutionId}", executionId);
+            _logger.LogError(ex, "failed to ack execution");
         }
 
         stateProbe.DecrementInflight();
@@ -209,7 +227,8 @@ internal sealed class ExecutionDispatcher(
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogDebug(ex, "lease renew failed for execution {ExecutionId}", executionId);
+                    // Identifiers come from the ambient dispatcher scope.
+                    _logger.LogDebug(ex, "lease renew failed");
                 }
             }
         }

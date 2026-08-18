@@ -23,6 +23,28 @@ project follows [Semantic Versioning](https://semver.org/).
   cleartext URL deliberately and logs one loud SLF4J warning under
   `io.croniq.runner.config.ServerUrls` instead.
 
+- **`job_key` and `execution_id` no longer reach log messages, and are validated
+  on ingest ([#441](https://github.com/nuetzliches/croniq/issues/441)).**
+  `ExecutionDispatcher` and `BoundedLogWriter` interpolated both identifiers
+  into their SLF4J messages ("Handler for {} threw", "Renew failed for {}: {}"),
+  so a server-supplied value carrying CRLF forged log records and one carrying
+  ANSI escapes reached the operator's terminal raw. Both now travel as `MDC`
+  entries with a constant message — the logging backend owns rendering (add
+  `%X{job_key}` / `%X{execution_id}` to a Logback pattern, or use a structured
+  encoder), and the SDK does not escape a second time.
+  `ExecutionDispatcher.dispatch` additionally validates both identifiers. A
+  `job_key` is refused only for containing a control character — C0, DEL or C1
+  — or exceeding 256 code points; every printable character in any script is
+  accepted, interior spaces included, because
+  `job "billing:monthly invoice" { … }` is legal DSL and `POST /v1/jobs`
+  constrains the key not at all. Execution ids keep a narrow
+  `a-z A-Z 0-9 - _ . :` charset up to 64 characters, which the server's v4 UUIDs
+  satisfy strictly. A refused assignment with a *valid* `execution_id` is acked
+  as a failure naming the offending field, so it dead-letters rather than
+  looping; one whose `execution_id` is itself unsafe is dropped, since nothing
+  safely addresses the server. New public helper
+  `io.croniq.runner.internal.IdentifierGuard` holds the rules.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added — logical fire time

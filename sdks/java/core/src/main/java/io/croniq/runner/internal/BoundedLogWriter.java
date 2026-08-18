@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 /**
  * Bounded queue + virtual-thread flusher. Drains events to the server in
@@ -104,12 +105,18 @@ public final class BoundedLogWriter implements CroniqLogWriter {
             try {
                 client.pushEvents(executionId, remaining);
             } catch (Exception e) {
-                log.debug("Final log drain failed for {}: {}", executionId, e.toString());
+                // Runs on the dispatcher's thread, whose MDC already carries
+                // execution_id and job_key (#441).
+                log.debug("Final log drain failed: {}", e.toString());
             }
         }
     }
 
     private void drainLoop() {
+        // Own thread, so it needs its own MDC scope — the dispatcher's does not
+        // propagate here. execution_id travels as an MDC entry rather than
+        // inside a message because it is server-supplied (#441).
+        MDC.put("execution_id", executionId);
         while (!closed.get()) {
             try {
                 WorkEvent first = queue.poll(flushIntervalMs, TimeUnit.MILLISECONDS);
@@ -126,7 +133,7 @@ public final class BoundedLogWriter implements CroniqLogWriter {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
-                log.debug("Log batch push failed for {}: {}", executionId, e.toString());
+                log.debug("Log batch push failed: {}", e.toString());
                 // Drop the batch we tried to send — retrying indefinitely
                 // would compound backpressure into the handler. The .NET SDK
                 // makes the same trade-off.

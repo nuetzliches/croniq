@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 /**
  * Owns the in-flight execution table and the per-handler lifecycle:
@@ -66,16 +67,78 @@ public final class ExecutionDispatcher {
     /**
      * Submit a work assignment for handling. Returns immediately; the actual
      * handler runs on a virtual thread inside the executor.
+     *
+     * <p>An assignment carrying a control character in either identifier is
+     * refused here, before it can reach a handler, a log record or a telemetry
+     * attribute. See {@link IdentifierGuard} for the rule and why it is a
+     * denylist.
      */
     public void dispatch(WorkAssignment work) {
+        String rejected = IdentifierGuard.rejectAssignmentReason(work.executionId(), work.jobKey());
+        if (rejected != null) {
+            rejectAssignment(work, rejected);
+            return;
+        }
         CancellationHandle handle = new CancellationHandle();
         inflight.put(work.executionId(), handle);
         executor.execute(() -> runOne(work, handle));
     }
 
+    /**
+     * Handle a work assignment refused by the ingest guard.
+     *
+     * <p>The two cases differ in what the runner can still tell the server:
+     *
+     * <ul>
+     *   <li><b>Unsafe {@code execution_id}</b> — nothing. That value is what
+     *       addresses an ack or renew, so there is no way to report anything
+     *       about this execution. The assignment is dropped and the server's
+     *       lease expires.
+     *   <li><b>Unsafe {@code job_key}, valid {@code execution_id}</b> — a
+     *       failure ack. The handler never runs, but the execution completes
+     *       with an error naming the offending field, so the operator sees a
+     *       dead-lettered execution instead of one that is silently requeued by
+     *       the stale-claim reaper and refused again on every later poll.
+     * </ul>
+     *
+     * <p>Runs inline on the poll thread rather than on the handler executor:
+     * this path only triggers on malformed input, so pausing the loop for one
+     * small POST costs nothing and keeps the ordering observable.
+     */
+    private void rejectAssignment(WorkAssignment work, String field) {
+        boolean ackable = !"execution_id".equals(field);
+        String offending = ackable ? work.jobKey() : work.executionId();
+        // The value is escaped and truncated: this is the one place a refused
+        // value is rendered, and it is hostile by definition.
+        log.warn(
+                "Rejected work assignment with unsafe identifier {} (acked={}): {}",
+                field,
+                ackable,
+                IdentifierGuard.previewForLog(offending));
+        if (!ackable) {
+            return;
+        }
+        // The execution_id is the safe half here, so it can carry the ack's
+        // diagnostics as an MDC entry the way runOne does.
+        MDC.put("execution_id", work.executionId());
+        try {
+            sendAck(work, AckRequest.Status.FAILURE, IdentifierGuard.rejectionAckError(field, offending), 0);
+        } finally {
+            MDC.remove("execution_id");
+        }
+    }
+
     private void runOne(WorkAssignment work, CancellationHandle handle) {
         long startNanos = System.nanoTime();
         handle.attach(Thread.currentThread());
+        // Identifiers travel as MDC entries, never interpolated into a message —
+        // a job_key carrying CRLF would otherwise forge a log record and one
+        // carrying ANSI escapes would reach the operator's terminal raw. The
+        // logging backend owns rendering, exactly as it does for every other MDC
+        // entry; the values are already known safe because dispatch() validated
+        // them. Cleared in the finally below.
+        MDC.put("execution_id", work.executionId());
+        MDC.put("job_key", work.jobKey());
         // Renewal loop runs alongside the handler. We interrupt it after the
         // handler finishes; the virtual thread exits on its own and the JVM
         // doesn't care about lingering ones.
@@ -122,12 +185,12 @@ public final class ExecutionDispatcher {
             } catch (Exception e) {
                 status = AckRequest.Status.FAILURE;
                 error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                log.debug("Handler for {} threw", work.executionId(), e);
+                log.debug("Job handler threw", e);
             }
         } catch (RuntimeException e) {
             status = AckRequest.Status.FAILURE;
             error = e.getMessage();
-            log.warn("Dispatcher failure for execution {}", work.executionId(), e);
+            log.warn("Dispatcher failure", e);
         } finally {
             renewer.interrupt();
             // Drain log events BEFORE acking. This is the central
@@ -138,6 +201,8 @@ public final class ExecutionDispatcher {
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
             notifyEnd(work, status, error, durationMs);
             sendAck(work, status, error, durationMs);
+            MDC.remove("execution_id");
+            MDC.remove("job_key");
         }
     }
 
@@ -179,6 +244,9 @@ public final class ExecutionDispatcher {
 
     private Thread startRenewalLoop(String executionId, CancellationHandle handle) {
         return Thread.ofVirtual().name("croniq-renew-" + executionId).start(() -> {
+            // Own thread, so it needs its own MDC scope — the dispatcher's does
+            // not propagate here.
+            MDC.put("execution_id", executionId);
             long intervalMs = Math.max(50, options.renewInterval().toMillis());
             while (!handle.isRequested() && !Thread.currentThread().isInterrupted()) {
                 try {
@@ -199,7 +267,7 @@ public final class ExecutionDispatcher {
                     // will mark the execution as stalled if no heartbeats
                     // arrive. Hard-failing here would conflict with the
                     // handler's own error reporting.
-                    log.debug("Renew failed for {}: {}", executionId, e.toString());
+                    log.debug("Renew failed: {}", e.toString());
                 }
             }
         });
@@ -211,7 +279,9 @@ public final class ExecutionDispatcher {
         } catch (Exception e) {
             // Ack failures are logged and dropped — the server will eventually
             // re-issue the work and the next attempt will land.
-            log.warn("Failed to ack execution {} (status={}): {}", work.executionId(), status, e.toString());
+            // Both callers (runOne, rejectAssignment) put execution_id in the
+            // MDC before getting here, so the record is still attributable.
+            log.warn("Failed to ack execution (status={}): {}", status, e.toString());
         }
     }
 

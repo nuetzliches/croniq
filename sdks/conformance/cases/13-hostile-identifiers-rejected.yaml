@@ -1,0 +1,81 @@
+name: "Hostile job_key is never dispatched, but is acked as a failure"
+description: |
+  A malicious or compromised server delivers a work assignment whose job_key
+  carries CRLF and ANSI escapes. Interpolated into a log message it forges a
+  log record and repaints the operator's terminal; used as a logger name it
+  grows a permanently-cached, server-controlled namespace (issue #441).
+
+  The runner must reject the assignment on ingest and never hand it to a
+  handler — not even to a catch-all default handler, which is exactly the
+  registration that makes this reachable, since it accepts any key.
+
+  Because the execution_id here is well-formed, the runner CAN still address
+  the server, and must: it acks a failure naming the offending field. Dropping
+  silently would leave the execution to the stale-claim reaper, which requeues
+  it — and the next poll would refuse it again, forever, with a WARN line as
+  the operator's only signal. A failure ack turns that into a dead-lettered
+  execution that explains itself.
+
+  Two things distinguish "rejected" from "ran": the ack status is `failure`,
+  and no lease is renewed, because no handler ever started.
+
+  The companion case 14 covers the other half — an unsafe execution_id, which
+  leaves nothing to address the server with and so IS dropped silently.
+
+runner_config:
+  capabilities: ["billing"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 2000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 2000
+
+handlers:
+  # A catch-all: without ingest validation this accepts the hostile key.
+  - job_key: "billing:invoice"
+    is_default: true
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          # CR, LF and two ANSI SGR sequences inside the job key. YAML
+          # double-quoted scalars expand \r, \n and \x1b.
+          - execution_id: "exec-hostile"
+            job_key: "billing:\x1b[31minvoice\r\n2026-01-01 ERROR forged record\x1b[0m"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "1m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    # The loop keeps running: the rejected assignment does not stop polling.
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+    # Refused, not run — reported as a failure with an explanatory error.
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-hostile"
+        status: "failure"
+        attempt: 1
+        error: "*"
+    # No handler started, so no lease was ever renewed.
+    - method: POST
+      path: /v1/work/renew
+      exact_count: 0

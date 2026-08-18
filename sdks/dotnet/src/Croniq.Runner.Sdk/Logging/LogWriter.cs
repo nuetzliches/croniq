@@ -112,9 +112,12 @@ internal sealed class LogWriter : ILogWriter
         }
         catch (TimeoutException)
         {
-            _logger.LogWarning(
-                "log_writer drain timed out after {Timeout} (execution {ExecutionId})",
-                _options.ShutdownTimeout, _executionId);
+            // execution_id travels as scope state, not inside the message —
+            // it is server-supplied (#441).
+            using (_logger.BeginScope(new Dictionary<string, object> { ["execution_id"] = _executionId }))
+            {
+                _logger.LogWarning("log_writer drain timed out after {Timeout}", _options.ShutdownTimeout);
+            }
             await _shutdownCts.CancelAsync().ConfigureAwait(false);
         }
         finally
@@ -257,10 +260,10 @@ internal sealed class LogWriter : ILogWriter
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(
-                    ex,
-                    "log_writer: batch POST failed — {Count} events dropped (execution {ExecutionId})",
-                    chunk.Count, _executionId);
+                using (_logger.BeginScope(new Dictionary<string, object> { ["execution_id"] = _executionId }))
+                {
+                    _logger.LogWarning(ex, "log_writer: batch POST failed — {Count} events dropped", chunk.Count);
+                }
             }
         }
     }

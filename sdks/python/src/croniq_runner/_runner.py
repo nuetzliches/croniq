@@ -20,6 +20,12 @@ from croniq_runner._context import (
     _parse_timeout,
 )
 from croniq_runner._errors import HandlerError, NoHandlerRegisteredError
+from croniq_runner._identifiers import (
+    is_safe_execution_id,
+    preview_for_log,
+    reject_assignment_reason,
+    rejection_ack_error,
+)
 from croniq_runner._identity import resolve_runner_id
 from croniq_runner._options import RunnerOptions
 from croniq_runner._otel import maybe_start_span
@@ -208,6 +214,16 @@ class Runner:
                 continue
 
             for assignment in response.work:
+                # Ingest guard: an assignment carrying a control character in
+                # either identifier never reaches a handler, a log record, a
+                # logger name or a telemetry attribute. See ``_identifiers``
+                # for the rule and why it is a denylist.
+                rejected = reject_assignment_reason(
+                    assignment.execution_id, assignment.job_key
+                )
+                if rejected is not None:
+                    await self._reject_assignment(assignment, rejected)
+                    continue
                 self._spawn_handler(assignment)
 
             # Yield to the event loop so newly-spawned handler tasks (and
@@ -219,10 +235,70 @@ class Runner:
 
     def _handle_cancellations(self, cancel_ids: list[str]) -> None:
         for execution_id in cancel_ids:
+            # Cancel ids are server-supplied too. An unsafe one can never match
+            # an in-flight key (those were validated on ingest), but checking
+            # here keeps the value off the record below on any code path.
+            if not is_safe_execution_id(execution_id):
+                continue
             inflight = self._inflight.get(execution_id)
             if inflight is not None:
                 inflight.cancellation.set()
-                _log.info("server requested cancellation of execution %s", execution_id)
+                _log.info(
+                    "server requested cancellation",
+                    extra={"execution_id": execution_id},
+                )
+
+    async def _reject_assignment(self, assignment: WorkAssignment, field: str) -> None:
+        """Handle a work assignment refused by the ingest guard.
+
+        The two cases differ in what the runner can still tell the server:
+
+        * **Unsafe ``execution_id``** — nothing. That value is what addresses an
+          ack or renew, so there is no way to report anything about this
+          execution. The assignment is dropped and the server's lease expires.
+        * **Unsafe ``job_key``, valid ``execution_id``** — a failure ack. The
+          handler never runs, but the execution completes with an error naming
+          the offending field, so the operator sees a dead-lettered execution
+          instead of one that is silently requeued by the stale-claim reaper and
+          refused again on every later poll.
+
+        Awaited rather than spawned: this path only triggers on malformed input,
+        so pausing the loop for one small POST costs nothing and keeps the
+        ordering observable.
+        """
+        offending = getattr(assignment, field)
+        ackable = field == "job_key"
+        # ``value`` is escaped and truncated: this is the one place a refused
+        # value is rendered, and it is hostile by definition.
+        _log.warning(
+            "rejected work assignment with unsafe identifier",
+            extra={
+                "field": field,
+                "value": preview_for_log(offending),
+                "acked": ackable,
+            },
+        )
+        if not ackable:
+            return
+        try:
+            await self._client.ack(
+                AckRequest(
+                    runner_id=self._runner_id or "",
+                    execution_id=assignment.execution_id,
+                    status="failure",
+                    error=rejection_ack_error(field, offending),
+                    duration_ms=0,
+                    attempt=assignment.attempt,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — ack failure is non-fatal
+            _log.warning(
+                "failed to ack a rejected work assignment",
+                exc_info=True,
+                extra={"execution_id": assignment.execution_id},
+            )
 
     def _spawn_handler(self, assignment: WorkAssignment) -> None:
         if assignment.execution_id in self._inflight:
@@ -296,15 +372,28 @@ class Runner:
             else:
                 error = "cancelled by server"
         except HandlerError as exc:
-            _log.warning("handler for %s (execution %s) raised: %s", job_key, execution_id, exc.message)
+            # Identifiers travel as fields, never interpolated into the message
+            # — see ``_identifiers``. The same applies to every call below.
+            _log.warning(
+                "job handler raised: %s",
+                exc.message,
+                extra={"job_key": job_key, "execution_id": execution_id},
+            )
             status = "failure"
             error = exc.message
         except NoHandlerRegisteredError as exc:
-            _log.error("%s", exc)
+            _log.error(
+                "no handler registered for job",
+                extra={"job_key": job_key, "execution_id": execution_id},
+            )
             status = "failure"
             error = str(exc)
         except Exception as exc:  # noqa: BLE001 — handler-boundary catch-all
-            _log.warning("handler for %s (execution %s) raised", job_key, execution_id, exc_info=True)
+            _log.warning(
+                "job handler raised",
+                exc_info=True,
+                extra={"job_key": job_key, "execution_id": execution_id},
+            )
             status = "failure"
             error = str(exc) or exc.__class__.__name__
 
@@ -323,7 +412,9 @@ class Runner:
                 await ctx.log_writer.aclose()
             except Exception:
                 _log.warning(
-                    "log_writer drain failed for execution %s", execution_id, exc_info=True
+                    "log_writer drain failed",
+                    exc_info=True,
+                    extra={"job_key": job_key, "execution_id": execution_id},
                 )
 
         try:
@@ -338,7 +429,11 @@ class Runner:
                 )
             )
         except Exception:
-            _log.error("failed to ack execution %s", execution_id, exc_info=True)
+            _log.error(
+                "failed to ack execution",
+                exc_info=True,
+                extra={"job_key": job_key, "execution_id": execution_id},
+            )
 
     async def _renew_loop(self, execution_id: str, stop: asyncio.Event) -> None:
         interval = self._options.renew_interval_ms / 1000.0
@@ -355,7 +450,9 @@ class Runner:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — transient renew failure is non-fatal
-                _log.debug("lease renew failed for execution %s: %s", execution_id, exc)
+                _log.debug(
+                    "lease renew failed: %s", exc, extra={"execution_id": execution_id}
+                )
 
     async def _drain(self) -> None:
         if not self._inflight:

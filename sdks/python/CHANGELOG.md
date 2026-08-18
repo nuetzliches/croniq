@@ -24,6 +24,39 @@ the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   deliberately and logs one loud warning on the `croniq_runner.security`
   logger instead.
 
+- **`job_key` and `execution_id` no longer reach log messages, and are
+  validated on ingest
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).** `_runner`
+  interpolated both identifiers into its messages
+  (`"handler for %s (execution %s) raised"`), so a server-supplied value
+  carrying CRLF forged log records and one carrying ANSI escapes reached the
+  operator's terminal raw. Both now travel as record attributes via
+  `extra={…}` with a constant message — the host `logging` configuration owns
+  rendering (a JSON formatter picks them up; a plain `%(message)s` formatter
+  ignores them), and the SDK does not escape a second time. The runner
+  additionally validates both identifiers before dispatching. A `job_key` is
+  refused only for containing a control character — C0, DEL or C1 — or
+  exceeding 256 scalar values; every printable character in any script is
+  accepted, interior spaces included, because
+  `job "billing:monthly invoice" { … }` is legal DSL and `POST /v1/jobs`
+  constrains the key not at all. Execution ids keep a narrow
+  `a-z A-Z 0-9 - _ . :` charset up to 64 characters, which the server's v4 UUIDs
+  satisfy strictly. A refused assignment with a *valid* `execution_id` is acked
+  as a failure naming the offending field, so it dead-letters rather than
+  looping; one whose `execution_id` is itself unsafe is dropped, since nothing
+  safely addresses the server.
+- **The per-job logger namespace is gone
+  ([#441](https://github.com/nuetzliches/croniq/issues/441)).**
+  `ExecutionContext` built `logging.getLogger(f"croniq_runner.job.{job_key}")`,
+  handing a server control of a logger namespace. `getLogger` caches every name
+  forever, plus a `PlaceHolder` per dot-separated ancestor, so a server
+  delivering many distinct keys grew the process without bound — and a key
+  chosen to land under a namespace configured with `propagate=False` evaded log
+  filtering. `ctx.logger` is now a `LoggerAdapter` over the fixed
+  `croniq_runner.job` logger, attaching `job_key`, `execution_id`, `runner_id`
+  and `attempt` to every record. Logging configuration written against
+  `croniq_runner.job.<key>` needs to move to `croniq_runner.job`.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added
