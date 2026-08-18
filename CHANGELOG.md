@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dead-letter `job_key` filter is bound as a query parameter.** The SQLite
+  backend's `list_dead_letters` assembled its `job_key` predicate by
+  interpolating the filter value straight into the SQL string, so a value
+  containing quote characters altered the shape of the query instead of being
+  compared as a literal. `job_key` and `limit` now travel through `?N`
+  placeholders, matching the `list_executions` path next to it and the
+  Postgres backend, both of which were already parameterised. `limit` is also
+  clamped to 1000, as the audit-log listing already did.
+
 ## [0.31.0] - 2026-07-27
 
 ### Added
