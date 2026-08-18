@@ -63,6 +63,12 @@ export interface JobScheduleState {
   job_key: string
   status: JobLifecycleStatus
   next_fire_at: string | null
+  /// IANA zone `next_fire_at` is computed in — the *effective* zone, read off
+  /// the live trigger, so it is filled in when the job inherits it from
+  /// `defaults { }` or declares nothing at all (then `UTC`, issue #427).
+  /// `null`/`undefined` when the live trigger snapshot is unavailable or on
+  /// older servers — never a stand-in for UTC, so render nothing in that case.
+  timezone?: string | null
   last_fired_at: string | null
   fire_count: number
   overdue: boolean

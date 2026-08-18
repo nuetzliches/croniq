@@ -87,6 +87,30 @@ pub fn compile(path: &Path) -> Result<()> {
         ))
     })?;
 
+    // Compiling a file the server would refuse to load must not print JSON that
+    // looks authoritative (issue #426): `compile` output is meant to be the
+    // complete description of the schedule, and a `timezone Europe/Berln` used
+    // to sail through into it verbatim. Error-severity diagnostics are exactly
+    // what `load_from_compiled` fails closed on since #402, so the two agree.
+    // Warnings go to stderr and still produce output — stdout stays pure JSON.
+    let diags = validate::validate(&ast);
+    let mut errors = 0usize;
+    for diag in &diags {
+        match diag.severity {
+            validate::Severity::Error => {
+                errors += 1;
+                eprintln!("error: {}", diag.message);
+            }
+            validate::Severity::Warning => eprintln!("warning: {}", diag.message),
+        }
+    }
+    if errors > 0 {
+        eprintln!(
+            "\n{errors} error(s) — nothing compiled. Run `croniq validate` for the full list."
+        );
+        std::process::exit(1);
+    }
+
     let config = compile::compile(&ast);
     let json = serde_json::to_string_pretty(&config).into_diagnostic()?;
     println!("{json}");

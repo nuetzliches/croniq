@@ -160,6 +160,14 @@ job reports:monthly-summary {
   every 1st of month at 06:00 {
     calendar business-days
   }
+  # Job-level timezone — overrides `defaults { timezone … }` for this job only.
+  # Precedence: schedule option (`every … at … { timezone … }`) > this
+  # directive > `defaults { }`. With none of the three, wall-clock times are
+  # interpreted as UTC (croniq never reads the host's TZ, so the same file
+  # fires at the same instant in every environment) — `croniq validate` warns
+  # when a wall-clock schedule has no zone. An unknown IANA name is a hard
+  # error everywhere, rather than a silent fallback to UTC.
+  timezone Europe/London
   timeout 1h
 }
 

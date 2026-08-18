@@ -302,6 +302,17 @@ smtp {
 
 job billing:invoice {
   every weekday at 02:00 { calendar business-days }
+
+  # Timezone precedence: schedule option (`every … { timezone … }`) >
+  # this job-level directive > `defaults { timezone … }`. Declare it
+  # somewhere for any wall-clock schedule (`every day/weekday/Nth at …`)
+  # or job `window`: with no zone at all those times mean UTC, and
+  # `croniq validate` warns about it. Croniq never reads the host's TZ,
+  # so one Croniqfile fires at the same instant in every environment.
+  # An unknown IANA name is an error in validate/compile and a load
+  # fault at the server — never a silent fallback to UTC.
+  timezone Europe/Vienna
+
   runner { require billing }
   timeout 15m
 }

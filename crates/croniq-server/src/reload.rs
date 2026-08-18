@@ -334,6 +334,13 @@ pub async fn build_plan(
             line: None,
             column: None,
         },
+        // An unknown IANA zone rejects the reload rather than quietly
+        // re-arming the job in UTC (issue #426).
+        LoadError::Timezone { job, reason } => ReloadError::Validation {
+            message: format!("invalid timezone in job '{job}': {reason}"),
+            line: None,
+            column: None,
+        },
         // Semantic errors (#402) reject the reload the same way a parse error
         // does — the running config stays untouched.
         LoadError::Validate { messages } => ReloadError::Validation {
@@ -417,7 +424,7 @@ pub async fn build_plan(
             let job_config = job_config_from_definition(def, None);
             merged_jobs.push(job_config);
             merged_triggers.insert(def.job_key.clone(), built.trigger);
-            if let Some(reason) = built.calendar_fault {
+            if let Some(reason) = built.config_fault {
                 api_calendar_faults.insert(def.job_key.clone(), reason);
             }
         }

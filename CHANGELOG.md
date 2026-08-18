@@ -258,6 +258,67 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   well inside the reaper's grace window. `openapi.yaml` documents the new
   semantics and the `404` / `409` responses; see also *Orphaned claims* in
   [`docs/operations.md`](docs/operations.md).
+
+- **A misconfigured `timezone` is no longer silently ignored
+  ([#426](https://github.com/nuetzliches/croniq/issues/426)).** Three related
+  silences, all of which changed *when* jobs fired while `validate` stayed
+  green:
+
+  *An invalid IANA name.* `timezone Europe/Berln` passed `validate`, survived
+  `compile` into the runtime config verbatim, and the loader turned it into
+  UTC via `.parse().ok().unwrap_or(chrono_tz::UTC)` — so a one-character typo
+  moved every wall-clock fire of the job by the zone's offset, permanently and
+  without a log line. Zone names are now resolved in one place
+  (`croniq_config::timezone`) which has no UTC fallback: `validate` and
+  `compile` report an error with a did-you-mean suggestion
+  (`did you mean 'Europe/Berlin'?`), a Croniqfile with an unknown zone fails
+  the server load and any reload, and a persisted API schedule carrying one
+  loads **paused** with a `config_error` instead of firing in the wrong zone.
+  `POST /v1/schedules`, `PUT /v1/schedules/{id}` and `POST /v1/jobs/register`
+  reject it up front with `400`.
+
+  *The job-level spelling.* `timezone Europe/Vienna` written as a bare
+  directive inside `job { }` was discarded — it only worked in `defaults { }`
+  or as a schedule option, even though `defaults { }` accepting the same bare
+  keyword is exactly what makes the job body look like it should too. It now
+  works, with precedence: schedule option > job-level directive >
+  `defaults { }`.
+
+  *Every other unknown job directive.* `validate` inspected only specific job
+  directives, so any unrecognised key in a job body was a no-op without a
+  diagnostic — the hole [#403](https://github.com/nuetzliches/croniq/issues/403)
+  closed for the operator blocks, one level down. Job bodies are now checked
+  against the known-key table like every other block, including the sub-block
+  names and the `retry` / `dead_letter` bodies. `calendar`, `not_before` and
+  `not_after` written in the body get a message naming the schedule line they
+  belong on, rather than a did-you-mean.
+
+  **This rejects configurations earlier versions accepted.** A Croniqfile with
+  a misspelled zone, or a typo'd/misplaced directive in a job body, now fails
+  `validate` and the server load instead of running with the value dropped. Run
+  `croniq validate` before upgrading: everything it now reports was already
+  being ignored at runtime.
+
+- **`validate` warns when a wall-clock schedule has no timezone
+  ([#427](https://github.com/nuetzliches/croniq/issues/427)).** `every day at
+  03:00` with no zone anywhere runs at 03:00 **UTC**. That default is
+  deliberate and unchanged — croniq never reads the host's `TZ`, so one
+  Croniqfile fires at the same instant in dev, staging and prod — but nothing
+  said so, and on a non-UTC host the job simply ran an hour or two off what the
+  file read, with the offset moving at every DST switch. `validate` now emits a
+  warning (not an error, and it does not block a boot) for `every day at …`,
+  `every <weekday> at …`, `every <n>th of month at …`, and for a job-level
+  `window`, whose gate is likewise evaluated in the job's zone. Interval
+  schedules stay quiet — they are zone-independent — and so does `once at …`,
+  whose value is parsed as UTC regardless of any declared zone, which makes
+  "declare a timezone" the wrong advice there.
+
+  The job detail view now shows the **effective** zone next to `next fire`,
+  read off the live trigger rather than the config text, so it is filled in for
+  a job that inherits it from `defaults { }` and reads `UTC` for one that
+  declares nothing. `GET /v1/jobs/states` carries it as the new nullable
+  `timezone` field.
+
 - **.NET SDK: POSIX shell commands reach `sh` verbatim
   ([#442](https://github.com/nuetzliches/croniq/issues/442)).** The shell
   handler interpolated the command into `/bin/sh -c "…"`, escaping `"` but

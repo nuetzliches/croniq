@@ -1310,23 +1310,14 @@ fn compile_job(
 
     let schedule_summary = schedule.summary();
 
-    // Extract schedule options
+    // Timezone precedence (issue #426): schedule option > job-level directive >
+    // `defaults { }`. The schedule-option pass therefore runs *after* the
+    // directive loop below — the other three options it reads are
+    // schedule-only, so nothing else is affected by the order.
     let mut timezone = defaults.timezone.clone();
     let mut calendar = None;
     let mut not_before = None;
     let mut not_after = None;
-
-    if let Some(ref sched) = job.schedule {
-        for opt in &sched.options {
-            match opt.key.value.as_str() {
-                "timezone" => timezone = first_arg(opt, vars),
-                "calendar" => calendar = first_arg(opt, vars),
-                "not_before" => not_before = first_arg(opt, vars),
-                "not_after" => not_after = first_arg(opt, vars),
-                _ => {}
-            }
-        }
-    }
 
     // Extract job-level directives
     let mut description = None;
@@ -1353,6 +1344,10 @@ fn compile_job(
         match dob {
             DirectiveOrBlock::Directive(d) => match d.key.value.as_str() {
                 "description" => description = first_arg(d, vars),
+                // Job-level `timezone` (issue #426). Was silently dropped
+                // before, which moved every wall-clock fire of the job by the
+                // zone's offset with a green `validate`.
+                "timezone" => timezone = first_arg(d, vars),
                 "timeout" => timeout = first_arg(d, vars),
                 "window" => window = first_arg(d, vars),
                 "execution_mode" => {
@@ -1432,6 +1427,21 @@ fn compile_job(
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    // Schedule options last: they are the most specific spelling, so
+    // `every day at 02:00 { timezone … }` wins over a job-level `timezone`
+    // directive, which in turn wins over `defaults { }`.
+    if let Some(ref sched) = job.schedule {
+        for opt in &sched.options {
+            match opt.key.value.as_str() {
+                "timezone" => timezone = first_arg(opt, vars),
+                "calendar" => calendar = first_arg(opt, vars),
+                "not_before" => not_before = first_arg(opt, vars),
+                "not_after" => not_after = first_arg(opt, vars),
+                _ => {}
+            }
         }
     }
 
@@ -1868,6 +1878,63 @@ mod tests {
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
         assert_eq!(cfg.jobs[0].timeout.as_deref(), Some("5m"));
+    }
+
+    // ── job-level `timezone` + precedence (issue #426) ────────────────────────
+
+    #[test]
+    fn job_level_timezone_directive_applies() {
+        let ast = Parser::parse(
+            r#"job billing:invoice { every day at 02:00
+                                     timezone Europe/Vienna }"#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn job_level_timezone_beats_defaults() {
+        let ast = Parser::parse(
+            r#"
+            defaults { timezone UTC }
+            job billing:invoice { every day at 02:00
+                                  timezone Europe/Vienna }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn schedule_option_timezone_beats_job_level() {
+        let ast = Parser::parse(
+            r#"
+            defaults { timezone UTC }
+            job billing:invoice {
+                every day at 02:00 { timezone America/New_York }
+                timezone Europe/Vienna
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("America/New_York"));
+    }
+
+    #[test]
+    fn job_level_timezone_resolves_placeholders() {
+        let ast = Parser::parse(
+            r#"
+            vars { tz "Europe/Vienna" }
+            job billing:invoice { every day at 02:00
+                                  timezone {vars.tz} }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
     }
 
     #[test]
