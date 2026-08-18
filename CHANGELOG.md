@@ -80,8 +80,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through the documented `require` / `prefer` fields; non-reserved metadata is
   unaffected.
 
+- **.NET SDK: the shell-exec handler can be scoped to explicit job keys, and
+  its privilege directives fail closed
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).**
+  `AddCroniqShellHandler()` registered the shell handler only as the
+  catch-all default, so a runner that wanted shell-exec for one job had to
+  grant it for every job key the server dispatches. A new
+  `AddCroniqShellHandler("deploy:run", …)` overload registers the handler for
+  the listed keys only and is now the documented preferred form; the
+  parameterless catch-all stays as a deliberate opt-in equivalent to the Rust
+  `croniq-shell-runner`. Two silently-unsafe payload fields now fail closed:
+  the `user` directive — which .NET cannot honour (no setuid) and which was
+  accepted and ignored, running the command as the runner's own user — fails
+  the execution with a clear message, and payload-supplied `env` names that
+  can hijack process resolution or library loading (`PATH`, `PATHEXT`,
+  `COMSPEC`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`, `CRONIQ_*`,
+  case-insensitive) are rejected unless the new
+  `CroniqShellHandlerOptions.AllowUnsafeEnvironment` opt-out is set.
+
 ### Fixed
 
+- **.NET SDK: POSIX shell commands reach `sh` verbatim
+  ([#442](https://github.com/nuetzliches/croniq/issues/442)).** The shell
+  handler interpolated the command into `/bin/sh -c "…"`, escaping `"` but
+  not `\`, so a command containing escaped quotes or ending in a backslash
+  was corrupted by .NET's re-parse of the `Arguments` string and shell jobs
+  failed in hard-to-diagnose ways. The command now travels as a single argv
+  entry via `ProcessStartInfo.ArgumentList` — no escaping round-trip,
+  matching the Rust shell runner's `sh -c <command>`. The Windows branch
+  keeps the raw `cmd.exe /c <command>` pass-through on purpose (`cmd` parses
+  the remainder of the line itself; argv-quoting would corrupt it) and is
+  pinned by a test.
 - **Dead-letter `job_key` filter is bound as a query parameter.** The SQLite
   backend's `list_dead_letters` assembled its `job_key` predicate by
   interpolating the filter value straight into the SQL string, so a value

@@ -34,7 +34,10 @@ builder.Services
     // 2) Interface handler with DI — auto-registers schedule on startup
     .AddCroniqJob<BillingInvoiceHandler>("billing:invoice", schedule: "5m")
 
-    // 3) Shell-exec default — picks up DSL `runner shell { ... }` / `runner exec { ... }` jobs
+    // 3) Shell-exec — picks up DSL `runner shell { ... }` / `runner exec { ... }` jobs.
+    //    The demo uses the catch-all form so any shell job routed here runs;
+    //    in production prefer scoping it to explicit keys, e.g.
+    //    .AddCroniqShellHandler("deploy:run", "deploy:cleanup")
     .AddCroniqShellHandler();
 
 builder.Services.AddSingleton<IInvoiceService, FakeInvoiceService>();
