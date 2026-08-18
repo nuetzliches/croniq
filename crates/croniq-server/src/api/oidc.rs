@@ -4,10 +4,20 @@
 //!   GET /v1/auth/oidc/login           302 to IdP authorize URL
 //!   GET /v1/auth/oidc/callback?...    finishes the dance, mints tokens
 //!
-//! On success the callback returns a `TokenResponse` JSON directly so
-//! the UI's existing `fetch('/v1/auth/oidc/callback')` handler picks
-//! it up. (Alternative is a browser redirect with the tokens in
-//! query/fragment; both work but JSON is simpler to test.)
+//! The callback answers in one of two shapes, chosen by the request's `Accept`
+//! header (issue #454):
+//!
+//! * **A browser navigation** (`Accept: text/html…`, which is what the IdP's
+//!   redirect produces) gets the refresh token as an `HttpOnly` cookie and a
+//!   302 to `oidc.post_login_redirect`. The SPA then boots, exchanges the
+//!   cookie for an access token via `/v1/auth/refresh`, and no token ever
+//!   appears in a URL, in `localStorage`, or in a document the user can see.
+//!   Before #454 this path rendered raw `TokenResponse` JSON into the
+//!   browser window and `post_login_redirect` was parsed but never used.
+//! * **An explicit JSON caller** (`Accept: application/json`) gets the
+//!   `TokenResponse` body as before, refresh token included — kept for
+//!   scripted flows and for a dashboard served from a different origin, which
+//!   cannot receive a `SameSite=Strict` cookie.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +25,7 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
 use chrono::Utc;
@@ -29,6 +39,7 @@ use uuid::Uuid;
 use super::ServerState;
 use crate::api::audit;
 use crate::api::auth_endpoints::TokenResponse;
+use crate::api::refresh_cookie;
 
 const PENDING_TTL: Duration = Duration::from_secs(600); // 10 min
 
@@ -95,12 +106,14 @@ pub async fn handle_login(State(state): State<Arc<ServerState>>) -> Result<Respo
     Ok(Redirect::to(&auth_url).into_response())
 }
 
-/// `GET /v1/auth/oidc/callback?code=&state=` — finish the flow,
-/// JIT-create user if needed, mint tokens, return JSON.
+/// `GET /v1/auth/oidc/callback?code=&state=` — finish the flow, JIT-create the
+/// user if needed, mint tokens, and answer per the module docs: cookie + 302
+/// for a browser navigation, `TokenResponse` JSON for an explicit JSON caller.
 pub async fn handle_callback(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Query(params): Query<CallbackParams>,
-) -> Result<Json<TokenResponse>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let provider = state.oidc.clone().ok_or(StatusCode::NOT_FOUND)?;
     let store = state
         .store
@@ -199,12 +212,47 @@ pub async fn handle_callback(
         "user",
         Some(&user_id),
     );
-    Ok(Json(TokenResponse {
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        token_type: "Bearer".into(),
-        expires_in: jwt_config.access_ttl_secs,
-    }))
+
+    if wants_json(&headers) {
+        return Ok(Json(TokenResponse {
+            access_token: pair.access_token,
+            refresh_token: Some(pair.refresh_token),
+            token_type: "Bearer".into(),
+            expires_in: jwt_config.access_ttl_secs,
+        })
+        .into_response());
+    }
+
+    // Browser navigation: park the refresh token in the cookie and send the
+    // user to the app. The access token is deliberately *dropped* rather than
+    // passed along — putting it in the redirect URL would write it into
+    // browser history, the Referer chain, and any proxy log on the way. The
+    // SPA mints a fresh one from the cookie on boot, which costs one request.
+    let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
+    let mut response = Redirect::to(&provider.config.post_login_redirect).into_response();
+    if let Some(cookie) =
+        refresh_cookie::set(&pair.refresh_token, jwt_config.refresh_ttl_secs, secure)
+    {
+        response.headers_mut().insert(header::SET_COOKIE, cookie);
+    }
+    Ok(response)
+}
+
+/// Whether the caller explicitly wants the JSON shape.
+///
+/// Only an `Accept` that names a JSON type *without* also accepting HTML
+/// counts. A browser sends `text/html,application/xhtml+xml,…,*/*;q=0.8`, and
+/// `*/*` alone (curl's default) is not an explicit choice either — both take
+/// the cookie+redirect path, which is the one a navigation can actually use.
+fn wants_json(headers: &HeaderMap) -> bool {
+    let Some(accept) = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    accept.contains("/json") && !accept.contains("text/html")
 }
 
 /// `GET /v1/auth/oidc/config` — read-only metadata so the login UI can

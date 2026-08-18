@@ -31,8 +31,12 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Content-Security-Policy for everything this server serves — most
-/// importantly the dashboard SPA, which holds the auth token in JS, so the
-/// CSP is the main thing limiting the blast radius of any future XSS.
+/// importantly the dashboard SPA. Since #454 the SPA holds only the one-hour
+/// access token in JS (the refresh token is an `HttpOnly` cookie; see
+/// [`crate::api::refresh_cookie`]), so an XSS can no longer walk away with
+/// durable account access — but it can still act as the user for as long as
+/// the page is open, which makes the CSP the main thing limiting the blast
+/// radius of any future XSS.
 ///
 /// Checked against the actual Vite production build (`ui/dist`):
 ///
@@ -50,7 +54,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 ///   rendered as inline SVG markup (a DOM subtree, not a resource load) and
 ///   needs no directive.
 /// * `connect-src 'self'` — the SPA defaults to same-origin `fetch` (see
-///   `ui/src/api/client.ts`), which also covers the SSE streams and the
+///   `ui/src/api/base.ts`), which also covers the SSE streams and the
 ///   wasm-bindgen loader fetching its `.wasm` next to the JS.
 /// * `frame-ancestors 'none'` — no embedding (clickjacking); the modern
 ///   equivalent of `X-Frame-Options: DENY`, which is also set for older
@@ -78,7 +82,8 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
 /// headers, and emitting none means browsers enforce the same-origin policy
 /// unaided. When configured, exactly the app URL's origin is allowed, with
 /// the methods and headers the dashboard uses. `Allow-Credentials` is never
-/// set — auth is Bearer-header only.
+/// set: cross-origin auth is Bearer-header only, and the refresh cookie (#454)
+/// is `SameSite=Strict`, so it never rides a cross-origin request in any case.
 pub fn cors_layer(app_base_url: Option<&str>) -> Option<CorsLayer> {
     let origin = app_base_url.and_then(allowed_origin)?;
     Some(

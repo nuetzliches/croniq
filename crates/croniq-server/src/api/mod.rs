@@ -19,6 +19,7 @@ pub mod maintenance;
 pub mod oidc;
 pub mod password_reset;
 pub mod pat;
+pub mod refresh_cookie;
 pub mod runner_identity;
 pub mod runners_sse;
 pub mod schedules;

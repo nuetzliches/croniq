@@ -62,7 +62,13 @@ components:
       type: object
       properties:
         access_token: { type: string }
-        refresh_token: { type: string }
+        refresh_token:
+          type: string
+          description: >
+            Omitted when the refresh token was delivered as the `croniq_refresh`
+            cookie instead — see the `refresh_cookie` request field. Returning
+            both would let any script that can reach `/v1/auth/refresh` trade
+            the HttpOnly cookie for a readable long-lived token.
         token_type: { type: string }
         expires_in: { type: integer }
 
@@ -618,6 +624,17 @@ paths:
                 recovery_code:
                   type: string
                   description: Optional single-use recovery code (alternative to `code`).
+                refresh_cookie:
+                  type: boolean
+                  default: false
+                  description: >
+                    Deliver the refresh token as a `croniq_refresh` cookie
+                    (`HttpOnly; SameSite=Strict; Path=/v1/auth`) instead of in
+                    the response body, which is then omitted. The browser
+                    dashboard sets this so no script can read the refresh
+                    token; non-browser clients leave it unset. Only useful to a
+                    caller on this server's own origin — a `SameSite=Strict`
+                    cookie is never sent cross-site.
       responses:
         "200":
           description: >
@@ -638,32 +655,60 @@ paths:
   /v1/auth/refresh:
     post:
       summary: Refresh access token
+      description: >
+        Takes the refresh token from the request body or, when the body carries
+        none, from the `croniq_refresh` cookie. The response mirrors the source:
+        a body token yields a new body token, a cookie yields a rotated cookie
+        and no `refresh_token` field. The refresh token rotates either way, so
+        the presented one is revoked.
       security: []
       requestBody:
         content:
           application/json:
             schema:
               properties:
-                refresh_token: { type: string }
+                refresh_token:
+                  type: string
+                  description: >
+                    Omit (send `{}`) to refresh from the `croniq_refresh`
+                    cookie.
       responses:
         "200":
-          description: Fresh access and refresh token pair
+          description: >
+            Fresh access token, plus either a `refresh_token` in the body or a
+            rotated `croniq_refresh` cookie.
+          headers:
+            Set-Cookie:
+              description: Rotated `croniq_refresh` cookie (cookie flow only).
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { description: No refresh token supplied, or it is unknown, revoked or expired }
 
   /v1/auth/logout:
     post:
       summary: Revoke refresh token
+      description: >
+        Revokes the refresh token from the body, the `croniq_refresh` cookie, or
+        both. The cookie is always cleared, even when the token was already
+        unknown to the server.
       security: []
       requestBody:
         content:
           application/json:
             schema:
               properties:
-                refresh_token: { type: string }
+                refresh_token:
+                  type: string
+                  description: Omit (send `{}`) to log out via the cookie.
       responses:
-        "204": { description: Logged out }
+        "204":
+          description: Logged out
+          headers:
+            Set-Cookie:
+              description: Clears `croniq_refresh` (`Max-Age=0`).
+              schema: { type: string }
 
   /v1/jobs:
     get:
@@ -2056,6 +2101,12 @@ paths:
                 recovery_code:
                   type: string
                   description: 8-char single-use recovery code.
+                refresh_cookie:
+                  type: boolean
+                  default: false
+                  description: >
+                    Deliver the refresh token as the `croniq_refresh` cookie
+                    instead of in the body — see `POST /v1/auth/login`.
       responses:
         "200":
           description: Tokens
@@ -2120,6 +2171,12 @@ paths:
                 code:
                   type: string
                   description: 6-digit TOTP from the authenticator app.
+                refresh_cookie:
+                  type: boolean
+                  default: false
+                  description: >
+                    Deliver the refresh token as the `croniq_refresh` cookie
+                    instead of in the body — see `POST /v1/auth/login`.
       responses:
         "200":
           description: Tokens
@@ -2215,6 +2272,13 @@ paths:
   /v1/auth/oidc/callback:
     get:
       summary: IdP redirect target — completes the authorization-code flow
+      description: >
+        Answers in one of two shapes, chosen by `Accept`. A browser navigation
+        (`Accept: text/html…`, which is what the IdP's redirect sends) gets the
+        refresh token as a `croniq_refresh` cookie and a 302 to the configured
+        `oidc.post_login_redirect`; the dashboard then mints an access token
+        from the cookie, so no token ever appears in a URL. A caller that asks
+        for `application/json` gets the `TokenResponse` body instead.
       security: []
       parameters:
         - name: code
@@ -2227,10 +2291,22 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Tokens minted (JIT-creates the user on first sign-in)
+          description: >
+            Tokens minted (JIT-creates the user on first sign-in). Returned to
+            callers that explicitly `Accept: application/json`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
+        "302":
+          description: >
+            Browser flow: refresh token set as an HttpOnly cookie, redirect to
+            `oidc.post_login_redirect`.
+          headers:
+            Location:
+              schema: { type: string }
+            Set-Cookie:
+              description: "`croniq_refresh` (HttpOnly; SameSite=Strict; Path=/v1/auth)"
+              schema: { type: string }
         "401": { description: "Unknown state, bad code, or invalid ID token" }
         "403": { description: Linked user is deactivated }
         "404": { description: OIDC not configured }

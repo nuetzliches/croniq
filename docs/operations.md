@@ -50,8 +50,11 @@ unaided.
 When an app URL *is* configured, exactly its origin (scheme + host + port)
 is allowed, with the methods and headers the dashboard uses (`GET`, `POST`,
 `PUT`, `PATCH`, `DELETE`; `Authorization`, `Content-Type`). There is no
-wildcard and `Access-Control-Allow-Credentials` is never set — authentication
-is Bearer-header only. Consequences worth knowing:
+wildcard and `Access-Control-Allow-Credentials` is never set — cross-origin
+authentication is Bearer-header only. (The refresh cookie introduced by #454 is
+`SameSite=Strict` and same-origin only, so it never participates in a
+cross-origin request either; see *Where the dashboard keeps its tokens*.)
+Consequences worth knowing:
 
 - A dashboard built with `VITE_API_URL` pointing at a server on a different
   origin needs that server to have `app_url` set to the dashboard's URL, or
@@ -86,6 +89,73 @@ anyway. If you terminate TLS in front of Croniq (reverse proxy, ingress,
 load balancer), add HSTS there, e.g.
 `Strict-Transport-Security: max-age=31536000` once you are confident the
 host will stay HTTPS-only.
+
+### Where the dashboard keeps its tokens
+
+A password or SSO login mints two credentials with very different lifetimes:
+an access token (a stateless JWT, one hour) and a refresh token (opaque,
+seven days, stored hashed server-side). Until #454 the dashboard kept both in
+`localStorage`, which meant any XSS — or a compromised npm dependency
+executing at runtime — could lift the refresh token and hold the account for a
+week, surviving reloads and outliving the access token that `token_generation`
+makes cheap to revoke.
+
+In the standard setup — croniq-server serving both the API and the dashboard,
+as the official Docker image does — the split is now:
+
+| Credential | Where it lives | Reachable from JavaScript |
+|---|---|---|
+| Access token | Memory only (never persisted) | Yes, by design — it is sent as `Authorization: Bearer …` |
+| Refresh token | `croniq_refresh` cookie: `HttpOnly; SameSite=Strict; Path=/v1/auth` | **No** |
+
+Consequences worth knowing:
+
+- **A reload starts with no access token.** The dashboard silently calls
+  `POST /v1/auth/refresh`, which the browser answers with the cookie, and gets
+  a fresh access token. This is why a reload briefly shows a spinner rather
+  than the login page.
+- **A session now survives past the access token's hour.** A 401 mid-session
+  triggers a refresh and a retry instead of dropping the user at the login
+  screen.
+- **Logging out is a server round-trip.** Clearing a cookie does not revoke
+  the token behind it, so `POST /v1/auth/logout` revokes it server-side and
+  clears the cookie in the same response.
+- **There is still no CSRF surface.** `SameSite=Strict` means the cookie is
+  never attached to a cross-site request, only `/v1/auth/refresh` accepts it,
+  and the token it mints goes into a response body that a foreign page cannot
+  read (CORS is origin-locked — see *CORS* above). Every other API call
+  authenticates with an `Authorization` header, so no ambient authority exists
+  anywhere else.
+- **`Secure` is set only when the server can tell the page is on HTTPS**
+  (`Origin`, `X-Forwarded-Proto`, or an `https://` `app_url`). Browsers never
+  send a `Secure` cookie back over plain HTTP, so setting it on a plain-HTTP
+  deployment would lock everyone out rather than harden anything. Terminate
+  TLS in front of Croniq and the flag appears by itself.
+- **Non-browser clients are unaffected.** The CLI, curl, the SDKs and any
+  scripted flow keep receiving `refresh_token` in the login response body and
+  keep passing it in the refresh request body. Cookie delivery is opt-in per
+  request (`"refresh_cookie": true`), and a cookie-sourced refresh is the only
+  thing that omits the body field.
+
+#### Cross-origin dashboards (`VITE_API_URL`)
+
+A `SameSite=Strict` cookie cannot reach a dashboard served from a different
+origin than the API, so such a build has to keep the refresh token in
+`localStorage` — with exactly the exposure described above. Because that is a
+trade rather than a default, `ui/vite.config.ts` refuses to build a
+`VITE_API_URL` bundle unless it is acknowledged:
+
+```
+VITE_API_URL=https://api.example.com \
+VITE_ALLOW_LOCALSTORAGE_REFRESH=1 \
+npm run build
+```
+
+Without the second variable the build fails with an explanation. If you can
+serve the dashboard from croniq-server itself instead, that is the stronger
+option and needs no flags at all. (Local development is unaffected: `npm run
+dev` proxies `/v1` through the Vite dev server, so the browser sees a single
+origin and gets the cookie.)
 
 ### Keep `/metrics` on an internal interface
 

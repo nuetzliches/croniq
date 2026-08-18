@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, apiPost, apiPut, apiDelete } from './client'
 import type * as T from './types'
 import { useAuthStore } from '@/auth/store'
+import { refreshAccessToken } from '@/auth/session'
 
 // Health
 export function useHealth() {
@@ -257,7 +258,14 @@ export function useRunnersSSE() {
           signal: ctrl.signal,
           headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         })
-        if (res.status === 401) { useAuthStore.getState().logout(); return }
+        if (res.status === 401) {
+          // An expired access token, most likely: the stream outlives it by
+          // design. Refresh and reconnect rather than ending the session
+          // (issue #454); a genuinely dead session fails the refresh and
+          // `refreshAccessToken` clears it for us.
+          if (await refreshAccessToken()) throw new Error('SSE 401 — retrying with a fresh token')
+          return
+        }
         if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
 
         setIsConnected(true)
