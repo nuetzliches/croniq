@@ -11,6 +11,7 @@ pub mod dead_letters;
 pub mod events_sse;
 pub mod execution_logs;
 pub mod executions;
+pub mod hardening;
 pub mod invitations;
 pub mod jobs;
 pub mod maintenance;
@@ -723,9 +724,22 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // for the OIDC-only `/v1/auth/oidc/config`; both are kept for now.
         .route("/v1/auth/config", get(oidc::handle_auth_config));
 
-    let cors = tower_http::cors::CorsLayer::permissive();
+    // Explicit CORS allowlist (issue #429). The only browser origin that
+    // legitimately calls this API cross-origin is a dashboard served from the
+    // operator-configured public app URL — when it is unset, the SPA is
+    // served same-origin by this very server and needs no CORS at all, so no
+    // CORS headers are emitted. No wildcard, no `Allow-Credentials`.
+    let cors = hardening::cors_layer(state.app_base_url.as_deref());
 
-    authenticated.merge(public).with_state(state).layer(cors)
+    let mut router = authenticated.merge(public).with_state(state);
+    if let Some(cors) = cors {
+        router = router.layer(cors);
+    }
+    // Security headers on every API response. main.rs applies the same layer
+    // again over the fully assembled app so the SPA fallback and /mcp
+    // (mounted after this router is built) are covered too; `if_not_present`
+    // keeps the double application idempotent.
+    hardening::apply_security_headers(router)
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────

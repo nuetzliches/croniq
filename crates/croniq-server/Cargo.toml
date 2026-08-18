@@ -20,7 +20,7 @@ croniq-auth      = { path = "../croniq-auth" }
 croniq-mcp       = { path = "../croniq-mcp" }
 
 axum = { version = "0.8", features = ["json", "macros"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "set-header"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-core = "0.3"
 async-stream = "0.3"
@@ -94,6 +94,9 @@ smtp = ["dep:lettre"]
 pretty_assertions = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
+# The http_hardening integration test mirrors main.rs's SPA fallback
+# assembly (ServeDir + ServeFile) to assert security headers on it.
+tower-http = { version = "0.6", features = ["cors", "fs", "set-header"] }
 http-body-util = "0.1"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3"

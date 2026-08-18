@@ -953,6 +953,13 @@ async fn main() -> Result<()> {
         tracing::info!(path = %ui_dir.display(), "serving UI static files");
     }
 
+    // Security headers on every response (issue #429) — applied here, after
+    // the MCP router and the SPA fallback are mounted, because Router::layer
+    // only wraps what is already in the router. server_router() applies the
+    // same headers to the API routes; `if_not_present` makes this outer
+    // application a no-op for those.
+    let app = croniq_server::api::hardening::apply_security_headers(app);
+
     tracing::info!(address = %addr, "croniq-server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)

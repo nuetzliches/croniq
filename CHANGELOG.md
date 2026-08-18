@@ -24,6 +24,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **Permissive CORS replaced by an explicit allowlist, and security headers
+  added to every response.** The API router applied `CorsLayer::permissive()`
+  to every route — `Access-Control-Allow-Origin: *` with any method and any
+  header — so any website could read every unauthenticated response
+  (`/version`, `/v1/auth/config`, the password-reset and OIDC flows)
+  cross-origin. Harmless today because authentication is Bearer-header only
+  with no cookies anywhere, but a standing hazard the moment cookie auth
+  appears. CORS is now derived from the operator-configured public app URL
+  (`server { app_url … }` / `CRONIQ_APP_URL`): when set, exactly that origin
+  is allowed, with the methods and headers the dashboard uses
+  (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`, `Authorization`, `Content-Type`) and
+  never `Allow-Credentials`; when unset — the standard setup, where
+  croniq-server serves the SPA itself and everything is same-origin — no CORS
+  headers are emitted at all. Deployments that serve the dashboard from a
+  different origin (a `VITE_API_URL` build) must set `app_url` for browser
+  calls to keep working; non-browser clients are unaffected.
+
+  Every response — API, dashboard, and `/mcp` — additionally carries
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, and a `Content-Security-Policy` verified
+  against the Vite production bundle (`script-src 'self' 'wasm-unsafe-eval'`
+  for the DSL wasm bridge, `style-src 'self' 'unsafe-inline'` for React style
+  attributes, `connect-src 'self'`, `frame-ancestors 'none'`, `object-src
+  'none'`, `base-uri 'self'`). The SPA holds the auth token in JS, so the CSP
+  is the main thing limiting the blast radius of any future XSS.
+  `Strict-Transport-Security` is deliberately not set — croniq-server does
+  not terminate TLS; operators who do should add HSTS at their proxy. See the
+  new *HTTP hardening* section in [`docs/operations.md`](docs/operations.md),
+  which also documents the standing advice to keep the unauthenticated
+  `/metrics` listener on an internal interface.
 - **Issued credential scopes are bounded by the caller's own scopes.** The
   four endpoints that mint credentials — `POST /v1/users/me/tokens`,
   `POST /v1/api-clients`, `PUT /v1/api-clients/{id}` and `POST /v1/api-keys`,
