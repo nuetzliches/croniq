@@ -812,13 +812,25 @@ pub async fn handle_refresh(
             scopes,
         )
     } else {
-        let scopes = store
+        // A row with no user belongs to a machine client minted by
+        // `POST /v1/api-clients/{id}/tokens`. Re-resolve the client so the
+        // rotated token reflects the current row: narrowed scopes take
+        // effect, a deactivated client stops refreshing, and a deleted one
+        // 401s instead of silently rotating into a scope-less token.
+        let client = store
             .get_client(&token.client_id)
-            .ok()
-            .flatten()
-            .map(|c| c.scopes)
-            .unwrap_or_default();
-        (CallerType::ApiKey, None, None, AuthMethod::ApiKey, scopes)
+            .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+            .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
+        if !client.is_active {
+            return Err(status_err(StatusCode::FORBIDDEN));
+        }
+        (
+            CallerType::ApiKey,
+            None,
+            None,
+            AuthMethod::ApiKey,
+            client.scopes,
+        )
     };
 
     let caller_id = user_id.clone().unwrap_or_else(|| token.client_id.clone());
@@ -1052,6 +1064,24 @@ pub async fn handle_issue_client_token(
         None,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Persist the refresh half, exactly like `mint_user_tokens` and the OIDC
+    // callback do. Without a `refresh_tokens` row the token handed out below
+    // could never be redeemed — `handle_refresh` looks the presented hash up
+    // and 401s when it finds nothing (issue #463). `user_id` stays `None`:
+    // that is what marks the row as belonging to a machine client and sends
+    // `handle_refresh` down its API-key branch.
+    let refresh_hash = hash_api_key(&pair.refresh_token);
+    store
+        .create_refresh_token(&RefreshToken {
+            token_hash: refresh_hash,
+            client_id: client.client_id.clone(),
+            user_id: None,
+            expires_at: pair.refresh_expires_at,
+            revoked_at: None,
+            created_at: Utc::now(),
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Body delivery, always: this endpoint is called by an authenticated admin
     // tool to provision a machine credential, never by a browser session that
@@ -1305,6 +1335,39 @@ mod tests {
         )
         .await
         .expect("a client within the caller's scopes still issues");
+    }
+
+    /// The endpoint advertises a `refresh_token`, so it has to leave a row
+    /// behind for `handle_refresh` to find — issue #463. `user_id: None` is
+    /// the part that matters: it is what routes the redemption down the
+    /// API-key branch instead of looking for a user that does not exist.
+    #[tokio::test]
+    async fn issuing_a_client_token_persists_its_refresh_half() {
+        let store = make_store();
+        seed_client(&store, "reader", &[Scope::JOBS_READ]);
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_CLIENTS_ADMIN, Scope::JOBS_READ]);
+
+        let Json(tokens) = handle_issue_client_token(
+            State(state),
+            Extension(ctx),
+            axum::extract::Path("reader".into()),
+        )
+        .await
+        .expect("issuing within the caller's scopes succeeds");
+
+        let raw = tokens
+            .refresh_token
+            .expect("the endpoint returns a refresh token");
+        let row = store
+            .validate_refresh_token(&hash_api_key(&raw))
+            .unwrap()
+            .expect("the returned refresh token must be redeemable");
+        assert_eq!(row.client_id, "reader");
+        assert!(
+            row.user_id.is_none(),
+            "a machine credential has no owning user"
+        );
     }
 
     #[tokio::test]

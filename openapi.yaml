@@ -694,7 +694,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
-        "401": { description: "No refresh token supplied, or it is unknown, revoked or expired" }
+        "401":
+          description: >
+            No refresh token supplied, or it is unknown, revoked or expired —
+            including a machine token whose API client has been deleted.
+        "403":
+          description: >
+            The owning identity is deactivated: the user for a session token,
+            the API client for a machine token.
 
   /v1/auth/logout:
     post:
@@ -1846,6 +1853,13 @@ paths:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:
       summary: Issue a token for an API client
+      description: >
+        Mints an access/refresh pair carrying the client's scopes verbatim.
+        Delivery is always in the body — this is a machine credential, never a
+        browser session. The `refresh_token` is redeemable at
+        `/v1/auth/refresh`, which re-reads the client row on every rotation: a
+        narrowed scope list takes effect on the next refresh, and a deactivated
+        or deleted client stops refreshing.
       responses:
         "200":
           description: A token scoped to the API client
