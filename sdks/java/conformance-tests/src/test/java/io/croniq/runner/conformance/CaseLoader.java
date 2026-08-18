@@ -1,17 +1,17 @@
 package io.croniq.runner.conformance;
 
+import static io.croniq.runner.conformance.YamlSupport.EXPECTATIONS_KEYS;
+import static io.croniq.runner.conformance.YamlSupport.HTTP_EXPECTATION_KEYS;
+import static io.croniq.runner.conformance.YamlSupport.loadRoot;
+import static io.croniq.runner.conformance.YamlSupport.parseScript;
+import static io.croniq.runner.conformance.YamlSupport.requireKnownKeys;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
+import java.util.Set;
 
 /**
  * Loads a YAML conformance case from disk into a typed {@link CaseSpec}.
@@ -21,80 +21,61 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * typed record manually. We don't use Jackson YAML here because the case schema
  * is small and snake_case-to-camelCase translation needs case-by-case knowledge
  * (e.g., the {@code body} field stays untyped for {@link BodyMatcher}).
+ *
+ * <p>Picking keys by name means an unrecognised key is never read at all, so
+ * every level asserts its vocabulary through
+ * {@link YamlSupport#requireKnownKeys}. Without that, a case using an assertion
+ * key this binding has not implemented would load cleanly and simply not be
+ * asserted (#460).
+ *
+ * <p>The generic load and {@code server_script} parsing live in
+ * {@link YamlSupport}, shared with {@link TriggerCaseLoader}, so the YAML 1.1
+ * {@code on:} workaround and the script vocabulary exist in exactly one place.
  */
 final class CaseLoader {
+
+    /**
+     * Exactly the keys this binding implements, one set per node a runner case
+     * nests. See {@link YamlSupport#requireKnownKeys} for why these are the
+     * binding's own surface rather than a copy of case-schema.json.
+     */
+    private static final Set<String> CASE_KEYS = Set.of(
+            "name", "description", "runner_config", "handlers", "server_script", "shutdown_after_ms", "expectations");
+
+    private static final Set<String> RUNNER_CONFIG_KEYS = Set.of(
+            "runner_id",
+            "runner_id_prefix",
+            "capabilities",
+            "tags",
+            "max_inflight",
+            "api_key",
+            "bearer_token",
+            "poll_timeout_ms",
+            "renew_interval_ms",
+            "drain_timeout_ms",
+            "poll_retry_delay_ms",
+            "capacity_backoff_ms");
+
+    private static final Set<String> HANDLER_KEYS = Set.of(
+            "job_key",
+            "is_default",
+            "schedule",
+            "behavior",
+            "error_message",
+            "duration_ms",
+            "level",
+            "message",
+            "count",
+            "interval_ms");
 
     private CaseLoader() {}
 
     static CaseSpec load(Path file) throws IOException {
-        try (InputStream in = Files.newInputStream(file)) {
-            // SafeConstructor, explicitly: it constructs only the standard YAML
-            // scalar/sequence/mapping types and refuses arbitrary Java types.
-            // SnakeYAML 2.x's default TagInspector already rejects global tags
-            // (the CVE-2022-1471 fix) and these fixtures are repo-local, so
-            // `new Yaml()` is not exploitable today — but that safety is a
-            // version-dependent default, and the property we want here is
-            // version-independent. See YamlSupport.loadRoot for the same call.
-            Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
-            Object root = yaml.load(in);
-            // SnakeYAML 2.x still treats bare YAML 1.1 keywords (`on`, `off`,
-            // `yes`, `no`) as booleans even though it nominally defaults to
-            // YAML 1.2. The case files use `on:` as the script-entry key — we
-            // need to coerce every map key back to its string form before any
-            // typed access, otherwise `parseCase` looks up "on" and misses.
-            root = normaliseKeys(root);
-            if (!(root instanceof Map)) {
-                throw new IOException("Top-level YAML must be a map: " + file);
-            }
-            @SuppressWarnings("unchecked")
-            Map<String, Object> top = (Map<String, Object>) root;
-            return parseCase(top);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Object normaliseKeys(Object o) {
-        if (o instanceof Map<?, ?> m) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            for (var e : m.entrySet()) {
-                String key = keyToString(e.getKey());
-                out.put(key, normaliseKeys(e.getValue()));
-            }
-            return out;
-        }
-        if (o instanceof List<?> list) {
-            List<Object> out = new ArrayList<>(list.size());
-            for (Object item : list) {
-                out.add(normaliseKeys(item));
-            }
-            return out;
-        }
-        return o;
-    }
-
-    /**
-     * SnakeYAML 2.x maps YAML 1.1 keywords {@code on}, {@code off}, {@code yes},
-     * {@code no} to {@link Boolean}. We can't recover the exact original
-     * spelling but the case schema only uses {@code on:} as a key, so
-     * {@code Boolean.TRUE} → "on" and {@code Boolean.FALSE} → "off" is a safe
-     * round-trip for our YAML files. Numeric keys would also be unusual at the
-     * key position, so cast everything via {@link Object#toString()} as a
-     * fallback.
-     */
-    private static String keyToString(Object key) {
-        if (key == null) {
-            return null;
-        }
-        if (key == Boolean.TRUE) {
-            return "on";
-        }
-        if (key == Boolean.FALSE) {
-            return "off";
-        }
-        return key.toString();
+        return parseCase(loadRoot(file));
     }
 
     private static CaseSpec parseCase(Map<String, Object> m) {
+        requireKnownKeys(m, CASE_KEYS, "case");
         return new CaseSpec(
                 stringOf(m, "name"),
                 stringOf(m, "description"),
@@ -109,6 +90,7 @@ final class CaseLoader {
         if (m == null) {
             return null;
         }
+        requireKnownKeys(m, RUNNER_CONFIG_KEYS, "runner_config");
         return new CaseSpec.RunnerConfig(
                 stringOf(m, "runner_id"),
                 stringOf(m, "runner_id_prefix"),
@@ -132,6 +114,7 @@ final class CaseLoader {
         for (Object o : raw) {
             @SuppressWarnings("unchecked")
             Map<String, Object> h = (Map<String, Object>) o;
+            requireKnownKeys(h, HANDLER_KEYS, "handler '%s'".formatted(stringOf(h, "job_key")));
             out.add(new CaseSpec.HandlerSpec(
                     stringOf(h, "job_key"),
                     boolOf(h, "is_default"),
@@ -147,35 +130,18 @@ final class CaseLoader {
         return out;
     }
 
-    private static List<CaseSpec.ScriptEntry> parseScript(List<Object> raw) {
-        if (raw == null) {
-            return List.of();
-        }
-        List<CaseSpec.ScriptEntry> out = new ArrayList<>(raw.size());
-        for (Object o : raw) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> e = (Map<String, Object>) o;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> r = (Map<String, Object>) e.get("respond");
-            CaseSpec.ScriptEntry.Respond resp = r == null
-                    ? null
-                    : new CaseSpec.ScriptEntry.Respond(
-                            intRequired(r, "status"), r.get("body"), stringMapOf(r, "headers"), intOf(r, "delay_ms"));
-            out.add(new CaseSpec.ScriptEntry(stringOf(e, "on"), intOf(e, "match_count"), resp));
-        }
-        return out;
-    }
-
     private static CaseSpec.Expectations parseExpectations(Map<String, Object> m) {
         if (m == null) {
             return null;
         }
+        requireKnownKeys(m, EXPECTATIONS_KEYS, "expectations");
         List<CaseSpec.Expectations.HttpExpectation> http = new ArrayList<>();
         List<Object> rawHttp = listOf(m, "http");
         if (rawHttp != null) {
             for (Object o : rawHttp) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> e = (Map<String, Object>) o;
+                requireKnownKeys(e, HTTP_EXPECTATION_KEYS, YamlSupport.httpExpectationContext(e));
                 http.add(new CaseSpec.Expectations.HttpExpectation(
                         stringOf(e, "method"),
                         stringOf(e, "path"),
@@ -190,18 +156,10 @@ final class CaseLoader {
     }
 
     // -------- map / type helpers --------
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> mapOf(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        return v instanceof Map ? (Map<String, Object>) v : null;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<Object> listOf(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        return v instanceof List ? (List<Object>) v : null;
-    }
+    //
+    // stringListOf stays local: it returns an empty list where YamlSupport's
+    // returns null, and the runner-config record relies on that. The rest
+    // delegate so the coercion rules have a single definition.
 
     private static List<String> stringListOf(Map<String, Object> m, String key) {
         List<Object> raw = listOf(m, key);
@@ -215,51 +173,27 @@ final class CaseLoader {
         return out;
     }
 
+    private static Map<String, Object> mapOf(Map<String, Object> m, String key) {
+        return YamlSupport.mapOf(m, key);
+    }
+
+    private static List<Object> listOf(Map<String, Object> m, String key) {
+        return YamlSupport.listOf(m, key);
+    }
+
     private static Map<String, String> stringMapOf(Map<String, Object> m, String key) {
-        Map<String, Object> raw = mapOf(m, key);
-        if (raw == null) {
-            return Collections.emptyMap();
-        }
-        Map<String, String> out = new LinkedHashMap<>();
-        raw.forEach((k, v) -> out.put(k, v == null ? null : v.toString()));
-        return out;
+        return YamlSupport.stringMapOf(m, key);
     }
 
     private static String stringOf(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        return v == null ? null : v.toString();
+        return YamlSupport.stringOf(m, key);
     }
 
     private static Integer intOf(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        if (v == null) {
-            return null;
-        }
-        if (v instanceof Integer i) {
-            return i;
-        }
-        if (v instanceof Long l) {
-            return Math.toIntExact(l);
-        }
-        if (v instanceof Number n) {
-            return n.intValue();
-        }
-        return Integer.parseInt(v.toString());
-    }
-
-    private static int intRequired(Map<String, Object> m, String key) {
-        Integer v = intOf(m, key);
-        if (v == null) {
-            throw new IllegalStateException("Missing required int: " + key);
-        }
-        return v;
+        return YamlSupport.intOf(m, key);
     }
 
     private static Boolean boolOf(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        if (v == null) {
-            return null;
-        }
-        return Boolean.parseBoolean(v.toString());
+        return YamlSupport.boolOf(m, key);
     }
 }

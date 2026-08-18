@@ -11,9 +11,22 @@ namespace Croniq.Runner.Sdk.Conformance.Tests;
 /// </summary>
 internal static class CaseLoader
 {
+    /// <remarks>
+    /// Deliberately built <b>without</b> <c>IgnoreUnmatchedProperties()</c>: a
+    /// key that <see cref="CaseSpec"/> does not model must be a load-time
+    /// error, not a silent drop (#460). Ignoring unmatched properties means a
+    /// case using an assertion key this binding never implemented loads
+    /// cleanly and then simply is not asserted — a green suite for an
+    /// unenforced contract, the same failure mode as the case-level allowlist
+    /// in #453 one level down.
+    ///
+    /// This is complementary to, not a duplicate of, the corpus-level
+    /// <c>check-jsonschema</c> run in CI: that catches a key the *schema* does
+    /// not allow, this catches a schema-legal key the *binding* has not
+    /// implemented.
+    /// </remarks>
     private static readonly IDeserializer _yaml = new DeserializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
-        .IgnoreUnmatchedProperties()
         .Build();
 
     public static CaseSpec Load(string path)

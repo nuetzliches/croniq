@@ -3,21 +3,20 @@ package conformance
 import (
 	"fmt"
 	"os"
-
-	"gopkg.in/yaml.v3"
 )
 
 // LoadTriggerFile reads a single trigger (producer) case YAML and normalises
 // the JSON body trees — request metadata, server_script response bodies, and
 // body_match expectations — so downstream JSON encoding and subset matching
-// round-trip cleanly. Mirrors [LoadFile] for runner cases.
+// round-trip cleanly. Mirrors [LoadFile] for runner cases, strict decoding
+// included: a key [TriggerSpec] does not model is a load-time error.
 func LoadTriggerFile(path string) (*TriggerSpec, error) {
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read trigger case %s: %w", path, err)
 	}
 	var spec TriggerSpec
-	if err := yaml.Unmarshal(buf, &spec); err != nil {
+	if err := strictDecode(buf, &spec); err != nil {
 		return nil, fmt.Errorf("parse trigger case %s: %w", path, err)
 	}
 

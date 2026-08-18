@@ -92,6 +92,12 @@ type Expectations struct {
 }
 
 // HTTPExpectation is one expected request pattern.
+//
+// Shared by the runner and trigger harnesses. BodyAbsent is only meaningful
+// for trigger cases — trigger-case-schema.json declares it and case-schema.json
+// does not — but the field lives here because both halves decode through this
+// type. A runner case that used it would be rejected by the corpus-level
+// check-jsonschema run in CI, so the sharing costs no strictness.
 type HTTPExpectation struct {
 	Method     string            `yaml:"method"`
 	Path       string            `yaml:"path"`
@@ -100,4 +106,9 @@ type HTTPExpectation struct {
 	MaxCount   *int              `yaml:"max_count,omitempty"`
 	Headers    map[string]string `yaml:"headers,omitempty"`
 	BodyMatch  any               `yaml:"body_match,omitempty"`
+	// BodyAbsent lists top-level request-body keys that MUST NOT be present.
+	// It pins the omission of unset optionals — a producer must not emit a
+	// metadata/require/prefer/timeout/idempotency_key field it was never
+	// given. Asserted against the first matching request.
+	BodyAbsent []string `yaml:"body_absent,omitempty"`
 }
