@@ -36,6 +36,68 @@ confirm the rollout has actually replaced the previous build.
 `env` is read at request time, so changing `CRONIQ_ENV` does not require a
 rebuild — just a restart.
 
+## HTTP hardening
+
+### CORS
+
+The server emits CORS headers only when a public app URL is configured
+(`server { app_url "…" }` in the Croniqfile, or `CRONIQ_APP_URL`). In the
+standard setup — croniq-server serves both the API and the dashboard SPA,
+as in the official Docker image — everything is same-origin, no CORS headers
+are needed, and none are sent; browsers enforce the same-origin policy
+unaided.
+
+When an app URL *is* configured, exactly its origin (scheme + host + port)
+is allowed, with the methods and headers the dashboard uses (`GET`, `POST`,
+`PUT`, `PATCH`, `DELETE`; `Authorization`, `Content-Type`). There is no
+wildcard and `Access-Control-Allow-Credentials` is never set — authentication
+is Bearer-header only. Consequences worth knowing:
+
+- A dashboard built with `VITE_API_URL` pointing at a server on a different
+  origin needs that server to have `app_url` set to the dashboard's URL, or
+  browser calls will be blocked.
+- Non-browser clients (runners, the CLI, curl, SDKs) are unaffected — CORS
+  is a browser-side read gate, not authentication.
+- `server.app_url` is boot-only (see *Reload vs. restart*): changing it
+  requires a restart, and the CORS allowlist follows suit.
+
+### Security headers
+
+Every response — API, dashboard, and `/mcp` — carries:
+
+| Header | Value |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `no-referrer` |
+| `Content-Security-Policy` | see below |
+
+The CSP is scoped to what the dashboard bundle actually needs: `default-src
+'self'`, `script-src 'self' 'wasm-unsafe-eval'` (the schedule builder runs
+the DSL parser as WebAssembly), `style-src 'self' 'unsafe-inline'` (React
+style attributes), `img-src 'self' data:`, `connect-src 'self'`,
+`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'self'`,
+`form-action 'self'`. The exact value and per-directive rationale live in
+[`hardening.rs`](../crates/croniq-server/src/api/hardening.rs).
+
+`Strict-Transport-Security` is **not** set by croniq-server: it does not
+terminate TLS itself, and HSTS sent over plain HTTP is ignored by browsers
+anyway. If you terminate TLS in front of Croniq (reverse proxy, ingress,
+load balancer), add HSTS there, e.g.
+`Strict-Transport-Security: max-age=31536000` once you are confident the
+host will stay HTTPS-only.
+
+### Keep `/metrics` on an internal interface
+
+The Prometheus endpoint is unauthenticated by design (the standard scrape
+pattern) and lives on its own opt-in listener
+(`observability { metrics { listen :9900 } }`). It exposes job keys, queue
+depths, and runner names — operational data, not secrets, but nothing that
+belongs on the public internet either. Bind it to an internal address
+(`listen "127.0.0.1:9900"` or an internal network interface) or restrict it
+with firewall/network-policy rules; a bare port form like `listen :9900`
+binds `0.0.0.0`.
+
 ## Environment variables
 
 A complete table of supported variables lives in

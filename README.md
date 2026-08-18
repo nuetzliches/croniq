@@ -555,7 +555,7 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | API Clients | `GET/POST /v1/api-clients`, `DELETE .../api-clients/{id}`, `POST .../tokens` |
 | API Keys | `POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` |
 | Health | `GET /health` (public) |
-| Metrics | `GET /metrics` (separate port) |
+| Metrics | `GET /metrics` (separate opt-in port, unauthenticated by design — bind it to an internal interface, e.g. `metrics { listen "127.0.0.1:9900" }`; see [`docs/operations.md`](docs/operations.md)) |
 
 Full specification: [`openapi.yaml`](openapi.yaml)
 
@@ -710,7 +710,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_INIT_API_KEY_RECONCILE` | Opt-in to rotating the `default` client's API key on boot when `CRONIQ_INIT_API_KEY` differs from the stored value. Default is to only log the mismatch, so an accidental env change cannot silently revoke a working credential. | `0` |
 | `CRONIQ_ON_FAILURE_CMD` | **Deprecated** — single global shell command on permanent failure. At boot, croniq-server synthesises a catch-all rule from this var when no `alerts {}` block is present. Migrate to `alerts { channel "…" { shell "…" } rule "…" { when job_failed; channels "…" } }` and unset. | — |
 | `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
-| `CRONIQ_APP_URL` | Public base URL for invitation, password-reset, and OIDC login links. When unset, it is derived per-request from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so links work behind a reverse proxy with no config. Set it explicitly to pin the URL — recommended on directly-exposed servers, where the `Host` header is untrusted and is **not** used for the public password-reset link. The Croniqfile `server { app_url "…" }` directive sets the same value and takes precedence over this env var. | _auto-detected from request_ |
+| `CRONIQ_APP_URL` | Public base URL for invitation, password-reset, and OIDC login links. When unset, it is derived per-request from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so links work behind a reverse proxy with no config. Set it explicitly to pin the URL — recommended on directly-exposed servers, where the `Host` header is untrusted and is **not** used for the public password-reset link. The Croniqfile `server { app_url "…" }` directive sets the same value and takes precedence over this env var. Also drives the CORS allowlist: when set, exactly this origin may call the API cross-origin from a browser; when unset, no CORS headers are emitted (same-origin deployments need none). See [`docs/operations.md`](docs/operations.md). | _auto-detected from request_ |
 | `CRONIQ_SMTP_URL` | Legacy composite transport URL (`smtp://user:pass@host:587/?tls=required`). When set, it wins over the decomposed `CRONIQ_SMTP_HOST/PORT/SECURITY` vars and the `smtp {}` block. Requires `--features smtp`. | — |
 | `CRONIQ_SMTP_HOST` | SMTP relay host. Used when `CRONIQ_SMTP_URL` is unset. Overridden by `smtp { host … }`. | — |
 | `CRONIQ_SMTP_PORT` | SMTP relay port. Overridden by `smtp { port … }`. | `587` |
