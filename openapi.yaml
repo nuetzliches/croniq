@@ -684,7 +684,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
-        "401": { description: No refresh token supplied, or it is unknown, revoked or expired }
+        "401": { description: "No refresh token supplied, or it is unknown, revoked or expired" }
 
   /v1/auth/logout:
     post:
