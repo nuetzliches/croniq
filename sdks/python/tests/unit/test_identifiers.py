@@ -173,7 +173,7 @@ async def _run_one_assignment(
         return httpx.Response(404)
 
     options = RunnerOptions(
-        server_url="http://test.invalid",
+        server_url="https://test.invalid",
         api_key="testkey",
         poll_timeout_ms=500,
         poll_retry_delay_ms=100,
