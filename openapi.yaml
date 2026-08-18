@@ -678,7 +678,11 @@ paths:
                 job_key: { type: string }
                 description: { type: string }
                 assigned_runner_id: { type: string }
-                metadata: { type: object }
+                metadata:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: >
+                    Free-form job metadata. Keys prefixed with `__` are reserved for the scheduler and are ignored when supplied by a caller.
                 timeout: { type: string }
                 max_retries: { type: integer }
                 dead_letter_enabled: { type: boolean }
@@ -992,7 +996,15 @@ paths:
         Filtering by `levels` happens server-side (cheap). Free-text
         search is performed in the dashboard.
 
-        Scope: `executions:read` (read-only).
+        Events on secret-bearing tracing targets are dropped before they
+        reach the stream, and structured fields whose name looks like a
+        credential (`token`, `secret`, `password`, ...) are replaced with
+        `[redacted]`.
+
+        Scope: `admin`. The stream is the raw server-wide tracing feed
+        (including a replay buffer), not per-job output — per-execution
+        logs stay available to `executions:read` via
+        `GET /v1/executions/{id}/logs`.
       parameters:
         - name: levels
           in: query
@@ -1856,7 +1868,10 @@ paths:
                 job_key: { type: string }
                 require: { type: array, items: { type: string } }
                 prefer: { type: array, items: { type: string } }
-                metadata: { type: object }
+                metadata:
+                  type: object
+                  description: >
+                    Free-form metadata. Keys prefixed with `__` are reserved for the scheduler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are ignored when supplied by a caller — use `require` / `prefer` to influence routing.
                 timeout: { type: string, default: "5m" }
                 idempotency_key:
                   type: string

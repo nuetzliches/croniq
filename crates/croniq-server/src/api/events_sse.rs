@@ -76,15 +76,19 @@ fn into_sse(event: &ConsoleEvent) -> Event {
 
 /// `GET /v1/events/stream`
 ///
-/// Scope: `executions:read` (read-only access — the live tail is the same
-/// information the operator can already pull from execution logs +
-/// runner SSE, just multiplexed).
+/// Scope: `admin`. This is not the per-job execution log — it is the raw
+/// server-wide tracing feed (audit lines, auth failures with user ids, job
+/// stderr, config diagnostics), plus a replay buffer of everything the
+/// server logged recently. That is an operator-of-the-whole-server tool, so
+/// it sits behind the admin wildcard rather than a read scope that role
+/// defaults hand to viewers. Per-execution logs remain available to
+/// `executions:read` via `GET /v1/executions/{id}/logs`.
 pub async fn handle_events_stream(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Query(q): Query<EventStreamQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
-    require_scope(&ctx, Scope::EXECUTIONS_READ)?;
+    require_scope(&ctx, Scope::ADMIN)?;
 
     let hub = state
         .console_hub

@@ -31,7 +31,7 @@ interface NavSection {
   label: string
 }
 
-function navItems(deadLetters: number): (NavSpec | NavSection)[] {
+function navItems(deadLetters: number, showConsole: boolean): (NavSpec | NavSection)[] {
   return [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/jobs', label: 'Jobs', icon: Briefcase },
@@ -47,7 +47,13 @@ function navItems(deadLetters: number): (NavSpec | NavSection)[] {
           : undefined,
     },
     { to: '/alerts', label: 'Alerts', icon: Bell },
-    { to: '/console', label: 'Console', icon: Terminal },
+    // The Live Console tails the whole server tracing stream, so
+    // GET /v1/events/stream requires the `admin` scope. Hiding the entry
+    // for known non-admins keeps it from being a menu item that only ever
+    // answers 403.
+    ...(showConsole
+      ? [{ to: '/console', label: 'Console', icon: Terminal } as NavSpec]
+      : []),
     { kind: 'section', label: 'Config' },
     { to: '/calendars', label: 'Calendars', icon: CalendarDays },
     { to: '/settings', label: 'Settings', icon: Settings },
@@ -92,7 +98,13 @@ export function Sidebar() {
   // called confusing. Make it always work.
   const collapsed = collapsedPref
 
-  const items = navItems(deadLetters?.length ?? 0)
+  // `me` is null/undefined for API-key and auth-disabled sessions, where
+  // the role is unknown but the caller may well be an admin — only hide the
+  // console when we actually know the role and it isn't admin. The server
+  // enforces the scope either way.
+  const showConsole = me ? me.role === 'admin' : true
+
+  const items = navItems(deadLetters?.length ?? 0, showConsole)
 
   const displayName = me?.display_name || me?.username || 'Operator'
   const email = me?.email ?? me?.username ?? ''

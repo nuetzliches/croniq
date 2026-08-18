@@ -48,7 +48,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization is enforced on every endpoint: a token must carry the matching scope (e.g. `jobs:write`, `dead-letters:write`, `runners:read`) or the wildcard `admin` scope. See [Scopes](#scopes) below.
 
-**React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (server-sent events, scope/level filters, scroll-lock, copy + `.ndjson` download).
+**React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (admin-only, server-sent events, level filters, scroll-lock, copy + `.ndjson` download).
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
@@ -454,9 +454,11 @@ shell-runner:
     - /backups:/backups
 ```
 
-**Trust model.** Anyone with write access to the Croniqfile (or to
-`__runner_exec` job metadata via the API) can run arbitrary commands as the
-shell-runner process. Treat the runner pool's filesystem and network as
+**Trust model.** Anyone with write access to the Croniqfile can run arbitrary
+commands as the shell-runner process. `__runner_exec` is stamped by the DSL
+compiler alone: every API and MCP path that accepts caller metadata strips the
+reserved `__` namespace at the ingress, so the Croniqfile — not an API token —
+is the trust boundary. Treat the runner pool's filesystem and network as
 exposed to whoever can ship a Croniqfile change. Run separate shell-runner
 pools per blast-radius bracket and use `runner { require <pool> }` /
 `exclude <pool>` to pin sensitive jobs to the right pool.
@@ -548,7 +550,7 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs`, `POST /v1/executions/{id}/cancel` |
 | Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay`, `POST .../bulk-delete` |
 | Calendars | `GET/POST /v1/calendars`, `GET/DELETE /v1/calendars/{id}` |
-| Live Console | `GET /v1/events/stream` (SSE — server tracing events) |
+| Live Console | `GET /v1/events/stream` (SSE — server tracing events, `admin` scope) |
 | Dashboard | `GET /v1/dashboard/forecast` |
 | API Clients | `GET/POST /v1/api-clients`, `DELETE .../api-clients/{id}`, `POST .../tokens` |
 | API Keys | `POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` |
@@ -566,7 +568,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Jobs | `jobs:read` | `jobs:write` (`jobs:register` for `/v1/jobs/register`, `jobs:trigger` for `/v1/trigger`) |
 | Schedules | `schedules:read` | `schedules:write` |
 | Calendars | `calendars:read` | `calendars:write` |
-| Executions + logs | `executions:read` (incl. Live Console stream) | `executions:cancel` (`POST /v1/executions/{id}/cancel`) |
+| Executions + logs | `executions:read` | `executions:cancel` (`POST /v1/executions/{id}/cancel`) |
 | Dead letters | `dead-letters:read` | `dead-letters:write` (delete + replay) |
 | Runners | `runners:read` (incl. SSE) | `runners:write` |
 | Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |
@@ -574,6 +576,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Failure alerts (`/v1/alerts/config`, `/v1/alerts/deliveries`) | `alerts:read` | — (rules + channels are DSL-managed; no write API yet) |
 | API clients | `api-clients:admin` | `api-clients:admin` |
 | API keys | — | `api-keys:admin` |
+| Live Console stream (`/v1/events/stream`) | `admin` — the raw server-wide tracing feed | — |
 | Admin reload | — | `admin` |
 
 Endpoints that issue credentials — personal access tokens, API clients, client tokens and API keys — can only grant scopes the calling credential itself holds, so a narrowly scoped token stays a boundary and cannot re-mint itself wider. `admin` is the wildcard and remains unrestricted. A PAT additionally cannot issue further PATs.

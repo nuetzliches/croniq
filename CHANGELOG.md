@@ -45,6 +45,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `403` on those four endpoints (and a `503` if the binding lookup itself
   fails). See the README's *Runner identity in the work protocol* section and
   [`docs/operations.md`](docs/operations.md).
+- **Redact secrets from the Live Console stream and restrict it to
+  admins.** `GET /v1/events/stream` carries the raw server-wide tracing
+  feed plus a replay buffer of recent events, but only required
+  `executions:read` — a scope every role default hands out, including
+  Viewer. It now requires the `admin` scope, matching what the endpoint
+  actually exposes; per-execution output is unaffected and stays on
+  `executions:read` via `GET /v1/executions/{id}/logs`. The console fan-out
+  additionally drops events on secret-bearing tracing targets
+  (`croniq::password_reset`, `croniq::email`, `croniq::oidc`) and replaces
+  the value of any field named like a credential (`token`, `secret`,
+  `password`, `confirm_url`, …) with `[redacted]`. Public identifiers such
+  as `job_key` and `runner_id` are untouched.
+- **Password-reset links no longer pass through `tracing`.** The
+  reset-issued log line keeps its `user_id` / `reset_id` fields but drops
+  the confirm URL, which embeds the single-use reset token. Operators
+  without a mail transport still get the link to hand over: it is written
+  straight to the server's stderr, bypassing the console hub, the event
+  ring buffer, and OTLP log export. With a delivering mail transport the
+  token is not printed at all. The dashboard hides the Console entry for
+  non-admins and explains the 403 when the page is opened directly.
+- **Reserved `__` metadata namespace is now enforced on every metadata
+  ingress.** The `__`-prefixed metadata namespace belongs to the scheduler and
+  the DSL compiler (`__runner_exec`, `__require`, `__prefer`,
+  `__max_concurrent`) and runners act on those keys directly.
+  `POST /v1/trigger` has always dropped caller-supplied keys in that
+  namespace; the MCP `enqueue_job`, `job_trigger` and `create_job` tools and
+  `POST /v1/jobs` did not, and forwarded them into the dispatch queue and the
+  stored job definition unchanged. All four now apply the same filter, which
+  moved into `croniq-config` as the single source of truth
+  (`is_reserved_metadata_key`, `strip_reserved_metadata_map`,
+  `strip_reserved_metadata_json`), so the namespace stays scheduler-owned no
+  matter which API a caller reaches for. Callers keep influencing routing
+  through the documented `require` / `prefer` fields; non-reserved metadata is
+  unaffected.
 
 ### Fixed
 

