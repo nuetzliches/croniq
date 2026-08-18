@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Issued credential scopes are bounded by the caller's own scopes.** The
+  four endpoints that mint credentials — `POST /v1/users/me/tokens`,
+  `POST /v1/api-clients`, `PUT /v1/api-clients/{id}` and `POST /v1/api-keys`,
+  plus `POST /v1/api-clients/{id}/tokens` which hands out a client's scopes
+  as a JWT — validated only that the caller was allowed to *use* the
+  endpoint, not that the scopes being granted were covered by the credential
+  presented on the request. A deliberately narrow token was therefore not a
+  boundary: it could issue a wider one. All five now reject any scope the
+  caller does not itself hold with a 403, via the shared
+  `CallerContext::can_grant_scopes` check; `admin` is the wildcard and stays
+  unrestricted. A PAT can no longer issue further PATs at all — chaining let
+  a token outlive the revocation of the one it came from.
+
 ### Fixed
 
 - **Dead-letter `job_key` filter is bound as a query parameter.** The SQLite
