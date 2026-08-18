@@ -2424,7 +2424,10 @@ paths:
                 scopes:
                   type: array
                   items: { type: string }
-                  description: Subset of the role's default scopes.
+                  description: >-
+                    Subset of the role's default scopes *and* of the scopes
+                    carried by the credential making the request. Defaults to
+                    the role's set narrowed to the caller's own scopes.
                 expires_at:
                   type: string
                   format: date-time
@@ -2436,7 +2439,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CreatePatResponse" }
         "400": { description: Empty name or empty scopes }
-        "403": { description: Requested scope outside role's default-set }
+        "403":
+          description: >-
+            Requested scope outside the role's default-set or outside the
+            caller's own scopes, or the request itself authenticated with a
+            PAT (a PAT cannot issue further PATs).
 
   /v1/users/me/tokens/{id}:
     delete:

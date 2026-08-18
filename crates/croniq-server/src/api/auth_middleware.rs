@@ -129,6 +129,26 @@ pub fn require_scope(ctx: &CallerContext, scope: &str) -> Result<(), StatusCode>
     }
 }
 
+/// Guard for every endpoint that issues a credential (PAT, API client,
+/// API key, client token): the scopes stamped onto the new credential
+/// must be a subset of the scopes carried by the credential presented on
+/// this request. `admin` callers are unrestricted — `admin` is the
+/// wildcard, so every set is a subset of it.
+///
+/// Without this bound a narrowly scoped credential is not a boundary at
+/// all: it can re-mint itself with wider rights. Any new issuing
+/// endpoint must call this before persisting the scope list.
+pub fn require_grantable_scopes(
+    ctx: &CallerContext,
+    requested: &[String],
+) -> Result<(), StatusCode> {
+    if ctx.can_grant_scopes(requested) {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 /// Resolve an `Authorization: ... croniq_pat_…` header into a
 /// CallerContext. Validates revocation + expiry + owning user is
 /// active, then stamps `last_used_at` (best-effort, errors swallowed).
