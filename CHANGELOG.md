@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-18
+
 ### Added
 
 - **Dependency advisory scanning in CI.** A new `cargo-deny` job in the CI
