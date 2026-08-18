@@ -553,6 +553,12 @@ fn mint_user_tokens(
     store: &crate::store::DynStore,
 ) -> Result<TokenResponse, StatusCode> {
     let scopes = default_scopes_for_role(user.role);
+    // Stamp the user's current credential generation into the token so the
+    // auth middleware can invalidate it on the next password change, reset or
+    // deactivation (issue #431).
+    let token_generation = store
+        .users_token_generation(&user.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pair = issue_token_pair(
         jwt_config,
         &user.user_id,
@@ -562,6 +568,7 @@ fn mint_user_tokens(
         Some(user.role),
         AuthMethod::Password,
         &scopes,
+        token_generation,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -710,6 +717,15 @@ pub async fn handle_refresh(
     };
 
     let caller_id = user_id.clone().unwrap_or_else(|| token.client_id.clone());
+    // Re-read the generation rather than carrying it over: a refresh that
+    // happens after a password change must mint a token for the *new*
+    // generation, not resurrect the old one (issue #431).
+    let token_generation = match user_id.as_deref() {
+        Some(uid) => store
+            .users_token_generation(uid)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        None => None,
+    };
     let pair = issue_token_pair(
         jwt_config,
         &caller_id,
@@ -719,6 +735,7 @@ pub async fn handle_refresh(
         role,
         auth_method,
         &scopes,
+        token_generation,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -910,6 +927,8 @@ pub async fn handle_issue_client_token(
         None,
         AuthMethod::ApiKey,
         &client.scopes,
+        // API-key callers have no user row, so no generation applies.
+        None,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1007,7 +1026,7 @@ mod tests {
         ServerState::with_auth(
             AppState::new(),
             tx,
-            Some(JwtConfig::default()),
+            Some(JwtConfig::for_tests()),
             Some(Arc::clone(store)),
         )
     }
@@ -1023,6 +1042,7 @@ mod tests {
             role: None,
             auth_method: AuthMethod::ApiKey,
             scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            token_generation: None,
         }
     }
 

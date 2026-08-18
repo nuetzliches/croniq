@@ -892,6 +892,8 @@ mod tests {
                 users_delete(user_id: &str) -> ();
                 users_set_last_login(user_id: &str, at: DateTime<Utc>) -> ();
                 users_count_active_admins() -> u64;
+                users_token_generation(user_id: &str) -> Option<i64>;
+                users_bump_token_generation(user_id: &str) -> ();
                 invitations_create(invite: &Invitation) -> ();
                 invitations_get(invitation_id: &str) -> Option<Invitation>;
                 invitations_get_by_token_hash(token_hash: &str) -> Option<Invitation>;

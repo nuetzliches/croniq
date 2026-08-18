@@ -54,6 +54,16 @@ pub struct CallerContext {
     /// How this caller authenticated. Drives audit log granularity.
     pub auth_method: AuthMethod,
     pub scopes: Vec<String>,
+    /// Credential generation this token was minted under (issue #431).
+    ///
+    /// Carried through from the JWT's `token_generation` claim so the auth
+    /// middleware can compare it against the user row and reject tokens issued
+    /// before a password change, reset, or deactivation. `None` for callers
+    /// where the notion does not apply — API keys and PATs, which are checked
+    /// against the store on every request anyway — and for tokens minted
+    /// before the upgrade, which are read as generation 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_generation: Option<i64>,
 }
 
 impl CallerContext {
@@ -222,6 +232,7 @@ mod tests {
             role,
             auth_method: AuthMethod::Password,
             scopes,
+            token_generation: None,
         }
     }
 
@@ -243,6 +254,7 @@ mod tests {
             role: None,
             auth_method: AuthMethod::ApiKey,
             scopes: vec!["jobs:read".into(), "runners:read".into()],
+            token_generation: None,
         };
         assert!(ctx.has_scope("jobs:read"));
         assert!(!ctx.has_scope("jobs:write"));

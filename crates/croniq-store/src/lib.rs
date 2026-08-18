@@ -12,6 +12,8 @@ pub mod sqlite;
 pub mod pg;
 #[cfg(feature = "postgres")]
 pub mod pg_actor;
+#[cfg(feature = "postgres")]
+pub mod pg_tls;
 
 #[cfg(test)]
 mod contract_tests;

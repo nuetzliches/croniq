@@ -115,6 +115,122 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is acked as a failure, with no lease renewal) and
   `14-hostile-execution-id-dropped.yaml` (an unsafe `execution_id` produces no
   ack at all). In both, the poll loop keeps running.
+
+- **Defence-in-depth: seven hardening gaps closed** (issue #431). None was
+  exploitable in the shipped server as configured, but several were guarded by
+  exactly one accident of the boot path, which is the reason to close them
+  rather than rely on the guard holding.
+
+  *The auth middleware fails closed.* When `ServerState.jwt_config` was `None`,
+  `require_auth` injected a synthetic caller carrying the `admin` wildcard, so
+  every `require_scope` check passed and the entire REST API plus `/mcp` served
+  an anonymous request as admin. The only thing keeping that out of the shipped
+  binary was `main.rs` always passing `Some`. It now answers `401` and inserts
+  a scope-less context instead, so the safety property can be read off the
+  middleware rather than emerging from one call site. `JwtConfig`'s `Default`
+  impl — which carried the literal secret `croniq-dev-secret-change-me` — is
+  gone in favour of `JwtConfig::new(secret)` and a `for_tests()` constructor
+  that generates a random one, making "signed production tokens with a string
+  published in this repository" unrepresentable.
+
+  *Postgres connections negotiate TLS.* The driver was handed `NoTls`
+  unconditionally, so against a remote database the connection password and
+  every row the auth tables return — password hashes, wrapped TOTP secrets,
+  API-key hashes — crossed the network in cleartext. The connector is now
+  rustls-based (`tokio-postgres-rustls`; no OpenSSL, no C toolchain), with
+  libpq-style modes resolved from `sslmode=` in the connection string, then
+  `CRONIQ_PG_SSLMODE`, then a default of `require` for a remote host and
+  `prefer` for loopback or a unix socket. Certificate verification is always on
+  when TLS is used — Croniq's `require` behaves like libpq's `verify-full` —
+  with roots from the platform trust store, the Mozilla bundle, and an optional
+  PEM file named by `CRONIQ_PG_ROOT_CERT`. **Breaking-ish:** a remote Postgres
+  that does not speak TLS, or presents an untrusted certificate, now fails to
+  connect where it previously connected in cleartext; the error names both
+  escape hatches. Applies only to builds with the off-by-default
+  `croniq-store/postgres` feature.
+
+  *`jwt.secret` is restricted on Windows.* The file was written with mode
+  `0600` on Unix, but the non-Unix branch was a plain write, so on Windows it
+  inherited the data directory's ACL — typically `Users:(RX)` under
+  `C:\ProgramData`, readable by every local account. Since that one file both
+  signs every token and derives the TOTP at-rest key, it is the file that least
+  deserved a permissive ACL. It is now created empty, restricted to the current
+  user's SID via `icacls /inheritance:r /grant:r`, and only then filled, so the
+  secret never exists on disk under the inherited ACL. A failure to apply the
+  ACL aborts startup rather than writing the key unprotected.
+
+  *Shell-runner jobs no longer inherit the runner's environment.*
+  `croniq-shell-runner` called `env_clear()` and then re-injected all of
+  `std::env::vars()`, so every `runner shell {}` / `runner exec {}` job saw the
+  runner process environment — including its own `CRONIQ_API_KEY`. Jobs now
+  inherit an allowlist: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`,
+  `TZ`, the `LANG`/`LC_*` locale set, and the Windows variables a subprocess
+  genuinely cannot start without (`SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`,
+  `TMP`, `APPDATA`, `PROGRAMFILES`, …). `CRONIQ_*` is never inherited
+  implicitly. `CRONIQ_RUNNER_ENV_PASSTHROUGH` widens the list by name, or
+  restores blanket inheritance with `*` — which still withholds `CRONIQ_*`,
+  because a blunt wildcard must not hand out the runner's credentials.
+  **Breaking-ish:** a job that silently relied on an inherited variable
+  (`AWS_ACCESS_KEY_ID`, `JAVA_HOME`, a proxy setting) stops seeing it; declare
+  it in the job's `env {}` block or add it to the passthrough list.
+
+  *A failed privilege drop refuses to spawn.* In the same file, a `user`
+  directive the runner could not honour — a non-numeric value on unix, or any
+  value off unix — was logged and ignored, and the job then ran as the runner's
+  own user, possibly root. That is strictly more privilege than the job asked
+  for, so it is now a hard failure naming the two ways forward: set a numeric
+  uid, or drop the directive and run the runner process itself as the desired
+  user. Matches the .NET runner SDK's behaviour (#442).
+
+  *The MCP mutation gate denies what it cannot classify.* `check_mutation_scope`
+  only inspected bodies that parsed as an object with `method == "tools/call"`;
+  a JSON-RPC batch (a top-level array, carrying no `method`) or an unparseable
+  body fell straight through the `if let` and reached rmcp without ever meeting
+  the `mcp:write` check. Not a confirmed bypass — rmcp 1.5 implements the MCP
+  revision that removed batching — but a gate should refuse what it cannot
+  read. Both now return `400`. JSON-RPC *responses* to server-initiated
+  requests still pass, since they invoke nothing. Tool classification is
+  deny-by-default too: croniq-mcp gained a `READ_TOOL_NAMES` list next to
+  `MUTATION_TOOL_NAMES`, a `tool_requires_write()` helper that returns `None`
+  for anything in neither, and a test asserting the two lists partition the
+  router exactly — so a newly added tool fails CI rather than landing in the
+  permissive half. The module doc comment, which named 5 mutation tools where
+  the list has 17, was corrected.
+
+  *Demo mode cannot be exposed to the network.* `CRONIQ_DEMO_MODE=1` seeds
+  `admin`/`demo-admin`, a fixed admin-scoped API key, and (with
+  `CRONIQ_DEMO_MFA=1`) the literal recovery code `123456` in all ten slots —
+  everything needed to take an instance over is in this repository, so the only
+  protection is unreachability. The server now refuses to start in demo mode if
+  `--listen` or `--metrics` resolves to a non-loopback address (the default
+  `:4000` means `0.0.0.0`), and `docker-compose.yml` publishes its ports to
+  `127.0.0.1` instead of every interface. A container must bind `0.0.0.0` for a
+  published port to reach it at all, so `docker-entrypoint.sh` sets
+  `CRONIQ_DEMO_CONTAINER_BIND=1` and the server warns instead of refusing
+  there; for the compose stack the guarantee is the host-side publish.
+
+- **Access tokens no longer survive a password change, reset, or
+  deactivation** (issue #431). Access tokens are stateless JWTs valid until
+  `exp`, up to an hour. Refresh was correctly blocked after a deactivation — it
+  re-checks `is_active` — but every access token minted beforehand kept working
+  for the rest of its lifetime, so "I reset the password to lock the attacker
+  out" did not actually lock them out for up to an hour. Each user row now
+  carries a `token_generation` counter (migration `025`, `BIGINT`/`INTEGER`
+  defaulting to `0`), stamped into every access token as a claim and compared
+  against the row on each JWT-authenticated request. It is incremented on
+  exactly three events — `POST /v1/users/me/change-password`,
+  `POST /v1/auth/password-reset/confirm`, and `PATCH /v1/users/{id}` with
+  `is_active: false` — and deliberately not on profile or role edits, since
+  signing someone out is a real cost and a role change already propagates on
+  the next refresh. A deleted user's tokens stop working immediately. The check
+  costs one primary-key lookup per JWT-authenticated request, bringing the JWT
+  path in line with the API-key and PAT paths, which already did store I/O per
+  request; API keys and PATs themselves carry no claim, since both are already
+  re-checked against their own revocation columns. Rolling restarts are safe:
+  tokens minted by an older binary carry no claim and read as generation `0`,
+  which is what every existing row is backfilled to, so the upgrade itself
+  signs nobody out.
+
 - **Permissive CORS replaced by an explicit allowlist, and security headers
   added to every response.** The API router applied `CorsLayer::permissive()`
   to every route — `Access-Control-Allow-Origin: *` with any method and any

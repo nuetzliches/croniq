@@ -19,6 +19,38 @@ use http_body_util::BodyExt;
 use tokio::sync::{RwLock, mpsc};
 use tower::util::ServiceExt;
 
+// ─── Auth fixtures (issue #431) ───────────────────────────────────────────────
+//
+// `require_auth` fails closed: a ServerState without a jwt_config rejects every
+// authenticated route with 401 rather than injecting a synthetic admin caller.
+// These tests therefore configure a real signing key and send a real admin
+// token, so they exercise the middleware instead of bypassing it.
+
+const TEST_JWT_SECRET: &str = "calendars-integration-test-secret";
+
+fn test_jwt() -> croniq_auth::jwt::JwtConfig {
+    croniq_auth::jwt::JwtConfig::new(TEST_JWT_SECRET)
+}
+
+fn admin_bearer() -> String {
+    let pair = croniq_auth::jwt::issue_token_pair(
+        &test_jwt(),
+        "test-admin",
+        "test-admin",
+        // API-client shaped: a user token is checked against
+        // users.token_generation on every request (issue #431), which would
+        // mean seeding a user row into every fixture here.
+        croniq_auth::CallerType::ApiKey,
+        None,
+        None,
+        croniq_auth::AuthMethod::ApiKey,
+        &[croniq_auth::context::Scope::ADMIN.to_string()],
+        None,
+    )
+    .expect("minting a test admin token cannot fail");
+    format!("Bearer {}", pair.access_token)
+}
+
 const DSL_WITH_CALENDAR: &str = r#"
 calendar business-days {
   timezone Europe/Vienna
@@ -47,6 +79,7 @@ fn build_state_with_policy(src: &str, adopt_on_mutate: bool) -> Arc<ServerState>
     let mut state = ServerState::with_timeout(runner, tx, Duration::from_millis(50));
     {
         let s = Arc::get_mut(&mut state).unwrap();
+        s.jwt_config = Some(test_jwt());
         s.store = Some(store);
         s.dsl_jobs = Some(dsl_jobs);
         s.dsl_calendars = Some(dsl_calendars);
@@ -60,6 +93,7 @@ async fn get_json(app: axum::Router, uri: &str) -> (axum::http::StatusCode, serd
     let resp = app
         .oneshot(
             Request::builder()
+                .header("authorization", admin_bearer())
                 .method("GET")
                 .uri(uri)
                 .body(Body::empty())
@@ -86,6 +120,7 @@ async fn send_json(
     let resp = app
         .oneshot(
             Request::builder()
+                .header("authorization", admin_bearer())
                 .method(method)
                 .uri(uri)
                 .header("content-type", "application/json")

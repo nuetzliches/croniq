@@ -249,6 +249,15 @@ pub async fn handle_update(
     store
         .users_update(&user)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Deactivating an account must end its sessions now, not when the last
+    // access token happens to expire (issue #431). Role and profile edits
+    // deliberately do not bump: signing someone out is a real cost, and a role
+    // change already propagates on the next refresh.
+    if deactivates {
+        store
+            .users_bump_token_generation(&user.user_id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     audit::record(
         store,
         &ctx,
@@ -382,6 +391,12 @@ pub async fn handle_change_password(
         ..cred
     };
     if store.upsert_credentials(&updated).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    // Invalidate access tokens minted under the old password (issue #431).
+    // Refresh was already blocked by the is_active re-check, but access tokens
+    // stayed valid until exp — up to an hour after the change.
+    if store.users_bump_token_generation(user_id).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     audit::record(

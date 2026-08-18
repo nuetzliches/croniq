@@ -25,12 +25,40 @@ use tokio::sync::mpsc;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
+/// Insert the user the test tokens are minted for.
+///
+/// Since issue #431 the auth middleware checks every user-typed JWT against
+/// `users.token_generation`, so a token naming a user that does not exist is
+/// rejected — which is the point: a deleted user's tokens must stop working.
+/// The fixture therefore has to create the user it authenticates as.
+fn seed_user(store: &croniq_server::store::DynStore, user_id: &str, role: croniq_auth::Role) {
+    let now = chrono::Utc::now();
+    store
+        .users_create(&croniq_store::models::User {
+            user_id: user_id.to_string(),
+            username: user_id.to_string(),
+            email: None,
+            display_name: None,
+            role,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .expect("seeding the test user cannot fail");
+}
+
 const TEST_JWT_SECRET: &str = "alerts-read-api-test-secret-please-do-not-use-in-prod";
 
 /// Build a ServerState with auth + an SQLite store, a custom
 /// AlertsConfig snapshot, and (optionally) some seeded delivery rows.
 fn make_state(alerts: AlertsConfig, seeded: &[AlertDelivery]) -> Arc<ServerState> {
     let store = croniq_server::store::sqlite_store(SqliteStore::in_memory().unwrap());
+    seed_user(
+        &store,
+        ("test-user", croniq_auth::Role::Viewer).0,
+        ("test-user", croniq_auth::Role::Viewer).1,
+    );
     for d in seeded {
         store.record_alert_delivery(d).unwrap();
     }
@@ -40,10 +68,7 @@ fn make_state(alerts: AlertsConfig, seeded: &[AlertDelivery]) -> Arc<ServerState
     let mut state = ServerState::with_auth(
         runner,
         tx,
-        Some(JwtConfig {
-            secret: TEST_JWT_SECRET.into(),
-            ..Default::default()
-        }),
+        Some(JwtConfig::new(TEST_JWT_SECRET)),
         Some(store),
     );
     {
@@ -65,6 +90,7 @@ fn token_with_scopes(state: &ServerState, scopes: &[&str]) -> String {
         Some(croniq_auth::Role::Viewer),
         croniq_auth::AuthMethod::Password,
         &scopes,
+        None,
     )
     .unwrap()
     .access_token

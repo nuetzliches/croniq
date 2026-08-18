@@ -176,3 +176,39 @@ async fn password_reset_confirm_returns_403_envelope_when_disabled() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["error"], serde_json::json!("password_login_disabled"));
 }
+
+// ─── Fail-closed auth middleware (issue #431) ─────────────────────────────────
+
+/// A server with no `jwt_config` used to inject a synthetic caller carrying the
+/// `admin` wildcard, so every authenticated route answered as admin to an
+/// entirely anonymous request. `main.rs` always passing `Some` was the only
+/// thing keeping that out of the shipped binary; this asserts the property
+/// where it belongs, in the middleware.
+#[tokio::test]
+async fn unconfigured_auth_rejects_instead_of_granting_admin() {
+    // `router_with` deliberately builds a state with jwt_config = None.
+    for uri in [
+        "/v1/runners",
+        "/v1/jobs",
+        "/v1/executions",
+        "/v1/calendars",
+        "/v1/users",
+    ] {
+        let (status, _) = get(router_with(true), uri).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{uri} must answer 401 without a JWT configuration, not serve it as admin"
+        );
+    }
+}
+
+/// Unauthenticated probes stay reachable — the fail-closed change must not
+/// take the health/readiness surface down with it.
+#[tokio::test]
+async fn public_endpoints_are_unaffected_by_the_fail_closed_path() {
+    let (status, _) = get(router_with(true), "/health").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = get(router_with(true), "/v1/auth/config").await;
+    assert_eq!(status, StatusCode::OK);
+}

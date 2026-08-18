@@ -33,14 +33,38 @@ pub struct JwtConfig {
     pub issuer: String,
 }
 
-impl Default for JwtConfig {
-    fn default() -> Self {
+/// Default access-token validity: 1 hour.
+pub const DEFAULT_ACCESS_TTL_SECS: i64 = 3600;
+/// Default refresh-token validity: 7 days.
+pub const DEFAULT_REFRESH_TTL_SECS: i64 = 604_800;
+
+impl JwtConfig {
+    /// Build a config around `secret`, with the shipped TTLs and issuer.
+    ///
+    /// There is deliberately no `Default` impl (issue #431). The old one
+    /// carried `secret: "croniq-dev-secret-change-me"`, so any future
+    /// `JwtConfig::default()` — or a `..Default::default()` that forgot to
+    /// name `secret` — would have silently signed production tokens with a
+    /// string published in this repository. Requiring the secret as an
+    /// argument makes that mistake unrepresentable; `..JwtConfig::new(secret)`
+    /// still covers the "override one field" case.
+    pub fn new(secret: impl Into<String>) -> Self {
         Self {
-            secret: "croniq-dev-secret-change-me".into(),
-            access_ttl_secs: 3600,
-            refresh_ttl_secs: 604800,
+            secret: secret.into(),
+            access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
+            refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
             issuer: JWT_ISSUER.into(),
         }
+    }
+
+    /// A config with a freshly generated random secret, for tests.
+    ///
+    /// Public because croniq-server's integration tests need it. Safe to
+    /// expose: the secret is a per-call UUID, so even a misuse in production
+    /// code fails closed (tokens stop validating across restarts) rather than
+    /// signing with a value an attacker can look up.
+    pub fn for_tests() -> Self {
+        Self::new(uuid::Uuid::new_v4().to_string())
     }
 }
 
@@ -64,6 +88,14 @@ pub struct Claims {
     /// "pat" / "oidc").
     pub auth_method: String,
     pub scopes: Vec<String>,
+    /// Credential generation this token was minted under (issue #431). The
+    /// auth middleware rejects the token when it no longer matches the user
+    /// row, which is how a password change / reset / deactivation invalidates
+    /// tokens already issued. `#[serde(default)]` so tokens minted before the
+    /// upgrade deserialise as `None` and are read as generation 0 — a rolling
+    /// restart does not sign everyone out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_generation: Option<i64>,
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
@@ -116,6 +148,7 @@ pub fn issue_token_pair(
     role: Option<Role>,
     auth_method: AuthMethod,
     scopes: &[String],
+    token_generation: Option<i64>,
 ) -> Result<TokenPair, AuthError> {
     let now = Utc::now();
     let access_exp = now + Duration::seconds(config.access_ttl_secs);
@@ -129,6 +162,7 @@ pub fn issue_token_pair(
         role: role.map(|r| r.as_str().to_string()),
         auth_method: auth_method_to_str(auth_method).to_string(),
         scopes: scopes.to_vec(),
+        token_generation,
         iss: config.issuer.clone(),
         exp: access_exp.timestamp(),
         iat: now.timestamp(),
@@ -291,6 +325,7 @@ pub fn validate_token(config: &JwtConfig, token: &str) -> Result<CallerContext, 
         role,
         auth_method,
         scopes: claims.scopes,
+        token_generation: claims.token_generation,
     })
 }
 
@@ -316,13 +351,17 @@ pub enum AuthError {
 mod tests {
     use super::*;
 
+    /// Fixed secret for the tests that need two configs to agree on the key
+    /// while differing in some other field.
+    const SHARED_SECRET: &str = "unit-test-secret";
+
     #[test]
     fn every_mfa_token_is_unique_and_still_validates() {
         // Two tokens minted for the same user in the same second must not be
         // byte-identical: the server's per-token second-factor failure budget
         // (issue #428) keys on the token, so a repeated password step has to
         // yield a genuinely new token.
-        let cfg = JwtConfig::default();
+        let cfg = JwtConfig::for_tests();
         let (a, ttl) = issue_mfa_token(&cfg, "u-1").unwrap();
         let (b, _) = issue_mfa_token(&cfg, "u-1").unwrap();
         assert_ne!(a, b, "mfa tokens must differ per issuance");
@@ -333,7 +372,7 @@ mod tests {
 
     #[test]
     fn issue_and_validate_round_trip_for_user() {
-        let config = JwtConfig::default();
+        let config = JwtConfig::for_tests();
         let pair = issue_token_pair(
             &config,
             "user-1",
@@ -343,6 +382,7 @@ mod tests {
             Some(Role::Operator),
             AuthMethod::Password,
             &["jobs:read".into(), "runners:read".into()],
+            None,
         )
         .unwrap();
 
@@ -358,7 +398,7 @@ mod tests {
 
     #[test]
     fn issue_and_validate_round_trip_for_api_key() {
-        let config = JwtConfig::default();
+        let config = JwtConfig::for_tests();
         let pair = issue_token_pair(
             &config,
             "key-1",
@@ -368,6 +408,7 @@ mod tests {
             None,
             AuthMethod::ApiKey,
             &["jobs:read".into()],
+            None,
         )
         .unwrap();
 
@@ -381,21 +422,15 @@ mod tests {
 
     #[test]
     fn invalid_token_rejected() {
-        let config = JwtConfig::default();
+        let config = JwtConfig::for_tests();
         let result = validate_token(&config, "not.a.valid.token");
         assert!(result.is_err());
     }
 
     #[test]
     fn wrong_secret_rejected() {
-        let config1 = JwtConfig {
-            secret: "secret-1".into(),
-            ..Default::default()
-        };
-        let config2 = JwtConfig {
-            secret: "secret-2".into(),
-            ..Default::default()
-        };
+        let config1 = JwtConfig::new("secret-1");
+        let config2 = JwtConfig::new("secret-2");
 
         let pair = issue_token_pair(
             &config1,
@@ -406,6 +441,7 @@ mod tests {
             Some(Role::Admin),
             AuthMethod::Password,
             &[],
+            None,
         )
         .unwrap();
         let result = validate_token(&config2, &pair.access_token);
@@ -419,7 +455,7 @@ mod tests {
         // is rejected. This is the PR-A1 hard-cut migration guarantee.
         let legacy = JwtConfig {
             issuer: "croniq".into(),
-            ..Default::default()
+            ..JwtConfig::new(SHARED_SECRET)
         };
         let pair = issue_token_pair(
             &legacy,
@@ -430,11 +466,12 @@ mod tests {
             Some(Role::Admin),
             AuthMethod::Password,
             &["admin".into()],
+            None,
         )
         .unwrap();
 
-        // Default config uses "croniq-v1" — old issuer must be rejected.
-        let current = JwtConfig::default();
+        // Current config uses "croniq-v1" — old issuer must be rejected.
+        let current = JwtConfig::new(SHARED_SECRET);
         assert!(validate_token(&current, &pair.access_token).is_err());
     }
 }

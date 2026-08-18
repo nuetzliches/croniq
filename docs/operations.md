@@ -118,6 +118,84 @@ The label is non-sensitive (no hostnames, no internal IPs) and is exposed
 publicly via `/version`. Don't put credentials, infrastructure tags, or
 anything you wouldn't print on a sticker into this variable.
 
+### PostgreSQL TLS (`CRONIQ_PG_SSLMODE`, `CRONIQ_PG_ROOT_CERT`)
+
+Applies to the Postgres backend only (built with the off-by-default
+`croniq-store/postgres` feature).
+
+Before issue #431 the driver was handed `NoTls` unconditionally. Against a local
+database that is harmless; against a remote one the connection password and
+every row the auth tables return — password hashes, wrapped TOTP secrets,
+API-key hashes — crossed the network in cleartext. The connector is now
+rustls-based (no OpenSSL, no C toolchain).
+
+The mode is resolved highest-first from:
+
+1. `sslmode=` in the connection string (libpq spelling, so existing connection
+   strings keep working);
+2. `CRONIQ_PG_SSLMODE`;
+3. the default — see the breaking-change note below.
+
+| Mode | Behaviour |
+|---|---|
+| `disable` | No TLS. Sane only for a unix socket or a trusted local host. |
+| `prefer` | TLS when the server offers it, cleartext when it does not. |
+| `require` (also `verify-ca`, `verify-full`) | TLS or no connection at all. |
+
+**Default:** `require` when every host in the connection string is remote,
+`prefer` when it is loopback or a unix socket.
+
+**Certificate verification is always on when TLS is used.** There is no
+"encrypt but don't check who you're talking to" mode — it stops none of the
+attacks this closes. This is stricter than libpq, where plain `require` skips
+verification; a Croniq `require` behaves like libpq's `verify-full`.
+
+Roots come from the platform trust store plus the Mozilla bundle.
+`CRONIQ_PG_ROOT_CERT` points at a PEM file of additional CAs — an internal PKI,
+or Amazon RDS's `rds-ca-…` bundle. An unreadable or empty file is a hard error
+rather than a silent fallback, so a typo surfaces at boot instead of as a
+confusing handshake failure.
+
+> **Breaking-ish.** A remote Postgres that does not speak TLS, or presents a
+> certificate from a CA the host does not trust, now fails to connect where it
+> previously connected in cleartext. The connection error names both escape
+> hatches. To keep the old behaviour: `CRONIQ_PG_SSLMODE=prefer` (or `disable`).
+> To fix it properly: enable TLS on the server, and add its CA via
+> `CRONIQ_PG_ROOT_CERT` if it is privately issued.
+
+### Shell-runner job environment (`CRONIQ_RUNNER_ENV_PASSTHROUGH`)
+
+`croniq-shell-runner` used to copy its entire process environment into every
+`runner shell {}` / `runner exec {}` job, so any job author could read the
+runner's own `CRONIQ_API_KEY`. Since issue #431 jobs inherit an allowlist
+instead: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TZ`, the `LC_*`
+/ `LANG` locale set, and the Windows variables a subprocess cannot start without
+(`SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `APPDATA`, `PROGRAMFILES`,
+…). `env {}` in the Croniqfile is applied afterwards and still overrides any of
+them.
+
+`CRONIQ_*` is never inherited implicitly — that prefix is where the runner's own
+credentials live.
+
+`CRONIQ_RUNNER_ENV_PASSTHROUGH` widens the list, as a comma-separated value:
+
+| Value | Effect |
+|---|---|
+| `MY_TOKEN,OTHER_VAR` | Inherit these names in addition to the allowlist. Naming a `CRONIQ_*` variable explicitly *does* pass it through — that is a deliberate operator act. |
+| `*` | Inherit the runner's whole environment, i.e. the pre-#431 behaviour. `CRONIQ_*` is still withheld: a blunt wildcard must not hand out the runner's credentials. |
+
+> **Breaking-ish.** A job that silently relied on an inherited variable —
+> `AWS_ACCESS_KEY_ID`, `JAVA_HOME`, a proxy setting — stops seeing it. Declare
+> it in the job's `env {}` block, or add it to
+> `CRONIQ_RUNNER_ENV_PASSTHROUGH`.
+
+In the same change, a `user` directive the runner cannot honour now **fails the
+job** instead of running it as the runner's own user. A non-numeric `user` on
+unix, or any `user` off unix, was previously logged and ignored — which meant
+the job ran with *more* privilege than it asked for, possibly root. Set a
+numeric uid, or drop the directive and run the runner process itself as the
+desired user.
+
 ### SMTP (`CRONIQ_SMTP_*` + `smtp {}` block)
 
 The alert `email` channel, invitation mails, and password-reset mails all
@@ -251,7 +329,17 @@ Stored TOTP seeds are encrypted at rest with AES-256-GCM under a key derived
 JWT secret and every stored TOTP secret becomes undecryptable.
 
 The secret is resolved as `CRONIQ_JWT_SECRET` → `$DATA_DIR/jwt.secret`
-(auto-created on first boot). Before 0.29.0, `pull_api { auth <value> }` came
+(auto-created on first boot).
+
+`jwt.secret` is created restricted to the account that runs the server: mode
+`0600` on Unix, and since issue #431 a single non-inherited ACE on Windows
+(applied with `icacls /inheritance:r /grant:r`). Previously the Windows branch
+was a plain write, so the file inherited the data directory's ACL — typically
+`Users:(RX)` under `C:\ProgramData`, i.e. readable by every local account. Since
+this one file both signs every token and derives the TOTP at-rest key, that was
+the file in the tree that least deserved a permissive ACL. If `icacls` cannot
+run, the server fails to start rather than writing the key unprotected; supply
+`CRONIQ_JWT_SECRET` instead and no file is written at all. Before 0.29.0, `pull_api { auth <value> }` came
 first in that chain — it was never an auth on/off switch, its value was used
 verbatim as the signing secret (issue #371). The directive was removed in
 0.29.0, so **upgrading a deployment that relied on it** falls through to a
@@ -283,6 +371,44 @@ they are SHA-256 hashed, not wrapped — so the way back in is:
 the same way, so order the steps: relax enforcement
 (`auth { totp { required false } }`) → rotate → have users re-enrol →
 re-enable enforcement.
+
+### Session invalidation: `token_generation` (issue #431)
+
+Access tokens are stateless JWTs valid until `exp` — an hour by default. That
+used to mean a password change, a password reset, or deactivating an account
+did **not** end sessions already in progress: refresh was correctly blocked
+(it re-checks `is_active`), but every access token minted beforehand kept
+working for up to an hour. "I reset the password to lock the attacker out" is a
+reasonable operator expectation and it did not hold.
+
+Each user row now carries a `token_generation` counter (migration `025`). It is
+stamped into every access token as a claim and compared against the row on
+every JWT-authenticated request, and it is incremented on exactly three events:
+
+| Event | Endpoint |
+|---|---|
+| Password change | `POST /v1/users/me/change-password` |
+| Password reset completed | `POST /v1/auth/password-reset/confirm` |
+| User deactivated | `PATCH /v1/users/{id}` with `is_active: false` |
+
+Everything else — profile edits, role changes, `PATCH /v1/users/me` — leaves the
+counter alone. Signing someone out is a real cost, so it is spent only where the
+credential itself changed or the account was disabled; a role change already
+propagates on the next refresh.
+
+Operational notes:
+
+* **Cost.** One primary-key lookup per JWT-authenticated request. The API-key
+  and PAT paths already did store I/O per request; this brings the JWT path in
+  line. That is the price of making a stateless token revocable.
+* **API keys and PATs are unaffected.** Neither carries the claim — both are
+  already re-checked against their own revocation columns on every request.
+* **Rolling restarts are safe.** Tokens minted by an older binary carry no
+  claim and are read as generation `0`, which is what every existing row was
+  backfilled to. Nobody is signed out by the upgrade itself; the first bump on
+  a given account invalidates its older tokens along with the rest.
+* **A deleted user's tokens stop working immediately** — no row means no
+  generation to match.
 
 ### Probing from the UI: `GET /v1/auth/config`
 
@@ -333,6 +459,26 @@ of defence against accidental production use.
 
 Both flags are read by `croniq init` at first-boot only; they do
 nothing on subsequent restarts where the database already exists.
+
+#### Demo mode cannot be exposed to the network (issue #431)
+
+The credentials above are published in this repository, so the only thing
+protecting a demo instance is that nobody else can reach it. That used to be a
+comment in `docker-compose.yml`; it is now enforced in two places:
+
+* **`croniq-server` refuses to start** with `CRONIQ_DEMO_MODE=1` if `--listen`
+  (or `--metrics`) resolves to anything other than a loopback address. The
+  default `--listen :4000` means `0.0.0.0`, so a demo-mode server started
+  directly on a host now fails with an explanatory error instead of publishing
+  `admin/demo-admin` to every interface. Bind `127.0.0.1:4000`, or drop
+  `CRONIQ_DEMO_MODE` and configure real credentials.
+* **`docker-compose.yml` publishes to `127.0.0.1` only.** A container has its
+  own network namespace and *must* bind `0.0.0.0` for a published port to reach
+  it at all, so the in-process rule cannot apply there — `docker-entrypoint.sh`
+  sets `CRONIQ_DEMO_CONTAINER_BIND=1` to say so, and the server logs a warning
+  instead of refusing. What decides exposure for the compose stack is the
+  host-side publish. **Removing the `127.0.0.1:` prefix from the `ports:`
+  entries re-exposes the demo credentials** — on a cloud VM, to the internet.
 
 ## Configuration validation
 

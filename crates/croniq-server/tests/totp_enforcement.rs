@@ -57,10 +57,7 @@ fn app_with_user(require_totp: bool) -> axum::Router {
 
     let runner = AppState::new();
     let (tx, _rx) = mpsc::unbounded_channel();
-    let jwt = JwtConfig {
-        secret: "test-secret-not-for-prod".into(),
-        ..Default::default()
-    };
+    let jwt = JwtConfig::new("test-secret-not-for-prod");
     let mut state = ServerState::with_auth(runner, tx, Some(jwt), Some(store));
     Arc::get_mut(&mut state).unwrap().require_totp = require_totp;
     server_router(state)
@@ -324,10 +321,7 @@ mod rotated_jwt_secret {
 
         let runner = AppState::new();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let jwt = JwtConfig {
-            secret: NEW_SECRET.into(),
-            ..Default::default()
-        };
+        let jwt = JwtConfig::new(NEW_SECRET);
         let state = ServerState::with_auth(runner, tx, Some(jwt), Some(store.clone()));
         (server_router(state), store)
     }

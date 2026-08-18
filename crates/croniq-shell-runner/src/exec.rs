@@ -9,6 +9,14 @@
 //! Execution Detail Logs panel renders chatty / long-running jobs as they
 //! progress. A bounded rolling tail-buffer keeps the last lines around so
 //! failure snippets in the dead-letter view stay meaningful.
+//!
+//! As of #431 jobs no longer inherit the runner's whole environment. They get
+//! [`INHERITED_ENV_ALLOWLIST`] — PATH, HOME, locale, TZ and the Windows
+//! variables a subprocess cannot start without — and nothing else, so the
+//! runner's own `CRONIQ_API_KEY` is not readable from a job. Operators who
+//! need more set [`ENV_PASSTHROUGH_VAR`]. In the same change, a `user`
+//! directive the runner cannot honour fails the job instead of silently
+//! running it with the runner's own (possibly root) privileges.
 
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -61,6 +69,140 @@ pub enum RunError {
 
     #[error("`runner exec` requires a non-empty `args` list")]
     EmptyArgv,
+
+    #[error(
+        "`user {0}` is not a numeric uid: the shell runner cannot resolve user names, and running \
+         the job as the runner's own user would grant more privilege than the job asked for. Set a \
+         numeric uid (e.g. `user 1000`), or drop the directive and run the runner process itself as \
+         the desired user."
+    )]
+    NonNumericUser(String),
+
+    #[error(
+        "`user {0}` cannot be honoured on this platform: privilege dropping is only implemented for \
+         unix targets. Drop the directive and run the runner process itself as the desired user."
+    )]
+    UserUnsupported(String),
+}
+
+/// Environment variables inherited from the runner process into every job.
+///
+/// Before #431 the runner re-injected all of `std::env::vars()`, so every
+/// shell/exec job saw the runner's own environment — including the runner's
+/// `CRONIQ_API_KEY`. Jobs now start from this allowlist instead: the entries a
+/// subprocess genuinely cannot work without, and nothing else.
+///
+/// Names are compared case-insensitively on Windows (where env names are
+/// case-insensitive and appear as `Path` / `SystemRoot` in `env::vars()`) and
+/// exactly on unix.
+const INHERITED_ENV_ALLOWLIST: &[&str] = &[
+    // POSIX essentials. Without PATH, `sh -c` cannot find any binary at all.
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    // Timezone — jobs that format timestamps rely on the runner's zone.
+    "TZ",
+    // Locale. Missing LANG silently switches many tools to the C collation.
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    // Windows. These are not optional: the CRT resolves temp paths through
+    // TEMP/TMP, `cmd.exe` is found via COMSPEC, DLL loading and countless
+    // tools resolve through SYSTEMROOT, and PATHEXT decides which extensions
+    // count as executable. A job spawned without them fails in obscure ways.
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "USERNAME",
+    "USERPROFILE",
+    "USERDOMAIN",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+];
+
+/// Operator escape hatch for the inheritance allowlist: a comma-separated list
+/// of additional variable names to pass through, or the single value `*` to
+/// inherit the runner's whole environment (the pre-#431 behaviour).
+///
+/// `CRONIQ_*` is never inherited via `*` — that prefix is where the runner's
+/// own credentials live, and a blunt wildcard must not leak them. An operator
+/// who genuinely needs one (say `CRONIQ_SERVER_URL`) names it explicitly,
+/// which is a deliberate act rather than a side effect.
+const ENV_PASSTHROUGH_VAR: &str = "CRONIQ_RUNNER_ENV_PASSTHROUGH";
+
+/// The runner's own configuration/credential namespace. Never inherited
+/// implicitly, and never covered by the `*` wildcard.
+const RESERVED_ENV_PREFIX: &str = "CRONIQ_";
+
+fn env_name_eq(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+fn is_reserved_env_name(name: &str) -> bool {
+    name.len() >= RESERVED_ENV_PREFIX.len()
+        && name[..RESERVED_ENV_PREFIX.len()].eq_ignore_ascii_case(RESERVED_ENV_PREFIX)
+}
+
+/// Parse [`ENV_PASSTHROUGH_VAR`] into (`wildcard`, `explicit names`).
+fn parse_passthrough(raw: Option<&str>) -> (bool, Vec<String>) {
+    let Some(raw) = raw else {
+        return (false, Vec::new());
+    };
+    let mut wildcard = false;
+    let mut names = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if part == "*" {
+            wildcard = true;
+        } else {
+            names.push(part.to_string());
+        }
+    }
+    (wildcard, names)
+}
+
+/// Decide whether `name` from the runner's environment is inherited by jobs.
+fn inherits(name: &str, wildcard: bool, extra: &[String]) -> bool {
+    // Explicitly named by the operator — honoured even inside the reserved
+    // prefix, because naming it is the deliberate opt-in.
+    if extra.iter().any(|e| env_name_eq(e, name)) {
+        return true;
+    }
+    if is_reserved_env_name(name) {
+        return false;
+    }
+    wildcard || INHERITED_ENV_ALLOWLIST.iter().any(|a| env_name_eq(a, name))
 }
 
 /// Decode the `__runner_exec` payload out of the work-assignment metadata.
@@ -109,12 +251,17 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
         cmd.current_dir(dir);
     }
 
+    // Inherit only what a subprocess genuinely needs (issue #431). The runner's
+    // own credentials — `CRONIQ_API_KEY` above all — stay in the runner
+    // process. User-supplied env from the Croniqfile is applied afterwards and
+    // still overrides any inherited value.
     cmd.env_clear();
+    let passthrough = std::env::var(ENV_PASSTHROUGH_VAR).ok();
+    let (wildcard, extra) = parse_passthrough(passthrough.as_deref());
     for (k, v) in std::env::vars() {
-        // Inherit the bare minimum from the runner's own environment so that
-        // `PATH`, `HOME`, locale, etc. work; user-supplied env in the Croniqfile
-        // overrides any of these by being applied afterwards.
-        cmd.env(k, v);
+        if inherits(&k, wildcard, &extra) {
+            cmd.env(k, v);
+        }
     }
     for (k, v) in env {
         cmd.env(k, v);
@@ -123,24 +270,21 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
     if let Some(u) = user
         && !u.is_empty()
     {
-        // Best-effort: only a numeric uid is honoured. Building a full
-        // user-resolution dance would mean linking nss/libc which the runner
-        // image deliberately avoids.
+        // A privilege drop that cannot be performed must fail the job rather
+        // than run it as the runner's own user — possibly root — which is
+        // strictly more privilege than the job asked for (issue #431). Only a
+        // numeric uid is honoured: resolving names would mean linking nss/libc,
+        // which the runner image deliberately avoids.
         #[cfg(unix)]
         {
-            if let Ok(uid) = u.parse::<u32>() {
-                cmd.uid(uid);
-            } else {
-                tracing::warn!(
-                    user = %u,
-                    "`user` was not a numeric uid — set a numeric value (e.g. `user 0`) or \
-                     drop the directive and run the runner container as the desired user."
-                );
-            }
+            let uid = u
+                .parse::<u32>()
+                .map_err(|_| RunError::NonNumericUser(u.clone()))?;
+            cmd.uid(uid);
         }
         #[cfg(not(unix))]
         {
-            tracing::warn!(user = %u, "`user` is only honoured on unix targets");
+            return Err(RunError::UserUnsupported(u.clone()));
         }
     }
 
@@ -427,6 +571,171 @@ mod tests {
         };
         let err = build_command(&exec).unwrap_err();
         assert!(matches!(err, RunError::EmptyArgv));
+    }
+
+    // ─── Environment inheritance + privilege drop (issue #431) ──────────────
+
+    fn probe_exec() -> RunnerExec {
+        RunnerExec::Exec {
+            argv: vec!["/bin/echo".to_string()],
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        }
+    }
+
+    /// Names the built command will hand to the child. `env_clear()` plus
+    /// explicit `env()` calls means this is exactly the inherited set, so the
+    /// assertion needs no subprocess and works identically on every platform.
+    fn built_env_names(exec: &RunnerExec) -> Vec<String> {
+        build_command(exec)
+            .expect("build ok")
+            .as_std()
+            .get_envs()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn runner_credentials_are_never_inherited() {
+        // The whole point of #431: `CRONIQ_API_KEY` and friends stay in the
+        // runner process. This asserts against the real process environment,
+        // so it also catches an allowlist entry that accidentally matches.
+        let names = built_env_names(&probe_exec());
+        assert!(
+            names.iter().all(|n| !is_reserved_env_name(n)),
+            "reserved-prefix variable leaked into the job: {names:?}"
+        );
+    }
+
+    #[test]
+    fn path_is_still_inherited() {
+        // PATH is the one variable whose absence breaks every job, so the
+        // allowlist has to keep working — a test that only asserts absence
+        // would pass on an empty environment.
+        let names = built_env_names(&probe_exec());
+        assert!(
+            names.iter().any(|n| env_name_eq(n, "PATH")),
+            "PATH must stay inherited: {names:?}"
+        );
+    }
+
+    #[test]
+    fn allowlist_admits_only_known_names() {
+        assert!(inherits("PATH", false, &[]));
+        assert!(inherits("LC_ALL", false, &[]));
+        assert!(!inherits("AWS_SECRET_ACCESS_KEY", false, &[]));
+        assert!(!inherits("CRONIQ_API_KEY", false, &[]));
+    }
+
+    #[test]
+    fn wildcard_passthrough_still_withholds_the_reserved_prefix() {
+        // `*` restores the pre-#431 blanket inheritance for operators who need
+        // it, but a blunt wildcard must not hand out the runner's own
+        // credentials.
+        let (wildcard, extra) = parse_passthrough(Some("*"));
+        assert!(wildcard);
+        assert!(extra.is_empty());
+        assert!(inherits("AWS_SECRET_ACCESS_KEY", wildcard, &extra));
+        assert!(!inherits("CRONIQ_API_KEY", wildcard, &extra));
+    }
+
+    #[test]
+    fn explicitly_named_variables_pass_through_including_reserved_ones() {
+        let (wildcard, extra) = parse_passthrough(Some("MY_TOKEN, CRONIQ_SERVER_URL ,"));
+        assert!(!wildcard);
+        assert_eq!(extra, vec!["MY_TOKEN", "CRONIQ_SERVER_URL"]);
+        assert!(inherits("MY_TOKEN", wildcard, &extra));
+        // Naming a reserved variable is a deliberate operator act, so it wins.
+        assert!(inherits("CRONIQ_SERVER_URL", wildcard, &extra));
+        // Not named, so still withheld.
+        assert!(!inherits("CRONIQ_API_KEY", wildcard, &extra));
+    }
+
+    #[test]
+    fn unset_passthrough_is_the_plain_allowlist() {
+        let (wildcard, extra) = parse_passthrough(None);
+        assert!(!wildcard);
+        assert!(extra.is_empty());
+    }
+
+    #[test]
+    fn dsl_env_overrides_an_inherited_value() {
+        // User-supplied env is applied after inheritance, so it wins. Asserted
+        // here because the allowlist rewrite reordered that block.
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), "/croniq-override".to_string());
+        let exec = RunnerExec::Exec {
+            argv: vec!["/bin/echo".to_string()],
+            workdir: None,
+            user: None,
+            env,
+        };
+        let cmd = build_command(&exec).expect("build ok");
+        let path = cmd
+            .as_std()
+            .get_envs()
+            .find(|(k, _)| env_name_eq(&k.to_string_lossy(), "PATH"))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned());
+        assert_eq!(path.as_deref(), Some("/croniq-override"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_numeric_user_refuses_to_spawn() {
+        // Previously logged and ignored, which ran the job as the runner's own
+        // user (possibly root) — strictly more privilege than asked for.
+        let exec = RunnerExec::Shell {
+            command: "id -u".into(),
+            workdir: None,
+            user: Some("nobody".into()),
+            env: HashMap::new(),
+        };
+        let err = build_command(&exec).unwrap_err();
+        assert!(
+            matches!(&err, RunError::NonNumericUser(u) if u == "nobody"),
+            "expected NonNumericUser, got {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn numeric_user_is_still_accepted() {
+        let exec = RunnerExec::Shell {
+            command: "id -u".into(),
+            workdir: None,
+            user: Some("1000".into()),
+            env: HashMap::new(),
+        };
+        assert!(build_command(&exec).is_ok());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn user_directive_refuses_to_spawn_off_unix() {
+        let exec = RunnerExec::Exec {
+            argv: vec!["cmd".to_string(), "/C".into(), "echo".into()],
+            workdir: None,
+            user: Some("1000".into()),
+            env: HashMap::new(),
+        };
+        let err = build_command(&exec).unwrap_err();
+        assert!(
+            matches!(&err, RunError::UserUnsupported(u) if u == "1000"),
+            "expected UserUnsupported, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_user_directive_is_not_a_privilege_request() {
+        let exec = RunnerExec::Exec {
+            argv: vec!["/bin/echo".to_string()],
+            workdir: None,
+            user: Some(String::new()),
+            env: HashMap::new(),
+        };
+        assert!(build_command(&exec).is_ok());
     }
 
     #[test]

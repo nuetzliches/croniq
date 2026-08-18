@@ -2400,3 +2400,51 @@ mod tests {
         assert_eq!(parsed["queued"], 1);
     }
 }
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+    use crate::{MUTATION_TOOL_NAMES, READ_TOOL_NAMES, tool_requires_write};
+
+    /// The `/mcp` gate denies any `tools/call` it cannot classify, so a tool
+    /// added to [`tools::CroniqMcp`] without being listed in either
+    /// [`MUTATION_TOOL_NAMES`] or [`READ_TOOL_NAMES`] would be unreachable for
+    /// read-only callers — and, worse, a *mutating* tool left off both lists
+    /// would look unknown rather than obviously wrong. Assert the partition.
+    #[test]
+    fn every_registered_tool_is_classified() {
+        let registered: Vec<String> = CroniqMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert!(
+            !registered.is_empty(),
+            "tool router reported no tools — the introspection API changed"
+        );
+
+        let unclassified: Vec<&String> = registered
+            .iter()
+            .filter(|n| tool_requires_write(n).is_none())
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "these tools are in neither MUTATION_TOOL_NAMES nor READ_TOOL_NAMES \
+             and would be denied to read-only callers: {unclassified:?}"
+        );
+
+        for name in MUTATION_TOOL_NAMES.iter().chain(READ_TOOL_NAMES) {
+            assert!(
+                registered.iter().any(|r| r == name),
+                "{name} is classified but no longer registered — drop it from the list"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_tools_are_unclassified() {
+        assert_eq!(tool_requires_write("delete_job"), Some(true));
+        assert_eq!(tool_requires_write("list_jobs"), Some(false));
+        assert_eq!(tool_requires_write("nuke_everything"), None);
+    }
+}

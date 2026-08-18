@@ -279,6 +279,7 @@ mod tests {
             role: None,
             auth_method: AuthMethod::Password,
             scopes: vec!["admin".into()],
+            token_generation: None,
         }
     }
 
