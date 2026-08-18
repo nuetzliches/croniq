@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **Issued credential scopes are bounded by the caller's own scopes.** The
+  four endpoints that mint credentials — `POST /v1/users/me/tokens`,
+  `POST /v1/api-clients`, `PUT /v1/api-clients/{id}` and `POST /v1/api-keys`,
+  plus `POST /v1/api-clients/{id}/tokens` which hands out a client's scopes
+  as a JWT — validated only that the caller was allowed to *use* the
+  endpoint, not that the scopes being granted were covered by the credential
+  presented on the request. A deliberately narrow token was therefore not a
+  boundary: it could issue a wider one. All five now reject any scope the
+  caller does not itself hold with a 403, via the shared
+  `CallerContext::can_grant_scopes` check; `admin` is the wildcard and stays
+  unrestricted. A PAT can no longer issue further PATs at all — chaining let
+  a token outlive the revocation of the one it came from.
 - **Runner identity is bound to the authenticated caller in the work protocol.**
   The work handlers (`POST /v1/work/poll`, `…/ack`, `…/renew`,
   `…/{execution_id}/events`) took the acting `runner_id` from the request body
@@ -33,6 +45,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `403` on those four endpoints (and a `503` if the binding lookup itself
   fails). See the README's *Runner identity in the work protocol* section and
   [`docs/operations.md`](docs/operations.md).
+
+### Fixed
+
+- **Dead-letter `job_key` filter is bound as a query parameter.** The SQLite
+  backend's `list_dead_letters` assembled its `job_key` predicate by
+  interpolating the filter value straight into the SQL string, so a value
+  containing quote characters altered the shape of the query instead of being
+  compared as a literal. `job_key` and `limit` now travel through `?N`
+  placeholders, matching the `list_executions` path next to it and the
+  Postgres backend, both of which were already parameterised. `limit` is also
+  clamped to 1000, as the audit-log listing already did.
 
 ## [0.31.0] - 2026-07-27
 

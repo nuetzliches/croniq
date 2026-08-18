@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use super::ServerState;
 use crate::api::audit;
-use crate::api::auth_middleware::require_scope;
+use crate::api::auth_middleware::{require_grantable_scopes, require_scope};
 
 // ─── Request/Response types ──────────────────────────────────────────────────
 
@@ -704,6 +704,9 @@ pub async fn handle_create_client(
     if req.name.trim().is_empty() || req.scopes.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    // `api-clients:admin` provisions clients; it does not confer the
+    // right to provision one that outranks the caller.
+    require_grantable_scopes(&ctx, &req.scopes)?;
     let store = state
         .store
         .as_ref()
@@ -751,6 +754,9 @@ pub async fn handle_update_client(
         && scopes.is_empty()
     {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(ref scopes) = req.scopes {
+        require_grantable_scopes(&ctx, scopes)?;
     }
     let store = state
         .store
@@ -814,6 +820,11 @@ pub async fn handle_issue_client_token(
         .get_client(&client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    // The token inherits the client's scopes verbatim, so issuing one for
+    // a client that outranks the caller is a straight escalation — the
+    // guard on client creation alone would leave pre-existing clients
+    // (the bootstrap `admin` client, for one) as a way around it.
+    require_grantable_scopes(&ctx, &client.scopes)?;
 
     let pair = issue_token_pair(
         jwt_config,
@@ -848,10 +859,13 @@ pub async fn handle_create_api_key(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Verify client exists
-    store
+    let client = store
         .get_client(&req.client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    // The key authenticates as the client and therefore carries the
+    // client's scopes; bound them by the caller's own.
+    require_grantable_scopes(&ctx, &client.scopes)?;
 
     let (raw_key, key_hash, prefix) = generate_api_key();
     let key_id = Uuid::new_v4().to_string();
@@ -898,4 +912,212 @@ pub async fn handle_revoke_api_key(
     };
     let _ = store.revoke_api_key(&key_id, Utc::now());
     StatusCode::NO_CONTENT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{DynStore, sqlite_store};
+    use croniq_auth::jwt::JwtConfig;
+    use croniq_runner::AppState;
+    use croniq_store::sqlite::SqliteStore;
+    use tokio::sync::mpsc;
+
+    fn make_store() -> DynStore {
+        sqlite_store(SqliteStore::in_memory().unwrap())
+    }
+
+    fn state_with(store: &DynStore) -> Arc<ServerState> {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        ServerState::with_auth(
+            AppState::new(),
+            tx,
+            Some(JwtConfig::default()),
+            Some(Arc::clone(store)),
+        )
+    }
+
+    /// An API-key caller holding exactly `scopes` — the shape of a
+    /// deliberately narrow provisioning credential.
+    fn key_ctx(scopes: &[&str]) -> CallerContext {
+        CallerContext {
+            caller_type: CallerType::ApiKey,
+            caller_id: "key-1".into(),
+            client_id: "client-1".into(),
+            user_id: None,
+            role: None,
+            auth_method: AuthMethod::ApiKey,
+            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn seed_client(store: &DynStore, client_id: &str, scopes: &[&str]) {
+        store
+            .create_client(&ApiClient {
+                client_id: client_id.into(),
+                name: client_id.into(),
+                scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                is_active: true,
+                created_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn client_creation_is_bounded_by_the_callers_scopes() {
+        let store = make_store();
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_CLIENTS_ADMIN, Scope::JOBS_READ]);
+
+        let Err(status) = handle_create_client(
+            State(Arc::clone(&state)),
+            Extension(ctx.clone()),
+            Json(CreateClientRequest {
+                name: "escalated".into(),
+                scopes: vec!["admin".into()],
+            }),
+        )
+        .await
+        else {
+            panic!("provisioning an admin client must be refused");
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // A client within the caller's own scopes is still fine.
+        let (status, Json(body)) = handle_create_client(
+            State(state),
+            Extension(ctx),
+            Json(CreateClientRequest {
+                name: "reader".into(),
+                scopes: vec![Scope::JOBS_READ.into()],
+            }),
+        )
+        .await
+        .expect("granting a held scope is allowed");
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body.scopes, vec![Scope::JOBS_READ]);
+    }
+
+    #[tokio::test]
+    async fn admin_caller_may_still_create_an_admin_client() {
+        let store = make_store();
+        let (status, Json(body)) = handle_create_client(
+            State(state_with(&store)),
+            Extension(key_ctx(&["admin"])),
+            Json(CreateClientRequest {
+                name: "root".into(),
+                scopes: vec!["admin".into()],
+            }),
+        )
+        .await
+        .expect("an admin caller is unrestricted");
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body.scopes, vec!["admin"]);
+    }
+
+    #[tokio::test]
+    async fn client_update_cannot_widen_scopes_past_the_caller() {
+        let store = make_store();
+        seed_client(&store, "c1", &[Scope::JOBS_READ]);
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_CLIENTS_ADMIN, Scope::JOBS_READ]);
+
+        let Err(status) = handle_update_client(
+            State(Arc::clone(&state)),
+            Extension(ctx.clone()),
+            axum::extract::Path("c1".into()),
+            Json(UpdateClientRequest {
+                name: None,
+                scopes: Some(vec!["admin".into()]),
+                is_active: None,
+            }),
+        )
+        .await
+        else {
+            panic!("widening an existing client must be refused");
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // The stored row is untouched.
+        let stored = store.get_client("c1").unwrap().unwrap();
+        assert_eq!(stored.scopes, vec![Scope::JOBS_READ]);
+
+        // A rename leaves the scopes alone and is still allowed.
+        let Json(updated) = handle_update_client(
+            State(state),
+            Extension(ctx),
+            axum::extract::Path("c1".into()),
+            Json(UpdateClientRequest {
+                name: Some("renamed".into()),
+                scopes: None,
+                is_active: None,
+            }),
+        )
+        .await
+        .expect("a rename is not an escalation");
+        assert_eq!(updated.name, "renamed");
+        assert_eq!(updated.scopes, vec![Scope::JOBS_READ]);
+    }
+
+    #[tokio::test]
+    async fn issuing_a_token_for_a_wider_client_is_refused() {
+        let store = make_store();
+        // The bootstrap client every install ships with.
+        seed_client(&store, "root", &["admin"]);
+        seed_client(&store, "reader", &[Scope::JOBS_READ]);
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_CLIENTS_ADMIN, Scope::JOBS_READ]);
+
+        let Err(status) = handle_issue_client_token(
+            State(Arc::clone(&state)),
+            Extension(ctx.clone()),
+            axum::extract::Path("root".into()),
+        )
+        .await
+        else {
+            panic!("minting an admin token must be refused");
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = handle_issue_client_token(
+            State(state),
+            Extension(ctx),
+            axum::extract::Path("reader".into()),
+        )
+        .await
+        .expect("a client within the caller's scopes still issues");
+    }
+
+    #[tokio::test]
+    async fn api_key_creation_is_bounded_by_the_target_clients_scopes() {
+        let store = make_store();
+        seed_client(&store, "root", &["admin"]);
+        seed_client(&store, "reader", &[Scope::JOBS_READ]);
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_KEYS_ADMIN, Scope::JOBS_READ]);
+
+        let Err(status) = handle_create_api_key(
+            State(Arc::clone(&state)),
+            Extension(ctx.clone()),
+            Json(CreateApiKeyClientRequest {
+                client_id: "root".into(),
+            }),
+        )
+        .await
+        else {
+            panic!("keying an admin client must be refused");
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, _) = handle_create_api_key(
+            State(state),
+            Extension(ctx),
+            Json(CreateApiKeyClientRequest {
+                client_id: "reader".into(),
+            }),
+        )
+        .await
+        .expect("keying a client within the caller's scopes still works");
+        assert_eq!(status, StatusCode::CREATED);
+    }
 }

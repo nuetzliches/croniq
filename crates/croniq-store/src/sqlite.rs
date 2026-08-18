@@ -791,16 +791,24 @@ impl DeadLetterStore for SqliteStore {
             "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE 1=1",
         );
 
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
         if let Some(ref jk) = filter.job_key {
-            sql.push_str(&format!(" AND job_key = '{jk}'"));
+            param_values.push(Box::new(jk.clone()));
+            sql.push_str(&format!(" AND job_key = ?{}", param_values.len()));
         }
 
         sql.push_str(" ORDER BY created_at DESC");
-        let limit = filter.limit.unwrap_or(100);
-        sql.push_str(&format!(" LIMIT {limit}"));
+        let limit = filter.limit.unwrap_or(100).min(1000);
+        param_values.push(Box::new(limit));
+        sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
-        let rows = stmt.query_map([], row_to_dead_letter).map_err(map_err)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(params_ref.as_slice(), row_to_dead_letter)
+            .map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }

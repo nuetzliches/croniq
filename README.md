@@ -576,6 +576,8 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | API keys | — | `api-keys:admin` |
 | Admin reload | — | `admin` |
 
+Endpoints that issue credentials — personal access tokens, API clients, client tokens and API keys — can only grant scopes the calling credential itself holds, so a narrowly scoped token stays a boundary and cannot re-mint itself wider. `admin` is the wildcard and remains unrestricted. A PAT additionally cannot issue further PATs.
+
 A 403 with no body is returned when the scope is missing. The server always resolves a JWT signing secret at boot — from `CRONIQ_JWT_SECRET`, or an auto-generated `$DATA_DIR/jwt.secret` — so scope enforcement is always on; there is no anonymous work access. (An open "synthetic admin" mode exists only when the server is embedded without any JWT config, as in the test harness.)
 
 ---

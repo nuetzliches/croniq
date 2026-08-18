@@ -71,6 +71,38 @@ impl CallerContext {
     pub fn is_admin(&self) -> bool {
         self.scopes.iter().any(|s| s == "admin")
     }
+
+    /// True if the caller may hand out every scope in `requested`.
+    ///
+    /// Endpoints that issue credentials (PATs, API clients, API keys,
+    /// client tokens) must bound the scopes they grant by the scopes of
+    /// the credential presented on the request. Without that bound a
+    /// deliberately narrow token is not a security boundary: it can mint
+    /// a fresh credential carrying everything its owner *could* have had.
+    ///
+    /// `admin` is the wildcard (see [`CallerContext::has_scope`]), so an
+    /// admin caller may grant anything. For everyone else the requested
+    /// set must be a subset of the held set — note that `admin` itself is
+    /// only grantable by a caller that already holds it.
+    pub fn can_grant_scopes(&self, requested: &[String]) -> bool {
+        self.is_admin()
+            || requested
+                .iter()
+                .all(|want| self.scopes.iter().any(|held| held == want))
+    }
+
+    /// The subset of `candidates` this caller is allowed to grant.
+    /// Used to narrow a default scope set instead of rejecting it.
+    pub fn grantable_subset(&self, candidates: &[String]) -> Vec<String> {
+        if self.is_admin() {
+            return candidates.to_vec();
+        }
+        candidates
+            .iter()
+            .filter(|want| self.scopes.iter().any(|held| held == *want))
+            .cloned()
+            .collect()
+    }
 }
 
 /// Known scopes in the system.
@@ -236,6 +268,44 @@ mod tests {
         assert!(!ctx.has_scope(Scope::API_KEYS_ADMIN));
         assert!(!ctx.has_scope(Scope::RUNNERS_WRITE));
         assert!(!ctx.is_admin());
+    }
+
+    #[test]
+    fn admin_can_grant_anything() {
+        let ctx = user_ctx(vec!["admin".into()], Some(Role::Admin));
+        assert!(ctx.can_grant_scopes(&["admin".into()]));
+        assert!(ctx.can_grant_scopes(&["jobs:write".into(), "users:admin".into()]));
+        assert!(ctx.can_grant_scopes(&[]));
+    }
+
+    #[test]
+    fn narrow_caller_cannot_grant_the_admin_wildcard() {
+        let ctx = user_ctx(vec![Scope::API_CLIENTS_ADMIN.into()], Some(Role::Admin));
+        assert!(!ctx.can_grant_scopes(&["admin".into()]));
+        assert!(ctx.can_grant_scopes(&[Scope::API_CLIENTS_ADMIN.into()]));
+    }
+
+    #[test]
+    fn granting_requires_every_requested_scope_to_be_held() {
+        let ctx = user_ctx(
+            vec![Scope::JOBS_READ.into(), Scope::JOBS_WRITE.into()],
+            Some(Role::Operator),
+        );
+        assert!(ctx.can_grant_scopes(&[Scope::JOBS_READ.into()]));
+        assert!(ctx.can_grant_scopes(&[Scope::JOBS_READ.into(), Scope::JOBS_WRITE.into()]));
+        // One un-held scope poisons the whole request.
+        assert!(!ctx.can_grant_scopes(&[Scope::JOBS_READ.into(), Scope::JOBS_TRIGGER.into()]));
+        assert!(!ctx.can_grant_scopes(&[Scope::USERS_ADMIN.into()]));
+    }
+
+    #[test]
+    fn grantable_subset_narrows_to_held_scopes() {
+        let ctx = user_ctx(vec![Scope::JOBS_READ.into()], Some(Role::Operator));
+        let defaults = default_scopes_for_role(Role::Operator);
+        assert_eq!(ctx.grantable_subset(&defaults), vec![Scope::JOBS_READ]);
+
+        let admin = user_ctx(vec!["admin".into()], Some(Role::Admin));
+        assert_eq!(admin.grantable_subset(&defaults), defaults);
     }
 
     #[test]

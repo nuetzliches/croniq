@@ -972,6 +972,103 @@ fn dead_letter_list_and_remove() {
 }
 
 #[test]
+fn dead_letter_list_job_key_filter_binds_the_value() {
+    let store = create_memory_store().unwrap();
+
+    for jk in ["etl:sync", "billing:invoice"] {
+        store
+            .add_dead_letter(&DeadLetter {
+                id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                job_key: jk.into(),
+                fire_at: now(),
+                scheduled_for: now(),
+                attempt: 3,
+                error: "timeout".into(),
+                dead_reason: "timeout".into(),
+                metadata: HashMap::new(),
+                created_at: now(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+
+    // An exact job key still filters as expected.
+    let matched = store
+        .list_dead_letters(&DeadLetterFilter {
+            job_key: Some("etl:sync".into()),
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0].job_key, "etl:sync");
+
+    // A job key carrying SQL syntax is compared as a literal, so it matches
+    // nothing instead of widening the query to other rows or other tables.
+    let probes = [
+        "' OR '1'='1",
+        "etl:sync' OR '1'='1",
+        "' OR 1=1 --",
+        // A column-count-matching UNION: it would return every row if the
+        // value were interpolated into the statement.
+        "' UNION SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters --",
+    ];
+    for probe in probes {
+        let rows = store
+            .list_dead_letters(&DeadLetterFilter {
+                job_key: Some(probe.into()),
+                limit: None,
+            })
+            .unwrap();
+        assert!(
+            rows.is_empty(),
+            "job_key {probe:?} returned {} row(s); the filter value must be bound, not interpolated",
+            rows.len()
+        );
+    }
+}
+
+#[test]
+fn dead_letter_list_honours_limit() {
+    let store = create_memory_store().unwrap();
+
+    for _ in 0..3 {
+        store
+            .add_dead_letter(&DeadLetter {
+                id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                job_key: "etl:sync".into(),
+                fire_at: now(),
+                scheduled_for: now(),
+                attempt: 3,
+                error: "timeout".into(),
+                dead_reason: "timeout".into(),
+                metadata: HashMap::new(),
+                created_at: now(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+
+    let limited = store
+        .list_dead_letters(&DeadLetterFilter {
+            job_key: None,
+            limit: Some(2),
+        })
+        .unwrap();
+    assert_eq!(limited.len(), 2);
+
+    // An oversized limit is clamped rather than rejected.
+    let all = store
+        .list_dead_letters(&DeadLetterFilter {
+            job_key: None,
+            limit: Some(u32::MAX),
+        })
+        .unwrap();
+    assert_eq!(all.len(), 3);
+}
+
+#[test]
 fn dead_letter_remove_many_by_ids() {
     let store = create_memory_store().unwrap();
 
