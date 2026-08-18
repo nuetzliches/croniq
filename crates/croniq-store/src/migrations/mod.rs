@@ -66,6 +66,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "023_dead_letter_policy",
         include_str!("023_dead_letter_policy.sql"),
     ),
+    (
+        "024_runner_identities",
+        include_str!("024_runner_identities.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -114,6 +118,56 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn migration_024_creates_runner_identity_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "023_dead_letter_policy").unwrap();
+
+        // Pre-condition: the binding table does not exist yet, so an
+        // upgraded deployment starts with every runner_id unclaimed.
+        assert!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'runner_identities'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap()
+                == 0
+        );
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "024_runner_identities")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        conn.execute(
+            "INSERT INTO runner_identities (runner_id, owner_id, bound_at)
+             VALUES ('worker-1', 'client-a', '2026-05-08T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        // runner_id is the primary key: one owner per runner identity.
+        assert!(
+            conn.execute(
+                "INSERT INTO runner_identities (runner_id, owner_id, bound_at)
+                 VALUES ('worker-1', 'client-b', '2026-05-08T00:00:01Z')",
+                [],
+            )
+            .is_err()
+        );
+
+        let owner: String = conn
+            .query_row(
+                "SELECT owner_id FROM runner_identities WHERE runner_id = 'worker-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, "client-a");
     }
 
     #[test]

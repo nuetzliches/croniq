@@ -664,6 +664,52 @@ impl RunnerStore for SqliteStore {
         .map_err(map_err)?;
         Ok(())
     }
+
+    fn runner_identity_bind(
+        &self,
+        runner_id: &str,
+        owner_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<String, StoreError> {
+        // Insert-then-read under one held connection lock, so the pair is
+        // atomic with respect to other callers of this store: a second
+        // credential racing the first poll of a `runner_id` reads back the
+        // winner's owner instead of overwriting it.
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO runner_identities (runner_id, owner_id, bound_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(runner_id) DO NOTHING",
+            params![runner_id, owner_id, dt_to_sql(&now)],
+        )
+        .map_err(map_err)?;
+        conn.query_row(
+            "SELECT owner_id FROM runner_identities WHERE runner_id = ?1",
+            params![runner_id],
+            |row| row.get(0),
+        )
+        .map_err(map_err)
+    }
+
+    fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT owner_id FROM runner_identities WHERE runner_id = ?1",
+            params![runner_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM runner_identities WHERE runner_id = ?1",
+            params![runner_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
 }
 
 // ─── DeadLetterStore ───

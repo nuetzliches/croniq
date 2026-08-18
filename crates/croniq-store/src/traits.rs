@@ -211,6 +211,30 @@ pub trait RunnerStore {
         inflight: &[Uuid],
         now: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    /// Bind `runner_id` to `owner_id` unless it is already bound, and return
+    /// the owner that is in force afterwards (first-writer-wins).
+    ///
+    /// `owner_id` identifies the authenticated credential behind a work
+    /// request — see [`RunnerStore::runner_identity_owner`]. Callers compare
+    /// the returned owner against their own identity: equal means the caller
+    /// owns this `runner_id`, different means another credential claimed it
+    /// first and the request must be refused. The insert-or-read is atomic so
+    /// two racing first polls cannot both win.
+    fn runner_identity_bind(
+        &self,
+        runner_id: &str,
+        owner_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<String, StoreError>;
+
+    /// Read the owner bound to `runner_id`, or `None` when it is unclaimed.
+    fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError>;
+
+    /// Release the binding for `runner_id` so another credential can claim
+    /// it. Deregistering a runner is the supported way to hand a `runner_id`
+    /// to a different credential. A no-op when nothing is bound.
+    fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError>;
 }
 
 /// Dead letter queue persistence.

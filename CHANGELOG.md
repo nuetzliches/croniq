@@ -20,6 +20,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CallerContext::can_grant_scopes` check; `admin` is the wildcard and stays
   unrestricted. A PAT can no longer issue further PATs at all — chaining let
   a token outlive the revocation of the one it came from.
+- **Runner identity is bound to the authenticated caller in the work protocol.**
+  The work handlers (`POST /v1/work/poll`, `…/ack`, `…/renew`,
+  `…/{execution_id}/events`) took the acting `runner_id` from the request body
+  and verified only the caller's scope, never that the caller was the runner it
+  named. Since `runner_id`s are operator-chosen names, a credential holding a
+  `work:*` scope could interfere with another runner's work. Deployments where
+  several runners hold their own credentials should upgrade.
+
+  A `runner_id` is now bound to the credential that first uses it
+  (first-writer-wins, persisted in the new `runner_identities` table) and every
+  work request is checked against that binding. The events endpoint, which is
+  addressed by execution, is fenced on the runner that claimed the execution,
+  and the completion compare-and-swap now fences on the caller's identity rather
+  than on the `runner_id` supplied in the body.
+  `DELETE /v1/runners/{id}` releases a binding — the supported way to hand a
+  `runner_id` to a different credential.
+
+  Upgrading needs no preparation and does not break deployments that share one
+  runner key across many runners: every such runner resolves to the same
+  credential, so every check matches. Binding is inert without auth or without a
+  store, and `pull_api { runner_identity_binding "off" }` restores the previous
+  behaviour. No request or response schema changed; the only new observable is a
+  `403` on those four endpoints (and a `503` if the binding lookup itself
+  fails). See the README's *Runner identity in the work protocol* section and
+  [`docs/operations.md`](docs/operations.md).
 
 ### Fixed
 

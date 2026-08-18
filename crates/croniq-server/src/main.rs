@@ -203,6 +203,26 @@ async fn main() -> Result<()> {
         None => croniq_server::api::DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
     };
 
+    // Whether a work-protocol `runner_id` is bound to the credential that
+    // first claimed it, from `pull_api { runner_identity_binding … }`.
+    // Defaults to on — including when no pull_api block is present — so a
+    // fresh install is fenced without having to opt in.
+    let runner_identity_binding = match loaded
+        .runtime
+        .pull_api
+        .as_ref()
+        .map(|p| p.runner_identity_binding.as_str())
+    {
+        None | Some("strict") => true,
+        Some("off") => false,
+        Some(other) => {
+            return Err(anyhow::anyhow!(
+                "invalid pull_api.runner_identity_binding {other:?} in {}: expected \"strict\" or \"off\"",
+                cli.config.display()
+            ));
+        }
+    };
+
     // Restore queued executions from DB into the in-memory work queue.
     // This ensures executions survive server restarts.
     let restored = restore_queued_executions(&*store, &loaded.runtime.jobs, &runner_state).await;
@@ -332,6 +352,12 @@ async fn main() -> Result<()> {
         s.scheduler_heartbeat = Some(Arc::clone(&scheduler_heartbeat));
         // Issue #279: dedup window for POST /v1/trigger idempotency keys.
         s.trigger_dedup_window_secs = trigger_dedup_window_secs;
+        s.runner_identity_binding = runner_identity_binding;
+    }
+    if !runner_identity_binding {
+        tracing::warn!(
+            "pull_api.runner_identity_binding is off — the work protocol trusts the              runner_id in the request body, so any credential holding a work:* scope              can act as any runner"
+        );
     }
     // Issue #231: prune orphan alert-rule overrides whose DSL rule no
     // longer exists (FK-cascade-by-name). The alerts config is loaded at

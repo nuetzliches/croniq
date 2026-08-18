@@ -350,6 +350,27 @@ impl RunnerStore for PgStoreHandle {
         let inflight = inflight.to_vec();
         self.call(move |s| s.update_poll(&runner_id, &inflight, now))
     }
+
+    fn runner_identity_bind(
+        &self,
+        runner_id: &str,
+        owner_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<String, StoreError> {
+        let runner_id = runner_id.to_owned();
+        let owner_id = owner_id.to_owned();
+        self.call(move |s| s.runner_identity_bind(&runner_id, &owner_id, now))
+    }
+
+    fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError> {
+        let runner_id = runner_id.to_owned();
+        self.call(move |s| s.runner_identity_owner(&runner_id))
+    }
+
+    fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError> {
+        let runner_id = runner_id.to_owned();
+        self.call(move |s| s.runner_identity_release(&runner_id))
+    }
 }
 
 // ─── DeadLetterStore ───
