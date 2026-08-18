@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     Extension, Json,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
@@ -27,6 +27,7 @@ use super::ServerState;
 use crate::api::audit;
 use crate::api::auth_middleware::{require_grantable_scopes, require_scope};
 use crate::api::login_throttle::{ClientIp, LoginThrottle, MFA_MAX_FAILURES};
+use crate::api::refresh_cookie;
 
 // ─── Request/Response types ──────────────────────────────────────────────────
 
@@ -42,12 +43,23 @@ pub struct LoginRequest {
     pub code: Option<String>,
     #[serde(default)]
     pub recovery_code: Option<String>,
+    /// Opt in to `HttpOnly` refresh-cookie delivery (issue #454). The
+    /// dashboard SPA sets this; every other client leaves it unset and keeps
+    /// receiving `refresh_token` in the body. See
+    /// [`crate::api::refresh_cookie`].
+    #[serde(default)]
+    pub refresh_cookie: bool,
 }
 
 #[derive(Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
-    pub refresh_token: String,
+    /// Omitted entirely when the refresh token was delivered as a cookie —
+    /// returning both would let an XSS read a fresh 7-day token straight out
+    /// of a refresh it triggered itself, which is the whole thing the cookie
+    /// exists to prevent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
     pub token_type: String,
     pub expires_in: i64,
 }
@@ -94,16 +106,25 @@ pub struct TotpLoginRequest {
     pub code: Option<String>,
     #[serde(default)]
     pub recovery_code: Option<String>,
+    /// See [`LoginRequest::refresh_cookie`].
+    #[serde(default)]
+    pub refresh_cookie: bool,
 }
 
 #[derive(Deserialize)]
 pub struct RefreshRequest {
-    pub refresh_token: String,
+    /// Optional since #454: a cookie-based caller sends no body token, and
+    /// the delivery mode of the response mirrors where the token came from.
+    #[serde(default)]
+    pub refresh_token: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
+#[serde(default)]
 pub struct LogoutRequest {
-    pub refresh_token: String,
+    /// Optional since #454 — a cookie-based caller sends `{}` and the token
+    /// is read from the cookie instead.
+    pub refresh_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -166,20 +187,67 @@ pub(super) fn rate_limited_response() -> Response {
         .into_response()
 }
 
+// ─── Refresh-token delivery ──────────────────────────────────────────────────
+
+/// Which delivery mode a token-minting request asked for, and whether the
+/// cookie may carry `Secure`. See [`crate::api::refresh_cookie`] for why this
+/// is the caller's choice and not something the server second-guesses.
+fn resolve_delivery(
+    requested: bool,
+    headers: &HeaderMap,
+    state: &ServerState,
+) -> (refresh_cookie::Delivery, bool) {
+    let delivery = if requested {
+        refresh_cookie::Delivery::Cookie
+    } else {
+        refresh_cookie::Delivery::Body
+    };
+    (
+        delivery,
+        refresh_cookie::is_secure_request(headers, state.app_base_url.as_deref()),
+    )
+}
+
+/// Apply a delivery mode to a minted pair: either leave the refresh token in
+/// the response body (pre-#454 behaviour) or move it into a `Set-Cookie`
+/// header and drop it from the body. It is deliberately a *move* — the token
+/// exists in exactly one of the two places, never both.
+fn deliver(
+    mut tokens: TokenResponse,
+    delivery: refresh_cookie::Delivery,
+    secure: bool,
+    refresh_ttl_secs: i64,
+) -> (HeaderMap, TokenResponse) {
+    match delivery {
+        refresh_cookie::Delivery::Body => (HeaderMap::new(), tokens),
+        refresh_cookie::Delivery::Cookie => {
+            let value = tokens.refresh_token.take();
+            let cookie = value
+                .as_deref()
+                .and_then(|v| refresh_cookie::set(v, refresh_ttl_secs, secure));
+            (refresh_cookie::header_map(cookie), tokens)
+        }
+    }
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// `POST /v1/auth/login`
 pub async fn handle_login(
     State(state): State<Arc<ServerState>>,
     ClientIp(peer_ip): ClientIp,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, Response> {
+) -> Result<(HeaderMap, Json<LoginResponse>), Response> {
     if !state.password_login_enabled {
         return Err(password_disabled_response());
     }
     if !state.login_throttle.allow_ip(peer_ip) {
         return Err(rate_limited_response());
     }
+    // Resolved before any credential work so a request that cannot be served
+    // fails on its own terms rather than after a successful password check.
+    let (delivery, secure) = resolve_delivery(req.refresh_cookie, &headers, &state);
     let store = state
         .store
         .as_ref()
@@ -283,11 +351,14 @@ pub async fn handle_login(
                 "user",
                 Some(&user.user_id),
             );
-            return Ok(Json(LoginResponse::MfaRequired(MfaRequiredResponse {
-                requires_totp: true,
-                mfa_token,
-                mfa_token_expires_in: expires_in,
-            })));
+            return Ok((
+                HeaderMap::new(),
+                Json(LoginResponse::MfaRequired(MfaRequiredResponse {
+                    requires_totp: true,
+                    mfa_token,
+                    mfa_token_expires_in: expires_in,
+                })),
+            ));
         }
         verify_second_factor(
             jwt_config,
@@ -312,13 +383,16 @@ pub async fn handle_login(
             "user",
             Some(&user.user_id),
         );
-        return Ok(Json(LoginResponse::EnrollmentRequired(
-            EnrollmentRequiredResponse {
-                enrollment_required: true,
-                enroll_token,
-                enroll_token_expires_in: expires_in,
-            },
-        )));
+        return Ok((
+            HeaderMap::new(),
+            Json(LoginResponse::EnrollmentRequired(
+                EnrollmentRequiredResponse {
+                    enrollment_required: true,
+                    enroll_token,
+                    enroll_token_expires_in: expires_in,
+                },
+            )),
+        ));
     }
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
@@ -337,7 +411,8 @@ pub async fn handle_login(
         "user",
         Some(&user.user_id),
     );
-    Ok(Json(LoginResponse::Tokens(tokens)))
+    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    Ok((headers, Json(LoginResponse::Tokens(tokens))))
 }
 
 /// `POST /v1/auth/login/totp` — exchange the MFA step-up token + a
@@ -345,8 +420,9 @@ pub async fn handle_login(
 pub async fn handle_totp_login(
     State(state): State<Arc<ServerState>>,
     ClientIp(peer_ip): ClientIp,
+    headers: HeaderMap,
     Json(req): Json<TotpLoginRequest>,
-) -> Result<Json<TokenResponse>, Response> {
+) -> Result<(HeaderMap, Json<TokenResponse>), Response> {
     if !state.password_login_enabled {
         // TOTP login is the second step of the password flow; gate the same way.
         return Err(password_disabled_response());
@@ -354,6 +430,7 @@ pub async fn handle_totp_login(
     if !state.login_throttle.allow_ip(peer_ip) {
         return Err(rate_limited_response());
     }
+    let (delivery, secure) = resolve_delivery(req.refresh_cookie, &headers, &state);
     let store = state
         .store
         .as_ref()
@@ -439,7 +516,8 @@ pub async fn handle_totp_login(
         "user",
         Some(&user.user_id),
     );
-    Ok(Json(tokens))
+    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    Ok((headers, Json(tokens)))
 }
 
 // ─── Forced TOTP enrolment (login flow) ─────────────────────────────────────
@@ -453,6 +531,9 @@ pub struct EnrollTotpBeginRequest {
 pub struct EnrollTotpConfirmRequest {
     pub enroll_token: String,
     pub code: String,
+    /// See [`LoginRequest::refresh_cookie`].
+    #[serde(default)]
+    pub refresh_cookie: bool,
 }
 
 /// `POST /v1/auth/login/enroll/totp/begin` — start inline TOTP enrolment for a
@@ -506,11 +587,13 @@ pub async fn handle_enroll_totp_begin(
 /// enable 2FA, and complete login by minting tokens. Same `enroll_token`.
 pub async fn handle_enroll_totp_confirm(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Json(req): Json<EnrollTotpConfirmRequest>,
-) -> Result<Json<TokenResponse>, Response> {
+) -> Result<(HeaderMap, Json<TokenResponse>), Response> {
     if !state.password_login_enabled {
         return Err(password_disabled_response());
     }
+    let (delivery, secure) = resolve_delivery(req.refresh_cookie, &headers, &state);
     let store = state
         .store
         .as_ref()
@@ -541,7 +624,8 @@ pub async fn handle_enroll_totp_confirm(
         Some(&user.user_id),
     );
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
-    Ok(Json(tokens))
+    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    Ok((headers, Json(tokens)))
 }
 
 /// Mint + persist an access/refresh pair for a fully-authenticated
@@ -586,7 +670,7 @@ fn mint_user_tokens(
 
     Ok(TokenResponse {
         access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
+        refresh_token: Some(pair.refresh_token),
         token_type: "Bearer".into(),
         expires_in: jwt_config.access_ttl_secs,
     })
@@ -661,27 +745,48 @@ fn verify_second_factor(
 }
 
 /// `POST /v1/auth/refresh`
+///
+/// Accepts the refresh token from the request body (every client before #454)
+/// or from the `croniq_refresh` cookie (the dashboard SPA). The response
+/// **mirrors the source**: a body token yields a body token, a cookie yields a
+/// rotated cookie and no `refresh_token` field at all. Without that
+/// equivalence the cookie would buy nothing — an XSS could POST here, have the
+/// browser attach the `HttpOnly` cookie for it, and read the fresh 7-day token
+/// out of the response.
 pub async fn handle_refresh(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Json(req): Json<RefreshRequest>,
-) -> Result<Json<TokenResponse>, StatusCode> {
+) -> Result<(HeaderMap, Json<TokenResponse>), Response> {
     let store = state
         .store
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
     let jwt_config = state
         .jwt_config
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
 
-    let token_hash = hash_api_key(&req.refresh_token);
+    let (presented, delivery) = match req.refresh_token {
+        Some(body_token) => (body_token, refresh_cookie::Delivery::Body),
+        None => match refresh_cookie::read(&headers) {
+            Some(cookie_token) => (cookie_token, refresh_cookie::Delivery::Cookie),
+            // Neither source. 401 rather than 400: "you have no session" is
+            // exactly what the SPA's bootstrap refresh needs to hear on a
+            // first visit, and it is indistinguishable from a stale token.
+            None => return Err(status_err(StatusCode::UNAUTHORIZED)),
+        },
+    };
+    let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
+
+    let token_hash = hash_api_key(&presented);
     let token = store
         .validate_refresh_token(&token_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
 
     if Utc::now() > token.expires_at {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(status_err(StatusCode::UNAUTHORIZED));
     }
 
     // Revoke old token
@@ -693,10 +798,10 @@ pub async fn handle_refresh(
     let (caller_type, user_id, role, auth_method, scopes) = if let Some(uid) = &token.user_id {
         let user = store
             .users_get_by_id(uid)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+            .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+            .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
         if !user.is_active {
-            return Err(StatusCode::FORBIDDEN);
+            return Err(status_err(StatusCode::FORBIDDEN));
         }
         let scopes = default_scopes_for_role(user.role);
         (
@@ -723,7 +828,7 @@ pub async fn handle_refresh(
     let token_generation = match user_id.as_deref() {
         Some(uid) => store
             .users_token_generation(uid)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?,
         None => None,
     };
     let pair = issue_token_pair(
@@ -737,7 +842,7 @@ pub async fn handle_refresh(
         &scopes,
         token_generation,
     )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
 
     let new_hash = hash_api_key(&pair.refresh_token);
     let _ = store.create_refresh_token(&RefreshToken {
@@ -749,25 +854,41 @@ pub async fn handle_refresh(
         created_at: Utc::now(),
     });
 
-    Ok(Json(TokenResponse {
+    let tokens = TokenResponse {
         access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
+        refresh_token: Some(pair.refresh_token),
         token_type: "Bearer".into(),
         expires_in: jwt_config.access_ttl_secs,
-    }))
+    };
+    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    Ok((headers, Json(tokens)))
 }
 
 /// `POST /v1/auth/logout`
+///
+/// Revokes the presented refresh token — from the body, the cookie, or both —
+/// and always answers with a cookie-clearing `Set-Cookie`. Clearing
+/// unconditionally means a caller whose cookie is already unknown to the store
+/// (revoked, expired, or minted before a JWT-secret change) still ends up with
+/// a clean browser rather than a cookie that will 401 forever.
 pub async fn handle_logout(
     State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
     Json(req): Json<LogoutRequest>,
-) -> StatusCode {
+) -> (HeaderMap, StatusCode) {
+    let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
+    let clearing = refresh_cookie::header_map(refresh_cookie::clear(secure));
     let Some(store) = state.store.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return (clearing, StatusCode::SERVICE_UNAVAILABLE);
     };
-    let token_hash = hash_api_key(&req.refresh_token);
-    let _ = store.revoke_refresh_token(&token_hash, Utc::now());
-    StatusCode::NO_CONTENT
+    let now = Utc::now();
+    for raw in [req.refresh_token, refresh_cookie::read(&headers)]
+        .into_iter()
+        .flatten()
+    {
+        let _ = store.revoke_refresh_token(&hash_api_key(&raw), now);
+    }
+    (clearing, StatusCode::NO_CONTENT)
 }
 
 /// `GET /v1/api-clients`
@@ -932,9 +1053,12 @@ pub async fn handle_issue_client_token(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Body delivery, always: this endpoint is called by an authenticated admin
+    // tool to provision a machine credential, never by a browser session that
+    // could hold a cookie.
     Ok(Json(TokenResponse {
         access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
+        refresh_token: Some(pair.refresh_token),
         token_type: "Bearer".into(),
         expires_in: jwt_config.access_ttl_secs,
     }))

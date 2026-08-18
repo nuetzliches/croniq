@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Terminal, Pause, Play, Trash2, Copy, Download, X } from 'lucide-react'
 import { useAuthStore } from '@/auth/store'
+import { refreshAccessToken } from '@/auth/session'
 
 // One event as emitted by GET /v1/events/stream. Keep in sync with
 // `ConsoleEvent` in crates/croniq-server/src/live_console.rs.
@@ -79,7 +80,9 @@ export function ConsolePage() {
           },
         })
         if (res.status === 401) {
-          useAuthStore.getState().logout()
+          // Expired access token — refresh and let the backoff reconnect
+          // (issue #454). A dead session fails the refresh, which clears it.
+          if (await refreshAccessToken()) throw new Error('SSE 401 — retrying with a fresh token')
           return
         }
         if (res.status === 403) {

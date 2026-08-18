@@ -29,8 +29,9 @@ export interface LoginFailure {
 /** HTTP status of a failed request, when the failure carries one. */
 function statusOf(err: unknown): number | undefined {
   if (err instanceof ApiError) return err.status
-  // `apiFetch` throws a plain Error for 401 (it also clears the session), and
-  // older call paths format the message as "<status>: <body>".
+  // `apiFetch` throws a plain Error for 401, and older call paths format the
+  // message as "<status>: <body>". A 401 from `/v1/auth/*` leaves the session
+  // alone — it is a wrong password, not an expired token (see `api/client.ts`).
   if (err instanceof Error) {
     if (err.message === 'Unauthorized') return 401
     const m = /^(\d{3})[: ]/.exec(err.message)

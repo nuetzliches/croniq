@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router'
 import { Sun, Moon, User as UserIcon, Key, LogOut, Globe } from 'lucide-react'
-import { useAuthStore } from '@/auth/store'
+import { logout } from '@/auth/session'
 import { useTheme } from '@/lib/theme'
 import clsx from 'clsx'
 
@@ -12,7 +12,6 @@ export interface UserMenuProps {
 
 export function UserMenu({ onClose }: UserMenuProps) {
   const navigate = useNavigate()
-  const logout = useAuthStore((s) => s.logout)
   const { pref, setPref } = useTheme()
 
   useEffect(() => {
@@ -46,7 +45,10 @@ export function UserMenu({ onClose }: UserMenuProps) {
   }
   function signOut() {
     onClose()
-    logout()
+    // Revoking the refresh token server-side is what ends the session — the
+    // cookie living 7 days in the browser is not ours to simply forget. Local
+    // state is cleared either way, so navigate without waiting.
+    void logout()
     navigate('/login')
   }
 

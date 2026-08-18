@@ -176,7 +176,12 @@ export interface ExecutionLogEntry {
 
 export interface TokenResponse {
   access_token: string
-  refresh_token: string
+  /**
+   * Omitted when the server delivered the refresh token as an `HttpOnly`
+   * cookie instead (issue #454) — which is the case for every same-origin
+   * dashboard build. Present only on the cross-origin `VITE_API_URL` path.
+   */
+  refresh_token?: string
   token_type: string
   expires_in: number
 }

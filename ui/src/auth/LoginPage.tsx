@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Lock, Shield, ShieldCheck, ArrowRight, ExternalLink, Bell } from 'lucide-react'
 import clsx from 'clsx'
-import { useAuthStore } from './store'
+import { REFRESH_COOKIE_MODE } from '@/api/base'
+import { acceptTokens } from './session'
 import { classifyLoginFailure } from './login-failure'
 import { apiFetch, apiPost } from '@/api/client'
 import { isMac } from '@/lib/utils'
@@ -158,7 +159,6 @@ export function LoginPage() {
   const [enrollCode, setEnrollCode] = useState('')
   const [enrollAck, setEnrollAck] = useState(false)
 
-  const login = useAuthStore((s) => s.login)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -216,7 +216,13 @@ export function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      const body: Record<string, string> = { username, password }
+      const body: Record<string, string | boolean> = {
+        username,
+        password,
+        // Ask for the refresh token as an HttpOnly cookie (issue #454). False
+        // only in a cross-origin build, which cannot receive one.
+        refresh_cookie: REFRESH_COOKIE_MODE,
+      }
       const code = mfaCode.trim()
       if (code) {
         if (useRecovery) body.recovery_code = code
@@ -239,7 +245,7 @@ export function LoginPage() {
         await beginEnrollment(res.enroll_token)
         return
       }
-      login(res.access_token, res.refresh_token)
+      acceptTokens(res)
       navigate('/')
     } catch (err) {
       // A code was sent, so a 401 is the password or the code — the classifier
@@ -277,9 +283,13 @@ export function LoginPage() {
     try {
       const tokens = await apiPost<TokenResponse>(
         '/v1/auth/login/enroll/totp/confirm',
-        { enroll_token: enrollToken, code: enrollCode.trim() },
+        {
+          enroll_token: enrollToken,
+          code: enrollCode.trim(),
+          refresh_cookie: REFRESH_COOKIE_MODE,
+        },
       )
-      login(tokens.access_token, tokens.refresh_token)
+      acceptTokens(tokens)
       navigate('/')
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
