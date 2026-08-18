@@ -77,6 +77,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An API client's refresh token was minted but never stored, so it could not
+  be redeemed** (#463). `POST /v1/api-clients/{id}/tokens` returned a full
+  access/refresh pair without writing the `refresh_tokens` row that
+  `POST /v1/auth/refresh` looks the presented token up in, so a machine caller
+  that saved the token got a 401 the first time it tried to use it — while
+  `openapi.yaml` advertised the field without qualification. The endpoint now
+  persists the refresh half the way the login and OIDC paths do, and fails the
+  request outright if that write fails rather than handing back a credential
+  that cannot work.
+
+  This also brings the refresh handler's API-key branch to life for the first
+  time: it is reachable only from a `refresh_tokens` row with no `user_id`, and
+  nothing had ever created one. Since it had never run, it was missing the
+  checks its user-side counterpart has, and gained them here — a refresh now
+  re-resolves the owning client on every rotation, so a narrowed scope list
+  takes effect on the next refresh, a deactivated client gets a 403, and a
+  deleted one gets a 401 instead of rotating into a scope-less token.
+
+  Nothing in the repo consumed the field, so no client behaviour changes; a
+  machine credential simply gains the token renewal the endpoint always claimed
+  to offer, without needing the issuing admin credential again.
+
 - **`calendar { timezone … }` was accepted, validated, compiled, persisted and
   displayed — and then ignored.** No evaluator ever read it. `Trigger::gate_allows`
   localized calendar gates with the *job's* zone, so a calendar declaring its
