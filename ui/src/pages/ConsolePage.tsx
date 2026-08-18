@@ -39,6 +39,10 @@ export function ConsolePage() {
   const [paused, setPaused] = useState(false)
   const [events, setEvents] = useState<LogEvent[]>([])
   const [isConnected, setIsConnected] = useState(false)
+  // Set when the server rejects the subscription for lack of scope. The
+  // stream is admin-only (it tails the whole server tracing feed), so a
+  // 403 is a permanent answer — surface it instead of reconnect-looping.
+  const [forbidden, setForbidden] = useState(false)
 
   // Auto-scroll tracking — when the user manually scrolls up we stop
   // auto-following so they can read what they're looking at.
@@ -76,6 +80,14 @@ export function ConsolePage() {
         })
         if (res.status === 401) {
           useAuthStore.getState().logout()
+          return
+        }
+        if (res.status === 403) {
+          // Not an admin — the console stream will never open for this
+          // session. Stop here rather than retrying every 2s.
+          stopped = true
+          setForbidden(true)
+          setIsConnected(false)
           return
         }
         if (res.status === 503) {
@@ -220,7 +232,8 @@ export function ConsolePage() {
         <div>
           <h1 className="page-title">Live Console</h1>
           <p className="page-subtitle">
-            Tail server tracing events in real time. {isConnected ? null : <span className="dim">(reconnecting…)</span>}
+            Tail server tracing events in real time.{' '}
+            {forbidden || isConnected ? null : <span className="dim">(reconnecting…)</span>}
           </p>
         </div>
         <span className="dim mono" style={{ fontSize: 12 }}>
@@ -228,6 +241,14 @@ export function ConsolePage() {
           {paused ? ' (paused)' : ''}
         </span>
       </div>
+
+      {forbidden ? (
+        <div className="banner warn" role="status" style={{ marginBottom: 14 }}>
+          The live console tails the server's whole tracing stream and is
+          restricted to administrators. Per-job output stays available on each
+          execution's detail page.
+        </div>
+      ) : null}
 
       <section className="card" style={{ padding: 0 }}>
         <div
@@ -330,7 +351,13 @@ export function ConsolePage() {
           {filtered.length === 0 ? (
             <div className="dim center" style={{ padding: 40 }}>
               <Terminal size={20} style={{ marginBottom: 8 }} />
-              <div>{events.length === 0 ? 'Waiting for server events…' : 'No events match the current filters.'}</div>
+              <div>
+                {forbidden
+                  ? 'Administrator access required.'
+                  : events.length === 0
+                    ? 'Waiting for server events…'
+                    : 'No events match the current filters.'}
+              </div>
             </div>
           ) : (
             filtered.map((e, i) => (

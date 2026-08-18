@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Redact secrets from the Live Console stream and restrict it to
+  admins.** `GET /v1/events/stream` carries the raw server-wide tracing
+  feed plus a replay buffer of recent events, but only required
+  `executions:read` — a scope every role default hands out, including
+  Viewer. It now requires the `admin` scope, matching what the endpoint
+  actually exposes; per-execution output is unaffected and stays on
+  `executions:read` via `GET /v1/executions/{id}/logs`. The console fan-out
+  additionally drops events on secret-bearing tracing targets
+  (`croniq::password_reset`, `croniq::email`, `croniq::oidc`) and replaces
+  the value of any field named like a credential (`token`, `secret`,
+  `password`, `confirm_url`, …) with `[redacted]`. Public identifiers such
+  as `job_key` and `runner_id` are untouched.
+- **Password-reset links no longer pass through `tracing`.** The
+  reset-issued log line keeps its `user_id` / `reset_id` fields but drops
+  the confirm URL, which embeds the single-use reset token. Operators
+  without a mail transport still get the link to hand over: it is written
+  straight to the server's stderr, bypassing the console hub, the event
+  ring buffer, and OTLP log export. With a delivering mail transport the
+  token is not printed at all. The dashboard hides the Console entry for
+  non-admins and explains the 403 when the page is opened directly.
+
 ## [0.31.0] - 2026-07-27
 
 ### Added

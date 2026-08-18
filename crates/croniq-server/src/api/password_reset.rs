@@ -6,13 +6,16 @@
 //!
 //! Request always returns 202 Accepted regardless of whether the
 //! username exists — this avoids leaking which usernames are valid.
-//! When the username does exist, a reset token is created, the reset
+//! When the username does exist, a reset token is created and the reset
 //! URL is emitted via the configured `EmailSender` (NoopSender by
-//! default just logs the audit event), and the raw token is logged
-//! at INFO so an operator can still recover the link from server logs
-//! if SMTP isn't configured (intentional — explicit hand-off, not
-//! cleartext-logging of a real credential; reset tokens are short-TTL
-//! single-use).
+//! default just logs the recipient + subject, never the body).
+//!
+//! The raw token never goes through `tracing`. An operator without SMTP
+//! still needs to hand the link over, so it is written straight to the
+//! process's stderr instead — `tracing` events fan out to the Live
+//! Console hub (`crate::live_console`) and to OTLP log export, both of
+//! which are readable by parties who must not see a single-use
+//! credential for someone else's account.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,17 +109,32 @@ pub async fn handle_request(
         ),
     );
 
-    // INFO-level audit line for operators running without SMTP. The token
-    // is a single-use, short-TTL credential whose value the operator
-    // legitimately needs to hand off (same trust model as `croniq init`
-    // printing the admin password to stdout on first run).
+    // INFO-level audit line. Identifiers only — the confirm URL carries a
+    // single-use credential and must never enter the tracing pipeline,
+    // which fans out to the Live Console SSE stream and to OTLP log
+    // export. `croniq::password_reset` is additionally on the console
+    // layer's drop list, but the rule holds independently of that.
     tracing::info!(
         target: "croniq::password_reset",
         user_id = %user.user_id,
         reset_id = %reset_id,
-        confirm_url = %confirm_url,
         "password reset issued"
     );
+
+    // Operators running without a delivering mail transport still need the
+    // link to hand off. Write it directly to stderr, bypassing `tracing`
+    // entirely: no console hub, no ring buffer, no OTLP export — same
+    // trust model as `croniq init` printing the first-run admin password
+    // to the terminal. With SMTP configured the token never appears here.
+    if !state.email_sender.delivers() {
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(
+            stderr,
+            "[croniq] password reset issued for user {} (reset {}) — no mail transport configured, deliver this link manually: {}",
+            user.user_id, reset_id, confirm_url
+        );
+    }
 
     StatusCode::ACCEPTED.into_response()
 }
