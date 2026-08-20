@@ -526,11 +526,20 @@ impl ExecutionStore for SqliteStore {
         // would fail otherwise. Both subqueries are identical and
         // deterministic (ORDER BY completed_at, id) over an unmodified
         // `executions` table, so they select the exact same batch.
+        //
+        // `dead` rows are included only when no `dead_letters` row references
+        // them. Dead-letter retention governs the ones that have a letter, as
+        // documented — but a dead execution that never produced one, or whose
+        // letter has already been purged, had no governing retention at all
+        // and grew without bound (issue #470).
         tx.execute(
             "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT id FROM executions
-                 WHERE completed_at IS NOT NULL AND completed_at <= ?1 AND state <> 'dead'
-                 ORDER BY completed_at ASC, id ASC
+                 SELECT e.id FROM executions e
+                 WHERE e.completed_at IS NOT NULL AND e.completed_at <= ?1
+                   AND (e.state <> 'dead'
+                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                       WHERE dl.execution_id = e.id))
+                 ORDER BY e.completed_at ASC, e.id ASC
                  LIMIT ?2
              )",
             params![cutoff_s, limit],
@@ -539,9 +548,12 @@ impl ExecutionStore for SqliteStore {
         let affected = tx
             .execute(
                 "DELETE FROM executions WHERE id IN (
-                     SELECT id FROM executions
-                     WHERE completed_at IS NOT NULL AND completed_at <= ?1 AND state <> 'dead'
-                     ORDER BY completed_at ASC, id ASC
+                     SELECT e.id FROM executions e
+                     WHERE e.completed_at IS NOT NULL AND e.completed_at <= ?1
+                       AND (e.state <> 'dead'
+                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                           WHERE dl.execution_id = e.id))
+                     ORDER BY e.completed_at ASC, e.id ASC
                      LIMIT ?2
                  )",
                 params![cutoff_s, limit],
@@ -563,9 +575,12 @@ impl ExecutionStore for SqliteStore {
         // `limit` older ones. Child logs first (see `prune_executions_older_than`).
         tx.execute(
             "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT id FROM executions
-                 WHERE job_key = ?1 AND completed_at IS NOT NULL AND state <> 'dead'
-                 ORDER BY completed_at DESC, id DESC
+                 SELECT e.id FROM executions e
+                 WHERE e.job_key = ?1 AND e.completed_at IS NOT NULL
+                   AND (e.state <> 'dead'
+                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                       WHERE dl.execution_id = e.id))
+                 ORDER BY e.completed_at DESC, e.id DESC
                  LIMIT ?2 OFFSET ?3
              )",
             params![job_key, limit, keep_last],
@@ -574,9 +589,12 @@ impl ExecutionStore for SqliteStore {
         let affected = tx
             .execute(
                 "DELETE FROM executions WHERE id IN (
-                     SELECT id FROM executions
-                     WHERE job_key = ?1 AND completed_at IS NOT NULL AND state <> 'dead'
-                     ORDER BY completed_at DESC, id DESC
+                     SELECT e.id FROM executions e
+                     WHERE e.job_key = ?1 AND e.completed_at IS NOT NULL
+                       AND (e.state <> 'dead'
+                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                           WHERE dl.execution_id = e.id))
+                     ORDER BY e.completed_at DESC, e.id DESC
                      LIMIT ?2 OFFSET ?3
                  )",
                 params![job_key, limit, keep_last],

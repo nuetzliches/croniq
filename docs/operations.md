@@ -1037,6 +1037,30 @@ to 500 rows per tick, oldest-due first; a larger backlog drains across ticks.
 A `singleton` job wedged by such an orphan therefore self-heals within one
 sweep after `timeout + grace` at the latest.
 
+### Per-job liveness series and removed jobs
+
+`croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp` and
+`croniq_job_overdue` are emitted only for jobs the running configuration
+defines.
+
+Their source, `job_states`, outlives the job that created it — nothing deletes
+a row when a job is removed from the Croniqfile. Until
+[issue #470](https://github.com/nuetzliches/croniq/issues/470) the exporter read
+straight from that table, so a job deleted months earlier kept reporting
+`croniq_job_overdue{job_key="demo:smoke"} 1` forever. Anyone following the
+recommended `croniq_job_overdue == 1` alert got a permanent false positive they
+could only clear with direct SQL against a stopped server.
+
+The rows themselves are still kept — a job commented out for a week should keep
+its state, and the loader cannot tell "removed" from "temporarily absent". It
+does log them once at startup, naming the keys. To clear one deliberately:
+
+```bash
+curl -X DELETE -H "Authorization: ApiKey $ADMIN_KEY"   "$CRONIQ_URL/v1/jobs/demo:smoke"
+```
+
+which now removes the `job_states` row along with the definition.
+
 ### Watchdog metrics
 
 The frequency of these recovery actions is the operator signal, so `/metrics`
@@ -1076,8 +1100,14 @@ Dead Letters UI, `DELETE /v1/dead-letters/{id}`, or
 
 Non-`ephemeral` executions are persisted for run history and would otherwise
 accumulate forever. Two **opt-in** knobs cap them; both prune terminal
-executions (`completed` / `failed` / `cancelled`) together with their logs, and
-both **exclude `dead` executions** (those follow dead-letter retention above).
+executions (`completed` / `failed` / `cancelled`) together with their logs.
+
+A `dead` execution is pruned by these knobs **only when no dead-letter row
+references it**. One that has a letter is left to dead-letter retention above,
+as before. One that never produced a letter — or whose letter has already been
+purged — used to fall through every retention path and grow without bound,
+because dead-letter retention only ever deletes from `dead_letters`
+([issue #470](https://github.com/nuetzliches/croniq/issues/470)).
 
 - **Age sweep** — `server { execution_retention <dur> }` (e.g. `30d`). Prunes
   executions whose `completed_at` is older than the cutoff.

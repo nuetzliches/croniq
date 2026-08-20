@@ -195,6 +195,50 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A removed job no longer reports `croniq_job_overdue` forever
+  ([#470](https://github.com/nuetzliches/croniq/issues/470)).** The per-job
+  liveness series are now emitted only for jobs the running configuration
+  defines.
+
+  Their source, `job_states`, outlives the job that created it — nothing
+  deletes a row — and the exporter read straight from the table. So a job
+  removed from the Croniqfile months earlier kept emitting
+  `croniq_job_overdue{job_key="demo:smoke"} 1` with a `next_fire_at` far in
+  the past, which defeats exactly what the metric is for: anyone following the
+  documented `croniq_job_overdue == 1` alert got a permanent false positive
+  they could only clear with direct SQL against a stopped server. Emitting a
+  series for a job the scheduler does not know about is wrong independently of
+  whether the row is ever deleted, so the fix is in the exporter rather than in
+  a retention policy. A server with no trigger map to consult still emits
+  everything — "cannot tell" must not become "emit nothing".
+
+  The rows are deliberately still kept: a job commented out for a week should
+  keep its state, and the loader cannot tell "removed" from "temporarily
+  absent". It now logs them once at startup, naming the keys, instead of
+  leaving them invisible.
+
+- **`DELETE /v1/jobs/{job_key}` clears the job's `job_states` row.** It
+  deleted from `trigger_definitions` and `job_definitions` only, so the
+  supported deletion route left the scheduling state behind — and with it a
+  stale `last_fired_at` / `fire_count` that would resurface if the key were
+  ever reused. Best-effort and logged on failure: the definition is already
+  gone at that point, and failing the request would report a delete that half
+  happened as no delete at all.
+
+- **`dead` executions are reachable by retention when nothing references them
+  ([#470](https://github.com/nuetzliches/croniq/issues/470)).** Both
+  `server { execution_retention }` and `keep_last` filtered `state <> 'dead'`
+  outright, on the documented grounds that per-job `dead_letter { retention }`
+  governs them instead. But that retention only ever deletes from
+  `dead_letters`; it never touches `executions`. A dead execution that never
+  produced a letter, or whose letter had already been purged, therefore had no
+  governing retention at all and accumulated forever — the unbounded-history
+  growth #344 was introduced to close, still open for one state.
+
+  Both paths now include a `dead` execution when no `dead_letters` row
+  references it. One that has a letter is still left to dead-letter retention,
+  so the documented split is unchanged where it actually applied.
+
 - **CI is green on Rust 1.98.** Clippy 1.98 tightened `result_large_err`, which
   now fires on the five `auth_endpoints` handlers returning
   `Result<T, Response>` — all three `-D warnings` clippy gates failed on `main`

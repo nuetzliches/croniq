@@ -881,14 +881,44 @@ fn execution_retention(store: &PgStore, s: &str) {
         .unwrap();
     let recent = seed_execution(store, &job, Some((ExecutionState::Failed, recent_ts)));
     let live = seed_execution(store, &job, None);
-    let dead = seed_execution(store, &job, Some((ExecutionState::Dead, old_ts)));
+    // Dead with a dead-letter — dead-letter retention owns it, so the sweep
+    // must leave it alone.
+    let dead_covered = seed_execution(store, &job, Some((ExecutionState::Dead, old_ts)));
+    store
+        .add_dead_letter(&DeadLetter {
+            id: Uuid::new_v4(),
+            execution_id: dead_covered,
+            job_key: job.clone(),
+            fire_at: old_ts,
+            scheduled_for: old_ts,
+            attempt: 3,
+            error: "boom".into(),
+            dead_reason: "retry_exhausted".into(),
+            metadata: HashMap::new(),
+            created_at: old_ts,
+            expires_at: None,
+        })
+        .unwrap();
+    // Dead with no dead-letter — nothing governed this row before (issue
+    // #470), so the sweep now reaches it.
+    let dead_orphan = seed_execution(store, &job, Some((ExecutionState::Dead, old_ts)));
 
     let deleted = store.prune_executions_older_than(cutoff, 100).unwrap();
-    assert_eq!(deleted, 1, "only the old completed execution is pruned");
+    assert_eq!(
+        deleted, 2,
+        "the old completed execution and the unreferenced dead one"
+    );
     assert!(store.get_execution(old).unwrap().is_none());
     assert!(store.get_execution(recent).unwrap().is_some());
     assert!(store.get_execution(live).unwrap().is_some());
-    assert!(store.get_execution(dead).unwrap().is_some());
+    assert!(
+        store.get_execution(dead_covered).unwrap().is_some(),
+        "a dead execution with a letter stays under dead-letter retention"
+    );
+    assert!(
+        store.get_execution(dead_orphan).unwrap().is_none(),
+        "a dead execution nothing references must not outlive the retention window"
+    );
     assert!(store.read_logs(old, 100).unwrap().is_empty());
 
     // keep_last: newest 1 of 4 completed survives.
