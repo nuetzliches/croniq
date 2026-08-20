@@ -212,6 +212,30 @@ components:
         scopes: { type: array, items: { type: string } }
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }
+        managed_by:
+          type: string
+          enum: [api, env]
+          default: api
+          description: >
+            Who owns the row. `env` clients are declared by
+            CRONIQ_API_CLIENT_<NAME>_KEY; the environment is their source of
+            truth, so PUT/DELETE on the client and POST /v1/api-keys for it
+            all return 409 `env_managed`. Change the environment and reload
+            instead.
+
+    ApiClientCredentialOutcome:
+      type: object
+      description: >
+        What a reload did to one environment-declared API client.
+      properties:
+        client: { type: string }
+        action:
+          type: string
+          enum: [created, rotated, scopes_updated, adopted, unchanged, blocked]
+          description: >
+            `blocked` means a change is pending but CRONIQ_API_KEY_RECONCILE=1
+            is not set, so nothing was written; `detail` says what was withheld.
+        detail: { type: string }
 
     ApiKeySummary:
       type: object
@@ -1866,6 +1890,8 @@ paths:
                   scopes: { type: array, items: { type: string } }
 
   /v1/api-clients/{id}:
+    # PUT and DELETE return 409 `env_managed` when the client is declared in
+    # the environment (see ApiClient.managed_by).
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     delete:
       summary: Delete an API client and its keys
@@ -1923,6 +1949,10 @@ paths:
         "404": { description: "No such client" }
     post:
       summary: Generate a new API key
+      description: >
+        Refused with 409 `env_managed` for a client the environment declares:
+        the reconciler retires every key that is not the declared one, so a
+        key minted here would carry a silent expiry date.
       requestBody:
         content:
           application/json:
@@ -2098,6 +2128,12 @@ paths:
         precedence) and reconciles the live scheduler. Use `?dry_run=true`
         to validate and return a diff without applying. Requires the
         `admin` scope.
+
+        Also re-reads the API clients the environment declares
+        (CRONIQ_API_CLIENT_<NAME>_KEY) and reports the result under
+        `credentials`. This is how a `<VAR>_FILE`-backed key is rotated
+        without restarting: the environment of a running process cannot
+        change, but the file it points at can.
       parameters:
         - name: dry_run
           in: query
@@ -2112,6 +2148,18 @@ paths:
                 properties:
                   applied: { type: boolean }
                   dry_run: { type: boolean }
+                  credentials:
+                    type: array
+                    description: >
+                      One entry per environment-declared API client. Omitted
+                      when the environment declares none.
+                    items: { $ref: "#/components/schemas/ApiClientCredentialOutcome" }
+                  credentials_error:
+                    type: string
+                    description: >
+                      Present when the declarations could not be read (for
+                      example an unknown scope). The Croniqfile half of the
+                      reload still applies — the two are independent.
                   diff:
                     type: object
                     properties:

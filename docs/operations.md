@@ -512,21 +512,126 @@ flat shape (`{enabled, provider_name, login_url}`) and is unaffected
 by `auth.password.enabled` — keep using it if you have an external
 probe that only cares about the SSO half.
 
+### Declaring API clients in the environment
+
+A deployment that renders its environment before the stack comes up can pin
+its machine credentials by value, including scoped ones:
+
+```yaml
+environment:
+  # The runner only needs the pull protocol.
+  CRONIQ_API_CLIENT_RUNNER_KEY: croniq_...
+  CRONIQ_API_CLIENT_RUNNER_SCOPES: work:poll,work:ack,work:renew
+  # The producer only needs to fire jobs.
+  CRONIQ_API_CLIENT_PRODUCER_KEY: croniq_...
+  CRONIQ_API_CLIENT_PRODUCER_SCOPES: jobs:trigger
+```
+
+Boot the stack and both clients exist with those scopes. Nothing has to be
+created through the API afterwards, and no credential has to be copied back
+into the deployment.
+
+`<NAME>` is `[A-Z0-9_]`, lowercased with `_` → `-`, so
+`CRONIQ_API_CLIENT_RUNNER_POLL_KEY` declares the client `runner-poll`. Every
+key variable also accepts the `_FILE` form (`CRONIQ_API_CLIENT_RUNNER_KEY_FILE`).
+
+For a single admin credential the short form still works and names the client
+`default`:
+
+```
+CRONIQ_API_KEY=croniq_...          # or CRONIQ_API_KEY_FILE
+CRONIQ_API_KEY_SCOPES=...          # optional; default is admin
+```
+
+`CRONIQ_INIT_API_KEY` remains an alias for the same thing. It is deprecated
+but not going away.
+
+**Scopes are mandatory for a named client.** Omitting them is an error rather
+than a fall-back to `admin` — silently granting the wildcard is the problem
+this feature exists to remove. An unknown scope (`job:reed`) is also a boot
+error: it would otherwise produce a credential that authorises nothing and
+fails at first use, in some other service, far from the file that caused it.
+
+#### What the reconciler will and will not do on its own
+
+| Situation | Without `CRONIQ_API_KEY_RECONCILE=1` | With it |
+|---|---|---|
+| Client does not exist | created | created |
+| Store matches the declaration | no-op | no-op |
+| Declared key differs | logged, **not** rotated | rotated (see grace window) |
+| Declared scopes differ | logged, **not** changed | updated |
+| Client exists but is API-owned | logged, ownership unchanged | ownership moves to the environment |
+
+Creating a client is additive — it cannot break a credential that is already
+working — so it needs no flag. Everything that rewrites existing state does,
+because an env value changed by accident should not be able to take a running
+deployment offline.
+
+#### Ownership
+
+A client the environment created is stored with `managed_by: "env"`. From then
+on the environment is its source of truth, and the API refuses to edit it,
+delete it, or mint keys for it — each with a 409 naming the variable to change
+instead. The dashboard shows those clients with an `env-managed` badge and
+disabled controls.
+
+Without that rule a scope change made in the dashboard would survive until the
+next reconcile and then revert, with nothing linking the two events.
+
+Ownership never moves silently: a client that already exists as `managed_by:
+"api"` — one created in the dashboard, or seeded by `croniq init --api-key` —
+stays API-owned until an operator sets `CRONIQ_API_KEY_RECONCILE=1`. Upgrading
+a deployment whose client names happen to collide with new declarations
+therefore changes nothing on its own. To hand a client back to the API, remove
+its declaration and restart.
+
+#### Rotating without a restart
+
+The direct environment of a running process cannot be changed from outside, so
+`CRONIQ_API_CLIENT_..._KEY` only takes effect at boot. The `_FILE` form does
+not have that limit: the file can be rewritten under a live process, which is
+what a Kubernetes Secret volume or a Vault sidecar does.
+
+Two triggers re-read it — both explicit:
+
+```bash
+kill -HUP <pid>
+# or
+curl -X POST -H "Authorization: ApiKey $ADMIN_KEY" \
+  "$CRONIQ_URL/v1/admin/reload-config"
+```
+
+```json
+{
+  "applied": true,
+  "credentials": [
+    { "client": "runner", "action": "rotated" },
+    { "client": "producer", "action": "unchanged" }
+  ]
+}
+```
+
+`?dry_run=true` reports the same `credentials` block without writing anything.
+
+The `--watch` file watcher deliberately does **not** re-read credentials. It
+fires on every write, including the partial one a secret manager makes halfway
+through replacing a file, and installing whatever that file happened to contain
+at that instant is not a risk worth taking for a convenience.
+
 ### Rotating an API key without downtime
 
-`CRONIQ_INIT_API_KEY` + `CRONIQ_INIT_API_KEY_RECONCILE=1` rotate the
-`default` client's key from configuration. Two things are worth knowing
-before relying on it.
+`CRONIQ_API_KEY` (or any `CRONIQ_API_CLIENT_<NAME>_KEY`) plus
+`CRONIQ_API_KEY_RECONCILE=1` rotate a declared client's key from
+configuration. Two things are worth knowing before relying on it.
 
 **The direct env var only rotates at boot.** The environment of a running
 process cannot be changed from outside — setting a new value in Compose or
 a Deployment means a new container, not a new value in the old one. To
-rotate a *running* server, use `CRONIQ_INIT_API_KEY_FILE` and point it at a
-mounted secret (a Kubernetes Secret volume, a Vault/Infisical sidecar
-target, a bind-mounted file). That file *does* change under a live process.
-The server re-reads it on boot; support for re-reading it on `SIGHUP` and
-`POST /v1/admin/reload-config` is tracked in
-[issue #471](https://github.com/nuetzliches/croniq/issues/471).
+rotate a *running* server, use the `_FILE` form and point it at a mounted
+secret (a Kubernetes Secret volume, a Vault/Infisical sidecar target, a
+bind-mounted file). That file *does* change under a live process, and
+`SIGHUP` or `POST /v1/admin/reload-config` re-reads it — see
+[Declaring API clients in the environment](#declaring-api-clients-in-the-environment).
 
 **The superseded key is retired, not revoked.** A rotation installs the new
 key and stamps the old one with `expires_at = now + CRONIQ_API_KEY_ROTATION_GRACE`

@@ -2650,6 +2650,7 @@ fn set_api_key_expiry_dates_a_key_without_revoking_it() {
             scopes: vec!["admin".into()],
             is_active: true,
             created_at: now(),
+            managed_by: "api".into(),
         })
         .unwrap();
     store

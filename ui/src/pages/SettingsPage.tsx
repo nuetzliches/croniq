@@ -301,12 +301,19 @@ export function ApiClientsTab() {
             <EmptyState icon={<KeyRound className="h-8 w-8" />} title="No API clients" description="Create a client to generate API keys" />
           )}
           <div className="space-y-2">
-            {clients?.map((c) => (
+            {clients?.map((c) => {
+              // An env-declared client is owned by the environment: the API
+              // refuses every mutation on it, so offering the buttons would
+              // only produce 409s. Show why instead.
+              const envManaged = c.managed_by === 'env'
+              const envHint = `Declared by CRONIQ_API_CLIENT_${c.name.toUpperCase().replace(/-/g, '_')}_KEY — edit the environment and reload`
+              return (
               <div key={c.client_id} className="flex items-center gap-3 p-3 rounded-md border border-border">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{c.name}</span>
                     <Badge variant={c.is_active ? 'ok' : 'neutral'}>{c.is_active ? 'active' : 'inactive'}</Badge>
+                    {envManaged && <Badge variant="neutral" title={envHint}>env-managed</Badge>}
                   </div>
                   <p className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
                     <span>{c.client_id}</span>
@@ -316,13 +323,16 @@ export function ApiClientsTab() {
                 <Button
                   variant="secondary" size="sm"
                   onClick={() => handleIssueToken(c)}
-                  disabled={issueToken.isPending}
+                  disabled={issueToken.isPending || envManaged}
+                  title={envManaged ? envHint : undefined}
                 >
                   <KeyRound className="h-3.5 w-3.5" />Issue Key
                 </Button>
                 <Button
                   variant="ghost" size="sm"
                   onClick={() => openEdit(c)}
+                  disabled={envManaged}
+                  title={envManaged ? envHint : undefined}
                   aria-label={`Edit client ${c.name}`}
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
                 >
@@ -331,13 +341,16 @@ export function ApiClientsTab() {
                 <Button
                   variant="ghost" size="sm"
                   onClick={() => handleDeleteClient(c)}
+                  disabled={envManaged}
+                  title={envManaged ? envHint : undefined}
                   aria-label={`Delete client ${c.name}`}
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
-            ))}
+              )
+            })}
           </div>
         </CardContent>
       </Card>

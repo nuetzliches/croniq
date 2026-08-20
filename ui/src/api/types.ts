@@ -393,6 +393,13 @@ export interface ApiClient {
   scopes: string[]
   is_active: boolean
   created_at: string
+  /**
+   * Who owns the row. `env` clients are declared by
+   * CRONIQ_API_CLIENT_<NAME>_KEY and the API refuses to edit, delete or mint
+   * keys for them — the environment is their source of truth. Optional so an
+   * older server (which omits the field) reads as `api`.
+   */
+  managed_by?: 'api' | 'env'
 }
 
 export interface CreateClientResponse {

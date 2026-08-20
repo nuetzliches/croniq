@@ -91,7 +91,7 @@ pub struct CreateCalendarRequest {
     pub rules: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ValidationError {
     pub error: &'static str,
     pub message: String,

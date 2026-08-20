@@ -30,13 +30,13 @@
 
 pub mod alerts;
 pub mod api;
+pub mod api_client_env;
 pub mod completion;
 pub mod dashboard;
 pub mod diagnostics;
 pub mod duration;
 pub mod email;
 pub mod env_secret;
-pub mod init_api_key;
 pub mod live_console;
 pub mod loader;
 pub mod mcp;

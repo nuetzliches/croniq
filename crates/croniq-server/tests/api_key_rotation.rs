@@ -68,6 +68,7 @@ fn fixture() -> (axum::Router, DynStore) {
             scopes: vec![Scope::JOBS_READ.to_string()],
             is_active: true,
             created_at: now,
+            managed_by: "api".into(),
         })
         .unwrap();
 

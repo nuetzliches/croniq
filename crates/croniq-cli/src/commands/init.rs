@@ -128,6 +128,14 @@ pub fn init(
                 scopes: resolved_scopes.clone(),
                 is_active: true,
                 created_at: now,
+                // Operator-owned, not env-owned, even though the Docker
+                // entrypoint sources `--api-key` from CRONIQ_INIT_API_KEY:
+                // `croniq init` cannot tell an env-declared key from one an
+                // operator typed. The environment takes ownership only when
+                // the operator opts in with CRONIQ_API_KEY_RECONCILE=1, so
+                // the default Docker flow keeps behaving exactly as before
+                // (issue #471).
+                managed_by: "api".to_string(),
             })
             .map_err(|e| miette!("Failed to create API client: {e}"))?;
 

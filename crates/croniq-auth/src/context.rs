@@ -184,6 +184,48 @@ impl Scope {
     /// Admin-only for v1 — not granted to Operator/Viewer role defaults.
     /// Implied by the `admin` wildcard.
     pub const ALERTS_WRITE: &str = "alerts:write";
+
+    /// Every scope the server recognises.
+    ///
+    /// Exists for callers that must validate a scope string arriving from
+    /// outside the type system — API-client declarations in the environment
+    /// (issue #471), where a typo like `job:read` would otherwise create a
+    /// credential that authorises nothing and fails only at first use.
+    /// `admin` is included: it is a grantable scope, not merely a wildcard.
+    pub const ALL: &'static [&'static str] = &[
+        Self::ADMIN,
+        Self::JOBS_READ,
+        Self::JOBS_WRITE,
+        Self::JOBS_REGISTER,
+        Self::JOBS_TRIGGER,
+        Self::SCHEDULES_READ,
+        Self::SCHEDULES_WRITE,
+        Self::EXECUTIONS_READ,
+        Self::EXECUTIONS_CANCEL,
+        Self::DEAD_LETTERS_READ,
+        Self::DEAD_LETTERS_WRITE,
+        Self::CALENDARS_READ,
+        Self::CALENDARS_WRITE,
+        Self::WORK_POLL,
+        Self::WORK_RENEW,
+        Self::WORK_ACK,
+        Self::WORK_EVENTS,
+        Self::RUNNERS_READ,
+        Self::RUNNERS_WRITE,
+        Self::RUNNERS_HEARTBEAT,
+        Self::API_CLIENTS_ADMIN,
+        Self::API_KEYS_ADMIN,
+        Self::USERS_ADMIN,
+        Self::MCP_READ,
+        Self::MCP_WRITE,
+        Self::ALERTS_READ,
+        Self::ALERTS_WRITE,
+    ];
+
+    /// Whether `scope` is one this server knows about.
+    pub fn is_known(scope: &str) -> bool {
+        Self::ALL.contains(&scope)
+    }
 }
 
 /// Default scope set for a user role. The login handler embeds these in
@@ -234,6 +276,24 @@ mod tests {
             scopes,
             token_generation: None,
         }
+    }
+
+    /// Tripwire for `Scope::ALL`. A new scope const that never reaches the
+    /// list would be rejected in env declarations while working everywhere
+    /// else — bump the count deliberately when adding one.
+    #[test]
+    fn all_scopes_listed_once() {
+        let mut seen = std::collections::BTreeSet::new();
+        for s in Scope::ALL {
+            assert!(seen.insert(*s), "duplicate scope in Scope::ALL: {s}");
+        }
+        assert_eq!(
+            Scope::ALL.len(),
+            27,
+            "Scope::ALL changed — add the new scope here and to the docs"
+        );
+        assert!(Scope::is_known(Scope::WORK_POLL));
+        assert!(!Scope::is_known("jobs:reed"));
     }
 
     #[test]
