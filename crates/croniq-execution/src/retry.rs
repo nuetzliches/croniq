@@ -132,27 +132,54 @@ fn apply_jitter(duration: Duration, jitter: f64) -> Duration {
     Duration::from_millis(jittered as u64)
 }
 
-/// Parse a duration string like "2s", "500ms", "5m", "1h".
-pub fn parse_duration(s: &str) -> Option<Duration> {
-    let s = s.trim();
-    if let Some(val) = s.strip_suffix("ms") {
-        val.parse::<u64>().ok().map(Duration::from_millis)
-    } else if let Some(val) = s.strip_suffix('s') {
-        val.parse::<u64>().ok().map(Duration::from_secs)
-    } else if let Some(val) = s.strip_suffix('m') {
-        val.parse::<u64>().ok().map(|v| Duration::from_secs(v * 60))
-    } else if let Some(val) = s.strip_suffix('h') {
-        val.parse::<u64>()
-            .ok()
-            .map(|v| Duration::from_secs(v * 3600))
-    } else if let Some(val) = s.strip_suffix('d') {
-        val.parse::<u64>()
-            .ok()
-            .map(|v| Duration::from_secs(v * 86400))
+/// Parse a duration string like "2s", "500ms", "5m", "1h", "30d", or a bare
+/// integer (seconds).
+///
+/// This is the one duration grammar for the whole workspace: config
+/// directives, env vars and API payloads all resolve through here, so an
+/// operator never has to remember which knob accepts which units.
+/// [`parse_duration`] is the `Option` flavour for callers that fall back to a
+/// default; this one reports *why* the value was rejected, for the paths that
+/// must fail loudly instead (bad config at boot).
+pub fn parse_duration_checked(s: &str) -> Result<Duration, String> {
+    let trimmed = s.trim();
+    // Longest suffix first: "ms" must win over "s".
+    let (digits, unit, millis_per_unit) = if let Some(v) = trimmed.strip_suffix("ms") {
+        (v, "ms", 1)
+    } else if let Some(v) = trimmed.strip_suffix('s') {
+        (v, "s", 1_000)
+    } else if let Some(v) = trimmed.strip_suffix('m') {
+        (v, "m", 60 * 1_000)
+    } else if let Some(v) = trimmed.strip_suffix('h') {
+        (v, "h", 3_600 * 1_000)
+    } else if let Some(v) = trimmed.strip_suffix('d') {
+        (v, "d", 86_400 * 1_000)
     } else {
-        // Try plain seconds
-        s.parse::<u64>().ok().map(Duration::from_secs)
+        (trimmed, "", 1_000)
+    };
+    if digits.is_empty() {
+        return Err(format!(
+            "invalid duration {s:?}: expected '<n>[ms|s|m|h|d]' or bare seconds"
+        ));
     }
+    let value: u64 = digits.parse().map_err(|_| {
+        if unit.is_empty() {
+            format!("invalid duration {s:?}: expected '<n>[ms|s|m|h|d]' or bare seconds")
+        } else {
+            format!("invalid duration {s:?}: cannot parse number before '{unit}'")
+        }
+    })?;
+    value
+        .checked_mul(millis_per_unit)
+        .map(Duration::from_millis)
+        .ok_or_else(|| format!("duration {s:?} overflows the representable range"))
+}
+
+/// Parse a duration string like "2s", "500ms", "5m", "1h", returning `None`
+/// on malformed input. Thin wrapper over [`parse_duration_checked`] for the
+/// call sites that fall back to a default instead of surfacing the reason.
+pub fn parse_duration(s: &str) -> Option<Duration> {
+    parse_duration_checked(s).ok()
 }
 
 #[cfg(test)]
@@ -273,5 +300,52 @@ mod tests {
     fn parse_duration_invalid() {
         assert_eq!(parse_duration("abc"), None);
         assert_eq!(parse_duration(""), None);
+    }
+
+    #[test]
+    fn checked_parse_reports_why_it_failed() {
+        assert!(
+            parse_duration_checked("10x")
+                .unwrap_err()
+                .contains("expected")
+        );
+        assert!(
+            parse_duration_checked("abcm")
+                .unwrap_err()
+                .contains("before 'm'")
+        );
+        // A unit with no number is not a zero-length duration.
+        assert!(parse_duration_checked("s").is_err());
+        assert!(parse_duration_checked("ms").is_err());
+        assert!(parse_duration_checked("  ").is_err());
+    }
+
+    #[test]
+    fn checked_parse_rejects_overflow_instead_of_wrapping() {
+        // u64 seconds still fit, but the millisecond conversion does not:
+        // the pre-#486 parser multiplied unchecked and wrapped (or panicked
+        // in a debug build) instead of reporting the bad value.
+        let err = parse_duration_checked("999999999999999999d").unwrap_err();
+        assert!(err.contains("overflows"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn checked_parse_accepts_the_full_grammar() {
+        assert_eq!(
+            parse_duration_checked("500ms").unwrap(),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            parse_duration_checked("45").unwrap(),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            parse_duration_checked("  10s  ").unwrap(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            parse_duration_checked("30d").unwrap(),
+            Duration::from_secs(2_592_000)
+        );
     }
 }

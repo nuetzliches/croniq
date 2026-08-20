@@ -239,6 +239,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   references it. One that has a letter is still left to dead-letter retention,
   so the documented split is unchanged where it actually applied.
 
+- **One duration grammar for every knob
+  ([#486](https://github.com/nuetzliches/croniq/issues/486)).**
+  `CRONIQ_API_KEY_ROTATION_GRACE=1d` was a fatal boot error while
+  `server { execution_retention 30d }` a few lines away in the same file was
+  fine: the rotation grace went through a second, narrower parser
+  (`s`/`m`/`h`/bare) than the `ms`/`s`/`m`/`h`/`d` one every other duration
+  uses. Two grammars for the same-looking value is a trap regardless of which
+  one is "right", so there is now one — `parse_duration_checked` in
+  `croniq-execution` — and the server's seconds-granularity settings adapt it
+  rather than reimplement it.
+
+  The shared parser also multiplied its unit factor unchecked, so a large
+  `<n>d` wrapped (or panicked in a debug build) instead of being rejected; it
+  now reports the overflow. Settings measured in whole seconds — lease TTLs,
+  the dedup window, the rotation grace — reject a sub-second value instead of
+  truncating `500ms` into a zero-second lease.
+
 - **CI is green on Rust 1.98.** Clippy 1.98 tightened `result_large_err`, which
   now fires on the five `auth_endpoints` handlers returning
   `Result<T, Response>` — all three `-D warnings` clippy gates failed on `main`
