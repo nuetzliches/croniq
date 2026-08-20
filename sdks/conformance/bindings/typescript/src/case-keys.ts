@@ -42,6 +42,7 @@ export const RUNNER_CONFIG_KEYS = [
   'poll_retry_delay_ms',
   'capacity_backoff_ms',
   'max_consecutive_poll_conflicts',
+  'max_consecutive_auth_failures',
 ] as const;
 
 export const HANDLER_KEYS = [

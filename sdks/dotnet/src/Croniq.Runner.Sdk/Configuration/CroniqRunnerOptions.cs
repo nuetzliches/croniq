@@ -115,6 +115,25 @@ public sealed class CroniqRunnerOptions
     [Range(1, 100)]
     public int MaxConsecutivePollConflicts { get; set; } = 3;
 
+    /// <summary>
+    /// Maximum number of consecutive <c>401 Unauthorized</c> responses from
+    /// <c>POST /v1/work/poll</c> before the runner gives up and throws
+    /// <see cref="Croniq.Runner.Sdk.AuthFailedException"/>. Default: 3.
+    /// </summary>
+    /// <remarks>
+    /// The API key is read once and never re-read, so a rejected credential
+    /// cannot fix itself; retrying only produces an idle-looking process that
+    /// never exits and never gets restarted. Not fatal on the first 401 —
+    /// rotation hands over through an expiry window (server issue
+    /// <see href="https://github.com/nuetzliches/croniq/issues/471">#471</see>)
+    /// and a race around it should not kill a healthy runner. The counter
+    /// resets on any successful poll and on any other error, since a 5xx says
+    /// nothing about whether the credential is valid. See issue
+    /// <see href="https://github.com/nuetzliches/croniq/issues/473">#473</see>.
+    /// </remarks>
+    [Range(1, 100)]
+    public int MaxConsecutiveAuthFailures { get; set; } = 3;
+
     /// <summary>Idle delay when the runner is at <see cref="MaxInflight"/> capacity.</summary>
     public TimeSpan CapacityBackoff { get; set; } = TimeSpan.FromMilliseconds(500);
 

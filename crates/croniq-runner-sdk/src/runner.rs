@@ -70,6 +70,46 @@ pub(crate) fn update_conflict_streak(
     }
 }
 
+/// Update the consecutive-401 counter and decide whether to keep polling.
+///
+/// A `401` says the credential was rejected. The SDK reads its API key once,
+/// at construction, and never re-reads it, so every later request presents
+/// the same rejected key — retrying cannot clear it (issue #473). Before this
+/// existed a `401` landed in the generic transient bucket and the runner
+/// retried on the poll interval forever: the process stayed up, looked
+/// healthy, did nothing, and never exited non-zero, so no restart policy
+/// fired — and restarting is precisely what would have fixed it.
+///
+/// Unlike a `403` it is not fatal on the first occurrence. Key rotation hands
+/// over by installing the new key and giving the old one an expiry (issue
+/// #471); dropping dead on a single `401` would turn a narrow race around
+/// that handover into an outage. So:
+///
+/// * Successful polls reset the counter — the credential works.
+/// * Other errors reset it too: a 5xx or a timeout says nothing about whether
+///   the key is valid, and counting them would bail on a merely unwell server.
+/// * `401`s increment and trip [`PollLoopAction::BailOut`] at the threshold.
+pub(crate) fn update_auth_streak(
+    result: &Result<crate::client::PollResponse, crate::client::ClientError>,
+    consecutive: &mut u32,
+    max_consecutive: u32,
+) -> PollLoopAction {
+    match result {
+        Err(crate::client::ClientError::Unauthorized { .. }) => {
+            *consecutive = consecutive.saturating_add(1);
+            if *consecutive >= max_consecutive {
+                PollLoopAction::BailOut
+            } else {
+                PollLoopAction::Continue
+            }
+        }
+        _ => {
+            *consecutive = 0;
+            PollLoopAction::Continue
+        }
+    }
+}
+
 /// Map the result of awaiting a handler task to an ack `(status, error,
 /// duration_ms)` triple. A handler that ran is `success`/`failure` as before;
 /// a task aborted by a server cancel (or one that panicked) is reported as
@@ -105,6 +145,7 @@ pub struct RunnerBuilder {
     poll_retry_delay: Duration,
     capacity_backoff: Duration,
     max_consecutive_poll_conflicts: u32,
+    max_consecutive_auth_failures: u32,
 }
 
 impl RunnerBuilder {
@@ -170,6 +211,22 @@ impl RunnerBuilder {
         self
     }
 
+    /// Maximum number of consecutive `401 Unauthorized` responses before the
+    /// runner gives up and exits with a fatal [`ClientError::Unauthorized`].
+    /// Default: 3.
+    ///
+    /// The API key is read once, at construction, and never re-read, so a
+    /// rejected credential cannot fix itself — retrying only produces an
+    /// idle-looking process that never exits and never gets restarted. The
+    /// budget exists so a narrow race around a key rotation handover (issue
+    /// #471) does not kill an otherwise healthy runner. The counter resets on
+    /// any successful poll, and on any other error: a 5xx says nothing about
+    /// whether the credential is valid.
+    pub fn max_consecutive_auth_failures(mut self, n: u32) -> Self {
+        self.max_consecutive_auth_failures = n;
+        self
+    }
+
     pub fn build(self) -> CroniqRunner {
         let mut client = CroniqClient::new(&self.server_url);
         if let Some(key) = &self.api_key {
@@ -186,6 +243,7 @@ impl RunnerBuilder {
             poll_retry_delay: self.poll_retry_delay,
             capacity_backoff: self.capacity_backoff,
             max_consecutive_poll_conflicts: self.max_consecutive_poll_conflicts,
+            max_consecutive_auth_failures: self.max_consecutive_auth_failures,
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
@@ -206,6 +264,7 @@ pub struct CroniqRunner {
     poll_retry_delay: Duration,
     capacity_backoff: Duration,
     max_consecutive_poll_conflicts: u32,
+    max_consecutive_auth_failures: u32,
     handlers: Arc<RwLock<HandlerRegistry>>,
     schedules: Arc<RwLock<Vec<JobSchedule>>>,
     inflight: Arc<RwLock<Vec<String>>>,
@@ -228,6 +287,7 @@ impl CroniqRunner {
             poll_retry_delay: Duration::from_secs(5),
             capacity_backoff: Duration::from_millis(500),
             max_consecutive_poll_conflicts: 3,
+            max_consecutive_auth_failures: 3,
         }
     }
 
@@ -330,6 +390,9 @@ impl CroniqRunner {
         // a fatal error so the host process can exit non-zero — see
         // #134 sub-item 1.
         let mut consecutive_conflicts: u32 = 0;
+        // Same shape for 401s, tracked separately: the two failures are
+        // independent, and a run of conflicts must not spend the auth budget.
+        let mut consecutive_auth_failures: u32 = 0;
 
         loop {
             if self.draining.load(std::sync::atomic::Ordering::Relaxed) {
@@ -368,6 +431,11 @@ impl CroniqRunner {
                 &poll_result,
                 &mut consecutive_conflicts,
                 self.max_consecutive_poll_conflicts,
+            );
+            let auth_action = update_auth_streak(
+                &poll_result,
+                &mut consecutive_auth_failures,
+                self.max_consecutive_auth_failures,
             );
             match poll_result {
                 Ok(resp) => {
@@ -587,6 +655,27 @@ impl CroniqRunner {
                     );
                     return Err(e);
                 }
+                Err(e) if auth_action == PollLoopAction::BailOut => {
+                    tracing::error!(
+                        runner_id = %self.runner_id,
+                        consecutive = consecutive_auth_failures,
+                        max = self.max_consecutive_auth_failures,
+                        "fatal: server returned 401 Unauthorized on poll repeatedly — the API \
+                         key was rejected. It may have been revoked, or its rotation grace \
+                         window may have elapsed. Restart the runner with the current key."
+                    );
+                    return Err(e);
+                }
+                Err(crate::client::ClientError::Unauthorized { .. }) => {
+                    tracing::warn!(
+                        runner_id = %self.runner_id,
+                        consecutive = consecutive_auth_failures,
+                        max = self.max_consecutive_auth_failures,
+                        delay_ms = self.poll_retry_delay.as_millis() as u64,
+                        "poll returned 401 Unauthorized — the API key was rejected; will retry"
+                    );
+                    tokio::time::sleep(self.poll_retry_delay).await;
+                }
                 Err(crate::client::ClientError::PollInstanceConflict { .. }) => {
                     tracing::warn!(
                         runner_id = %self.runner_id,
@@ -637,6 +726,12 @@ mod tests {
         Err(ClientError::WorkOwnershipDenied {
             endpoint: "/v1/work/poll",
             body: "runner_id is owned by another credential".into(),
+        })
+    }
+    fn unauthorized() -> Result<PollResponse, ClientError> {
+        Err(ClientError::Unauthorized {
+            endpoint: "/v1/work/poll",
+            body: "unauthorized".into(),
         })
     }
 
@@ -780,5 +875,73 @@ mod tests {
         let (status, error, _) = classify_join(Ok(Err(HandlerError::msg("boom"))), 7);
         assert_eq!(status, "failure");
         assert_eq!(error.as_deref(), Some("boom"));
+    }
+
+    // ─── 401 budget (issue #473) ─────────────────────────────────────────
+
+    #[test]
+    fn a_single_unauthorized_is_survivable() {
+        // Key rotation hands over through an expiry window; bailing on the
+        // first 401 would turn a narrow race around that into an outage.
+        let mut streak = 0;
+        assert_eq!(
+            update_auth_streak(&unauthorized(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(streak, 1);
+    }
+
+    #[test]
+    fn consecutive_unauthorized_bails_at_the_threshold() {
+        let mut streak = 0;
+        assert_eq!(
+            update_auth_streak(&unauthorized(), &mut streak, 2),
+            PollLoopAction::Continue
+        );
+        assert_eq!(
+            update_auth_streak(&unauthorized(), &mut streak, 2),
+            PollLoopAction::BailOut,
+            "a streak of 401s is a credential that is gone, not a blip"
+        );
+        assert_eq!(streak, 2);
+    }
+
+    #[test]
+    fn a_successful_poll_clears_the_auth_streak() {
+        let mut streak = 2;
+        assert_eq!(
+            update_auth_streak(&ok(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(streak, 0);
+    }
+
+    #[test]
+    fn an_unrelated_error_clears_the_auth_streak() {
+        // A 503 says nothing about whether the credential is valid. Counting
+        // it would make an unwell server look like a revoked key.
+        let mut streak = 2;
+        assert_eq!(
+            update_auth_streak(&server_error(), &mut streak, 3),
+            PollLoopAction::Continue
+        );
+        assert_eq!(streak, 0);
+    }
+
+    #[test]
+    fn the_two_budgets_do_not_share_a_counter() {
+        // A run of 409s must not spend the auth budget, or a duplicate
+        // deployment would be reported as an authentication failure.
+        let mut auth = 0;
+        let mut conflicts = 0;
+        for _ in 0..5 {
+            update_auth_streak(&conflict(), &mut auth, 2);
+            update_conflict_streak(&unauthorized(), &mut conflicts, 2);
+        }
+        assert_eq!(auth, 0, "conflicts must not count against the auth budget");
+        assert_eq!(
+            conflicts, 0,
+            "401s must not count against the conflict budget"
+        );
     }
 }

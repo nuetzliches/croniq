@@ -5,10 +5,12 @@ import { anySignal } from './abort.js';
 import {
   CroniqClient,
   HttpError,
+  AuthFailedError,
   PollInstanceConflictError,
   RunnerOwnershipDeniedError,
   isInstanceConflict,
   isOwnershipDenied,
+  isUnauthorized,
 } from './client.js';
 import { sleep } from './deferred.js';
 import { ExecutionDispatcher } from './dispatcher.js';
@@ -177,6 +179,10 @@ export class CroniqRunner {
     // Consecutive 409 Conflict responses on poll. Reset by a successful poll
     // or by any non-409 failure — see `maxConsecutivePollConflicts`.
     let consecutiveConflicts = 0;
+    // Consecutive 401s, tracked separately: a run of conflicts must not
+    // spend the auth budget, or a duplicate deployment would be reported
+    // as an authentication failure.
+    let consecutiveAuthFailures = 0;
 
     while (!signal.aborted) {
       // Control-slot polling (issue #176): even at capacity we still poll
@@ -212,6 +218,38 @@ export class CroniqRunner {
           );
           throw new RunnerOwnershipDeniedError(this.#runnerId!);
         }
+        // A 401 says the key was rejected, and the client never re-reads
+        // it, so every later poll presents the same dead credential.
+        // Budgeted rather than fatal at once: rotation hands over through an
+        // expiry window (server issue #471) and a race around it should not
+        // kill a healthy runner (issue #473).
+        if (isUnauthorized(err)) {
+          consecutiveAuthFailures += 1;
+          if (consecutiveAuthFailures >= this.#options.maxConsecutiveAuthFailures) {
+            this.#logger.error(
+              `fatal: poll refused with 401 Unauthorized ${consecutiveAuthFailures} times in ` +
+                'a row — the API key was rejected. It may have been revoked, or its rotation ' +
+                'grace window may have elapsed. Restart the runner with the current key',
+              { runner_id: this.#runnerId! },
+            );
+            throw new AuthFailedError(consecutiveAuthFailures);
+          }
+          this.#logger.warn(
+            `poll returned 401 Unauthorized (${consecutiveAuthFailures}/` +
+              `${this.#options.maxConsecutiveAuthFailures}) — the API key was rejected; ` +
+              `retrying after ${this.#options.pollRetryDelayMs}ms`,
+            { runner_id: this.#runnerId! },
+          );
+          try {
+            await sleep(this.#options.pollRetryDelayMs, signal);
+          } catch {
+            return;
+          }
+          continue;
+        }
+        // Anything that is not a 401 clears the auth budget: a 5xx or a
+        // timeout says nothing about whether the credential is valid.
+        consecutiveAuthFailures = 0;
         // A 409 means a newer instance has taken this runner_id over
         // (fencing, issue #374). One is transient — the deposed instance may
         // win it back — so we back off and retry. A streak of them is a

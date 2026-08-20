@@ -10,6 +10,7 @@ from collections.abc import Callable
 import httpx
 
 from croniq_runner import (
+    AuthFailedError,
     HandlerError,
     PollInstanceConflictError,
     Runner,
@@ -320,6 +321,131 @@ async def test_runner_stops_after_consecutive_poll_409s() -> None:
         raise AssertionError("expected PollInstanceConflictError")
 
     assert polls == 3, f"expected exactly 3 polls (the configured ceiling), got {polls}"
+
+
+async def test_runner_survives_a_single_poll_401() -> None:
+    """One 401 must not be fatal.
+
+    Rotation hands over by installing the new key and giving the old one an
+    expiry (server issue #471). A runner that died on a single 401 would turn
+    a narrow race around that handover into an outage.
+    """
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            polls += 1
+            if polls == 1:
+                return httpx.Response(401, json={"error": "unauthorized"})
+            return httpx.Response(200, json={"work": [], "cancel": []})
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=20,
+        drain_timeout_ms=500,
+        runner_id="r-rotating",
+        max_consecutive_auth_failures=3,
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.2)
+    runner.request_drain()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert polls >= 2, f"expected the runner to poll again after the 401, got {polls}"
+
+
+async def test_runner_stops_after_consecutive_poll_401s() -> None:
+    """A streak of 401s is a credential that is gone.
+
+    The key is read once and never re-read, so retrying presents the same dead
+    credential forever: the process stayed up, looked healthy, did nothing,
+    and never exited non-zero, so nothing ever restarted it (issue #473).
+    """
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            polls += 1
+            return httpx.Response(401, json={"error": "unauthorized"})
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=20,
+        drain_timeout_ms=500,
+        runner_id="r-revoked",
+        max_consecutive_auth_failures=3,
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    try:
+        await asyncio.wait_for(runner.run(), timeout=2.0)
+    except AuthFailedError as exc:
+        assert exc.consecutive_count == 3
+        assert "Restart the runner" in str(exc)
+    else:
+        raise AssertionError("expected AuthFailedError")
+
+    assert polls == 3, f"expected exactly 3 polls (the configured ceiling), got {polls}"
+
+
+async def test_auth_streak_resets_on_non_401() -> None:
+    """A 500 says nothing about whether the credential is valid."""
+    polls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if req.url.path == "/v1/work/poll":
+            polls += 1
+            # 401, 500, 401, … — never two 401s in a row, so a ceiling of 2
+            # must not trip.
+            if polls % 2 == 1:
+                return httpx.Response(401, json={"error": "unauthorized"})
+            return httpx.Response(500, json={"error": "boom"})
+        return httpx.Response(404)
+
+    options = RunnerOptions(
+        server_url="https://test.invalid",
+        api_key="testkey",
+        poll_timeout_ms=500,
+        poll_retry_delay_ms=20,
+        drain_timeout_ms=500,
+        runner_id="r-flaky",
+        max_consecutive_auth_failures=2,
+    )
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(base_url=options.server_url, transport=transport)
+    runner = Runner(options, client=CroniqClient(options, http=http))
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.sleep(0.3)
+    runner.request_drain()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert polls >= 4, f"the runner must have kept polling, got {polls}"
+
+
+def test_max_consecutive_auth_failures_rejects_zero() -> None:
+    """0 would make the runner exit on its first 401 — refuse it up front."""
+    try:
+        RunnerOptions(server_url="https://test.invalid", max_consecutive_auth_failures=0)
+    except ValueError as exc:
+        assert "max_consecutive_auth_failures" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 async def test_poll_conflict_streak_resets_on_non_409() -> None:

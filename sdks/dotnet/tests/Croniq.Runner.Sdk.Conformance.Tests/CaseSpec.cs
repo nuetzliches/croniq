@@ -36,6 +36,7 @@ public sealed class RunnerConfigSpec
     public int? PollRetryDelayMs { get; set; }
     public int? CapacityBackoffMs { get; set; }
     public int? MaxConsecutivePollConflicts { get; set; }
+    public int? MaxConsecutiveAuthFailures { get; set; }
 }
 
 public sealed class HandlerSpec

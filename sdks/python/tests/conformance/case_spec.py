@@ -110,6 +110,7 @@ class RunnerConfigSpec:
     poll_retry_delay_ms: int | None = None
     capacity_backoff_ms: int | None = None
     max_consecutive_poll_conflicts: int | None = None
+    max_consecutive_auth_failures: int | None = None
 
 
 @dataclass(slots=True)
@@ -171,6 +172,7 @@ _RUNNER_CONFIG_KEYS = frozenset(
         "poll_retry_delay_ms",
         "capacity_backoff_ms",
         "max_consecutive_poll_conflicts",
+        "max_consecutive_auth_failures",
     }
 )
 _HANDLER_KEYS = frozenset(
@@ -259,6 +261,7 @@ def _to_runner_config(d: dict[str, Any]) -> RunnerConfigSpec:
         poll_retry_delay_ms=d.get("poll_retry_delay_ms"),
         capacity_backoff_ms=d.get("capacity_backoff_ms"),
         max_consecutive_poll_conflicts=d.get("max_consecutive_poll_conflicts"),
+        max_consecutive_auth_failures=d.get("max_consecutive_auth_failures"),
     )
 
 

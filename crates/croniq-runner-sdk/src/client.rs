@@ -38,18 +38,39 @@ pub enum ClientError {
         endpoint: &'static str,
         body: String,
     },
+
+    /// The server returned `401 Unauthorized` — the API key was rejected.
+    ///
+    /// Lifted out of [`ClientError::Server`] because retrying cannot clear
+    /// it: the credential is read once at construction and never re-read, so
+    /// every subsequent request presents the same rejected key (issue #473).
+    /// Not fatal on the first occurrence the way a `403` is — key rotation
+    /// hands over through an expiry window (issue #471), and a narrow race
+    /// around that handover should not take a healthy runner down — but a
+    /// streak of them is a credential that is simply gone.
+    #[error(
+        "unauthorized on {endpoint} — the API key was rejected. It may have been revoked, \
+         or its rotation grace window may have elapsed. Restart the runner with the \
+         current key: {body}"
+    )]
+    Unauthorized {
+        endpoint: &'static str,
+        body: String,
+    },
 }
 
 /// Map a non-2xx response from a work endpoint to a [`ClientError`].
 ///
-/// `403` is lifted out of the generic [`ClientError::Server`] bucket so
-/// callers can distinguish "operator must intervene" from "transient" —
-/// every other status stays transient.
+/// `403` and `401` are lifted out of the generic [`ClientError::Server`]
+/// bucket so callers can tell "an operator must intervene" from "transient".
+/// The two differ in how fast the run loop gives up: a `403` is fatal at
+/// once, a `401` is budgeted (see `runner::update_auth_streak`). Every other
+/// status stays transient.
 fn work_endpoint_error(endpoint: &'static str, status: u16, body: String) -> ClientError {
-    if status == 403 {
-        ClientError::WorkOwnershipDenied { endpoint, body }
-    } else {
-        ClientError::Server { status, body }
+    match status {
+        403 => ClientError::WorkOwnershipDenied { endpoint, body },
+        401 => ClientError::Unauthorized { endpoint, body },
+        _ => ClientError::Server { status, body },
     }
 }
 
@@ -316,6 +337,24 @@ mod tests {
         ));
         let rendered = err.to_string();
         assert!(rendered.contains("DELETE /v1/runners/{id}"), "{rendered}");
+    }
+
+    #[test]
+    fn work_endpoint_error_lifts_401_out_of_the_transient_bucket() {
+        // The SDK reads its key once and never re-reads it, so a rejected
+        // credential cannot fix itself — treating 401 as retryable is what
+        // left runners spinning forever (issue #473).
+        let err = work_endpoint_error("/v1/work/poll", 401, "unauthorized".into());
+        assert!(matches!(
+            err,
+            ClientError::Unauthorized {
+                endpoint: "/v1/work/poll",
+                ..
+            }
+        ));
+        let rendered = err.to_string();
+        assert!(rendered.contains("revoked"), "{rendered}");
+        assert!(rendered.contains("Restart the runner"), "{rendered}");
     }
 
     #[test]

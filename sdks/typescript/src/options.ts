@@ -108,6 +108,20 @@ export interface CroniqRunnerOptions {
    */
   maxConsecutivePollConflicts?: number;
 
+  /**
+   * How many consecutive `401 Unauthorized` responses from
+   * `POST /v1/work/poll` the runner tolerates before `run()` rejects with an
+   * `AuthFailedError`. Default 3, range [1, 100].
+   *
+   * The API key is read once and never re-read, so a rejected credential
+   * cannot fix itself; retrying only produces an idle-looking process that
+   * never exits. Not fatal on the first 401 — rotation hands over through an
+   * expiry window (server issue #471) and a race around it should not kill a
+   * healthy runner. The counter resets on a successful poll and on any other
+   * failure: a 5xx says nothing about whether the key is valid.
+   */
+  maxConsecutiveAuthFailures?: number;
+
   /** Streaming log-writer tunables. */
   logWriter?: LogWriterOptions;
 
@@ -132,6 +146,7 @@ export interface ResolvedRunnerOptions {
   pollRetryDelayMs: number;
   capacityBackoffMs: number;
   maxConsecutivePollConflicts: number;
+  maxConsecutiveAuthFailures: number;
   logWriter: ResolvedLogWriterOptions;
   logger: Logger;
 }
@@ -177,6 +192,17 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     );
   }
 
+  const maxConsecutiveAuthFailures = input.maxConsecutiveAuthFailures ?? 3;
+  if (
+    !Number.isInteger(maxConsecutiveAuthFailures) ||
+    maxConsecutiveAuthFailures < 1 ||
+    maxConsecutiveAuthFailures > 100
+  ) {
+    throw new RangeError(
+      `CroniqRunnerOptions.maxConsecutiveAuthFailures must be an integer in [1, 100], got ${maxConsecutiveAuthFailures}`,
+    );
+  }
+
   const logWriter: ResolvedLogWriterOptions = {
     channelCapacity: input.logWriter?.channelCapacity ?? DEFAULT_LOG_WRITER.channelCapacity,
     batchSizeThreshold: input.logWriter?.batchSizeThreshold ?? DEFAULT_LOG_WRITER.batchSizeThreshold,
@@ -202,6 +228,7 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     pollRetryDelayMs: input.pollRetryDelayMs ?? 5_000,
     capacityBackoffMs: input.capacityBackoffMs ?? 500,
     maxConsecutivePollConflicts,
+    maxConsecutiveAuthFailures,
     logWriter,
     logger,
   };

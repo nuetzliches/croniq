@@ -61,4 +61,15 @@ public class CroniqHttpException extends IOException {
     public boolean isInstanceConflict() {
         return statusCode == 409;
     }
+
+    /**
+     * True when the server rejected this runner's API key — {@code 401} on a work
+     * endpoint. The credential is read once, when the client is built, and never
+     * re-read, so retrying presents the same dead key. Transient on its own —
+     * rotation hands over through an expiry window (server issue #471) — but a
+     * streak of them is fatal, see {@link CroniqAuthFailedException}.
+     */
+    public boolean isUnauthorized() {
+        return statusCode == 401;
+    }
 }

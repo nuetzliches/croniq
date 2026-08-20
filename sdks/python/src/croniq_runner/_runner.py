@@ -20,12 +20,14 @@ from croniq_runner._context import (
     _parse_timeout,
 )
 from croniq_runner._errors import (
+    AuthFailedError,
     HandlerError,
     NoHandlerRegisteredError,
     PollInstanceConflictError,
     RunnerOwnershipDeniedError,
     is_instance_conflict,
     is_ownership_denied,
+    is_unauthorized,
 )
 from croniq_runner._identifiers import (
     is_safe_execution_id,
@@ -191,6 +193,10 @@ class Runner:
         # poll or by any non-409 failure — see
         # RunnerOptions.max_consecutive_poll_conflicts.
         consecutive_conflicts = 0
+        # Consecutive 401s, tracked separately: a run of conflicts must not
+        # spend the auth budget, or a duplicate deployment would be reported
+        # as an authentication failure.
+        consecutive_auth_failures = 0
         while not self._drain_event.is_set():
             # Control-slot polling (issue #176): even at capacity we still
             # poll so the server can deliver cancels via PollResponse.cancel.
@@ -224,6 +230,35 @@ class Runner:
                         extra={"runner_id": self._runner_id or ""},
                     )
                     raise RunnerOwnershipDeniedError(self._runner_id or "") from exc
+                # A 401 says the key was rejected, and the client never
+                # re-reads it, so every later poll presents the same dead
+                # credential. Budgeted rather than fatal at once: rotation
+                # hands over through an expiry window (server issue #471) and
+                # a race around it should not kill a healthy runner (#473).
+                if is_unauthorized(exc):
+                    consecutive_auth_failures += 1
+                    if consecutive_auth_failures >= opts.max_consecutive_auth_failures:
+                        _log.error(
+                            "fatal: poll refused with 401 Unauthorized %d times in a row — "
+                            "the API key was rejected. It may have been revoked, or its "
+                            "rotation grace window may have elapsed. Restart the runner "
+                            "with the current key",
+                            consecutive_auth_failures,
+                            extra={"runner_id": self._runner_id or ""},
+                        )
+                        raise AuthFailedError(consecutive_auth_failures) from exc
+                    _log.warning(
+                        "poll returned 401 Unauthorized (%d/%d) — the API key was rejected; "
+                        "retrying after %dms",
+                        consecutive_auth_failures,
+                        opts.max_consecutive_auth_failures,
+                        opts.poll_retry_delay_ms,
+                    )
+                    await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
+                    continue
+                # Anything that is not a 401 clears the auth budget: a 5xx or
+                # a timeout says nothing about whether the credential is valid.
+                consecutive_auth_failures = 0
                 # A 409 means a newer instance has taken this runner_id over
                 # (fencing, issue #374). One is transient — the deposed
                 # instance may win it back — so we back off and retry. A

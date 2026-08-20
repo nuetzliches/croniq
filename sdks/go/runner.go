@@ -26,6 +26,11 @@ const (
 	// 409 Conflict responses the poll loop tolerates before giving up.
 	// See [Options.MaxConsecutivePollConflicts].
 	DefaultMaxConsecutivePollConflicts = 3
+
+	// DefaultMaxConsecutiveAuthFailures caps how many consecutive 401
+	// Unauthorized responses the runner tolerates before giving up.
+	// See [Options.MaxConsecutiveAuthFailures].
+	DefaultMaxConsecutiveAuthFailures = 3
 )
 
 // Options carries all runner-level configuration. Construct via
@@ -58,6 +63,16 @@ type Options struct {
 	// [DefaultMaxConsecutivePollConflicts]; set via
 	// [WithMaxConsecutivePollConflicts].
 	MaxConsecutivePollConflicts int
+
+	// MaxConsecutiveAuthFailures caps the streak of consecutive 401
+	// Unauthorized responses tolerated before [Runner.Run] returns an
+	// [AuthFailedError]. The API key is read once and never re-read, so a
+	// rejected credential cannot fix itself; retrying only produces an
+	// idle-looking process that never exits. Reset by any successful poll
+	// and by any other error — a 5xx says nothing about whether the key is
+	// valid. Defaults to [DefaultMaxConsecutiveAuthFailures]; set via
+	// [WithMaxConsecutiveAuthFailures].
+	MaxConsecutiveAuthFailures int
 
 	// AllowInsecureHTTP opts in to a cleartext http:// ServerURL on a
 	// non-loopback host. Off by default: such a URL is otherwise refused
@@ -137,6 +152,13 @@ func WithMaxConsecutivePollConflicts(n int) Option {
 	return func(o *Options) { o.MaxConsecutivePollConflicts = n }
 }
 
+// WithMaxConsecutiveAuthFailures sets how many consecutive 401 Unauthorized
+// responses the runner tolerates before stopping. Defaults to
+// [DefaultMaxConsecutiveAuthFailures].
+func WithMaxConsecutiveAuthFailures(n int) Option {
+	return func(o *Options) { o.MaxConsecutiveAuthFailures = n }
+}
+
 // WithHTTPClient lets callers inject a fully-configured *Client (for
 // custom transports, proxies, mTLS, recording, …).
 func WithHTTPClient(c *Client) Option { return func(o *Options) { o.Client = c } }
@@ -191,6 +213,7 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 		CapacityBackoff: DefaultCapacityBackoff,
 
 		MaxConsecutivePollConflicts: DefaultMaxConsecutivePollConflicts,
+		MaxConsecutiveAuthFailures:  DefaultMaxConsecutiveAuthFailures,
 	}
 	for _, opt := range opts {
 		opt(&o)
@@ -200,6 +223,9 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 	// first 409. Negative values are meaningless for the same reason.
 	if o.MaxConsecutivePollConflicts <= 0 {
 		o.MaxConsecutivePollConflicts = DefaultMaxConsecutivePollConflicts
+	}
+	if o.MaxConsecutiveAuthFailures <= 0 {
+		o.MaxConsecutiveAuthFailures = DefaultMaxConsecutiveAuthFailures
 	}
 
 	client := o.Client
@@ -299,6 +325,10 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 	// Consecutive 409 Conflict responses on poll. Reset by a successful
 	// poll or by any non-409 failure — see MaxConsecutivePollConflicts.
 	consecutiveConflicts := 0
+	// Consecutive 401s, tracked separately: a run of conflicts must not
+	// spend the auth budget, or a duplicate deployment would be reported as
+	// an authentication failure.
+	consecutiveAuthFailures := 0
 
 	for {
 		if ctx.Err() != nil {
@@ -351,6 +381,47 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 					Body:     body,
 				}
 			}
+			// A 401 says the key was rejected, and the client never
+			// re-reads it, so every later poll presents the same dead
+			// credential. Budgeted rather than fatal at once: rotation
+			// hands over through an expiry window (server issue #471) and a
+			// race around it should not kill a healthy runner (issue #473).
+			if isUnauthorized(err) {
+				consecutiveAuthFailures++
+				if consecutiveAuthFailures >= r.opts.MaxConsecutiveAuthFailures {
+					slog.ErrorContext(ctx, "fatal: poll refused with 401 Unauthorized on every attempt — the API key was rejected; it may have been revoked or its rotation grace window elapsed. Restart the runner with the current key",
+						"runner_id", r.opts.RunnerID,
+						"consecutive", consecutiveAuthFailures,
+						"error", err,
+					)
+					var se *ServerError
+					body := ""
+					if errors.As(err, &se) {
+						body = se.Body
+					}
+					return &AuthFailedError{
+						RunnerID:         r.opts.RunnerID,
+						Endpoint:         "/v1/work/poll",
+						ConsecutiveCount: consecutiveAuthFailures,
+						Body:             body,
+					}
+				}
+				slog.WarnContext(ctx, "poll returned 401 Unauthorized — the API key was rejected; retrying",
+					"runner_id", r.opts.RunnerID,
+					"consecutive", consecutiveAuthFailures,
+					"max_consecutive", r.opts.MaxConsecutiveAuthFailures,
+					"retry_after", r.opts.PollRetryDelay,
+				)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(r.opts.PollRetryDelay):
+					continue
+				}
+			}
+			// Anything that is not a 401 clears the auth budget: a 5xx or a
+			// timeout says nothing about whether the credential is valid.
+			consecutiveAuthFailures = 0
 			// A 409 means a newer instance has taken this runner_id over
 			// (fencing, issue #374). One is transient — the deposed
 			// instance may win it back — so we back off and retry. A

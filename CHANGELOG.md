@@ -8,6 +8,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Runner SDKs budget consecutive authentication failures
+  ([#473](https://github.com/nuetzliches/croniq/issues/473)).** All six SDKs —
+  Rust, Go, Python, TypeScript, Java, .NET — gained a
+  `max_consecutive_auth_failures` knob (default `3`) and a dedicated fatal
+  error for a run of `401 Unauthorized` responses on `POST /v1/work/poll`.
+
+  **Behaviour change.** A `401` was classified as transient, so a runner whose
+  key was revoked retried it every poll interval forever. The credential is
+  read once, at construction, and never re-read, so retrying could not clear
+  it: the process stayed up, looked healthy, did nothing, and never exited
+  non-zero — which meant no supervisor ever restarted it, and restarting is
+  exactly what would have picked up the new key. That is the gap the rotation
+  grace window of [#472](https://github.com/nuetzliches/croniq/pull/472)
+  papered over rather than closed: the window buys propagation time, but at
+  its end the same endless loop began.
+
+  Unlike the `403` of #437, the first `401` is not fatal. Rotation hands over
+  by installing the new key and giving the old one an expiry (#471), so dying
+  on a single rejection would turn a narrow race around that handover into an
+  outage. A streak of them is a credential that is simply gone.
+
+  New conformance case `17-poll-401-auth-ceiling.yaml`, green in all five
+  runner bindings, plus `max_consecutive_auth_failures` in the case schema.
+
 - **The CLI can authenticate, and manage credentials
   ([#475](https://github.com/nuetzliches/croniq/issues/475)).** `--api-key`
   (env `CRONIQ_API_KEY`) and `--url` (env `CRONIQ_URL`) are global arguments,
