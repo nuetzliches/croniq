@@ -331,7 +331,7 @@ pub fn rotation_grace_from_env(raw: Option<&str>) -> Result<Duration, String> {
         tracing::warn!(
             grace_secs = secs,
             "{ROTATION_GRACE_VAR} is longer than 24h — a rotated-out API key stays usable \
-             for that entire window. Check the unit ('<n>[s|m|h]', bare numbers are seconds)."
+             for that entire window. Check the unit ('<n>[s|m|h|d]', bare numbers are seconds)."
         );
     }
     Ok(Duration::seconds(secs as i64))
