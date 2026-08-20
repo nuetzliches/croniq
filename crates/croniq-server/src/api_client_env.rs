@@ -334,7 +334,20 @@ pub fn rotation_grace_from_env(raw: Option<&str>) -> Result<Duration, String> {
              for that entire window. Check the unit ('<n>[s|m|h|d]', bare numbers are seconds)."
         );
     }
-    Ok(Duration::seconds(secs as i64))
+    // `Duration::seconds` panics beyond its representable range, and a bare
+    // `secs as i64` would wrap a huge value negative first — turning a mistyped
+    // grace into either a boot panic or the exact opposite of what was asked
+    // for: `now + <negative>` is in the past, so every superseded key would be
+    // revoked on the spot. Report it instead.
+    i64::try_from(secs)
+        .ok()
+        .and_then(Duration::try_seconds)
+        .ok_or_else(|| {
+            format!(
+                "{ROTATION_GRACE_VAR}: {secs} seconds is beyond the longest representable \
+                 grace window"
+            )
+        })
 }
 
 // ─── Reconciliation ──────────────────────────────────────────────────────────
@@ -1186,5 +1199,28 @@ mod tests {
         );
         let err = rotation_grace_from_env(Some("15min")).unwrap_err();
         assert!(err.contains(ROTATION_GRACE_VAR), "{err}");
+    }
+
+    #[test]
+    fn grace_reports_an_out_of_range_value_instead_of_panicking() {
+        // Reachable since the grace accepts `d`: this parses to a u64 second
+        // count that chrono cannot represent. `Duration::seconds` would panic
+        // here, taking the boot down with a backtrace instead of a message.
+        let err = rotation_grace_from_env(Some("200000000000d")).unwrap_err();
+        assert!(err.contains(ROTATION_GRACE_VAR), "{err}");
+        assert!(err.contains("representable"), "{err}");
+    }
+
+    #[test]
+    fn grace_never_resolves_to_a_negative_window() {
+        // A value above i64::MAX seconds used to wrap negative, and a negative
+        // grace means `now + grace` is in the past — an instant revoke of every
+        // superseded key, which is the opposite of what the knob is for.
+        for raw in ["18446744073709551615", "9223372036854775808"] {
+            match rotation_grace_from_env(Some(raw)) {
+                Ok(d) => panic!("{raw} should be rejected, got {d}"),
+                Err(e) => assert!(e.contains(ROTATION_GRACE_VAR), "{e}"),
+            }
+        }
     }
 }

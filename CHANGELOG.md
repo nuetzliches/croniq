@@ -239,6 +239,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   references it. One that has a letter is still left to dead-letter retention,
   so the documented split is unchanged where it actually applied.
 
+- **An out-of-range `CRONIQ_API_KEY_ROTATION_GRACE` is reported, not acted on
+  ([#482](https://github.com/nuetzliches/croniq/issues/482)).** The parsed
+  second count reached `chrono::Duration::seconds` through a bare `as i64`
+  cast. Above `i64::MAX` seconds that wrapped negative, and a negative grace
+  makes `now + grace` a moment in the past — so a mistyped value produced the
+  exact opposite of the knob's purpose, revoking every superseded key on the
+  spot. Between the two limits it panicked at boot instead. Both are now a
+  boot error naming the variable.
+
 - **One duration grammar for every knob
   ([#486](https://github.com/nuetzliches/croniq/issues/486)).**
   `CRONIQ_API_KEY_ROTATION_GRACE=1d` was a fatal boot error while
