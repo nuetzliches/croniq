@@ -643,7 +643,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/api-clients/{id}/tokens",
             post(auth_endpoints::handle_issue_client_token),
         )
-        .route("/v1/api-keys", post(auth_endpoints::handle_create_api_key))
+        .route(
+            "/v1/api-keys",
+            get(auth_endpoints::handle_list_api_keys).post(auth_endpoints::handle_create_api_key),
+        )
         .route(
             "/v1/api-keys/{id}",
             delete(auth_endpoints::handle_revoke_api_key),

@@ -6,6 +6,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /v1/api-keys?client_id=…` — list a client's keys
+  ([#471](https://github.com/nuetzliches/croniq/issues/471)).** Metadata only
+  (`key_id`, `key_prefix`, `created_at`, `expires_at`, `revoked_at`); the key
+  hash is never returned. Revoked and expired rows are included, because the
+  question the endpoint answers is "which credentials exist and which are
+  still live?".
+
+  There was previously no way to enumerate keys at all: the raw value is shown
+  once at creation and the `key_id` needed to revoke one was only available in
+  that same response. An API-only deployment could therefore neither audit its
+  credentials nor revoke a specific key after the fact. Requires
+  `api-keys:admin`, bounded by the caller's own scopes; an unknown `client_id`
+  is `404` rather than an empty list.
+
+- **`CRONIQ_API_KEY_ROTATION_GRACE` — a handover window on key rotation
+  ([#471](https://github.com/nuetzliches/croniq/issues/471)).** When
+  `CRONIQ_INIT_API_KEY_RECONCILE=1` rotates the `default` client's key, the
+  superseded key is now stamped with `expires_at = now + grace` (default
+  `15m`) instead of being revoked outright. It keeps authenticating until the
+  deadline, which is visible on the new listing endpoint.
+
+  **Behaviour change.** A boot rotation previously revoked every active key the
+  instant the new one was installed. That is a hard cut for every credential
+  holder outside the server process: a runner in another container still has
+  the old value in memory, and the runner SDK classifies `401` as transient
+  (`ClientError::Server`), so it retries every few seconds indefinitely rather
+  than exiting for its orchestrator to restart it. Instant revocation did not
+  produce a brief blip — it produced a runner that never recovered on its own.
+  The grace window covers a Kubernetes secret-volume refresh plus a consumer
+  rollout.
+
+  Set `CRONIQ_API_KEY_ROTATION_GRACE=0s` to restore the previous behaviour.
+  The window is deliberately *not* the answer to a leaked key: to end one
+  immediately, take its `key_id` from `GET /v1/api-keys` and call
+  `DELETE /v1/api-keys/{id}`, or rotate with the grace set to `0s`. A
+  malformed duration fails the boot rather than falling back to a window the
+  operator did not choose, and anything over 24h logs a warning.
+
+  New store method `AuthStore::set_api_key_expiry` backs this (SQLite,
+  PostgreSQL, and the Postgres actor handle). It is a plain setter, like
+  `revoke_api_key`; the rotation path owns the rule that an existing, earlier
+  deadline is never pushed further out, so rotating repeatedly inside one
+  window cannot keep the oldest key alive.
+
 ## [0.33.0] - 2026-08-19
 
 ### Added

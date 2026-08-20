@@ -879,6 +879,7 @@ mod tests {
                 find_api_key_by_hash(key_hash: &str) -> Option<ApiKey>;
                 revoke_api_key(key_id: &str, now: DateTime<Utc>) -> ();
                 list_api_keys(client_id: &str) -> Vec<ApiKey>;
+                set_api_key_expiry(key_id: &str, expires_at: DateTime<Utc>) -> ();
                 get_credentials(username: &str) -> Option<PasswordCredential>;
                 upsert_credentials(cred: &PasswordCredential) -> ();
                 create_refresh_token(token: &RefreshToken) -> ();

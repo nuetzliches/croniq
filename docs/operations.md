@@ -512,6 +512,70 @@ flat shape (`{enabled, provider_name, login_url}`) and is unaffected
 by `auth.password.enabled` — keep using it if you have an external
 probe that only cares about the SSO half.
 
+### Rotating an API key without downtime
+
+`CRONIQ_INIT_API_KEY` + `CRONIQ_INIT_API_KEY_RECONCILE=1` rotate the
+`default` client's key from configuration. Two things are worth knowing
+before relying on it.
+
+**The direct env var only rotates at boot.** The environment of a running
+process cannot be changed from outside — setting a new value in Compose or
+a Deployment means a new container, not a new value in the old one. To
+rotate a *running* server, use `CRONIQ_INIT_API_KEY_FILE` and point it at a
+mounted secret (a Kubernetes Secret volume, a Vault/Infisical sidecar
+target, a bind-mounted file). That file *does* change under a live process.
+The server re-reads it on boot; support for re-reading it on `SIGHUP` and
+`POST /v1/admin/reload-config` is tracked in
+[issue #471](https://github.com/nuetzliches/croniq/issues/471).
+
+**The superseded key is retired, not revoked.** A rotation installs the new
+key and stamps the old one with `expires_at = now + CRONIQ_API_KEY_ROTATION_GRACE`
+(default `15m`). It keeps authenticating until then.
+
+That window exists because the server is not the only holder of the
+credential. A runner in another container has the old value in memory, and
+the runner SDK treats `401` as a transient error: it retries every few
+seconds indefinitely rather than exiting for its orchestrator to restart it.
+Revoking instantly therefore does not produce a brief blip — it produces a
+runner that never recovers until someone restarts it by hand. The grace
+window covers the secret-volume refresh and the consumer rollout.
+
+Inspect the handover:
+
+```bash
+curl -H "Authorization: ApiKey $ADMIN_KEY" \
+  "$CRONIQ_URL/v1/api-keys?client_id=$CLIENT_ID"
+```
+
+```json
+[
+  { "key_id": "9f3…", "key_prefix": "croniq_a1b2c", "created_at": "2026-08-20T09:00:00Z" },
+  { "key_id": "1c8…", "key_prefix": "croniq_0f9e8", "created_at": "2026-05-02T11:20:00Z",
+    "expires_at": "2026-08-20T09:15:00Z" }
+]
+```
+
+The row carrying `expires_at` is the outgoing key. Once that instant passes
+it stops working; the row stays for audit.
+
+**A leaked key is a different problem.** The grace window deliberately keeps
+the old value alive, so it is the wrong tool. Either:
+
+- rotate normally, then end the old key immediately with its `key_id` from
+  the listing above:
+  ```bash
+  curl -X DELETE -H "Authorization: ApiKey $ADMIN_KEY" \
+    "$CRONIQ_URL/v1/api-keys/1c8…"
+  ```
+- or set `CRONIQ_API_KEY_ROTATION_GRACE=0s`, which restores the pre-v0.34
+  behaviour of revoking every superseded key as part of the rotation. Use
+  this where a policy requires that revocation be instant.
+
+Note that revoking a key alone does not un-leak an env-declared credential:
+if the declared value is unchanged, the next reconcile with
+`CRONIQ_INIT_API_KEY_RECONCILE=1` installs it again. Change the declared
+value first, then rotate.
+
 ### Demo-only seed flags
 
 The docker entrypoint understands two opt-in env vars for the

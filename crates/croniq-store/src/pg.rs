@@ -1467,6 +1467,20 @@ impl AuthStore for PgStore {
         Ok(())
     }
 
+    fn set_api_key_expiry(
+        &self,
+        key_id: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        db.execute(
+            "UPDATE api_keys SET expires_at = $1 WHERE key_id = $2",
+            &[&expires_at, &key_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
         let mut db = self.client.lock().unwrap();
         let rows = db
