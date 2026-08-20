@@ -6,6 +6,7 @@
 //! data dir, on the same host, and never against Postgres. Day-2 credential
 //! work has to reach a running server, wherever it lives.
 
+use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, miette};
 use serde::{Deserialize, Serialize};
 
@@ -184,6 +185,38 @@ pub fn clients_delete(remote: &Remote, client_id: &str) -> Result<()> {
 
 // ─── api-keys ────────────────────────────────────────────────────────────────
 
+/// The state to print for one key.
+///
+/// Four distinct states, and `retiring` is the whole point of the rotation
+/// grace window (#472): still working, but on a deadline. Once that deadline
+/// passes the key is *not* still retiring — the server's auth middleware has
+/// been answering `401` for it since the instant in the `EXPIRES` column, so
+/// calling it `retiring` describes a handover that is already over and invites
+/// the operator to keep waiting for something that already happened.
+fn key_state(key: &ApiKeySummary, now: DateTime<Utc>) -> &'static str {
+    if key.revoked_at.is_some() {
+        return "revoked";
+    }
+    match key.expires_at.as_deref().and_then(parse_timestamp) {
+        // Strictly-later, to match what the server actually enforces:
+        // `auth_middleware` rejects on `now > expires`, so the deadline
+        // instant itself still authenticates.
+        Some(expiry) if expiry < now => "expired",
+        Some(_) => "retiring",
+        // An `expires_at` this CLI cannot parse still means a deadline exists;
+        // reporting `active` would be the one wrong answer, so keep the
+        // deadline visible and let the EXPIRES column speak for itself.
+        None if key.expires_at.is_some() => "retiring",
+        None => "active",
+    }
+}
+
+fn parse_timestamp(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
 pub fn keys_list(remote: &Remote, client_id: &str, json: bool) -> Result<()> {
     let keys: Vec<ApiKeySummary> =
         remote.get_json(&format!("/v1/api-keys?client_id={client_id}"))?;
@@ -199,16 +232,9 @@ pub fn keys_list(remote: &Remote, client_id: &str, json: bool) -> Result<()> {
         "KEY ID", "PREFIX", "STATE", "EXPIRES"
     );
     println!("{}", "-".repeat(110));
+    let now = Utc::now();
     for k in &keys {
-        // Three distinct states, and the middle one is the whole point of the
-        // rotation grace window (#472): still working, but on a deadline.
-        let state = if k.revoked_at.is_some() {
-            "revoked"
-        } else if k.expires_at.is_some() {
-            "retiring"
-        } else {
-            "active"
-        };
+        let state = key_state(k, now);
         println!(
             "{:<38} {:<14} {:<10} {:<26} {}",
             k.key_id,
@@ -218,14 +244,19 @@ pub fn keys_list(remote: &Remote, client_id: &str, json: bool) -> Result<()> {
             k.created_at
         );
     }
-    if keys
-        .iter()
-        .any(|k| k.revoked_at.is_none() && k.expires_at.is_some())
-    {
+    let states: Vec<&str> = keys.iter().map(|k| key_state(k, now)).collect();
+    if states.contains(&"retiring") {
         println!();
         println!(
             "A 'retiring' key was replaced by a rotation and stops working at its expiry. \
              To end one now: croniq api-keys revoke <key-id>"
+        );
+    }
+    if states.contains(&"expired") {
+        println!();
+        println!(
+            "An 'expired' key's rotation grace window has already elapsed — the server \
+             rejects it with 401. The row stays for audit; nothing needs doing."
         );
     }
     Ok(())
@@ -298,6 +329,62 @@ mod tests {
             serde_json::from_str(r#"{"client_id":"c1","name":"reporting","scopes":["jobs:read"]}"#)
                 .expect("the create response shape must decode");
         assert_eq!(parsed.name, "reporting");
+    }
+
+    fn key(expires_at: Option<&str>, revoked_at: Option<&str>) -> ApiKeySummary {
+        ApiKeySummary {
+            key_id: "k1".into(),
+            key_prefix: "croniq_ab".into(),
+            created_at: "2026-08-20T00:00:00Z".into(),
+            expires_at: expires_at.map(str::to_string),
+            revoked_at: revoked_at.map(str::to_string),
+        }
+    }
+
+    fn at(raw: &str) -> DateTime<Utc> {
+        parse_timestamp(raw).expect("test timestamp must parse")
+    }
+
+    #[test]
+    fn an_elapsed_grace_window_reads_as_expired_not_retiring() {
+        // The bug: a key whose deadline passed hours ago was still labelled
+        // `retiring`, which reads as "works until its expiry" for a key the
+        // server has been 401-ing ever since.
+        let k = key(Some("2026-08-20T09:15:00Z"), None);
+        assert_eq!(key_state(&k, at("2026-08-20T10:00:00Z")), "expired");
+        assert_eq!(key_state(&k, at("2026-08-20T09:10:00Z")), "retiring");
+        // The deadline instant itself still works: `auth_middleware` rejects
+        // on `now > expires`, so the CLI must not call it dead a moment early.
+        assert_eq!(key_state(&k, at("2026-08-20T09:15:00Z")), "retiring");
+        assert_eq!(key_state(&k, at("2026-08-20T09:15:01Z")), "expired");
+    }
+
+    #[test]
+    fn revocation_outranks_any_expiry() {
+        let k = key(Some("2026-08-20T09:15:00Z"), Some("2026-08-20T09:01:00Z"));
+        assert_eq!(key_state(&k, at("2026-08-20T09:05:00Z")), "revoked");
+        assert_eq!(key_state(&k, at("2026-08-20T23:00:00Z")), "revoked");
+    }
+
+    #[test]
+    fn a_key_with_no_deadline_is_active() {
+        assert_eq!(
+            key_state(&key(None, None), at("2026-08-20T10:00:00Z")),
+            "active"
+        );
+    }
+
+    #[test]
+    fn an_unparsable_expiry_keeps_the_deadline_visible() {
+        // Never report `active` for a row that carries a deadline this CLI
+        // could not read — that is the one answer that would mislead.
+        assert_eq!(
+            key_state(
+                &key(Some("not-a-timestamp"), None),
+                at("2026-08-20T10:00:00Z")
+            ),
+            "retiring"
+        );
     }
 
     #[test]
