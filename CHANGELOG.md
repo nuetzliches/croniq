@@ -260,6 +260,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself, and the trailing hint explains that state instead of advising a
   revoke nobody needs.
 
+- **The `env_managed` refusal names the variable that actually declares the
+  client ([#481](https://github.com/nuetzliches/croniq/issues/481)).** Both the
+  409 body and the dashboard's hint rebuilt the name as
+  `CRONIQ_API_CLIENT_<NAME>_KEY` for every env-owned client. For `default` —
+  declared by `CRONIQ_API_KEY`, outside that namespace — the result was
+  `CRONIQ_API_CLIENT_DEFAULT_KEY`, a *second* declaration of the same client.
+  So an operator who followed the advice did not merely fail to make the edit
+  land; they armed a fatal both-declare error for the server's next boot. The
+  server now resolves the name against its live environment, which also lets it
+  name the deprecated `CRONIQ_INIT_API_KEY` alias when that is what is set.
+
 - **The retention sweep no longer scans `dead_letters` once per candidate row
   ([#485](https://github.com/nuetzliches/croniq/issues/485)).** Reaching
   unreferenced `dead` executions (#470) added a correlated

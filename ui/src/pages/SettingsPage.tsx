@@ -10,6 +10,7 @@ import {
   useIssueClientToken,
 } from '@/api/hooks'
 import type { ApiClient } from '@/api/types'
+import { MANAGED_BY_ENV, declaringKeyVar } from '@/lib/env-managed'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -305,8 +306,8 @@ export function ApiClientsTab() {
               // An env-declared client is owned by the environment: the API
               // refuses every mutation on it, so offering the buttons would
               // only produce 409s. Show why instead.
-              const envManaged = c.managed_by === 'env'
-              const envHint = `Declared by CRONIQ_API_CLIENT_${c.name.toUpperCase().replace(/-/g, '_')}_KEY — edit the environment and reload`
+              const envManaged = c.managed_by === MANAGED_BY_ENV
+              const envHint = `Declared by ${declaringKeyVar(c.name)} — edit the environment and reload`
               return (
               <div key={c.client_id} className="flex items-center gap-3 p-3 rounded-md border border-border">
                 <div className="flex-1 min-w-0">

@@ -304,6 +304,39 @@ pub fn declarations_from_env() -> Result<Vec<Declaration>, String> {
     parse_declarations(&resolve_env_vars())
 }
 
+/// The variable that declares `client_name`, for a message telling an operator
+/// what to edit.
+///
+/// Not simply the inverse of [`client_name_from_infix`]: the `default` client
+/// is declared by [`KEY_VAR`], *outside* the named-client prefix. Naming it
+/// `CRONIQ_API_CLIENT_DEFAULT_KEY` would send the operator to add a second
+/// declaration of the same client, which the boot path rejects outright — so
+/// following the advice would take the server down at its next start.
+///
+/// Consults the live environment first so the answer names the variable the
+/// operator actually wrote, including the deprecated `CRONIQ_INIT_API_KEY`
+/// alias. Falls back to the canonical spelling for a row the environment no
+/// longer declares.
+pub fn declaring_key_var(client_name: &str) -> String {
+    if let Ok(declarations) = declarations_from_env()
+        && let Some(declaration) = declarations.iter().find(|d| d.name == client_name)
+    {
+        return declaration.key_var.clone();
+    }
+    canonical_key_var(client_name)
+}
+
+/// The variable that *would* declare `client_name`, ignoring the environment.
+fn canonical_key_var(client_name: &str) -> String {
+    if client_name == DEFAULT_CLIENT_NAME {
+        return KEY_VAR.to_string();
+    }
+    format!(
+        "{CLIENT_PREFIX}{}_KEY",
+        client_name.to_ascii_uppercase().replace('-', "_")
+    )
+}
+
 fn env_truthy(v: Option<String>) -> bool {
     matches!(
         v.as_deref().map(str::trim),
@@ -1175,6 +1208,53 @@ mod tests {
         let keys = s.list_api_keys(&id).unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key_hash, hash_api_key("croniq_old"));
+    }
+
+    // ─── Variable-name reconstruction ────────────────────────────────────────
+
+    #[test]
+    fn the_default_client_maps_back_to_the_variable_that_declares_it() {
+        // The bug behind #481: the reconstruction assumed every env-managed
+        // client lives under CRONIQ_API_CLIENT_, so it named
+        // CRONIQ_API_CLIENT_DEFAULT_KEY — a *second* declaration of `default`,
+        // which parse_declarations rejects as a conflict. Following the 409's
+        // advice therefore broke the next boot.
+        assert_eq!(canonical_key_var(DEFAULT_CLIENT_NAME), KEY_VAR);
+        assert!(!canonical_key_var(DEFAULT_CLIENT_NAME).starts_with(CLIENT_PREFIX));
+    }
+
+    #[test]
+    fn a_named_client_maps_back_to_its_prefixed_variable() {
+        assert_eq!(
+            canonical_key_var("runner-poll"),
+            "CRONIQ_API_CLIENT_RUNNER_POLL_KEY"
+        );
+        assert_eq!(
+            canonical_key_var("reporting"),
+            "CRONIQ_API_CLIENT_REPORTING_KEY"
+        );
+    }
+
+    #[test]
+    fn the_reconstruction_round_trips_through_the_parser() {
+        // The refusal message is only actionable if editing the variable it
+        // names re-declares the same client. Feed each reconstructed name back
+        // through the parser and check the client comes out unchanged.
+        for name in ["default", "runner-poll", "reporting", "a1"] {
+            let var = canonical_key_var(name);
+            let mut vars = BTreeMap::new();
+            vars.insert(var.clone(), "croniq_secret".to_string());
+            if var.starts_with(CLIENT_PREFIX) {
+                vars.insert(var.replace("_KEY", "_SCOPES"), "jobs:read".to_string());
+            }
+            let declared = parse_declarations(&vars)
+                .unwrap_or_else(|e| panic!("{var} must be a valid declaration: {e}"));
+            assert_eq!(
+                declared.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+                vec![name],
+                "{var} declared the wrong client"
+            );
+        }
     }
 
     // ─── Grace parsing ───────────────────────────────────────────────────────
