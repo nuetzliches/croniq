@@ -1094,6 +1094,83 @@ pub async fn handle_issue_client_token(
     }))
 }
 
+/// One row of `GET /v1/api-keys`.
+///
+/// Deliberately not the `ApiKey` model: that carries `key_hash`, and an
+/// endpoint whose whole job is to be readable by an operator must not hand
+/// out the hash of a live credential. `key_prefix` is the first 12
+/// characters of the raw key, which is what makes a row recognisable
+/// without being usable.
+#[derive(Serialize)]
+pub struct ApiKeySummary {
+    pub key_id: String,
+    pub client_id: String,
+    pub key_prefix: String,
+    pub created_at: chrono::DateTime<Utc>,
+    /// Set on a key that a rotation retired: it keeps authenticating until
+    /// this instant (see `CRONIQ_API_KEY_ROTATION_GRACE`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<chrono::DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<chrono::DateTime<Utc>>,
+}
+
+impl From<ApiKey> for ApiKeySummary {
+    fn from(k: ApiKey) -> Self {
+        Self {
+            key_id: k.key_id,
+            client_id: k.client_id,
+            key_prefix: k.key_prefix,
+            created_at: k.created_at,
+            expires_at: k.expires_at,
+            revoked_at: k.revoked_at,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ListApiKeysQuery {
+    pub client_id: String,
+}
+
+/// `GET /v1/api-keys?client_id=…`
+///
+/// Without this there is no way to see which keys a client has: the raw
+/// value is shown once at creation and the `key_id` needed to revoke one
+/// was only ever available in that same response. That makes both auditing
+/// ("which credentials are live?") and the break-glass revoke after a
+/// rotation impossible from an API-only deployment.
+///
+/// Newest first, revoked and expired rows included — a listing that hid
+/// them would answer the audit question wrongly.
+pub async fn handle_list_api_keys(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Query(query): axum::extract::Query<ListApiKeysQuery>,
+) -> Result<Json<Vec<ApiKeySummary>>, StatusCode> {
+    require_scope(&ctx, Scope::API_KEYS_ADMIN)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // 404 on an unknown client rather than an empty list: "this client has
+    // no keys" and "you typed the id wrong" are different problems and an
+    // operator chasing a broken credential needs to tell them apart.
+    let client = store
+        .get_client(&query.client_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    // Listing a client's keys exposes how its credentials are provisioned,
+    // so it is bounded by the caller's own scopes exactly like issuing one.
+    require_grantable_scopes(&ctx, &client.scopes)?;
+
+    let keys = store
+        .list_api_keys(&query.client_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(keys.into_iter().map(ApiKeySummary::from).collect()))
+}
+
 /// `POST /v1/api-keys`
 pub async fn handle_create_api_key(
     State(state): State<Arc<ServerState>>,

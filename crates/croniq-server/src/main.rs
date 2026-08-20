@@ -14,6 +14,7 @@ use croniq_runner::AppState;
 use croniq_server::{
     CompletionProcessor, SchedulerLoop, WatchdogLoop,
     api::{ServerState, server_router},
+    duration::parse_duration_secs,
     loader::{load_file, restore_queued_executions, restore_trigger_states},
     reload,
     store::{DynStore, sqlite_store},
@@ -165,9 +166,13 @@ async fn main() -> Result<()> {
     // On an existing data dir, init has already run, so the env var was
     // previously silently ignored. We now always log whether it matches,
     // and rotate when CRONIQ_INIT_API_KEY_RECONCILE=1 is set. See #217.
+    // A rotation retires the superseded key after
+    // CRONIQ_API_KEY_ROTATION_GRACE rather than revoking it outright (#471);
+    // a malformed grace is a boot error, not a guessed window.
     {
         let init_api_key = croniq_server::env_secret::env_or_file("CRONIQ_INIT_API_KEY");
-        let inputs = croniq_server::init_api_key::ReconcileInputs::from_env_borrowed(&init_api_key);
+        let inputs = croniq_server::init_api_key::ReconcileInputs::from_env_borrowed(&init_api_key)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         croniq_server::init_api_key::reconcile(&*store, inputs)
             .context("failed to reconcile CRONIQ_INIT_API_KEY against stored API client")?;
     }
@@ -1303,32 +1308,6 @@ fn open_postgres_store(_spec: &str) -> Result<DynStore> {
     )
 }
 
-/// Parse a duration string like `"60s"`, `"2m"`, `"1h"`, or a bare integer
-/// (interpreted as seconds) into seconds. Returns an error string on malformed
-/// input rather than silently falling back, so that bad config surfaces at boot
-/// instead of becoming a 2-minute lease nobody asked for.
-fn parse_duration_secs(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    let parse = |body: &str, mult: u64, suffix: char| -> Result<u64, String> {
-        body.parse::<u64>()
-            .map_err(|_| format!("invalid duration {s:?}: cannot parse number before '{suffix}'"))
-            .and_then(|v| {
-                v.checked_mul(mult)
-                    .ok_or_else(|| format!("duration {s:?} overflows u64 seconds"))
-            })
-    };
-    if let Some(n) = s.strip_suffix('s') {
-        parse(n, 1, 's')
-    } else if let Some(n) = s.strip_suffix('m') {
-        parse(n, 60, 'm')
-    } else if let Some(n) = s.strip_suffix('h') {
-        parse(n, 3600, 'h')
-    } else {
-        s.parse::<u64>()
-            .map_err(|_| format!("invalid duration {s:?}: expected '<n>[s|m|h]' or bare seconds"))
-    }
-}
-
 #[cfg(test)]
 mod demo_bind_tests {
     use super::{DemoBind, demo_bind_verdict};
@@ -1374,28 +1353,6 @@ mod demo_bind_tests {
             demo_bind_verdict(false, false, &addr("0.0.0.0:4000")),
             DemoBind::Allowed
         );
-    }
-}
-
-#[cfg(test)]
-mod parse_duration_tests {
-    use super::parse_duration_secs;
-
-    #[test]
-    fn parses_units_and_bare_seconds() {
-        assert_eq!(parse_duration_secs("30s").unwrap(), 30);
-        assert_eq!(parse_duration_secs("2m").unwrap(), 120);
-        assert_eq!(parse_duration_secs("1h").unwrap(), 3600);
-        assert_eq!(parse_duration_secs("45").unwrap(), 45);
-        assert_eq!(parse_duration_secs("  10s  ").unwrap(), 10);
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert!(parse_duration_secs("abc").is_err());
-        assert!(parse_duration_secs("10x").is_err());
-        assert!(parse_duration_secs("ms").is_err());
-        assert!(parse_duration_secs("").is_err());
     }
 }
 

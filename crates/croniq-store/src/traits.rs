@@ -332,6 +332,22 @@ pub trait AuthStore {
     fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError>;
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError>;
+    /// Stamp an expiry on an existing key, leaving it usable until then.
+    ///
+    /// This is the soft half of rotation (issue #471): when a new key value
+    /// replaces an old one, the old key gets `expires_at = now + grace`
+    /// instead of an immediate `revoked_at`, so a consumer that has not yet
+    /// picked up the new value keeps working for the length of the grace
+    /// window. `revoke_api_key` stays the immediate kill switch for a leaked
+    /// credential.
+    ///
+    /// A plain setter, like `revoke_api_key` — it does not compare against
+    /// the expiry already stored, so a later `expires_at` *extends* the key's
+    /// life. Callers that must not extend an expiry (the rotation path is
+    /// one) check the current value first; they already hold it from
+    /// `list_api_keys`.
+    fn set_api_key_expiry(&self, key_id: &str, expires_at: DateTime<Utc>)
+    -> Result<(), StoreError>;
 
     // Password credentials
     fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError>;

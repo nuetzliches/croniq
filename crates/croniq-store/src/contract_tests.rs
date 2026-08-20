@@ -2631,3 +2631,58 @@ fn runner_identity_release_frees_the_id() {
         .unwrap();
     assert_eq!(owner, "client-b");
 }
+
+// ─── AuthStore: API-key retirement ───
+
+/// Rotation retires a superseded key by dating it rather than revoking it
+/// (issue #471). Two properties matter to callers: the key stays
+/// un-revoked (so the auth path lets it through until the deadline), and
+/// the setter is unconditional (so the *caller* owns the "never extend an
+/// existing deadline" rule — see `init_api_key::retire_superseded_keys`).
+#[test]
+fn set_api_key_expiry_dates_a_key_without_revoking_it() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .create_client(&ApiClient {
+            client_id: "c1".into(),
+            name: "default".into(),
+            scopes: vec!["admin".into()],
+            is_active: true,
+            created_at: now(),
+        })
+        .unwrap();
+    store
+        .create_api_key(&ApiKey {
+            key_id: "k1".into(),
+            client_id: "c1".into(),
+            key_hash: "hash-1".into(),
+            key_prefix: "croniq_aaaa".into(),
+            expires_at: None,
+            revoked_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+
+    let deadline = utc(2026, 3, 29, 12, 15);
+    store.set_api_key_expiry("k1", deadline).unwrap();
+
+    let key = &store.list_api_keys("c1").unwrap()[0];
+    assert_eq!(key.expires_at, Some(deadline));
+    assert!(
+        key.revoked_at.is_none(),
+        "retiring a key must not revoke it — the grace window depends on it          still authenticating"
+    );
+
+    // Unconditional setter: it moves the deadline in either direction.
+    let earlier = utc(2026, 3, 29, 12, 5);
+    store.set_api_key_expiry("k1", earlier).unwrap();
+    assert_eq!(
+        store.list_api_keys("c1").unwrap()[0].expires_at,
+        Some(earlier)
+    );
+
+    // Revocation stays available as the immediate kill switch.
+    store.revoke_api_key("k1", now()).unwrap();
+    assert!(store.list_api_keys("c1").unwrap()[0].revoked_at.is_some());
+}

@@ -965,6 +965,20 @@ impl AuthStore for SqliteStore {
         Ok(())
     }
 
+    fn set_api_key_expiry(
+        &self,
+        key_id: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE api_keys SET expires_at = ?1 WHERE key_id = ?2",
+            params![dt_to_sql(&expires_at), key_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE client_id = ?1 ORDER BY created_at DESC").map_err(map_err)?;

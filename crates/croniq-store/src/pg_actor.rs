@@ -484,6 +484,15 @@ impl AuthStore for PgStoreHandle {
         self.call(move |s| s.list_api_keys(&client_id))
     }
 
+    fn set_api_key_expiry(
+        &self,
+        key_id: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let key_id = key_id.to_owned();
+        self.call(move |s| s.set_api_key_expiry(&key_id, expires_at))
+    }
+
     fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError> {
         let username = username.to_owned();
         self.call(move |s| s.get_credentials(&username))

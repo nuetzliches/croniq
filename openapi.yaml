@@ -213,6 +213,29 @@ components:
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }
 
+    ApiKeySummary:
+      type: object
+      description: >
+        API-key metadata. Never carries the key hash or the raw value — the raw
+        key is shown once, at creation.
+      properties:
+        key_id: { type: string }
+        client_id: { type: string }
+        key_prefix:
+          type: string
+          description: "First 12 characters of the raw key, enough to recognise a row"
+        created_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          description: >
+            Present on a key a rotation retired: it authenticates until this
+            instant, then stops. Absent on a key with no deadline.
+        revoked_at:
+          type: string
+          format: date-time
+          description: "Present once the key was revoked outright"
+
     # ─── PR-A1+ Auth + Multi-User ─────────────────────────────────────────
 
     Role:
@@ -1868,6 +1891,36 @@ paths:
               schema: { $ref: "#/components/schemas/TokenResponse" }
 
   /v1/api-keys:
+    get:
+      summary: List a client's API keys
+      description: |
+        Metadata only — the raw key is shown once at creation and is not
+        recoverable. Revoked and expired keys are included: the listing answers
+        "which credentials exist for this client, and which are still live?",
+        and hiding retired rows would answer it wrongly.
+
+        `expires_at` is set on a key that a rotation retired. It keeps
+        authenticating until that instant (see `CRONIQ_API_KEY_ROTATION_GRACE`),
+        which is what makes a zero-downtime rotation possible. To end a key
+        before its deadline — the right move for a leaked credential — take its
+        `key_id` from here and call `DELETE /v1/api-keys/{id}`.
+
+        Requires `api-keys:admin`, and the caller's own scopes must cover the
+        client's.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: "Keys for the client, newest first"
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiKeySummary" }
+        "404": { description: "No such client" }
     post:
       summary: Generate a new API key
       requestBody:
