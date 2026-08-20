@@ -1,5 +1,20 @@
 //! Auth API endpoints: login, refresh, logout, API client/key management.
 
+// clippy 1.98 tightened `result_large_err`, which now fires on every handler
+// in this module that returns `Result<T, Response>` — the `Err` variant is a
+// fully-built `axum::response::Response` at 128 bytes.
+//
+// Returning a `Response` as the error is what these handlers need: unlike the
+// rest of the API they attach headers on failure (the refresh-token cookie
+// being cleared, `WWW-Authenticate`, throttling headers), which a bare
+// `StatusCode` cannot carry. Clippy's remedy is to box it, which would mean
+// `Box::new` at 22 error sites to move 128 bytes off the stack on a path that
+// is already allocating a response body. That trade is not worth it here.
+//
+// Scoped to this module rather than the workspace so the lint keeps working
+// where it has something useful to say.
+#![allow(clippy::result_large_err)]
+
 use std::sync::Arc;
 
 use axum::{
