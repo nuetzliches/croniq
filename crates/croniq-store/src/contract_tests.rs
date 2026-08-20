@@ -1420,6 +1420,26 @@ fn complete_at(
         .unwrap();
 }
 
+/// Attach a dead-letter row to `execution_id`, which is what hands that
+/// execution's lifecycle to dead-letter retention.
+fn attach_dead_letter(store: &impl DeadLetterStore, execution_id: Uuid, job_key: &str) {
+    store
+        .add_dead_letter(&DeadLetter {
+            id: Uuid::new_v4(),
+            execution_id,
+            job_key: job_key.into(),
+            fire_at: utc(2026, 1, 1, 0, 0),
+            scheduled_for: utc(2026, 1, 1, 0, 0),
+            attempt: 3,
+            error: "boom".into(),
+            dead_reason: "retry_exhausted".into(),
+            metadata: HashMap::new(),
+            created_at: utc(2026, 1, 10, 0, 0),
+            expires_at: None,
+        })
+        .unwrap();
+}
+
 #[test]
 fn prune_executions_older_than_deletes_old_terminal_and_logs() {
     let store = create_memory_store().unwrap();
@@ -1449,18 +1469,46 @@ fn prune_executions_older_than_deletes_old_terminal_and_logs() {
     let live = make_execution("ret:job", utc(2026, 3, 28, 0, 0));
     store.create_execution(&live).unwrap();
 
-    // Dead, even if old — kept (dead-letter retention owns it).
-    let dead = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
-    complete_at(&store, &dead, ExecutionState::Dead, utc(2026, 1, 10, 0, 0));
+    // Dead with a dead-letter — kept, because dead-letter retention owns it.
+    let dead_covered = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(
+        &store,
+        &dead_covered,
+        ExecutionState::Dead,
+        utc(2026, 1, 10, 0, 0),
+    );
+    attach_dead_letter(&store, dead_covered.id, "ret:job");
+
+    // Dead with no dead-letter — pruned. Nothing governed this row before
+    // (issue #470): dead-letter retention only ever deletes from
+    // `dead_letters`, so an execution that never produced one, or whose letter
+    // was already purged, accumulated forever.
+    let dead_orphan = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(
+        &store,
+        &dead_orphan,
+        ExecutionState::Dead,
+        utc(2026, 1, 10, 0, 0),
+    );
 
     let cutoff = utc(2026, 2, 1, 0, 0);
     let deleted = store.prune_executions_older_than(cutoff, 100).unwrap();
 
-    assert_eq!(deleted, 1, "only the old completed execution is pruned");
+    assert_eq!(
+        deleted, 2,
+        "the old completed execution and the unreferenced dead one"
+    );
     assert!(store.get_execution(old.id).unwrap().is_none());
     assert!(store.get_execution(recent.id).unwrap().is_some());
     assert!(store.get_execution(live.id).unwrap().is_some());
-    assert!(store.get_execution(dead.id).unwrap().is_some());
+    assert!(
+        store.get_execution(dead_covered.id).unwrap().is_some(),
+        "a dead execution with a letter stays under dead-letter retention"
+    );
+    assert!(
+        store.get_execution(dead_orphan.id).unwrap().is_none(),
+        "a dead execution nothing references must not outlive the retention window"
+    );
     assert!(
         store.read_logs(old.id, 100).unwrap().is_empty(),
         "logs of the pruned execution are removed too"
@@ -1527,12 +1575,13 @@ fn prune_executions_keep_last_keeps_newest_n_per_job() {
 fn prune_executions_keep_last_excludes_dead_and_live() {
     let store = create_memory_store().unwrap();
 
-    // Queued (no completed_at) and dead don't count toward keep_last and are
-    // never removed by it.
+    // Queued (no completed_at) never counts toward keep_last, and a dead
+    // execution with a dead-letter is left to dead-letter retention.
     let queued = make_execution("cap:mix", utc(2026, 3, 1, 0, 0));
     store.create_execution(&queued).unwrap();
     let dead = make_execution("cap:mix", utc(2026, 3, 1, 0, 0));
     complete_at(&store, &dead, ExecutionState::Dead, utc(2026, 3, 1, 0, 0));
+    attach_dead_letter(&store, dead.id, "cap:mix");
 
     // Three completed — with keep_last=1, the two oldest go.
     let mut done = Vec::new();
@@ -1556,6 +1605,47 @@ fn prune_executions_keep_last_excludes_dead_and_live() {
     assert!(store.get_execution(dead.id).unwrap().is_some(), "dead kept");
     for (id, min) in &done {
         assert_eq!(store.get_execution(*id).unwrap().is_some(), *min == 2);
+    }
+}
+
+#[test]
+fn prune_executions_keep_last_reaches_dead_rows_nothing_references() {
+    // The per-job cap had the same blind spot as the age-based sweep: a dead
+    // execution with no dead-letter escaped every retention path (issue #470).
+    let store = create_memory_store().unwrap();
+
+    let covered = make_execution("cap:dead", utc(2026, 3, 1, 0, 0));
+    complete_at(
+        &store,
+        &covered,
+        ExecutionState::Dead,
+        utc(2026, 3, 1, 0, 0),
+    );
+    attach_dead_letter(&store, covered.id, "cap:dead");
+
+    // Three unreferenced dead rows, newest last.
+    let mut orphans = Vec::new();
+    for min in 0..3 {
+        let e = make_execution("cap:dead", utc(2026, 3, 1, 0, 0));
+        complete_at(&store, &e, ExecutionState::Dead, utc(2026, 3, 2, 0, min));
+        orphans.push((e.id, min));
+    }
+
+    // keep_last counts the prunable set, which is the unreferenced ones.
+    let deleted = store
+        .prune_executions_keep_last("cap:dead", 1, 100)
+        .unwrap();
+    assert_eq!(deleted, 2, "the two oldest unreferenced dead rows");
+    assert!(
+        store.get_execution(covered.id).unwrap().is_some(),
+        "the row a dead-letter references is not this path's business"
+    );
+    for (id, min) in &orphans {
+        assert_eq!(
+            store.get_execution(*id).unwrap().is_some(),
+            *min == 2,
+            "only the newest unreferenced dead row survives keep_last=1"
+        );
     }
 }
 

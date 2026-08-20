@@ -392,6 +392,27 @@ pub fn restore_trigger_states(
         }
     };
 
+    // Rows whose job no longer exists. Deliberately not deleted: a job
+    // commented out for a week should keep its state, and this loader cannot
+    // tell "removed" from "temporarily absent". But they are worth naming —
+    // they are invisible otherwise, and until issue #470 they also kept the
+    // metrics exporter emitting `croniq_job_overdue` for jobs the server does
+    // not know about. To clear one deliberately: DELETE /v1/jobs/{job_key}.
+    let orphans: Vec<&str> = states
+        .iter()
+        .filter(|s| !triggers.contains_key(&s.job_key))
+        .map(|s| s.job_key.as_str())
+        .collect();
+    if !orphans.is_empty() {
+        tracing::info!(
+            count = orphans.len(),
+            job_keys = %orphans.join(", "),
+            "job_states rows exist for jobs this configuration does not define. They are \
+             kept (a job may be temporarily absent) and no longer produce metrics; clear \
+             one with DELETE /v1/jobs/{{job_key}}."
+        );
+    }
+
     for job_state in states {
         let Some(trigger) = triggers.get_mut(&job_state.job_key) else {
             continue; // job removed from config since last run — ignore

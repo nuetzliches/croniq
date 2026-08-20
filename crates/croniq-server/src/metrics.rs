@@ -3,6 +3,7 @@
 //! Exposes key runtime metrics in Prometheus text exposition format at a
 //! configurable endpoint (default: `/metrics`).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -128,8 +129,25 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         // scheduled — `time() - croniq_job_last_fire_timestamp > period` or a
         // stuck `croniq_job_overdue == 1` — even when the in-process
         // scheduler is wedged (issue #248) and no run failed.
+        //
+        // Restricted to jobs the server actually has loaded. A `job_states`
+        // row outlives the job that created it — nothing deletes one — so a
+        // job removed from the Croniqfile months ago kept emitting
+        // `croniq_job_overdue{job_key="…"} 1` with a `next_fire_at` in the
+        // past, forever. That defeats the exact alarm these series exist for:
+        // an operator who wires up the recommended `croniq_job_overdue == 1`
+        // alert gets a permanent false positive they cannot clear, which is
+        // the fastest way to teach them to ignore the one signal that catches
+        // a wedged scheduler (issue #470).
+        //
+        // Emitting a series for a job the scheduler does not know about is
+        // wrong regardless of whether the row is ever deleted, so the fix
+        // belongs here rather than in a retention policy.
         match store.list_job_states() {
-            Ok(states) => render_job_state_metrics(&mut body, &states, now),
+            Ok(states) => {
+                let known = known_job_keys(&state).await;
+                render_job_state_metrics(&mut body, &states, now, known.as_ref());
+            }
             Err(e) => tracing::warn!(error = %e, "metrics: list_job_states query failed"),
         }
     }
@@ -220,14 +238,33 @@ fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
 /// Append the per-job scheduling-liveness families from `job_states`
 /// (issue #250): last fire, next fire, and an overdue flag. Each family
 /// gets one `# HELP`/`# TYPE` header followed by its samples.
+/// The job keys the scheduler currently knows about, or `None` when the
+/// server has no trigger map to consult.
+///
+/// `None` means "cannot tell", and the caller then emits every stored state
+/// rather than none: a server wired up without a trigger map (some tests, and
+/// any future embedding) must not silently lose its per-job series.
+async fn known_job_keys(state: &ServerState) -> Option<HashSet<String>> {
+    let triggers = state.triggers.as_ref()?;
+    Some(triggers.read().await.keys().cloned().collect())
+}
+
 fn render_job_state_metrics(
     out: &mut String,
     states: &[JobState],
     now: chrono::DateTime<chrono::Utc>,
+    known: Option<&HashSet<String>>,
 ) {
-    if states.is_empty() {
+    // `None` means the caller could not determine the live job set; emit
+    // everything rather than nothing.
+    let live: Vec<&JobState> = states
+        .iter()
+        .filter(|s| known.is_none_or(|k| k.contains(&s.job_key)))
+        .collect();
+    if live.is_empty() {
         return;
     }
+    let states = &live;
 
     out.push_str(
         "# HELP croniq_job_last_fire_timestamp Unix time (seconds) of the last scheduled fire per job.\n\
@@ -261,7 +298,7 @@ fn render_job_state_metrics(
         "# HELP croniq_job_overdue Whether an active job's next scheduled fire is in the past (1) or not (0). A stuck 1 signals a stalled scheduler.\n\
          # TYPE croniq_job_overdue gauge\n",
     );
-    for s in states {
+    for s in states.iter() {
         if s.status != JobStatus::Active {
             continue;
         }
@@ -581,7 +618,7 @@ mod tests {
             },
         ];
         let mut out = String::new();
-        render_job_state_metrics(&mut out, &states, now);
+        render_job_state_metrics(&mut out, &states, now, None);
 
         assert!(out.contains("# TYPE croniq_job_last_fire_timestamp gauge"));
         assert!(
@@ -595,6 +632,73 @@ mod tests {
         // Overdue: the backup's next fire is in the past, etl:sync's is not.
         assert!(out.contains("croniq_job_overdue{job_key=\"billing:backup\"} 1"));
         assert!(out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 0"));
+    }
+
+    #[test]
+    fn job_state_metrics_skip_jobs_the_server_does_not_know_about() {
+        // The #470 case: a job removed from the Croniqfile leaves its
+        // job_states row behind, and the exporter kept emitting
+        // croniq_job_overdue=1 for it forever — a permanent false positive on
+        // the very alert the series exists to feed.
+        let now = chrono::Utc::now();
+        let states = vec![
+            JobState {
+                job_key: "demo:smoke".into(),
+                next_fire_at: Some(now - chrono::Duration::days(90)),
+                last_fired_at: Some(now - chrono::Duration::days(90)),
+                fire_count: 1,
+                status: JobStatus::Active,
+                updated_at: now,
+            },
+            JobState {
+                job_key: "etl:sync".into(),
+                next_fire_at: Some(now - chrono::Duration::minutes(5)),
+                last_fired_at: Some(now - chrono::Duration::hours(1)),
+                fire_count: 9,
+                status: JobStatus::Active,
+                updated_at: now,
+            },
+        ];
+        let known: HashSet<String> = ["etl:sync".to_string()].into_iter().collect();
+
+        let mut out = String::new();
+        render_job_state_metrics(&mut out, &states, now, Some(&known));
+
+        // The live job still reports, overdue and all — the signal must keep
+        // working for jobs that actually exist.
+        assert!(
+            out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 1"),
+            "{out}"
+        );
+        assert!(
+            out.contains("croniq_job_next_fire_timestamp{job_key=\"etl:sync\"}"),
+            "{out}"
+        );
+
+        // The phantom is gone from every family, not just the overdue one.
+        assert!(!out.contains("demo:smoke"), "{out}");
+    }
+
+    #[test]
+    fn job_state_metrics_emit_everything_when_the_live_set_is_unknown() {
+        // `None` means "cannot tell" — a server with no trigger map must not
+        // silently lose its per-job series.
+        let now = chrono::Utc::now();
+        let states = vec![JobState {
+            job_key: "etl:sync".into(),
+            next_fire_at: Some(now + chrono::Duration::hours(1)),
+            last_fired_at: None,
+            fire_count: 0,
+            status: JobStatus::Active,
+            updated_at: now,
+        }];
+
+        let mut out = String::new();
+        render_job_state_metrics(&mut out, &states, now, None);
+        assert!(
+            out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 0"),
+            "{out}"
+        );
     }
 
     #[tokio::test]

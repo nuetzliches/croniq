@@ -1018,9 +1018,12 @@ impl ExecutionStore for PgStore {
         // batch even though `executions` is read twice.
         tx.execute(
             "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT id FROM executions
-                 WHERE completed_at IS NOT NULL AND completed_at <= $1 AND state <> 'dead'
-                 ORDER BY completed_at ASC, id ASC
+                 SELECT e.id FROM executions e
+                 WHERE e.completed_at IS NOT NULL AND e.completed_at <= $1
+                   AND (e.state <> 'dead'
+                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                       WHERE dl.execution_id = e.id))
+                 ORDER BY e.completed_at ASC, e.id ASC
                  LIMIT $2
              )",
             &[&cutoff, &limit_i],
@@ -1029,9 +1032,12 @@ impl ExecutionStore for PgStore {
         let affected = tx
             .execute(
                 "DELETE FROM executions WHERE id IN (
-                     SELECT id FROM executions
-                     WHERE completed_at IS NOT NULL AND completed_at <= $1 AND state <> 'dead'
-                     ORDER BY completed_at ASC, id ASC
+                     SELECT e.id FROM executions e
+                     WHERE e.completed_at IS NOT NULL AND e.completed_at <= $1
+                       AND (e.state <> 'dead'
+                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                           WHERE dl.execution_id = e.id))
+                     ORDER BY e.completed_at ASC, e.id ASC
                      LIMIT $2
                  )",
                 &[&cutoff, &limit_i],
@@ -1053,9 +1059,12 @@ impl ExecutionStore for PgStore {
         let keep_i = keep_last as i64;
         tx.execute(
             "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT id FROM executions
-                 WHERE job_key = $1 AND completed_at IS NOT NULL AND state <> 'dead'
-                 ORDER BY completed_at DESC, id DESC
+                 SELECT e.id FROM executions e
+                 WHERE e.job_key = $1 AND e.completed_at IS NOT NULL
+                   AND (e.state <> 'dead'
+                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                       WHERE dl.execution_id = e.id))
+                 ORDER BY e.completed_at DESC, e.id DESC
                  LIMIT $2 OFFSET $3
              )",
             &[&job_key, &limit_i, &keep_i],
@@ -1064,9 +1073,12 @@ impl ExecutionStore for PgStore {
         let affected = tx
             .execute(
                 "DELETE FROM executions WHERE id IN (
-                     SELECT id FROM executions
-                     WHERE job_key = $1 AND completed_at IS NOT NULL AND state <> 'dead'
-                     ORDER BY completed_at DESC, id DESC
+                     SELECT e.id FROM executions e
+                     WHERE e.job_key = $1 AND e.completed_at IS NOT NULL
+                       AND (e.state <> 'dead'
+                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                           WHERE dl.execution_id = e.id))
+                     ORDER BY e.completed_at DESC, e.id DESC
                      LIMIT $2 OFFSET $3
                  )",
                 &[&job_key, &limit_i, &keep_i],

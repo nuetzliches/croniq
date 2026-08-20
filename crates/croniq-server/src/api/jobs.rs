@@ -461,8 +461,28 @@ pub async fn handle_delete(
 
     store
         .delete_job_definition(&job_key)
-        .map(|_| StatusCode::NO_CONTENT)
-        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
+
+    // The scheduling state goes with the job. `delete_job_definition` clears
+    // `trigger_definitions` and `job_definitions` only, so the `job_states`
+    // row survived every supported deletion route — and the metrics exporter
+    // read straight from that table, which is how a deleted job kept
+    // reporting `croniq_job_overdue` (issue #470). The exporter no longer
+    // emits series for unknown jobs, but leaving the row behind would still
+    // resurrect stale `last_fired_at` / `fire_count` if the key were ever
+    // reused.
+    //
+    // Best-effort: the definition is already gone, and failing the request
+    // after that would tell the caller the delete did not happen when it
+    // half did.
+    if let Err(e) = store.delete_job_state(&job_key) {
+        tracing::warn!(
+            job_key = %job_key,
+            error = %e,
+            "deleted the job definition but could not clear its job_states row"
+        );
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /v1/jobs/{job_key}/activate`
