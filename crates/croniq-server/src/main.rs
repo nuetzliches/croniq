@@ -689,27 +689,6 @@ async fn main() -> Result<()> {
                 Some(request) = reload_rx.recv() => {
                     let path = request.path;
                     tracing::info!(path = %path.display(), "Croniqfile reload requested");
-                    if request.reconcile_credentials {
-                        // Best-effort: a bad declaration must not take the
-                        // Croniqfile reload down with it. At boot the same
-                        // error is fatal, because there the operator can still
-                        // fix it before anything depends on the server.
-                        match croniq_server::api_client_env::ReconcileInputs::from_env() {
-                            Ok(inputs) => {
-                                if let Err(e) = croniq_server::api_client_env::reconcile(
-                                    &*scheduler_reload_store,
-                                    &inputs,
-                                ) {
-                                    tracing::error!(error = %e, "API client reconcile failed");
-                                }
-                            }
-                            Err(e) => tracing::error!(
-                                error = %e,
-                                "environment-declared API clients are invalid — \
-                                 skipping credential reconcile, keeping the stored clients"
-                            ),
-                        }
-                    }
                     match reload::build_plan(
                         &path,
                         &scheduler_reload_store,
@@ -745,10 +724,45 @@ async fn main() -> Result<()> {
                                 pending_restart = pending_restart.len(),
                                 "config reloaded"
                             );
+                            // Only now, and for the same reason
+                            // POST /v1/admin/reload-config waits (see
+                            // api::admin::handle_reload_config): a credential
+                            // rotation is the more disruptive half, so it does
+                            // not run until the config it accompanies is known
+                            // good. A SIGHUP that carries both an invalid
+                            // Croniqfile and a new key must not retire the old
+                            // key while rejecting the edit that was supposed to
+                            // accompany it.
+                            if request.reconcile_credentials {
+                                // Best-effort: a bad declaration must not take
+                                // the Croniqfile reload down with it. At boot
+                                // the same error is fatal, because there the
+                                // operator can still fix it before anything
+                                // depends on the server.
+                                match croniq_server::api_client_env::ReconcileInputs::from_env() {
+                                    Ok(inputs) => {
+                                        if let Err(e) = croniq_server::api_client_env::reconcile(
+                                            &*scheduler_reload_store,
+                                            &inputs,
+                                        ) {
+                                            tracing::error!(error = %e, "API client reconcile failed");
+                                        }
+                                    }
+                                    Err(e) => tracing::error!(
+                                        error = %e,
+                                        "environment-declared API clients are invalid — \
+                                         skipping credential reconcile, keeping the stored clients"
+                                    ),
+                                }
+                            }
                         }
                         Err(e) => {
                             scheduler_reload_counters.inc_validation_error();
-                            tracing::error!(error = %e, "config reload failed — keeping previous config");
+                            tracing::error!(
+                                error = %e,
+                                reconcile_skipped = request.reconcile_credentials,
+                                "config reload failed — keeping previous config"
+                            );
                         }
                     }
                 }

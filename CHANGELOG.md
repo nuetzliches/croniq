@@ -239,6 +239,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   references it. One that has a letter is still left to dead-letter retention,
   so the documented split is unchanged where it actually applied.
 
+- **`SIGHUP` no longer rotates credentials when the Croniqfile it accompanies
+  is rejected ([#480](https://github.com/nuetzliches/croniq/issues/480)).**
+  The signal handler reconciled the environment-declared API clients *before*
+  validating the new config, so an operator who edited a key and a schedule
+  together and got a syntax error in the schedule still had the old key
+  retired: the disruptive half of the reload landed, the half that was supposed
+  to accompany it did not. `POST /v1/admin/reload-config` already deliberately
+  waits for a successful apply; both triggers now agree. A rejected reload logs
+  that the credential half was skipped.
+
 - **An out-of-range `CRONIQ_API_KEY_ROTATION_GRACE` is reported, not acted on
   ([#482](https://github.com/nuetzliches/croniq/issues/482)).** The parsed
   second count reached `chrono::Duration::seconds` through a bare `as i64`
