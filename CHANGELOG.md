@@ -249,6 +249,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   waits for a successful apply; both triggers now agree. A rejected reload logs
   that the credential half was skipped.
 
+- **`croniq api-keys list` distinguishes an expired key from a retiring one
+  ([#483](https://github.com/nuetzliches/croniq/issues/483)).** The `STATE`
+  column derived `retiring` from the mere presence of `expires_at`, so a key
+  whose grace window had elapsed hours earlier — one the server had been
+  answering `401` for ever since — still read as mid-handover, directly beside
+  the past timestamp that said otherwise. It now reports `expired` once the
+  deadline has passed, using the same strictly-later comparison the auth
+  middleware enforces so the two never disagree about the deadline instant
+  itself, and the trailing hint explains that state instead of advising a
+  revoke nobody needs.
+
 - **An out-of-range `CRONIQ_API_KEY_ROTATION_GRACE` is reported, not acted on
   ([#482](https://github.com/nuetzliches/croniq/issues/482)).** The parsed
   second count reached `chrono::Duration::seconds` through a bare `as i64`
