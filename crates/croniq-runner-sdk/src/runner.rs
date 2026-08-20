@@ -49,24 +49,40 @@ pub(crate) fn update_conflict_streak(
     consecutive: &mut u32,
     max_consecutive: u32,
 ) -> PollLoopAction {
-    match result {
-        Ok(_) => {
-            *consecutive = 0;
-            PollLoopAction::Continue
-        }
-        Err(crate::client::ClientError::WorkOwnershipDenied { .. }) => PollLoopAction::BailOut,
-        Err(crate::client::ClientError::PollInstanceConflict { .. }) => {
-            *consecutive = consecutive.saturating_add(1);
-            if *consecutive >= max_consecutive {
-                PollLoopAction::BailOut
-            } else {
-                PollLoopAction::Continue
-            }
-        }
-        Err(_) => {
-            *consecutive = 0;
-            PollLoopAction::Continue
-        }
+    // The 403 bails immediately and leaves the counter alone: it belongs to
+    // the 409 story, and the loop exits regardless.
+    if matches!(
+        result,
+        Err(crate::client::ClientError::WorkOwnershipDenied { .. })
+    ) {
+        return PollLoopAction::BailOut;
+    }
+    let counts = matches!(
+        result,
+        Err(crate::client::ClientError::PollInstanceConflict { .. })
+    );
+    update_streak(counts, consecutive, max_consecutive)
+}
+
+/// The budget rule both streak trackers apply: count the outcome the caller
+/// cares about, reset on anything else, and bail once the run reaches the
+/// threshold.
+///
+/// Shared so the two cannot drift apart. They already differ on which error
+/// they count and that is the whole of the intended difference — the
+/// saturating increment, the `>=` comparison and the reset-on-anything-else
+/// are one rule, and the SDK conformance suite holds all six language
+/// bindings to it.
+fn update_streak(counts: bool, consecutive: &mut u32, max_consecutive: u32) -> PollLoopAction {
+    if !counts {
+        *consecutive = 0;
+        return PollLoopAction::Continue;
+    }
+    *consecutive = consecutive.saturating_add(1);
+    if *consecutive >= max_consecutive {
+        PollLoopAction::BailOut
+    } else {
+        PollLoopAction::Continue
     }
 }
 
@@ -94,20 +110,8 @@ pub(crate) fn update_auth_streak(
     consecutive: &mut u32,
     max_consecutive: u32,
 ) -> PollLoopAction {
-    match result {
-        Err(crate::client::ClientError::Unauthorized { .. }) => {
-            *consecutive = consecutive.saturating_add(1);
-            if *consecutive >= max_consecutive {
-                PollLoopAction::BailOut
-            } else {
-                PollLoopAction::Continue
-            }
-        }
-        _ => {
-            *consecutive = 0;
-            PollLoopAction::Continue
-        }
-    }
+    let counts = matches!(result, Err(crate::client::ClientError::Unauthorized { .. }));
+    update_streak(counts, consecutive, max_consecutive)
 }
 
 /// Map the result of awaiting a handler task to an ack `(status, error,
