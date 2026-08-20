@@ -919,9 +919,11 @@ pub async fn handle_logout(
     (clearing, StatusCode::NO_CONTENT)
 }
 
-/// `managed_by` value for a client declared by
-/// `CRONIQ_API_CLIENT_<NAME>_KEY` (issue #471).
-pub const MANAGED_BY_ENV: &str = "env";
+/// `managed_by` value for a client the environment declares (issue #471).
+///
+/// Re-exported from the module that owns the declaration grammar so the two
+/// cannot disagree about the marker they both compare against.
+pub use crate::api_client_env::MANAGED_BY_ENV;
 /// `managed_by` value for a client created through the API or dashboard.
 pub const MANAGED_BY_API: &str = "api";
 
@@ -987,10 +989,11 @@ fn refuse_env_managed(
     if client.managed_by != MANAGED_BY_ENV {
         return None;
     }
-    let var = format!(
-        "CRONIQ_API_CLIENT_{}_KEY",
-        client.name.to_uppercase().replace('-', "_")
-    );
+    // Reconstructing the variable name here got the `default` client wrong: it
+    // is declared by CRONIQ_API_KEY, not under the named-client prefix, so the
+    // advice sent operators to add a second declaration of the same client —
+    // which the next boot refuses outright (issue #481).
+    let var = crate::api_client_env::declaring_key_var(&client.name);
     Some((
         StatusCode::CONFLICT,
         Json(ValidationError {

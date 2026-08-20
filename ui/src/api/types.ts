@@ -394,10 +394,14 @@ export interface ApiClient {
   is_active: boolean
   created_at: string
   /**
-   * Who owns the row. `env` clients are declared by
-   * CRONIQ_API_CLIENT_<NAME>_KEY and the API refuses to edit, delete or mint
-   * keys for them — the environment is their source of truth. Optional so an
-   * older server (which omits the field) reads as `api`.
+   * Who owns the row. `env` clients are declared in the server's environment
+   * and the API refuses to edit, delete or mint keys for them — the
+   * environment is their source of truth. Optional so an older server (which
+   * omits the field) reads as `api`.
+   *
+   * Use `declaringKeyVar` from `@/lib/env-managed` to name the variable that
+   * declares one; it is not a plain template over the client name, because
+   * `default` lives outside the `CRONIQ_API_CLIENT_` namespace.
    */
   managed_by?: 'api' | 'env'
 }
