@@ -78,6 +78,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "026_api_client_managed_by",
         include_str!("026_api_client_managed_by.sql"),
     ),
+    (
+        "027_dead_letter_execution_index",
+        include_str!("027_dead_letter_execution_index.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -249,6 +253,55 @@ mod tests {
             )
             .unwrap();
         assert!(expires.is_none());
+    }
+
+    #[test]
+    fn migration_027_indexes_the_retention_reachability_probe() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "026_api_client_managed_by").unwrap();
+
+        // Pre-condition: `dead_letters` is indexed by job_key and expires_at
+        // only, so the `dl.execution_id = e.id` probe of #470 has nothing to
+        // stand on.
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_dead_letters_execution_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 0);
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "027_dead_letter_execution_index")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // Post-condition: the planner actually picks it for the retention
+        // predicate. Asserting on the plan rather than on the index's mere
+        // existence is the point — an index the query cannot use would satisfy
+        // a name check while changing nothing about the scan it was added for.
+        let plan: Vec<String> = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT e.id FROM executions e
+                 WHERE e.completed_at IS NOT NULL
+                   AND (e.state <> 'dead'
+                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
+                                       WHERE dl.execution_id = e.id))",
+            )
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("idx_dead_letters_execution_id")),
+            "the probe must use idx_dead_letters_execution_id; plan was: {plan:#?}"
+        );
     }
 
     #[test]

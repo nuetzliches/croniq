@@ -4,6 +4,7 @@
 //! to match the synchronous store trait signatures.
 
 use crate::models::*;
+use crate::retention_sql::DELETABLE_EXECUTION;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
 use postgres::{Client, NoTls};
@@ -127,6 +128,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("024_runner_identities", PG_MIGRATION_024),
     ("025_token_generation", PG_MIGRATION_025),
     ("026_api_client_managed_by", PG_MIGRATION_026),
+    ("027_dead_letter_execution_index", PG_MIGRATION_027),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -261,6 +263,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS token_generation BIGINT NOT NULL DEFA
 // `migrations/026_api_client_managed_by.sql`.
 const PG_MIGRATION_026: &str = r#"
 ALTER TABLE api_clients ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'api';
+"#;
+
+// Index for the retention reachability probe added by #470 — `dead_letters`
+// was indexed by job_key and expires_at only, never by the column
+// `NOT EXISTS (… WHERE dl.execution_id = e.id)` joins on. See
+// `migrations/027_dead_letter_execution_index.sql`.
+const PG_MIGRATION_027: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_dead_letters_execution_id ON dead_letters(execution_id);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1016,30 +1026,21 @@ impl ExecutionStore for PgStore {
         // Child logs first, then parents (mirrors the SQLite path). Both
         // subqueries are identical and deterministic so they match the same
         // batch even though `executions` is read twice.
+        let selection = format!(
+            "SELECT e.id FROM executions e
+             WHERE e.completed_at IS NOT NULL AND e.completed_at <= $1
+               AND {DELETABLE_EXECUTION}
+             ORDER BY e.completed_at ASC, e.id ASC
+             LIMIT $2"
+        );
         tx.execute(
-            "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT e.id FROM executions e
-                 WHERE e.completed_at IS NOT NULL AND e.completed_at <= $1
-                   AND (e.state <> 'dead'
-                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                       WHERE dl.execution_id = e.id))
-                 ORDER BY e.completed_at ASC, e.id ASC
-                 LIMIT $2
-             )",
+            &format!("DELETE FROM execution_logs WHERE execution_id IN ({selection})"),
             &[&cutoff, &limit_i],
         )
         .map_err(map_err)?;
         let affected = tx
             .execute(
-                "DELETE FROM executions WHERE id IN (
-                     SELECT e.id FROM executions e
-                     WHERE e.completed_at IS NOT NULL AND e.completed_at <= $1
-                       AND (e.state <> 'dead'
-                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                           WHERE dl.execution_id = e.id))
-                     ORDER BY e.completed_at ASC, e.id ASC
-                     LIMIT $2
-                 )",
+                &format!("DELETE FROM executions WHERE id IN ({selection})"),
                 &[&cutoff, &limit_i],
             )
             .map_err(map_err)?;
@@ -1057,30 +1058,21 @@ impl ExecutionStore for PgStore {
         let mut tx = client.transaction().map_err(map_err)?;
         let limit_i = limit as i64;
         let keep_i = keep_last as i64;
+        let selection = format!(
+            "SELECT e.id FROM executions e
+             WHERE e.job_key = $1 AND e.completed_at IS NOT NULL
+               AND {DELETABLE_EXECUTION}
+             ORDER BY e.completed_at DESC, e.id DESC
+             LIMIT $2 OFFSET $3"
+        );
         tx.execute(
-            "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT e.id FROM executions e
-                 WHERE e.job_key = $1 AND e.completed_at IS NOT NULL
-                   AND (e.state <> 'dead'
-                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                       WHERE dl.execution_id = e.id))
-                 ORDER BY e.completed_at DESC, e.id DESC
-                 LIMIT $2 OFFSET $3
-             )",
+            &format!("DELETE FROM execution_logs WHERE execution_id IN ({selection})"),
             &[&job_key, &limit_i, &keep_i],
         )
         .map_err(map_err)?;
         let affected = tx
             .execute(
-                "DELETE FROM executions WHERE id IN (
-                     SELECT e.id FROM executions e
-                     WHERE e.job_key = $1 AND e.completed_at IS NOT NULL
-                       AND (e.state <> 'dead'
-                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                           WHERE dl.execution_id = e.id))
-                     ORDER BY e.completed_at DESC, e.id DESC
-                     LIMIT $2 OFFSET $3
-                 )",
+                &format!("DELETE FROM executions WHERE id IN ({selection})"),
                 &[&job_key, &limit_i, &keep_i],
             )
             .map_err(map_err)?;

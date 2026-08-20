@@ -260,6 +260,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself, and the trailing hint explains that state instead of advising a
   revoke nobody needs.
 
+- **The retention sweep no longer scans `dead_letters` once per candidate row
+  ([#485](https://github.com/nuetzliches/croniq/issues/485)).** Reaching
+  unreferenced `dead` executions (#470) added a correlated
+  `NOT EXISTS (… WHERE dl.execution_id = e.id)` probe to both prune paths, but
+  `dead_letters` was indexed by `job_key` and `expires_at` only — never by the
+  column that probe joins on. So every 30 s watchdog tick paid a full scan of
+  the dead-letter table per candidate execution, worst on exactly the
+  installations with a large backlog. Migration `027` adds the index, in both
+  backends.
+
+  The predicate itself was copy-pasted eight times — four queries per backend,
+  in two dialects, with the comment explaining the rule present in only one of
+  them ([#488](https://github.com/nuetzliches/croniq/issues/488)). It is now
+  one shared fragment.
+
 - **An out-of-range `CRONIQ_API_KEY_ROTATION_GRACE` is reported, not acted on
   ([#482](https://github.com/nuetzliches/croniq/issues/482)).** The parsed
   second count reached `chrono::Duration::seconds` through a bare `as i64`

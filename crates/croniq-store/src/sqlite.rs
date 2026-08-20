@@ -2,6 +2,7 @@
 
 use crate::migrations;
 use crate::models::*;
+use crate::retention_sql::DELETABLE_EXECUTION;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params, params_from_iter};
@@ -526,36 +527,21 @@ impl ExecutionStore for SqliteStore {
         // would fail otherwise. Both subqueries are identical and
         // deterministic (ORDER BY completed_at, id) over an unmodified
         // `executions` table, so they select the exact same batch.
-        //
-        // `dead` rows are included only when no `dead_letters` row references
-        // them. Dead-letter retention governs the ones that have a letter, as
-        // documented — but a dead execution that never produced one, or whose
-        // letter has already been purged, had no governing retention at all
-        // and grew without bound (issue #470).
+        let selection = format!(
+            "SELECT e.id FROM executions e
+             WHERE e.completed_at IS NOT NULL AND e.completed_at <= ?1
+               AND {DELETABLE_EXECUTION}
+             ORDER BY e.completed_at ASC, e.id ASC
+             LIMIT ?2"
+        );
         tx.execute(
-            "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT e.id FROM executions e
-                 WHERE e.completed_at IS NOT NULL AND e.completed_at <= ?1
-                   AND (e.state <> 'dead'
-                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                       WHERE dl.execution_id = e.id))
-                 ORDER BY e.completed_at ASC, e.id ASC
-                 LIMIT ?2
-             )",
+            &format!("DELETE FROM execution_logs WHERE execution_id IN ({selection})"),
             params![cutoff_s, limit],
         )
         .map_err(map_err)?;
         let affected = tx
             .execute(
-                "DELETE FROM executions WHERE id IN (
-                     SELECT e.id FROM executions e
-                     WHERE e.completed_at IS NOT NULL AND e.completed_at <= ?1
-                       AND (e.state <> 'dead'
-                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                           WHERE dl.execution_id = e.id))
-                     ORDER BY e.completed_at ASC, e.id ASC
-                     LIMIT ?2
-                 )",
+                &format!("DELETE FROM executions WHERE id IN ({selection})"),
                 params![cutoff_s, limit],
             )
             .map_err(map_err)?;
@@ -573,30 +559,21 @@ impl ExecutionStore for SqliteStore {
         let tx = conn.transaction().map_err(map_err)?;
         // Keep the newest `keep_last` terminal rows (OFFSET), delete up to
         // `limit` older ones. Child logs first (see `prune_executions_older_than`).
+        let selection = format!(
+            "SELECT e.id FROM executions e
+             WHERE e.job_key = ?1 AND e.completed_at IS NOT NULL
+               AND {DELETABLE_EXECUTION}
+             ORDER BY e.completed_at DESC, e.id DESC
+             LIMIT ?2 OFFSET ?3"
+        );
         tx.execute(
-            "DELETE FROM execution_logs WHERE execution_id IN (
-                 SELECT e.id FROM executions e
-                 WHERE e.job_key = ?1 AND e.completed_at IS NOT NULL
-                   AND (e.state <> 'dead'
-                        OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                       WHERE dl.execution_id = e.id))
-                 ORDER BY e.completed_at DESC, e.id DESC
-                 LIMIT ?2 OFFSET ?3
-             )",
+            &format!("DELETE FROM execution_logs WHERE execution_id IN ({selection})"),
             params![job_key, limit, keep_last],
         )
         .map_err(map_err)?;
         let affected = tx
             .execute(
-                "DELETE FROM executions WHERE id IN (
-                     SELECT e.id FROM executions e
-                     WHERE e.job_key = ?1 AND e.completed_at IS NOT NULL
-                       AND (e.state <> 'dead'
-                            OR NOT EXISTS (SELECT 1 FROM dead_letters dl
-                                           WHERE dl.execution_id = e.id))
-                     ORDER BY e.completed_at DESC, e.id DESC
-                     LIMIT ?2 OFFSET ?3
-                 )",
+                &format!("DELETE FROM executions WHERE id IN ({selection})"),
                 params![job_key, limit, keep_last],
             )
             .map_err(map_err)?;
