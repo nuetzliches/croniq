@@ -235,9 +235,6 @@ fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
     }
 }
 
-/// Append the per-job scheduling-liveness families from `job_states`
-/// (issue #250): last fire, next fire, and an overdue flag. Each family
-/// gets one `# HELP`/`# TYPE` header followed by its samples.
 /// The job keys the scheduler currently knows about, or `None` when the
 /// server has no trigger map to consult.
 ///
@@ -249,6 +246,12 @@ async fn known_job_keys(state: &ServerState) -> Option<HashSet<String>> {
     Some(triggers.read().await.keys().cloned().collect())
 }
 
+/// Append the per-job scheduling-liveness families from `job_states`
+/// (issue #250): last fire, next fire, and an overdue flag. Each family
+/// gets one `# HELP`/`# TYPE` header followed by its samples.
+///
+/// `known` filters the stored rows down to the jobs the running configuration
+/// defines (issue #470); see [`known_job_keys`] for what `None` means.
 fn render_job_state_metrics(
     out: &mut String,
     states: &[JobState],
