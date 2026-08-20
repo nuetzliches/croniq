@@ -638,12 +638,18 @@ key and stamps the old one with `expires_at = now + CRONIQ_API_KEY_ROTATION_GRAC
 (default `15m`). It keeps authenticating until then.
 
 That window exists because the server is not the only holder of the
-credential. A runner in another container has the old value in memory, and
-the runner SDK treats `401` as a transient error: it retries every few
-seconds indefinitely rather than exiting for its orchestrator to restart it.
-Revoking instantly therefore does not produce a brief blip — it produces a
-runner that never recovers until someone restarts it by hand. The grace
-window covers the secret-volume refresh and the consumer rollout.
+credential. A runner in another container has the old value in memory: the
+SDK reads its API key once, at construction, and never re-reads it, so a
+running process cannot pick up the new key at all. Revoking instantly
+therefore does not produce a brief blip — every poll from that runner fails
+until something restarts it. The grace window covers the secret-volume
+refresh and the consumer rollout.
+
+A runner no longer retries a rejected credential forever — it exits, so a
+supervisor can restart it with the new key. That changes "never recovers" to
+"recovers on restart", but it does not remove the need for the window: it puts
+a clock on it. See [How long a runner survives a rejected
+key](#how-long-a-runner-survives-a-rejected-key).
 
 Inspect the handover:
 
@@ -680,6 +686,59 @@ Note that revoking a key alone does not un-leak an env-declared credential:
 if the declared value is unchanged, the next reconcile with
 `CRONIQ_INIT_API_KEY_RECONCILE=1` installs it again. Change the declared
 value first, then rotate.
+
+### How long a runner survives a rejected key
+
+A runner that gets `401` on `POST /v1/work/poll` counts it. After
+`max_consecutive_auth_failures` in a row — **default 3** — it stops with a
+fatal authentication error instead of polling on. The credential is read once
+at construction and never re-read, so retrying cannot clear a rejection;
+exiting non-zero is what lets a supervisor restart the process and pick up the
+new key.
+
+There is no backoff on `401`, so the budget is spent at the poll interval:
+
+| poll interval | budget | time to exit |
+|---|---|---|
+| 5s (default) | 3 (default) | ~10s |
+| 5s | 10 | ~45s |
+| 30s | 3 | ~60s |
+
+The counter resets on any successful poll and on any other error — a 5xx or a
+timeout says nothing about whether the key is valid.
+
+**This assumes the runner is supervised.** Under Kubernetes, a Compose
+`restart:` policy, or systemd, the exit is the mechanism: the process dies, the
+supervisor restarts it, construction re-reads the environment, and the new key
+takes effect. Crash-looping for as long as the credential is genuinely gone is
+the intended, visible behaviour.
+
+**A runner with nothing to restart it needs a different setting.** A bare
+process, a `nohup`-ed script, a developer's laptop — there the default turns a
+10-second credential hiccup into a runner that is simply gone, with no
+schedule running and nothing reporting why beyond a log line. Either put it
+under a supervisor, or raise the budget so the process outlives the handover:
+
+```rust
+CroniqRunner::builder(url, "worker-1")
+    .max_consecutive_auth_failures(60)   // ~5 min at the default interval
+    .build();
+```
+
+The equivalent option exists in all six SDKs (`max_consecutive_auth_failures`,
+`maxConsecutiveAuthFailures`, `MaxConsecutiveAuthFailures`). Note that `0` does
+**not** disable the budget: the threshold is checked as "streak >= limit", so
+the first `401` trips it immediately — the opposite of what you want. Use a
+large finite value.
+
+**Sizing it against the rotation grace.** A runner only sees `401` once its key
+has actually stopped working, which during a normal rotation means the grace
+window closed before the rollout reached it. So the two settings answer
+different halves of the same question: `CRONIQ_API_KEY_ROTATION_GRACE` should
+cover how long a full consumer rollout takes, and the auth budget only has to
+cover the gap between a runner's key dying and its supervisor restarting it. If
+you find yourself raising the budget to survive routine rotations, the grace
+window is the setting that is too small.
 
 ### Demo-only seed flags
 
