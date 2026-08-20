@@ -1,7 +1,9 @@
 pub mod config;
+pub mod credentials;
 pub mod init;
 pub mod migrate;
 pub mod quickstart;
+pub mod remote;
 pub mod secret_output;
 pub mod server;
 pub mod store;

@@ -21,6 +21,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The CLI can authenticate, and manage credentials
+  ([#475](https://github.com/nuetzliches/croniq/issues/475)).** `--api-key`
+  (env `CRONIQ_API_KEY`) and `--url` (env `CRONIQ_URL`) are global arguments,
+  sent as `Authorization: ApiKey <key>`.
+
+  `status`, `list-runners` and `trigger` previously issued naked requests and
+  called `.json()` on whatever came back, so against a server with auth
+  enabled `croniq trigger` — the documented way to fire a job by hand — failed
+  with a serde decode error rather than saying the request was unauthorised.
+  Non-2xx responses now map to a message: a 401 without a credential names the
+  flag to use, a 401 with one points at revocation and the rotation grace
+  window, and a server-supplied `message` (the 409 `env_managed` refusal among
+  them) is surfaced verbatim.
+
+  New subcommands, over HTTP so they work against Postgres and remote servers
+  the way `croniq init` cannot:
+
+  ```
+  croniq api-clients list|create|update|delete
+  croniq api-keys   list|create|revoke
+  ```
+
+  `croniq api-keys list` marks a key replaced by a rotation as `retiring` and
+  shows when it dies; `croniq api-keys revoke` is the break-glass path for a
+  leaked credential. `--json` on the listing and create commands makes them
+  scriptable.
+
 - **Scoped API clients declared in the environment
   ([#471](https://github.com/nuetzliches/croniq/issues/471)).** A deployment
   can now pin least-privilege machine credentials from configuration alone:
@@ -138,6 +165,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   window cannot keep the oldest key alive.
 
 ### Changed
+
+- The 409 refusal on an env-declared client now states the consequence that
+  actually applies to the attempted operation. Minting a key was described as
+  being "reverted", when what happens is that the reconciler retires it —
+  close enough to sound right and wrong enough to mislead.
 
 - **`CRONIQ_API_KEY_RECONCILE=1` gates changes, not creation.** Creating a
   declared client that does not exist yet is additive — it cannot break a

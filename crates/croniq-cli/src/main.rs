@@ -36,6 +36,18 @@ const DEFAULT_SERVER_URL: &str = "http://localhost:4000";
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Croniq server URL, for the commands that talk to a running server.
+    #[arg(long, global = true, default_value = DEFAULT_SERVER_URL, env = "CRONIQ_URL")]
+    url: String,
+
+    /// API key to authenticate with, sent as `Authorization: ApiKey <key>`.
+    ///
+    /// Global rather than per-command: nine subcommands need it, and an
+    /// operator should be able to export it once. Without it every
+    /// authenticated endpoint answers 401 (issue #475).
+    #[arg(long, global = true, env = "CRONIQ_API_KEY", hide_env_values = true)]
+    api_key: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -88,28 +100,16 @@ enum Commands {
 
     // ── Server commands ───────────────────────────────────────────────────────
     /// Show live scheduler status (queue depth, runner counts)
-    Status {
-        /// Croniq server URL
-        #[arg(long, default_value = DEFAULT_SERVER_URL)]
-        url: String,
-    },
+    Status,
 
     /// List all connected runners with liveness status and capabilities
     #[command(name = "list-runners")]
-    ListRunners {
-        /// Croniq server URL
-        #[arg(long, default_value = DEFAULT_SERVER_URL)]
-        url: String,
-    },
+    ListRunners,
 
     /// Trigger a job immediately, bypassing its schedule
     Trigger {
         /// Job key (e.g. `billing:invoice-generate`)
         job_key: String,
-
-        /// Croniq server URL
-        #[arg(long, default_value = DEFAULT_SERVER_URL)]
-        url: String,
 
         /// Capabilities a runner MUST have (repeatable)
         #[arg(long)]
@@ -122,6 +122,21 @@ enum Commands {
         /// Timeout hint for the runner (e.g. `15m`, `2h`)
         #[arg(long, default_value = "5m")]
         timeout: String,
+    },
+
+    // ── Credential commands ───────────────────────────────────────────────────
+    /// Manage API clients on a running server (requires `api-clients:admin`)
+    #[command(name = "api-clients")]
+    ApiClients {
+        #[command(subcommand)]
+        action: ApiClientAction,
+    },
+
+    /// Manage API keys on a running server (requires `api-keys:admin`)
+    #[command(name = "api-keys")]
+    ApiKeys {
+        #[command(subcommand)]
+        action: ApiKeyAction,
     },
 
     // ── Store commands ────────────────────────────────────────────────────────
@@ -237,10 +252,81 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+enum ApiClientAction {
+    /// List API clients with their scopes and owner
+    List {
+        /// Emit raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create an API client
+    Create {
+        /// Client name (e.g. `runner-poll`)
+        #[arg(long)]
+        name: String,
+        /// Comma-separated scopes (e.g. `work:poll,work:ack,work:renew`)
+        #[arg(long, value_delimiter = ',')]
+        scopes: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change a client's name, scopes, or active flag
+    Update {
+        /// Client ID from `croniq api-clients list`
+        client_id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        scopes: Option<Vec<String>>,
+        /// Re-enable a deactivated client
+        #[arg(long, conflicts_with = "inactive")]
+        active: bool,
+        /// Deactivate the client without deleting it
+        #[arg(long)]
+        inactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a client and every API key bound to it
+    Delete {
+        /// Client ID from `croniq api-clients list`
+        client_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApiKeyAction {
+    /// List a client's keys, including retiring and revoked ones
+    List {
+        /// Client ID from `croniq api-clients list`
+        #[arg(long = "client")]
+        client_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mint a new key. The raw value is shown once and never again.
+    Create {
+        /// Client ID from `croniq api-clients list`
+        #[arg(long = "client")]
+        client_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke a key immediately, ending any rotation grace window
+    Revoke {
+        /// Key ID from `croniq api-keys list`
+        key_id: String,
+    },
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Built once, used by every command that reaches the server. Cheap for
+    // the ones that do not (`validate`, `fmt`, …) — it opens no connection.
+    let remote = commands::remote::Remote::new(&cli.url, cli.api_key.clone());
 
     match cli.command {
         // Config
@@ -251,15 +337,60 @@ fn main() -> Result<()> {
         Commands::Convert { expr } => commands::config::convert_cron(&expr),
 
         // Server
-        Commands::Status { url } => commands::server::status(&url),
-        Commands::ListRunners { url } => commands::server::list_runners(&url),
+        Commands::Status => commands::server::status(&remote),
+        Commands::ListRunners => commands::server::list_runners(&remote),
         Commands::Trigger {
             job_key,
-            url,
             require,
             prefer,
             timeout,
-        } => commands::server::trigger(&url, &job_key, require, prefer, &timeout),
+        } => commands::server::trigger(&remote, &job_key, require, prefer, &timeout),
+
+        // Credentials
+        Commands::ApiClients { action } => match action {
+            ApiClientAction::List { json } => commands::credentials::clients_list(&remote, json),
+            ApiClientAction::Create { name, scopes, json } => {
+                commands::credentials::clients_create(&remote, &name, &scopes, json)
+            }
+            ApiClientAction::Update {
+                client_id,
+                name,
+                scopes,
+                active,
+                inactive,
+                json,
+            } => {
+                // Absent means "leave it alone"; the two flags conflict at the
+                // clap level, so at most one can be set here.
+                let is_active = if active {
+                    Some(true)
+                } else if inactive {
+                    Some(false)
+                } else {
+                    None
+                };
+                commands::credentials::clients_update(
+                    &remote,
+                    &client_id,
+                    name.as_deref(),
+                    scopes.as_deref(),
+                    is_active,
+                    json,
+                )
+            }
+            ApiClientAction::Delete { client_id } => {
+                commands::credentials::clients_delete(&remote, &client_id)
+            }
+        },
+        Commands::ApiKeys { action } => match action {
+            ApiKeyAction::List { client_id, json } => {
+                commands::credentials::keys_list(&remote, &client_id, json)
+            }
+            ApiKeyAction::Create { client_id, json } => {
+                commands::credentials::keys_create(&remote, &client_id, json)
+            }
+            ApiKeyAction::Revoke { key_id } => commands::credentials::keys_revoke(&remote, &key_id),
+        },
 
         // Store
         Commands::DeadLetters {

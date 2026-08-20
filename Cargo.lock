@@ -670,6 +670,7 @@ dependencies = [
  "croniq-config",
  "croniq-runner",
  "croniq-store",
+ "http",
  "miette",
  "reqwest",
  "serde",

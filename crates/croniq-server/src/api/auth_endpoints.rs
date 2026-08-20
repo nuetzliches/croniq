@@ -982,7 +982,7 @@ impl IntoResponse for ApiClientError {
 /// Refusing names the variable to edit instead.
 fn refuse_env_managed(
     client: &ApiClient,
-    what: &str,
+    consequence: &str,
 ) -> Option<(StatusCode, Json<ValidationError>)> {
     if client.managed_by != MANAGED_BY_ENV {
         return None;
@@ -996,11 +996,11 @@ fn refuse_env_managed(
         Json(ValidationError {
             error: "env_managed",
             message: format!(
-                "API client '{name}' is declared in the environment ({var}) and is owned by \
-                 it, so {what} through the API would be reverted by the next reconcile. Change \
-                 the environment (or the file {var}_FILE points at) and reload with SIGHUP or \
-                 POST /v1/admin/reload-config. To hand the client back to the API, remove its \
-                 environment declaration and restart.",
+                "API client '{name}' is declared in the environment ({var}) and is owned \
+                 by it, so {consequence}. Change the environment (or the file \
+                 {var}_FILE points at) and reload with SIGHUP or \
+                 POST /v1/admin/reload-config. To hand the client back to the API, remove \
+                 its environment declaration and restart.",
                 name = client.name
             ),
         }),
@@ -1096,7 +1096,10 @@ pub async fn handle_update_client(
         .get_client(&client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    if let Some(refusal) = refuse_env_managed(&client, "editing it") {
+    if let Some(refusal) = refuse_env_managed(
+        &client,
+        "an edit made here would be reverted by the next reconcile",
+    ) {
         return Err(refusal.into());
     }
     if let Some(name) = req.name {
@@ -1135,7 +1138,7 @@ pub async fn handle_delete_client(
     // A client that is already gone stays a 204 — delete was idempotent
     // before this guard and there is no reason for it to stop being.
     if let Ok(Some(client)) = store.get_client(&client_id)
-        && let Some(refusal) = refuse_env_managed(&client, "deleting it")
+        && let Some(refusal) = refuse_env_managed(&client, "the next reconcile would recreate it")
     {
         return Err(refusal.into());
     }
@@ -1310,7 +1313,11 @@ pub async fn handle_create_api_key(
     // reconciler retires every key that is not the declared one. A key minted
     // here would therefore stop working at the next reconcile — issue it and
     // the operator has a credential with a silent expiry date.
-    if let Some(refusal) = refuse_env_managed(&client, "minting a key for it") {
+    if let Some(refusal) = refuse_env_managed(
+        &client,
+        "a key minted here would be retired by the next reconcile, which keeps only \
+         the declared one",
+    ) {
         return Err(refusal.into());
     }
     // The key authenticates as the client and therefore carries the

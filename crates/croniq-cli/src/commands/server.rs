@@ -1,17 +1,20 @@
 //! CLI commands that talk to a running croniq-server over HTTP.
+//!
+//! All requests go through [`Remote`], which attaches the credential and
+//! turns a non-2xx into a message. Before #475 these issued naked requests
+//! and called `.json()` on whatever came back, so a `401` from an
+//! auth-enabled server surfaced as a serde decode error.
 
 use croniq_runner::{HealthResponse, RunnerSummary, TriggerRequest, TriggerResponse};
-use miette::{IntoDiagnostic, Result, miette};
+use miette::Result;
+
+use super::remote::Remote;
 
 // ─── status ──────────────────────────────────────────────────────────────────
 
 /// `croniq status` — print scheduler health from the running server.
-pub fn status(server_url: &str) -> Result<()> {
-    let url = format!("{server_url}/health");
-    let resp: HealthResponse = reqwest::blocking::get(&url)
-        .map_err(|e| miette!("Could not connect to {url}: {e}"))?
-        .json()
-        .into_diagnostic()?;
+pub fn status(remote: &Remote) -> Result<()> {
+    let resp: HealthResponse = remote.get_json("/health")?;
 
     println!("Status:          {}", resp.status);
     println!("Queue depth:     {}", resp.queued);
@@ -25,12 +28,8 @@ pub fn status(server_url: &str) -> Result<()> {
 // ─── list-runners ─────────────────────────────────────────────────────────────
 
 /// `croniq list-runners` — print all runners with their liveness status.
-pub fn list_runners(server_url: &str) -> Result<()> {
-    let url = format!("{server_url}/v1/runners");
-    let runners: Vec<RunnerSummary> = reqwest::blocking::get(&url)
-        .map_err(|e| miette!("Could not connect to {url}: {e}"))?
-        .json()
-        .into_diagnostic()?;
+pub fn list_runners(remote: &Remote) -> Result<()> {
+    let runners: Vec<RunnerSummary> = remote.get_json("/v1/runners")?;
 
     if runners.is_empty() {
         println!("No runners connected.");
@@ -69,13 +68,12 @@ pub fn list_runners(server_url: &str) -> Result<()> {
 
 /// `croniq trigger` — immediately fire a job by enqueuing it on the server.
 pub fn trigger(
-    server_url: &str,
+    remote: &Remote,
     job_key: &str,
     require: Vec<String>,
     prefer: Vec<String>,
     timeout: &str,
 ) -> Result<()> {
-    let url = format!("{server_url}/v1/trigger");
     let req = TriggerRequest {
         job_key: job_key.to_string(),
         require,
@@ -85,13 +83,7 @@ pub fn trigger(
         idempotency_key: None,
     };
 
-    let resp: TriggerResponse = reqwest::blocking::Client::new()
-        .post(&url)
-        .json(&req)
-        .send()
-        .map_err(|e| miette!("Could not connect to {url}: {e}"))?
-        .json()
-        .into_diagnostic()?;
+    let resp: TriggerResponse = remote.post_json("/v1/trigger", &req)?;
 
     println!("Triggered job '{job_key}'");
     println!("  execution_id: {}", resp.execution_id);
