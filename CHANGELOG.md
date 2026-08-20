@@ -6,19 +6,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- **CI is green on Rust 1.98.** Clippy 1.98 tightened `result_large_err`, which
-  now fires on the five `auth_endpoints` handlers returning
-  `Result<T, Response>` — all three `-D warnings` clippy gates failed on `main`
-  the moment the toolchain rolled from 1.97.1 to 1.98.0, with no code change
-  involved. Those handlers return a `Response` because they attach headers on
-  failure (clearing the refresh cookie, throttling headers) and a bare
-  `StatusCode` cannot carry those; boxing it as clippy suggests would mean
-  `Box::new` at 22 error sites to move 128 bytes off a path that already
-  allocates a response body. Allowed for that module, with the reasoning
-  recorded at the top of the file.
-
 ### Added
 
 - **The CLI can authenticate, and manage credentials
@@ -181,6 +168,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `info`, not `warn`. Nothing is broken in that state — the row is merely
   still editable through the API — and warning about it on every boot would
   train operators to ignore the line that does mean something.
+
+### Fixed
+
+- **CI is green on Rust 1.98.** Clippy 1.98 tightened `result_large_err`, which
+  now fires on the five `auth_endpoints` handlers returning
+  `Result<T, Response>` — all three `-D warnings` clippy gates failed on `main`
+  the moment the toolchain rolled from 1.97.1 to 1.98.0, with no code change
+  involved. Those handlers return a `Response` because they attach headers on
+  failure (clearing the refresh cookie, throttling headers) and a bare
+  `StatusCode` cannot carry those; boxing it as clippy suggests would mean
+  `Box::new` at 22 error sites to move 128 bytes off a path that already
+  allocates a response body. Allowed for that module, with the reasoning
+  recorded at the top of the file.
 
 ## [0.33.0] - 2026-08-19
 
