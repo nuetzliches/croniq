@@ -74,6 +74,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "025_token_generation",
         include_str!("025_token_generation.sql"),
     ),
+    (
+        "026_api_client_managed_by",
+        include_str!("026_api_client_managed_by.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -513,6 +517,61 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_026_defaults_existing_clients_to_api_ownership() {
+        // An upgrade must not hand existing clients to the environment:
+        // ownership decides whether the dashboard may still edit them, and a
+        // row that silently flips would start refusing edits with no cause an
+        // operator could see.
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "025_token_generation").unwrap();
+
+        conn.execute(
+            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at)
+             VALUES ('c-1', 'default', '[\"admin\"]', 1, '2026-01-01T00:00:00+00:00')",
+            [],
+        )
+        .unwrap();
+
+        assert!(
+            conn.query_row("SELECT managed_by FROM api_clients", [], |r| r
+                .get::<_, String>(0))
+                .is_err(),
+            "managed_by must not exist before 026, or this proves nothing"
+        );
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "026_api_client_managed_by")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        let owner: String = conn
+            .query_row(
+                "SELECT managed_by FROM api_clients WHERE client_id = 'c-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, "api");
+
+        // And the column carries its default for rows that do not name it.
+        conn.execute(
+            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at)
+             VALUES ('c-2', 'other', '[]', 1, '2026-02-01T00:00:00+00:00')",
+            [],
+        )
+        .unwrap();
+        let owner: String = conn
+            .query_row(
+                "SELECT managed_by FROM api_clients WHERE client_id = 'c-2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, "api");
     }
 
     #[test]

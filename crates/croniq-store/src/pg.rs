@@ -126,6 +126,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("023_dead_letter_policy", PG_MIGRATION_023),
     ("024_runner_identities", PG_MIGRATION_024),
     ("025_token_generation", PG_MIGRATION_025),
+    ("026_api_client_managed_by", PG_MIGRATION_026),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -252,6 +253,14 @@ CREATE INDEX IF NOT EXISTS idx_runner_identities_owner
 // See `migrations/025_token_generation.sql` for the full rationale.
 const PG_MIGRATION_025: &str = r#"
 ALTER TABLE users ADD COLUMN IF NOT EXISTS token_generation BIGINT NOT NULL DEFAULT 0;
+"#;
+
+// Ownership marker on api_clients: 'env' rows are declared by
+// CRONIQ_API_CLIENT_<NAME>_KEY and owned by the environment, 'api' rows by
+// whoever created them through the API. See
+// `migrations/026_api_client_managed_by.sql`.
+const PG_MIGRATION_026: &str = r#"
+ALTER TABLE api_clients ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAULT 'api';
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1377,16 +1386,18 @@ impl AuthStore for PgStore {
         let mut db = self.client.lock().unwrap();
         let scopes = serde_json::to_string(&client.scopes).unwrap_or_default();
         db.execute(
-            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at, managed_by)
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT(client_id) DO UPDATE SET
-               name = EXCLUDED.name, scopes = EXCLUDED.scopes, is_active = EXCLUDED.is_active",
+               name = EXCLUDED.name, scopes = EXCLUDED.scopes, is_active = EXCLUDED.is_active,
+               managed_by = EXCLUDED.managed_by",
             &[
                 &client.client_id,
                 &client.name,
                 &scopes,
                 &client.is_active,
                 &client.created_at,
+                &client.managed_by,
             ],
         )
         .map_err(map_err)?;
@@ -1397,7 +1408,7 @@ impl AuthStore for PgStore {
         let mut db = self.client.lock().unwrap();
         let rows = db
             .query(
-                "SELECT client_id, name, scopes, is_active, created_at FROM api_clients WHERE client_id = $1",
+                "SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients WHERE client_id = $1",
                 &[&client_id],
             )
             .map_err(map_err)?;
@@ -1408,7 +1419,7 @@ impl AuthStore for PgStore {
         let mut db = self.client.lock().unwrap();
         let rows = db
             .query(
-                "SELECT client_id, name, scopes, is_active, created_at FROM api_clients ORDER BY name",
+                "SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients ORDER BY name",
                 &[],
             )
             .map_err(map_err)?;
@@ -2936,6 +2947,7 @@ fn row_to_api_client(row: &postgres::Row) -> ApiClient {
         scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
         is_active: row.get(3),
         created_at: row.get(4),
+        managed_by: row.get(5),
     }
 }
 

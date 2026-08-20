@@ -23,6 +23,18 @@ use croniq_server::{
 use croniq_store::sqlite::SqliteStore;
 use tokio::sync::mpsc;
 
+/// A pending configuration reload and where it came from.
+///
+/// Only an explicit request — SIGHUP, or `POST /v1/admin/reload-config` —
+/// re-reads the API clients the environment declares. The file watcher is for
+/// the Croniqfile alone: it fires on every write, including the partial one a
+/// secret manager makes halfway through replacing a key file.
+#[derive(Debug, Clone)]
+struct ReloadRequest {
+    path: std::path::PathBuf,
+    reconcile_credentials: bool,
+}
+
 #[derive(Parser)]
 // `version` picks up CARGO_PKG_VERSION, which the release workflow rewrites
 // in-place to the pushed tag — so `--version` reports the same value the
@@ -162,19 +174,16 @@ async fn main() -> Result<()> {
     // hard boot error, never a silent fall-back to SQLite.
     let store: DynStore = open_store(&loaded.runtime.server.db, &cli.data_dir)?;
 
-    // Reconcile CRONIQ_INIT_API_KEY against the stored 'default' client.
-    // On an existing data dir, init has already run, so the env var was
-    // previously silently ignored. We now always log whether it matches,
-    // and rotate when CRONIQ_INIT_API_KEY_RECONCILE=1 is set. See #217.
-    // A rotation retires the superseded key after
-    // CRONIQ_API_KEY_ROTATION_GRACE rather than revoking it outright (#471);
-    // a malformed grace is a boot error, not a guessed window.
+    // Reconcile the API clients the environment declares (#217, #471):
+    // create the ones that are missing, and — behind
+    // CRONIQ_API_KEY_RECONCILE=1 — sync scopes and rotate keys that differ.
+    // A malformed declaration is a boot error rather than a credential
+    // quietly missing from a deployment that looks like it came up fine.
     {
-        let init_api_key = croniq_server::env_secret::env_or_file("CRONIQ_INIT_API_KEY");
-        let inputs = croniq_server::init_api_key::ReconcileInputs::from_env_borrowed(&init_api_key)
+        let inputs = croniq_server::api_client_env::ReconcileInputs::from_env()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        croniq_server::init_api_key::reconcile(&*store, inputs)
-            .context("failed to reconcile CRONIQ_INIT_API_KEY against stored API client")?;
+        croniq_server::api_client_env::reconcile(&*store, &inputs)
+            .context("failed to reconcile environment-declared API clients")?;
     }
 
     // Restore persisted trigger states (once-jobs, next_fire_at) from the DB.
@@ -419,17 +428,40 @@ async fn main() -> Result<()> {
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
     // ── Reload signalling: file watcher (optional) + SIGHUP ─────────────────
-    let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
+    //
+    // The payload carries where the request came from, because the two
+    // sources mean different things. A watcher tick is the Croniqfile
+    // changing on disk; SIGHUP is an operator saying "re-read your
+    // configuration", which since #471 includes the credentials the
+    // environment declares. Re-reading secret files on every stray watcher
+    // event would install whatever a half-written file happened to contain.
+    let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<ReloadRequest>();
 
     if cli.watch {
         match croniq_server::watcher::watch_config(&config_path_abs) {
             Ok(raw_rx) => {
-                let debounce_tx = reload_tx.clone();
+                let (path_tx, mut path_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
                 tokio::spawn(croniq_server::watcher::debounced_reload_loop(
                     raw_rx,
                     std::time::Duration::from_millis(500),
-                    debounce_tx,
+                    path_tx,
                 ));
+                // Watcher-driven reloads are Croniqfile-only: implicit
+                // trigger, implicit scope.
+                let watch_tx = reload_tx.clone();
+                tokio::spawn(async move {
+                    while let Some(path) = path_rx.recv().await {
+                        if watch_tx
+                            .send(ReloadRequest {
+                                path,
+                                reconcile_credentials: false,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
                 tracing::info!(path = %config_path_abs.display(), "watching Croniqfile for changes");
             }
             Err(e) => {
@@ -455,7 +487,16 @@ async fn main() -> Result<()> {
                 };
             while signal.recv().await.is_some() {
                 tracing::info!("SIGHUP received — requesting config reload");
-                if sighup_tx.send(sighup_path.clone()).is_err() {
+                // Explicit operator request: re-read env-declared API
+                // clients too, which is how a `<VAR>_FILE`-backed key is
+                // rotated without restarting the process (#471).
+                if sighup_tx
+                    .send(ReloadRequest {
+                        path: sighup_path.clone(),
+                        reconcile_credentials: true,
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -645,8 +686,30 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                Some(path) = reload_rx.recv() => {
+                Some(request) = reload_rx.recv() => {
+                    let path = request.path;
                     tracing::info!(path = %path.display(), "Croniqfile reload requested");
+                    if request.reconcile_credentials {
+                        // Best-effort: a bad declaration must not take the
+                        // Croniqfile reload down with it. At boot the same
+                        // error is fatal, because there the operator can still
+                        // fix it before anything depends on the server.
+                        match croniq_server::api_client_env::ReconcileInputs::from_env() {
+                            Ok(inputs) => {
+                                if let Err(e) = croniq_server::api_client_env::reconcile(
+                                    &*scheduler_reload_store,
+                                    &inputs,
+                                ) {
+                                    tracing::error!(error = %e, "API client reconcile failed");
+                                }
+                            }
+                            Err(e) => tracing::error!(
+                                error = %e,
+                                "environment-declared API clients are invalid — \
+                                 skipping credential reconcile, keeping the stored clients"
+                            ),
+                        }
+                    }
                     match reload::build_plan(
                         &path,
                         &scheduler_reload_store,

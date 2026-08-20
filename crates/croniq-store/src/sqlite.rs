@@ -868,17 +868,17 @@ impl AuthStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let scopes = serde_json::to_string(&client.scopes).unwrap_or_default();
         conn.execute(
-            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(client_id) DO UPDATE SET name = excluded.name, scopes = excluded.scopes, is_active = excluded.is_active",
-            params![client.client_id, client.name, scopes, client.is_active, dt_to_sql(&client.created_at)],
+            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at, managed_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(client_id) DO UPDATE SET name = excluded.name, scopes = excluded.scopes, is_active = excluded.is_active, managed_by = excluded.managed_by",
+            params![client.client_id, client.name, scopes, client.is_active, dt_to_sql(&client.created_at), client.managed_by],
         ).map_err(map_err)?;
         Ok(())
     }
 
     fn get_client(&self, client_id: &str) -> Result<Option<ApiClient>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.prepare("SELECT client_id, name, scopes, is_active, created_at FROM api_clients WHERE client_id = ?1")
+        conn.prepare("SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients WHERE client_id = ?1")
             .map_err(map_err)?
             .query_row(params![client_id], |row| {
                 let scopes_str: String = row.get(2)?;
@@ -888,6 +888,7 @@ impl AuthStore for SqliteStore {
                     scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
                     is_active: row.get::<_, bool>(3)?,
                     created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    managed_by: row.get(5)?,
                 })
             })
             .optional()
@@ -896,7 +897,7 @@ impl AuthStore for SqliteStore {
 
     fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT client_id, name, scopes, is_active, created_at FROM api_clients ORDER BY name").map_err(map_err)?;
+        let mut stmt = conn.prepare("SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients ORDER BY name").map_err(map_err)?;
         let rows = stmt
             .query_map([], |row| {
                 let scopes_str: String = row.get(2)?;
@@ -906,6 +907,7 @@ impl AuthStore for SqliteStore {
                     scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
                     is_active: row.get::<_, bool>(3)?,
                     created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    managed_by: row.get(5)?,
                 })
             })
             .map_err(map_err)?;

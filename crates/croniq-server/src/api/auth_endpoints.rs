@@ -26,6 +26,7 @@ use uuid::Uuid;
 use super::ServerState;
 use crate::api::audit;
 use crate::api::auth_middleware::{require_grantable_scopes, require_scope};
+use crate::api::calendars::ValidationError;
 use crate::api::login_throttle::{ClientIp, LoginThrottle, MFA_MAX_FAILURES};
 use crate::api::refresh_cookie;
 
@@ -903,6 +904,94 @@ pub async fn handle_logout(
     (clearing, StatusCode::NO_CONTENT)
 }
 
+/// `managed_by` value for a client declared by
+/// `CRONIQ_API_CLIENT_<NAME>_KEY` (issue #471).
+pub const MANAGED_BY_ENV: &str = "env";
+/// `managed_by` value for a client created through the API or dashboard.
+pub const MANAGED_BY_API: &str = "api";
+
+/// Error half of the API-client mutation handlers.
+///
+/// The env-managed refusal has to say *which* variable owns the row — a bare
+/// 409 leaves the operator with nothing to act on — while the existing
+/// authorization, not-found and validation paths stay plain statuses.
+#[derive(Debug)]
+pub enum ApiClientError {
+    Status(StatusCode),
+    WithBody(StatusCode, Json<ValidationError>),
+}
+
+impl ApiClientError {
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Status(s) | Self::WithBody(s, _) => *s,
+        }
+    }
+}
+
+/// Lets a test assert against the status without unwrapping the variant —
+/// the body is an operator-facing detail, the status is the contract.
+impl PartialEq<StatusCode> for ApiClientError {
+    fn eq(&self, other: &StatusCode) -> bool {
+        self.status() == *other
+    }
+}
+
+impl From<StatusCode> for ApiClientError {
+    fn from(s: StatusCode) -> Self {
+        Self::Status(s)
+    }
+}
+
+impl From<(StatusCode, Json<ValidationError>)> for ApiClientError {
+    fn from((status, body): (StatusCode, Json<ValidationError>)) -> Self {
+        Self::WithBody(status, body)
+    }
+}
+
+impl IntoResponse for ApiClientError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Status(s) => s.into_response(),
+            Self::WithBody(s, body) => (s, body).into_response(),
+        }
+    }
+}
+
+/// Refuse a mutation that the environment owns.
+///
+/// For an env-declared client the environment is the source of truth and the
+/// reconciler re-applies it on every explicit reload. Accepting an API edit
+/// would mean the change survives until the next `SIGHUP` and then silently
+/// reverts — drift that is invisible from both the dashboard and the env file.
+/// Refusing names the variable to edit instead.
+fn refuse_env_managed(
+    client: &ApiClient,
+    what: &str,
+) -> Option<(StatusCode, Json<ValidationError>)> {
+    if client.managed_by != MANAGED_BY_ENV {
+        return None;
+    }
+    let var = format!(
+        "CRONIQ_API_CLIENT_{}_KEY",
+        client.name.to_uppercase().replace('-', "_")
+    );
+    Some((
+        StatusCode::CONFLICT,
+        Json(ValidationError {
+            error: "env_managed",
+            message: format!(
+                "API client '{name}' is declared in the environment ({var}) and is owned by \
+                 it, so {what} through the API would be reverted by the next reconcile. Change \
+                 the environment (or the file {var}_FILE points at) and reload with SIGHUP or \
+                 POST /v1/admin/reload-config. To hand the client back to the API, remove its \
+                 environment declaration and restart.",
+                name = client.name
+            ),
+        }),
+    ))
+}
+
 /// `GET /v1/api-clients`
 pub async fn handle_list_clients(
     State(state): State<Arc<ServerState>>,
@@ -943,6 +1032,7 @@ pub async fn handle_create_client(
         scopes: req.scopes.clone(),
         is_active: true,
         created_at: Utc::now(),
+        managed_by: MANAGED_BY_API.to_string(),
     };
     store
         .create_client(&client)
@@ -973,12 +1063,12 @@ pub async fn handle_update_client(
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
     Json(req): Json<UpdateClientRequest>,
-) -> Result<Json<ApiClient>, StatusCode> {
+) -> Result<Json<ApiClient>, ApiClientError> {
     require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
     if let Some(ref scopes) = req.scopes
         && scopes.is_empty()
     {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into());
     }
     if let Some(ref scopes) = req.scopes {
         require_grantable_scopes(&ctx, scopes)?;
@@ -991,9 +1081,12 @@ pub async fn handle_update_client(
         .get_client(&client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(refusal) = refuse_env_managed(&client, "editing it") {
+        return Err(refusal.into());
+    }
     if let Some(name) = req.name {
         if name.trim().is_empty() {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(StatusCode::BAD_REQUEST.into());
         }
         client.name = name;
     }
@@ -1014,15 +1107,25 @@ pub async fn handle_delete_client(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
-) -> StatusCode {
-    if let Err(s) = require_scope(&ctx, Scope::API_CLIENTS_ADMIN) {
-        return s;
+) -> Result<StatusCode, ApiClientError> {
+    require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    // Deleting an env-declared client is worse than a no-op: the next
+    // reconcile recreates it, so the operator would watch it reappear with no
+    // explanation. Deletion happens by removing the declaration.
+    //
+    // A client that is already gone stays a 204 — delete was idempotent
+    // before this guard and there is no reason for it to stop being.
+    if let Ok(Some(client)) = store.get_client(&client_id)
+        && let Some(refusal) = refuse_env_managed(&client, "deleting it")
+    {
+        return Err(refusal.into());
     }
-    let Some(store) = state.store.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    };
     let _ = store.delete_client(&client_id);
-    StatusCode::NO_CONTENT
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /v1/api-clients/{id}/tokens`
@@ -1176,7 +1279,7 @@ pub async fn handle_create_api_key(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateApiKeyClientRequest>,
-) -> Result<(StatusCode, Json<CreateApiKeyResponse>), StatusCode> {
+) -> Result<(StatusCode, Json<CreateApiKeyResponse>), ApiClientError> {
     require_scope(&ctx, Scope::API_KEYS_ADMIN)?;
     let store = state
         .store
@@ -1188,6 +1291,13 @@ pub async fn handle_create_api_key(
         .get_client(&req.client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    // An env-declared client's key value comes from the environment, and the
+    // reconciler retires every key that is not the declared one. A key minted
+    // here would therefore stop working at the next reconcile — issue it and
+    // the operator has a credential with a silent expiry date.
+    if let Some(refusal) = refuse_env_managed(&client, "minting a key for it") {
+        return Err(refusal.into());
+    }
     // The key authenticates as the client and therefore carries the
     // client's scopes; bound them by the caller's own.
     require_grantable_scopes(&ctx, &client.scopes)?;
@@ -1278,6 +1388,10 @@ mod tests {
     }
 
     fn seed_client(store: &DynStore, client_id: &str, scopes: &[&str]) {
+        seed_client_owned(store, client_id, scopes, MANAGED_BY_API);
+    }
+
+    fn seed_client_owned(store: &DynStore, client_id: &str, scopes: &[&str], managed_by: &str) {
         store
             .create_client(&ApiClient {
                 client_id: client_id.into(),
@@ -1285,6 +1399,7 @@ mod tests {
                 scopes: scopes.iter().map(|s| s.to_string()).collect(),
                 is_active: true,
                 created_at: Utc::now(),
+                managed_by: managed_by.into(),
             })
             .unwrap();
     }

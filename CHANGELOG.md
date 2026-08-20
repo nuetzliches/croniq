@@ -8,6 +8,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Scoped API clients declared in the environment
+  ([#471](https://github.com/nuetzliches/croniq/issues/471)).** A deployment
+  can now pin least-privilege machine credentials from configuration alone:
+
+  ```
+  CRONIQ_API_CLIENT_RUNNER_KEY=croniq_…
+  CRONIQ_API_CLIENT_RUNNER_SCOPES=work:poll,work:ack,work:renew
+  CRONIQ_API_CLIENT_PRODUCER_KEY=croniq_…
+  CRONIQ_API_CLIENT_PRODUCER_SCOPES=jobs:trigger
+  ```
+
+  Boot the stack and both clients exist with those scopes. Previously the only
+  credential a deployment could pin by value was the single `admin`-scoped
+  `CRONIQ_INIT_API_KEY`, and anything narrower had to be created through the
+  API after boot — which inverts the usual ordering (env is rendered first),
+  is neither declarative nor idempotent, and requires copying a
+  server-generated key back into the deployment. So deployments reused the
+  admin key everywhere, which is the opposite of the scoping the API supports.
+
+  `<NAME>` is `[A-Z0-9_]`, lowercased with `_` → `-`, so
+  `CRONIQ_API_CLIENT_RUNNER_POLL_KEY` declares `runner-poll`. Every key
+  variable takes the `_FILE` form. `CRONIQ_API_KEY` (+ `_SCOPES`) is the short
+  form for the `default` client; `CRONIQ_INIT_API_KEY` and
+  `CRONIQ_INIT_API_KEY_RECONCILE` keep working as deprecated aliases.
+
+  Scopes are **required** for a named client — omitting them is a boot error,
+  not an implicit `admin` — and an unknown scope fails the boot rather than
+  producing a credential that authorises nothing and fails at first use.
+
+  Named clients live under `CRONIQ_API_CLIENT_` rather than extending
+  `CRONIQ_API_KEY_<NAME>` because the latter is ambiguous: with the key value
+  carrying no attribute suffix, `CRONIQ_API_KEY_FOO_SCOPES` could be the
+  scopes of `foo` or the key of `foo-scopes`, and it collides with the control
+  variables (`CRONIQ_API_KEY_RECONCILE`, `…_ROTATION_GRACE`).
+
+- **`managed_by` on API clients, and the API refuses to fight the
+  environment.** A client the environment declares is stored with
+  `managed_by: "env"`; `PUT`/`DELETE /v1/api-clients/{id}` and
+  `POST /v1/api-keys` for it now return `409 env_managed` with a message
+  naming the variable to edit instead. The dashboard shows an `env-managed`
+  badge and disables those controls.
+
+  Without this an edit made in the dashboard would survive until the next
+  reconcile and then revert, with nothing connecting the two events.
+
+  Ownership never moves silently: a client that already exists as
+  `managed_by: "api"` — created in the dashboard, or seeded by
+  `croniq init --api-key` — stays API-owned until an operator sets
+  `CRONIQ_API_KEY_RECONCILE=1`. Upgrading a deployment whose client names
+  collide with new declarations therefore changes nothing on its own.
+  Migration `026_api_client_managed_by` defaults every existing row to `api`.
+
+- **Credential reconcile on `SIGHUP` and `POST /v1/admin/reload-config`.**
+  The environment of a running process cannot be changed from outside, so a
+  direct env var only ever takes effect at boot — but a `_FILE`-backed value
+  can be rewritten under a live process, which is what a Kubernetes Secret
+  volume or a Vault sidecar does. Both explicit reload triggers now re-read
+  the declarations, making a key rotatable without a restart.
+
+  The reload response gained a `credentials` array (one entry per declaration,
+  with `created` / `rotated` / `scopes_updated` / `adopted` / `unchanged` /
+  `blocked`) and a `credentials_error` field, so a deployment with no
+  dashboard can see the result instead of grepping logs. `?dry_run=true`
+  reports the same block without writing.
+
+  The `--watch` file watcher deliberately does **not** re-read credentials: it
+  fires on every write, including the partial one a secret manager makes
+  halfway through replacing a file.
+
+- **`Scope::ALL` / `Scope::is_known`** in `croniq-auth`, for validating scope
+  strings that arrive from outside the type system.
+
 - **`GET /v1/api-keys?client_id=…` — list a client's keys
   ([#471](https://github.com/nuetzliches/croniq/issues/471)).** Metadata only
   (`key_id`, `key_prefix`, `created_at`, `expires_at`, `revoked_at`); the key
@@ -51,6 +123,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `revoke_api_key`; the rotation path owns the rule that an existing, earlier
   deadline is never pushed further out, so rotating repeatedly inside one
   window cannot keep the oldest key alive.
+
+### Changed
+
+- **`CRONIQ_API_KEY_RECONCILE=1` gates changes, not creation.** Creating a
+  declared client that does not exist yet is additive — it cannot break a
+  working credential — so it happens without the flag. Rotating a key,
+  updating scopes and taking ownership all still require it. This is what lets
+  "render the env, boot the stack, get two scoped clients" work in one step.
+
+- A client that matches its declaration but is still API-owned is logged at
+  `info`, not `warn`. Nothing is broken in that state — the row is merely
+  still editable through the API — and warning about it on every boot would
+  train operators to ignore the line that does mean something.
 
 ## [0.33.0] - 2026-08-19
 

@@ -74,6 +74,7 @@ fn auth_api_clients_and_keys(store: &PgStore, s: &str) {
             scopes: vec!["jobs:read".into(), "jobs:write".into()],
             is_active: true,
             created_at: ts(),
+            managed_by: "env".into(),
         })
         .unwrap();
 
@@ -85,6 +86,19 @@ fn auth_api_clients_and_keys(store: &PgStore, s: &str) {
     assert_eq!(got.scopes, vec!["jobs:read", "jobs:write"]);
     assert!(got.is_active);
     assert_eq!(got.created_at, ts());
+    // Ownership has to survive the round trip on this backend too: it is what
+    // the API's env_managed refusal reads (issue #471).
+    assert_eq!(got.managed_by, "env");
+    assert_eq!(
+        store
+            .list_clients()
+            .unwrap()
+            .iter()
+            .find(|c| c.client_id == client_id)
+            .map(|c| c.managed_by.as_str()),
+        Some("env"),
+        "list_clients must select managed_by, not default it"
+    );
     assert!(
         store
             .list_clients()
@@ -113,6 +127,16 @@ fn auth_api_clients_and_keys(store: &PgStore, s: &str) {
     assert_eq!(key.client_id, client_id);
     assert_eq!(key.expires_at, Some(ts()));
     assert_eq!(store.list_api_keys(&client_id).unwrap().len(), 1);
+
+    // Retirement (grace-window rotation) leaves the key usable but dated.
+    let deadline = ts() + chrono::Duration::minutes(15);
+    store.set_api_key_expiry(&key.key_id, deadline).unwrap();
+    let retired = store
+        .find_api_key_by_hash(&key_hash)
+        .unwrap()
+        .expect("key exists");
+    assert_eq!(retired.expires_at, Some(deadline));
+    assert!(retired.revoked_at.is_none());
 
     store.revoke_api_key(&key.key_id, ts()).unwrap();
     assert!(

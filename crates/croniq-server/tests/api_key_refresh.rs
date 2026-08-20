@@ -84,6 +84,7 @@ fn seed_client(store: &DynStore, scopes: &[&str], is_active: bool) {
             scopes: scopes.iter().map(|s| s.to_string()).collect(),
             is_active,
             created_at: Utc::now(),
+            managed_by: "api".into(),
         })
         .unwrap();
 }

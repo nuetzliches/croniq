@@ -216,6 +216,20 @@ pub struct ApiClient {
     pub scopes: Vec<String>,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
+    /// Who owns this row: `"api"` (created through the API or dashboard) or
+    /// `"env"` (declared by `CRONIQ_API_CLIENT_<NAME>_KEY`, issue #471).
+    ///
+    /// For `"env"` the environment is the source of truth — the reconciler
+    /// syncs the row on every explicit reload and the API refuses edits, so a
+    /// dashboard change cannot be silently reverted on the next reconcile.
+    /// Defaults to `"api"` so every existing caller keeps its meaning.
+    #[serde(default = "managed_by_api")]
+    pub managed_by: String,
+}
+
+/// Serde default for [`ApiClient::managed_by`].
+fn managed_by_api() -> String {
+    "api".to_string()
 }
 
 /// A hashed API key bound to an API client.
