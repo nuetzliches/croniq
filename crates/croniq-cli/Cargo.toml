@@ -21,3 +21,8 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# Building bare responses for the HTTP error-mapping tests; reqwest
+# exposes `Response::from(http::Response<_>)` for exactly this.
+http = "1"

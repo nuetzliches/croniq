@@ -716,6 +716,48 @@ croniq trigger billing:invoice             # Fire job immediately
 croniq dead-letters --data-dir .           # List dead letters
 ```
 
+### Talking to a running server
+
+`status`, `list-runners`, `trigger` and the credential commands below reach a
+server over HTTP. Point them at it and give them a credential:
+
+```sh
+export CRONIQ_URL=https://cron.example.com     # default: http://localhost:4000
+export CRONIQ_API_KEY=croniq_...               # or pass --api-key
+```
+
+Both are also plain flags (`--url`, `--api-key`) and work on any subcommand.
+Without a credential every authenticated endpoint answers 401 — the CLI says
+so, and names the flag, rather than failing to parse the response.
+
+### Managing credentials without the dashboard
+
+These go over HTTP, so unlike `croniq init` they work against Postgres and
+against a remote server:
+
+```sh
+croniq api-clients list                                  # who exists, with scopes and owner
+croniq api-clients create --name reporting --scopes jobs:read,executions:read
+croniq api-clients update <client-id> --scopes jobs:read --inactive
+croniq api-clients delete <client-id>
+
+croniq api-keys list --client <client-id>                # live, retiring and revoked keys
+croniq api-keys create --client <client-id>              # raw key shown once
+croniq api-keys revoke <key-id>                          # break glass: ends a key now
+```
+
+`--json` on the listing and create commands emits raw JSON for scripting:
+
+```sh
+KEY=$(croniq api-keys create --client "$ID" --json | jq -r .raw_key)
+```
+
+A key listed as `retiring` was replaced by a rotation and stops working at its
+`EXPIRES` time — see [`CRONIQ_API_KEY_ROTATION_GRACE`](#environment-variables).
+Clients shown as owned by `env` are declared with
+`CRONIQ_API_CLIENT_<NAME>_KEY`; the API refuses to edit them, so change the
+environment and reload instead.
+
 ## Environment Variables
 
 | Variable | Description | Default |
