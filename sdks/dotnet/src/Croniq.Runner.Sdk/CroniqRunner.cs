@@ -213,6 +213,37 @@ public sealed class CroniqRunner : IAsyncDisposable
     }
 
     /// <summary>
+    /// Updates the consecutive-401 counter and reports whether the runner should
+    /// stop.
+    /// </summary>
+    /// <remarks>
+    /// <para>A 401 says the API key was rejected. The credential is read once, when
+    /// the client is built, and never re-read, so every later poll presents the same
+    /// dead key — retrying cannot clear it. Before this existed a 401 fell into the
+    /// generic transient bucket and the runner retried on the poll interval
+    /// indefinitely: the process stayed up, looked healthy, did nothing, and never
+    /// exited non-zero, so no supervisor restarted it (issue #473).</para>
+    /// <para>Unlike a 403 it is not fatal on the first occurrence: key rotation hands
+    /// over by installing the new key and giving the old one an expiry (server issue
+    /// #471), and dying on a single 401 would turn a narrow race around that handover
+    /// into an outage. Anything else — a success, a 5xx, a timeout — resets the
+    /// counter, because none of them say the credential is invalid.</para>
+    /// </remarks>
+    internal static bool UpdateAuthStreak(
+        System.Net.HttpStatusCode? failureStatus,
+        ref int consecutive,
+        int maxConsecutive)
+    {
+        if (failureStatus == System.Net.HttpStatusCode.Unauthorized)
+        {
+            consecutive++;
+            return consecutive >= maxConsecutive;
+        }
+        consecutive = 0;
+        return false;
+    }
+
+    /// <summary>
     /// Maps a poll exception to a fixed, non-identifying reason string.
     /// </summary>
     /// <remarks>
@@ -247,6 +278,10 @@ public sealed class CroniqRunner : IAsyncDisposable
         // Tracks consecutive `409 Conflict` responses on poll. See
         // UpdateConflictStreak for the reset/increment rules.
         int consecutiveConflicts = 0;
+        // Consecutive 401s, tracked separately: a run of conflicts must not
+        // spend the auth budget, or a duplicate deployment would be reported
+        // as an authentication failure.
+        int consecutiveAuthFailures = 0;
 
         while (!ct.IsCancellationRequested)
         {
@@ -266,6 +301,7 @@ public sealed class CroniqRunner : IAsyncDisposable
                 response = await _client.PollAsync(request, _options.PollTimeout, ct).ConfigureAwait(false);
                 _stateProbe.MarkSuccessfulPoll(_timeProvider.GetUtcNow());
                 UpdateConflictStreak(null, ref consecutiveConflicts, _options.MaxConsecutivePollConflicts);
+                UpdateAuthStreak(null, ref consecutiveAuthFailures, _options.MaxConsecutiveAuthFailures);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -284,6 +320,19 @@ public sealed class CroniqRunner : IAsyncDisposable
                 var status = (ex as HttpRequestException)?.StatusCode;
                 var shouldBail = UpdateConflictStreak(
                     status, ref consecutiveConflicts, _options.MaxConsecutivePollConflicts);
+                var shouldBailAuth = UpdateAuthStreak(
+                    status, ref consecutiveAuthFailures, _options.MaxConsecutiveAuthFailures);
+
+                if (shouldBailAuth)
+                {
+                    _logger.LogError(
+                        ex,
+                        "fatal: server returned 401 Unauthorized on poll {Count} times in a row — " +
+                        "the API key was rejected. It may have been revoked, or its rotation grace " +
+                        "window may have elapsed. Restart the runner with the current key.",
+                        consecutiveAuthFailures);
+                    throw new AuthFailedException(consecutiveAuthFailures, ex);
+                }
 
                 if (shouldBail && status == System.Net.HttpStatusCode.Forbidden)
                 {
@@ -307,7 +356,13 @@ public sealed class CroniqRunner : IAsyncDisposable
                     throw new PollInstanceConflictException(_resolvedRunnerId!, consecutiveConflicts, ex);
                 }
 
-                if (status == System.Net.HttpStatusCode.Conflict)
+                if (status == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    _logger.LogWarning(
+                        "poll returned 401 Unauthorized ({Consecutive}/{Max}) — the API key was rejected; retrying after {Delay}",
+                        consecutiveAuthFailures, _options.MaxConsecutiveAuthFailures, _options.PollRetryDelay);
+                }
+                else if (status == System.Net.HttpStatusCode.Conflict)
                 {
                     _logger.LogWarning(
                         "poll returned 409 Conflict ({Consecutive}/{Max}) — another runner instance may be active; retrying after {Delay}",

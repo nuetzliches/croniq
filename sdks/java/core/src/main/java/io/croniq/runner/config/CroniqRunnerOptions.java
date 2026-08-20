@@ -26,6 +26,9 @@ public final class CroniqRunnerOptions {
     public static final Duration DEFAULT_CAPACITY_BACKOFF = Duration.ofMillis(500);
     public static final int DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS = 3;
 
+    /** Default ceiling on consecutive {@code 401 Unauthorized} poll responses. */
+    public static final int DEFAULT_MAX_CONSECUTIVE_AUTH_FAILURES = 3;
+
     private final URI serverUrl;
     private final String runnerId;
     private final String runnerIdPrefix;
@@ -41,6 +44,7 @@ public final class CroniqRunnerOptions {
     private final Duration pollRetryDelay;
     private final Duration capacityBackoff;
     private final int maxConsecutivePollConflicts;
+    private final int maxConsecutiveAuthFailures;
     private final boolean allowInsecureHttp;
 
     private CroniqRunnerOptions(Builder b) {
@@ -60,6 +64,7 @@ public final class CroniqRunnerOptions {
         this.pollRetryDelay = b.pollRetryDelay;
         this.capacityBackoff = b.capacityBackoff;
         this.maxConsecutivePollConflicts = b.maxConsecutivePollConflicts;
+        this.maxConsecutiveAuthFailures = b.maxConsecutiveAuthFailures;
     }
 
     /**
@@ -150,6 +155,23 @@ public final class CroniqRunnerOptions {
         return maxConsecutivePollConflicts;
     }
 
+    /**
+     * How many consecutive {@code 401 Unauthorized} poll responses to tolerate before
+     * {@link io.croniq.runner.CroniqRunner#run()} throws {@link
+     * io.croniq.runner.CroniqAuthFailedException}.
+     *
+     * <p>The API key is read once and never re-read, so a rejected credential cannot
+     * fix itself; retrying only produces an idle-looking process that never exits
+     * (issue #473). Not fatal on the first {@code 401} — rotation hands over through
+     * an expiry window (server issue #471) and a race around it should not kill a
+     * healthy runner. The counter resets on a successful poll and on any other
+     * failure: a 5xx says nothing about whether the credential is valid. Defaults to
+     * {@link #DEFAULT_MAX_CONSECUTIVE_AUTH_FAILURES}.
+     */
+    public int maxConsecutiveAuthFailures() {
+        return maxConsecutiveAuthFailures;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -171,6 +193,7 @@ public final class CroniqRunnerOptions {
                 .drainTimeout(drainTimeout)
                 .pollRetryDelay(pollRetryDelay)
                 .maxConsecutivePollConflicts(maxConsecutivePollConflicts)
+                .maxConsecutiveAuthFailures(maxConsecutiveAuthFailures)
                 .capacityBackoff(capacityBackoff);
     }
 
@@ -189,6 +212,7 @@ public final class CroniqRunnerOptions {
         private Duration drainTimeout = DEFAULT_DRAIN_TIMEOUT;
         private Duration pollRetryDelay = DEFAULT_POLL_RETRY_DELAY;
         private int maxConsecutivePollConflicts = DEFAULT_MAX_CONSECUTIVE_POLL_CONFLICTS;
+        private int maxConsecutiveAuthFailures = DEFAULT_MAX_CONSECUTIVE_AUTH_FAILURES;
         private Duration capacityBackoff = DEFAULT_CAPACITY_BACKOFF;
         private boolean allowInsecureHttp;
 
@@ -295,6 +319,19 @@ public final class CroniqRunnerOptions {
                 throw new IllegalArgumentException("maxConsecutivePollConflicts must be in [1, 100], got " + v);
             }
             this.maxConsecutivePollConflicts = v;
+            return this;
+        }
+
+        /**
+         * Range-checked like {@link #maxConsecutivePollConflicts(int)}: 0 would make
+         * the runner exit on its very first {@code 401}, which turns any race around
+         * a key rotation into a crash-loop.
+         */
+        public Builder maxConsecutiveAuthFailures(int v) {
+            if (v < 1 || v > 100) {
+                throw new IllegalArgumentException("maxConsecutiveAuthFailures must be in [1, 100], got " + v);
+            }
+            this.maxConsecutiveAuthFailures = v;
             return this;
         }
 

@@ -43,13 +43,15 @@ async function runCase(spec: CaseSpec): Promise<void> {
 
     const runPromise = runner.run(runAC.signal).catch((err) => {
       if ((err as Error)?.name === 'AbortError') return;
-      // Expected for cases 15 and 16: a 403 on poll is permanent and a
-      // streak of 409s exhausts the conflict ceiling, so the SDK is
-      // contractually required to stop in both. The HTTP-count assertions
-      // below are what prove it actually did — a case that does not
-      // anticipate this exit still fails on min_count/max_count.
+      // Expected for cases 15, 16 and 17: a 403 on poll is permanent, a
+      // streak of 409s exhausts the conflict ceiling, and a streak of 401s
+      // exhausts the auth ceiling — the SDK is contractually required to stop
+      // in all three. The HTTP-count assertions below are what prove it
+      // actually did; a case that does not anticipate this exit still fails
+      // on min_count/max_count.
       if ((err as Error)?.name === 'RunnerOwnershipDeniedError') return;
       if ((err as Error)?.name === 'PollInstanceConflictError') return;
+      if ((err as Error)?.name === 'AuthFailedError') return;
       throw err;
     });
 
@@ -99,6 +101,8 @@ function buildOptions(cfg: RunnerConfig, serverUrl: string): CroniqRunnerOptions
   if (cfg.capacity_backoff_ms !== undefined) opts.capacityBackoffMs = cfg.capacity_backoff_ms;
   if (cfg.max_consecutive_poll_conflicts !== undefined)
     opts.maxConsecutivePollConflicts = cfg.max_consecutive_poll_conflicts;
+  if (cfg.max_consecutive_auth_failures !== undefined)
+    opts.maxConsecutiveAuthFailures = cfg.max_consecutive_auth_failures;
 
   // Conformance cases run fast: tighten the log writer's time-threshold so a
   // log-streaming case doesn't time out waiting on a 200 ms tick.

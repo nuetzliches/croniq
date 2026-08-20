@@ -1,0 +1,58 @@
+name: "Poll returning 401 forever stops the runner at the auth ceiling"
+description: |
+  A runner classifies 401 as a transient server error, so it retried the same
+  dead credential every poll interval, forever, with the key it read at
+  startup and never re-reads. The process stayed up and looked healthy while
+  doing nothing, and because it never exited non-zero no restart policy ever
+  fired — the one action that would fix it, restarting so the new key is read,
+  was exactly what the behaviour prevented (issue #473).
+
+  Unlike the 403 of case 15, the first 401 is not treated as fatal. Rotation
+  hands over by installing the new key and giving the old one an expiry
+  (CRONIQ_API_KEY_ROTATION_GRACE, issue #471), and a runner that dropped dead
+  on a single 401 would turn any narrow race around that handover into an
+  outage. So consecutive 401s are budgeted via
+  runner_config.max_consecutive_auth_failures (default 3) and exhaustion is
+  fatal — the same shape as the 409 ceiling in case 16, for the same reason:
+  one is a blip, a streak is a broken credential.
+
+  A successful poll resets the budget, and so does any other error: a 5xx or a
+  timeout says nothing about whether the credential is valid, and counting it
+  would bail on a server that is merely unwell.
+
+  Server returns 401 on every poll and the ceiling is set to 2, so the runner
+  should poll exactly twice and stop. With poll_retry_delay_ms=100 inside a 2 s
+  window a runner that retries forever would produce roughly twenty, so
+  max_count is the observable proof the budget is enforced; min_count pins the
+  other side, that the runner did not bail on the first 401 the way it must for
+  a 403. How the fatal error surfaces is language-specific and asserted in each
+  SDK's own tests — the wire cannot see it.
+
+runner_config:
+  runner_id: "conformance-401-ceiling"
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 1000
+  max_consecutive_auth_failures: 2
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 401
+      body:
+        error: "unauthorized"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+      max_count: 2
+      body_match:
+        runner_id: "conformance-401-ceiling"

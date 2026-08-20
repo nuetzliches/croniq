@@ -97,6 +97,37 @@ export function isInstanceConflict(err: unknown): boolean {
 }
 
 /**
+ * A work endpoint answered `401 Unauthorized` `maxConsecutiveAuthFailures`
+ * times in a row: the API key was rejected and keeps being rejected.
+ *
+ * The credential is read once, when the client is built, and never re-read,
+ * so retrying presents the same dead key forever. Before this existed a 401
+ * fell into the generic transient bucket and the runner retried on the poll
+ * interval indefinitely: the process stayed up, looked healthy, did nothing,
+ * and never exited non-zero — so no supervisor restarted it, and restarting
+ * is exactly what would have picked up the new key (issue #473).
+ *
+ * Not thrown on the first 401. Key rotation hands over by installing the new
+ * key and giving the old one an expiry (server issue #471), and dying on a
+ * single 401 would turn a narrow race around that handover into an outage.
+ */
+export class AuthFailedError extends Error {
+  constructor(public readonly consecutiveCount: number) {
+    super(
+      `unauthorized — the API key was rejected on ${consecutiveCount} consecutive ` +
+        `POST /v1/work/poll attempts. It may have been revoked, or its rotation grace ` +
+        `window may have elapsed. Restart the runner with the current key.`,
+    );
+    this.name = 'AuthFailedError';
+  }
+}
+
+/** True when `err` is a 401 from a work endpoint — the rejected credential. */
+export function isUnauthorized(err: unknown): boolean {
+  return err instanceof HttpError && err.status === 401;
+}
+
+/**
  * HTTP client for the Croniq runner API. Adds `Authorization` per request
  * (ApiKey takes precedence over Bearer when both are set) and serialises
  * snake_case JSON in/out.

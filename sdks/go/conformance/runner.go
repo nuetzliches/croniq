@@ -112,6 +112,9 @@ func buildRunner(t *testing.T, spec *Spec, baseURL string) *croniq.Runner {
 	if cfg.MaxConsecutivePollConflicts != nil {
 		opts = append(opts, croniq.WithMaxConsecutivePollConflicts(*cfg.MaxConsecutivePollConflicts))
 	}
+	if cfg.MaxConsecutiveAuthFailures != nil {
+		opts = append(opts, croniq.WithMaxConsecutiveAuthFailures(*cfg.MaxConsecutiveAuthFailures))
+	}
 
 	return croniq.NewRunner(baseURL, runnerID, opts...)
 }

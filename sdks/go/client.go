@@ -81,6 +81,45 @@ func (e *PollInstanceConflictError) Error() string {
 		e.RunnerID, e.ConsecutiveCount, e.Body)
 }
 
+// AuthFailedError reports that a work endpoint answered 401 Unauthorized
+// MaxConsecutiveAuthFailures times in a row: the API key was rejected and
+// keeps being rejected.
+//
+// The credential is read once, when the client is built, and never re-read,
+// so retrying presents the same rejected key forever. Before this existed a
+// 401 fell into the generic transient bucket and [Runner.Run] retried on the
+// poll interval indefinitely: the process stayed up, looked healthy, did
+// nothing, and never exited non-zero — so no restart policy fired, and
+// restarting is exactly what would have picked up the new key (issue #473).
+//
+// Not returned on the first 401. Key rotation hands over by installing the
+// new key and giving the old one an expiry (server issue #471), and dropping
+// dead on a single 401 would turn a narrow race around that handover into an
+// outage. Callers can match it with [errors.As].
+type AuthFailedError struct {
+	RunnerID string
+	Endpoint string
+	// ConsecutiveCount is the streak length observed before bailing, equal
+	// to Options.MaxConsecutiveAuthFailures at return time.
+	ConsecutiveCount int
+	Body             string
+}
+
+func (e *AuthFailedError) Error() string {
+	return fmt.Sprintf(
+		"unauthorized on %s — the API key was rejected on %d consecutive attempts. "+
+			"It may have been revoked, or its rotation grace window may have elapsed. "+
+			"Restart the runner with the current key: %s",
+		e.Endpoint, e.ConsecutiveCount, e.Body)
+}
+
+// isUnauthorized reports whether err is a 401 from a work endpoint. Counted
+// rather than acted on immediately: see [AuthFailedError].
+func isUnauthorized(err error) bool {
+	var se *ServerError
+	return errors.As(err, &se) && se.Status == http.StatusUnauthorized
+}
+
 // isOwnershipDenied reports whether err is a 403 from a work endpoint —
 // the wire layer keeps every non-2xx as a *ServerError, so the runner loop
 // is where the status becomes a policy decision.

@@ -325,6 +325,115 @@ func TestRunnerStopsAfterConsecutive409Polls(t *testing.T) {
 	}
 }
 
+func TestRunnerSurvives401PollAndKeepsPolling(t *testing.T) {
+	// A single 401 must not be fatal. Key rotation hands over by installing
+	// the new key and giving the old one an expiry (server issue #471); a
+	// runner that died on one 401 would turn a race around that handover
+	// into an outage.
+	rs := newRecordingServer()
+	defer rs.close()
+
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 401, body: `{"error":"unauthorized"}`},
+		cannedResp{status: 200, body: `{"work":[],"cancel":[]}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(50*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+		WithMaxConsecutiveAuthFailures(3),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("a single 401 must be survivable, got %v", err)
+	}
+	if got := rs.count("POST", "/v1/work/poll"); got < 2 {
+		t.Errorf("expected the runner to poll again after the 401, got %d polls", got)
+	}
+}
+
+func TestRunnerStopsAfterConsecutive401Polls(t *testing.T) {
+	// The credential is read once and never re-read, so a rejected key keeps
+	// being rejected. Retrying forever left the process up, healthy-looking
+	// and idle, and — because it never exited non-zero — never restarted,
+	// which is the one thing that would have fixed it (issue #473).
+	rs := newRecordingServer()
+	defer rs.close()
+
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 401, body: `{"error":"unauthorized"}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(50*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+		WithMaxConsecutiveAuthFailures(3),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Run(ctx) }()
+
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return — the runner kept polling past the auth ceiling")
+	}
+
+	var authErr *AuthFailedError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *AuthFailedError, got %v", err)
+	}
+	if authErr.ConsecutiveCount != 3 {
+		t.Errorf("ConsecutiveCount = %d, want 3", authErr.ConsecutiveCount)
+	}
+	if !strings.Contains(authErr.Error(), "Restart the runner") {
+		t.Errorf("expected the error to name the remedy, got %q", authErr.Error())
+	}
+	if got := rs.count("POST", "/v1/work/poll"); got != 3 {
+		t.Errorf("expected exactly 3 polls (the configured ceiling), got %d", got)
+	}
+}
+
+func TestRunnerAuthStreakResetsOnNon401(t *testing.T) {
+	// A 500 says nothing about whether the credential is valid. Counting it
+	// would make an unwell server look like a revoked key.
+	rs := newRecordingServer()
+	defer rs.close()
+
+	rs.reply("POST", "/v1/work/poll",
+		cannedResp{status: 401, body: `{"error":"unauthorized"}`},
+		cannedResp{status: 500, body: `{"error":"boom"}`},
+		cannedResp{status: 401, body: `{"error":"unauthorized"}`},
+		cannedResp{status: 200, body: `{"work":[],"cancel":[]}`},
+	)
+
+	r := NewRunner(rs.srv.URL, "test-runner",
+		WithMaxInflight(1),
+		WithPollTimeout(300*time.Millisecond),
+		WithPollRetryDelay(50*time.Millisecond),
+		WithDrainTimeout(500*time.Millisecond),
+		WithMaxConsecutiveAuthFailures(2),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	// Two 401s with a 500 between them: never two in a row, so the ceiling
+	// of 2 must not trip.
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("the 500 must reset the auth streak, got %v", err)
+	}
+}
+
 func TestRunnerConflictStreakResetsOnNon409(t *testing.T) {
 	// The streak counts *consecutive* conflicts. A 500 in between is
 	// unrelated to instance ownership — a server restart, a proxy hiccup —

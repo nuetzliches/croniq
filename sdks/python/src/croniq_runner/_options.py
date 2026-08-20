@@ -90,6 +90,19 @@ class RunnerOptions:
     timeout), which say nothing about instance ownership.
     """
 
+    max_consecutive_auth_failures: int = 3
+    """How many consecutive ``401 Unauthorized`` poll responses to tolerate.
+
+    On exhaustion :meth:`Runner.run` raises
+    :class:`~croniq_runner.AuthFailedError` instead of retrying forever: the
+    API key is read once and never re-read, so a rejected credential cannot
+    fix itself, and a runner that keeps polling looks idle rather than broken
+    (issue #473). Not fatal on the first ``401`` — rotation hands over through
+    an expiry window (server issue #471) and a race around it should not kill
+    a healthy runner. The counter resets on a successful poll and on any other
+    failure: a 5xx says nothing about whether the credential is valid.
+    """
+
     log_writer: LogWriterOptions = field(default_factory=LogWriterOptions)
 
     allow_insecure_http: bool = False
@@ -114,4 +127,9 @@ class RunnerOptions:
             raise ValueError(
                 "RunnerOptions.max_consecutive_poll_conflicts must be in [1, 100], "
                 f"got {self.max_consecutive_poll_conflicts}"
+            )
+        if not 1 <= self.max_consecutive_auth_failures <= 100:
+            raise ValueError(
+                "RunnerOptions.max_consecutive_auth_failures must be in [1, 100], "
+                f"got {self.max_consecutive_auth_failures}"
             )

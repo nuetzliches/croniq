@@ -14,6 +14,7 @@ without a major-version bump:
     WorkEvent           — structured log event for `LogWriter.write`
     HandlerError        — handler raises this to control the failure message
     PollInstanceConflictError — poll kept conflicting: a duplicate runner_id (409)
+    AuthFailedError — poll kept being rejected: the API key is gone (401)
     RunnerOwnershipDeniedError — a work endpoint refused this runner's credential (403)
     TriggerClient       — producer client for firing jobs via POST /v1/trigger
     TriggerClientOptions— trigger-client configuration (its own credentials)
@@ -36,6 +37,7 @@ Quick start::
 
 from croniq_runner._context import ExecutionContext
 from croniq_runner._errors import (
+    AuthFailedError,
     HandlerError,
     PollInstanceConflictError,
     RunnerOwnershipDeniedError,
@@ -52,6 +54,7 @@ __all__ = [
     "LogLevel",
     "LogWriter",
     "LogWriterOptions",
+    "AuthFailedError",
     "PollInstanceConflictError",
     "Runner",
     "RunnerOptions",

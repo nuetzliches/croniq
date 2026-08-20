@@ -4,6 +4,28 @@
 
 ### Added
 
+- **A ceiling on consecutive authentication failures
+  ([#473](https://github.com/nuetzliches/croniq/issues/473)).** New `maxConsecutiveAuthFailures` option (default `3`, range `[1, 100]`) budgets
+  consecutive `401 Unauthorized` responses to `POST /v1/work/poll`. On
+  exhaustion the runner stops with the new exported `AuthFailedError`, which carries the streak length and
+  names the remedy: restart with the current key. The counter resets on a
+  successful poll and on any other failure — a 5xx says nothing about whether
+  the credential is valid.
+
+  **Behaviour change.** A `401` was previously classified as transient, so a
+  runner whose key was revoked retried it every poll interval forever. The
+  credential is read once, at construction, and never re-read, so retrying
+  could not clear it: the process stayed up, looked healthy, did nothing, and
+  never exited non-zero — which meant no supervisor ever restarted it, and
+  restarting is exactly what would have picked up the new key.
+
+  Unlike the `403` of #437 the first `401` is *not* fatal. Key rotation hands
+  over by installing the new key and giving the old one an expiry
+  ([#471](https://github.com/nuetzliches/croniq/issues/471)), so dying on a
+  single rejection would turn a narrow race around that handover into an
+  outage. Conformance case `17-poll-401-auth-ceiling.yaml` pins the contract on
+  the wire across all five runner bindings.
+
 - **A ceiling on consecutive poll conflicts ([#466](https://github.com/nuetzliches/croniq/issues/466)).** New `maxConsecutivePollConflicts` option (default `3`, range `[1, 100]`) budgets consecutive `409 Conflict` responses to `POST /v1/work/poll`. On exhaustion `run()` rejects with the new exported `PollInstanceConflictError`, which carries `runnerId` and `consecutiveCount` and names the remedy: stop the duplicate process or rotate the `runner_id`. The counter resets on a successful poll or on any non-409 failure (5xx, network, timeout), which say nothing about instance ownership.
 
   **Behaviour change.** A sustained `409` previously retried forever. One conflict is still transient — a deposed instance may win its identity back, and conformance case 11 pins that it is retried — but a *streak* of them is a duplicate deployment, two processes started with the same fixed `runnerId`, and retrying that forever left the misconfiguration behind a warning that scrolled past. The runner now exits so the process can fail non-zero and reach monitoring, matching what the Rust and .NET SDKs have done since [#134](https://github.com/nuetzliches/croniq/issues/134) sub-item 1. Set the option to `100` to get close to the old behaviour. The `403` half was already symmetric across the SDKs (#437/#458); this closes the `409` half.

@@ -55,7 +55,8 @@ final class CaseLoader {
             "drain_timeout_ms",
             "poll_retry_delay_ms",
             "capacity_backoff_ms",
-            "max_consecutive_poll_conflicts");
+            "max_consecutive_poll_conflicts",
+            "max_consecutive_auth_failures");
 
     private static final Set<String> HANDLER_KEYS = Set.of(
             "job_key",
@@ -105,7 +106,8 @@ final class CaseLoader {
                 intOf(m, "drain_timeout_ms"),
                 intOf(m, "poll_retry_delay_ms"),
                 intOf(m, "capacity_backoff_ms"),
-                intOf(m, "max_consecutive_poll_conflicts"));
+                intOf(m, "max_consecutive_poll_conflicts"),
+                intOf(m, "max_consecutive_auth_failures"));
     }
 
     private static List<CaseSpec.HandlerSpec> parseHandlers(List<Object> raw) {

@@ -70,6 +70,43 @@ class PollInstanceConflictError(Exception):
         self.consecutive_count = consecutive_count
 
 
+class AuthFailedError(Exception):
+    """A work endpoint answered ``401 Unauthorized`` too many times in a row.
+
+    The API key is read once, when the client is built, and never re-read, so
+    a rejected credential keeps being rejected — retrying presents the same
+    dead key forever. Before this existed a ``401`` fell into the generic
+    transient bucket and the runner retried on the poll interval
+    indefinitely: the process stayed up, looked healthy, did nothing, and
+    never exited non-zero, so no restart policy fired — and restarting is
+    exactly what would have picked up the new key (issue #473).
+
+    Not raised on the first ``401``. Key rotation hands over by installing
+    the new key and giving the old one an expiry (server issue #471), and
+    dying on a single ``401`` would turn a narrow race around that handover
+    into an outage. :meth:`Runner.run` raises this once
+    :attr:`RunnerOptions.max_consecutive_auth_failures` consecutive
+    rejections have been seen.
+    """
+
+    def __init__(self, consecutive_count: int) -> None:
+        super().__init__(
+            "unauthorized — the API key was rejected on "
+            f"{consecutive_count} consecutive POST /v1/work/poll attempts. It may "
+            "have been revoked, or its rotation grace window may have elapsed. "
+            "Restart the runner with the current key."
+        )
+        self.consecutive_count = consecutive_count
+
+
+def is_unauthorized(exc: BaseException) -> bool:
+    """Return ``True`` when ``exc`` is a ``401`` from a work endpoint.
+
+    Counted rather than acted on immediately — see :class:`AuthFailedError`.
+    """
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401
+
+
 def is_instance_conflict(exc: BaseException) -> bool:
     """Return ``True`` when ``exc`` is a ``409`` from the poll endpoint.
 

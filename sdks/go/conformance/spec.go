@@ -36,6 +36,7 @@ type RunnerConfigSpec struct {
 	CapacityBackoffMs *int     `yaml:"capacity_backoff_ms"`
 
 	MaxConsecutivePollConflicts *int `yaml:"max_consecutive_poll_conflicts"`
+	MaxConsecutiveAuthFailures  *int `yaml:"max_consecutive_auth_failures"`
 }
 
 // HandlerSpec describes one handler to register, identified by job_key

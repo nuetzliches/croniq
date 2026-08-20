@@ -70,6 +70,13 @@ internal static class ConformanceRunner
         {
             // expected when we cancel the runner
         }
+        catch (AuthFailedException)
+        {
+            // Expected for case 17: a streak of 401s exhausts the auth
+            // ceiling, so the SDK is contractually required to stop. Same
+            // reasoning as the two below — the HTTP-count assertions are what
+            // prove it actually did.
+        }
         catch (PollInstanceConflictException)
         {
             // Expected for case 16: a streak of 409s exhausts the conflict
@@ -135,6 +142,7 @@ internal static class ConformanceRunner
         if (cfg.PollRetryDelayMs is int prd) opts.PollRetryDelay = TimeSpan.FromMilliseconds(prd);
         if (cfg.CapacityBackoffMs is int cb) opts.CapacityBackoff = TimeSpan.FromMilliseconds(cb);
         if (cfg.MaxConsecutivePollConflicts is int mcpc) opts.MaxConsecutivePollConflicts = mcpc;
+        if (cfg.MaxConsecutiveAuthFailures is int mcaf) opts.MaxConsecutiveAuthFailures = mcaf;
     }
 
     private static bool ExpectationsAreMet(ExpectationsSpec expectations, IReadOnlyList<RecordedRequest> recorded)

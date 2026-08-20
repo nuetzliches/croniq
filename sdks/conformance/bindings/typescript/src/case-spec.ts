@@ -26,6 +26,7 @@ export interface RunnerConfig {
   poll_retry_delay_ms?: number;
   capacity_backoff_ms?: number;
   max_consecutive_poll_conflicts?: number;
+  max_consecutive_auth_failures?: number;
 }
 
 export type HandlerBehavior = 'noop' | 'throw' | 'sleep' | 'log' | 'stream_logs';

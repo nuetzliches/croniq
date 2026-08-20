@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from croniq_runner import (
+    AuthFailedError,
     PollInstanceConflictError,
     Runner,
     RunnerOptions,
@@ -73,13 +74,13 @@ async def run_case(httpserver: HTTPServer, spec: CaseSpec) -> None:
         # the test forever.
         try:
             await asyncio.wait_for(run_task, timeout=2.0)
-        except (RunnerOwnershipDeniedError, PollInstanceConflictError):
-            # Expected for cases 15 and 16: a 403 on poll is permanent and a
-            # streak of 409s exhausts the conflict ceiling, so the SDK is
-            # contractually required to stop in both. The HTTP-count
-            # assertions below are what prove it actually did — a case that
-            # does not anticipate this exit still fails on
-            # min_count/max_count.
+        except (RunnerOwnershipDeniedError, PollInstanceConflictError, AuthFailedError):
+            # Expected for cases 15, 16 and 17: a 403 on poll is permanent, a
+            # streak of 409s exhausts the conflict ceiling, and a streak of
+            # 401s exhausts the auth ceiling — the SDK is contractually
+            # required to stop in all three. The HTTP-count assertions below
+            # are what prove it actually did; a case that does not anticipate
+            # this exit still fails on min_count/max_count.
             pass
         except TimeoutError:
             run_task.cancel()
@@ -116,6 +117,8 @@ def _build_options(spec: CaseSpec, server_url: str) -> RunnerOptions:
         opts.capacity_backoff_ms = cfg.capacity_backoff_ms
     if cfg.max_consecutive_poll_conflicts is not None:
         opts.max_consecutive_poll_conflicts = cfg.max_consecutive_poll_conflicts
+    if cfg.max_consecutive_auth_failures is not None:
+        opts.max_consecutive_auth_failures = cfg.max_consecutive_auth_failures
     return opts
 
 
