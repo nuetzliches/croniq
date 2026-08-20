@@ -2728,7 +2728,7 @@ fn runner_identity_release_frees_the_id() {
 /// (issue #471). Two properties matter to callers: the key stays
 /// un-revoked (so the auth path lets it through until the deadline), and
 /// the setter is unconditional (so the *caller* owns the "never extend an
-/// existing deadline" rule — see `init_api_key::retire_superseded_keys`).
+/// existing deadline" rule — see `api_client_env::retire_superseded_keys`).
 #[test]
 fn set_api_key_expiry_dates_a_key_without_revoking_it() {
     let store = create_memory_store().unwrap();
