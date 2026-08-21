@@ -1,6 +1,6 @@
 {
   "name": "@nuetzliches/croniq-runner",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Croniq runner SDK for Node.js. Polls a Croniq server for work, dispatches handlers, streams logs back.",
   "type": "module",
   "main": "./dist/index.js",
