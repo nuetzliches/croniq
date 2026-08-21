@@ -4,7 +4,7 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-21
 
 ### Added
 

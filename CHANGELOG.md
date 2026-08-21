@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-21
+
 ### Added
 
 - **Runner SDKs budget consecutive authentication failures
