@@ -343,7 +343,48 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
             key_var,
         });
     }
+    reject_shared_key_values(&out)?;
     Ok(out)
+}
+
+/// Refuse two clients declared with the same key value (issue #520).
+///
+/// The mirror of the conflict [`parse_declarations`]'s `set_key` catches: there
+/// two variables name one client with different values, here two clients are
+/// named with one value. Both are a declaration that cannot be satisfied, and
+/// this half is the worse of the two because nothing downstream can repair it.
+///
+/// Keys resolve by hash, so one value can only ever authenticate as one
+/// client. Reconciling both declarations writes two `api_keys` rows with the
+/// same `key_hash` in the same pass, and #516's ordering has no tie to break
+/// between them — un-revoked, open-ended, same `created_at` — so which client
+/// the credential answers as comes back to the query plan. The loser is a
+/// client that exists, is active and has the scopes it was declared with,
+/// whose key 403s on its own endpoints with nothing in the reconcile output
+/// hinting why.
+///
+/// Caught here rather than at reconcile time because at this point nothing has
+/// been written: there is no live credential whose identity has to be revoked
+/// from one side or the other, and the message can name both variables the
+/// operator has to look at. A key pasted in from a client that was created
+/// through the API is not covered — only one side of that collision is in the
+/// environment.
+fn reject_shared_key_values(declarations: &[Declaration]) -> Result<(), String> {
+    let mut seen: BTreeMap<&str, &Declaration> = BTreeMap::new();
+    for decl in declarations {
+        if let Some(first) = seen.insert(decl.raw_key.as_str(), decl) {
+            // `declarations` is built from a `BTreeMap`, so `first` is the
+            // name-ordered earlier client and the message is stable.
+            return Err(format!(
+                "{} and {} declare the same key value for two different API clients \
+                 ('{}' and '{}') — a key authenticates as exactly one client, so the other \
+                 would get 403s on the scopes it was declared with. Give each client its own \
+                 key.",
+                first.key_var, decl.key_var, first.name, decl.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Read the process environment and resolve every `<VAR>_FILE` sibling.
@@ -1057,6 +1098,72 @@ mod tests {
             err.contains(KEY_VAR) && err.contains(LEGACY_KEY_VAR),
             "{err}"
         );
+    }
+
+    #[test]
+    fn one_key_value_cannot_declare_two_clients() {
+        // Issue #520, the mirror of the test above: there two variables named
+        // one client with different values, here two clients are named with
+        // one value. Both declarations would reconcile — each client created,
+        // each with its own `api_keys` row carrying the same hash — and the
+        // credential then authenticates as whichever row the query plan
+        // returns, with only that client's scopes. The other client exists,
+        // is active, has the scopes it asked for, and 403s.
+        let err = parse_declarations(&vars(&[
+            ("CRONIQ_API_CLIENT_PRODUCER_KEY", "croniq_shared"),
+            ("CRONIQ_API_CLIENT_PRODUCER_SCOPES", "jobs:trigger"),
+            ("CRONIQ_API_CLIENT_RUNNER_KEY", "croniq_shared"),
+            ("CRONIQ_API_CLIENT_RUNNER_SCOPES", "work:poll"),
+        ]))
+        .unwrap_err();
+        for expected in [
+            "CRONIQ_API_CLIENT_PRODUCER_KEY",
+            "CRONIQ_API_CLIENT_RUNNER_KEY",
+            "producer",
+            "runner",
+        ] {
+            assert!(err.contains(expected), "{expected} missing from: {err}");
+        }
+    }
+
+    #[test]
+    fn the_default_client_cannot_share_its_key_with_a_named_one() {
+        // The `default` client is declared outside the `CRONIQ_API_CLIENT_`
+        // prefix, so the check has to reach across both spellings — naming
+        // the variable the operator actually wrote, not a reconstructed one.
+        let err = parse_declarations(&vars(&[
+            (KEY_VAR, "croniq_shared"),
+            (SCOPES_VAR, "admin"),
+            ("CRONIQ_API_CLIENT_RUNNER_KEY", "croniq_shared"),
+            ("CRONIQ_API_CLIENT_RUNNER_SCOPES", "work:poll"),
+        ]))
+        .unwrap_err();
+        assert!(err.contains(KEY_VAR), "{err}");
+        assert!(err.contains("CRONIQ_API_CLIENT_RUNNER_KEY"), "{err}");
+
+        let err = parse_declarations(&vars(&[
+            (LEGACY_KEY_VAR, "croniq_shared"),
+            ("CRONIQ_API_CLIENT_RUNNER_KEY", "croniq_shared"),
+            ("CRONIQ_API_CLIENT_RUNNER_SCOPES", "work:poll"),
+        ]))
+        .unwrap_err();
+        assert!(err.contains(LEGACY_KEY_VAR), "{err}");
+    }
+
+    #[test]
+    fn presenting_a_declared_key_on_the_server_host_is_not_a_collision() {
+        // `CRONIQ_API_KEY` with no scopes is the credential the CLI presents,
+        // not a declaration (#502) — so exporting the runner's own key on the
+        // server host to run `croniq` there stays legal. Rejecting it would
+        // make the collision check undo the distinction #502 drew.
+        let d = parse_declarations(&vars(&[
+            (KEY_VAR, "croniq_runner"),
+            ("CRONIQ_API_CLIENT_RUNNER_KEY", "croniq_runner"),
+            ("CRONIQ_API_CLIENT_RUNNER_SCOPES", "work:poll"),
+        ]))
+        .unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].name, "runner");
     }
 
     #[test]
