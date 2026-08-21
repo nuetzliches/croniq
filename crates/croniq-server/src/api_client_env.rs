@@ -134,19 +134,6 @@ pub struct Declaration {
     pub key_var: String,
 }
 
-impl Declaration {
-    /// Scopes to give this client when creating it from scratch.
-    ///
-    /// Only the `default` client can reach the fall-back, and admin is what
-    /// the bare variable has always seeded. Note this is *creation only* — an
-    /// undeclared scope set must never rewrite an existing client.
-    fn effective_scopes_for_create(&self) -> Vec<String> {
-        self.scopes
-            .clone()
-            .unwrap_or_else(|| vec![Scope::ADMIN.to_string()])
-    }
-}
-
 /// Partial state while folding variables into declarations.
 #[derive(Default)]
 struct Partial {
@@ -335,9 +322,10 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
         // authenticated as admin (issue #502).
         //
         // So the current spelling declares a client only when it says what the
-        // client is for. The deprecated spelling keeps its implied admin: it
-        // has never been a client-side variable, and the demo stack and every
-        // existing deployment rely on it.
+        // client is for. The deprecated spelling still declares — it has
+        // never been a client-side variable, and existing deployments rotate
+        // with it — it simply names no scopes, which since #499 means it
+        // rotates an existing client without being able to create one.
         if scopes.is_none() && key_var == KEY_VAR && !vars.contains_key(LEGACY_KEY_VAR) {
             tracing::info!(
                 var = %KEY_VAR,
@@ -516,6 +504,9 @@ pub enum Action {
     Unchanged,
     /// A change is needed but the opt-in is not set, so nothing was written.
     Blocked,
+    /// The declaration asked for a client that does not exist but named no
+    /// scopes, so nothing was created; see [`skip_implicit_creation`].
+    Skipped,
 }
 
 /// Per-client result, surfaced on the reload response so a headless caller
@@ -546,7 +537,15 @@ pub fn reconcile<S: AuthStore + ?Sized>(
 
     for decl in &inputs.declarations {
         let outcome = match existing.iter().find(|c| c.name == decl.name) {
-            None => create_declared_client(store, decl, now, inputs.dry_run)?,
+            // A declaration that never said what the client is for rotates
+            // the key of one that exists, but does not bring one back that
+            // does not (issue #499). Passing the scopes rather than the whole
+            // declaration keeps that invariant structural: there is no
+            // implied-admin fall-back left for `create` to reach for.
+            None => match decl.scopes.as_deref() {
+                None => skip_implicit_creation(decl),
+                Some(scopes) => create_declared_client(store, decl, scopes, now, inputs.dry_run)?,
+            },
             Some(client) => sync_declared_client(store, decl, client, inputs, now)?,
         };
         outcomes.push(outcome);
@@ -554,17 +553,50 @@ pub fn reconcile<S: AuthStore + ?Sized>(
     Ok(outcomes)
 }
 
+/// Report a declaration that names a client the store does not have, and did
+/// not say what that client is for.
+///
+/// Creating one from a key alone means a stale value left in a deployment
+/// reinstalls a credential the operator had removed: delete the `default`
+/// client after a key leak, leave `CRONIQ_INIT_API_KEY=<leaked>` behind, and
+/// the next boot recreates it — active, admin-scoped, keyed with the leaked
+/// value. Worse, the recreated row is `managed_by=env`, so
+/// `DELETE /v1/api-clients/{id}` then answers 409 and the operator cannot undo
+/// it through the API at all. On v0.33.0 the same environment was a no-op: the
+/// variable "only seeds on fresh `croniq init`" (issue #499).
+///
+/// The ungated-creation rationale — "additive, it cannot break a working
+/// credential" — holds for a client that never existed. It does not hold for
+/// one that was deliberately removed, and an implied `admin` is the least
+/// defensible thing to grant on a guess. A declaration that names its scopes
+/// still creates: saying what a client is for is an unambiguous statement that
+/// it should exist, and the one-step "render the env, boot the stack" flow
+/// depends on it.
+fn skip_implicit_creation(decl: &Declaration) -> ClientOutcome {
+    tracing::info!(
+        var = %decl.key_var,
+        client = %decl.name,
+        "{} is set but no '{}' API client exists, and it names no scopes. A key on its own          rotates an existing client; it does not create one. To declare the client from the          environment, add {SCOPES_VAR}; to mint a key for an existing client, use          POST /v1/api-keys.",
+        decl.key_var,
+        decl.name,
+    );
+    ClientOutcome {
+        client: decl.name.clone(),
+        action: Action::Skipped,
+        detail: Some(format!(
+            "no such client, and {} names no scopes — add {SCOPES_VAR} to declare it",
+            decl.key_var
+        )),
+    }
+}
+
 fn create_declared_client<S: AuthStore + ?Sized>(
     store: &S,
     decl: &Declaration,
+    scopes: &[String],
     now: DateTime<Utc>,
     dry_run: bool,
 ) -> Result<ClientOutcome, StoreError> {
-    // A brand-new client needs concrete scopes, and the bare `default`
-    // declaration has always meant admin. Defaulting here rather than in the
-    // parse is what keeps "said nothing" from reading as "asked for admin"
-    // when an *existing* client is reconciled (issue #501).
-    let scopes = decl.effective_scopes_for_create();
     let outcome = ClientOutcome {
         client: decl.name.clone(),
         action: Action::Created,
@@ -578,7 +610,7 @@ fn create_declared_client<S: AuthStore + ?Sized>(
     store.create_client(&ApiClient {
         client_id: client_id.clone(),
         name: decl.name.clone(),
-        scopes: scopes.clone(),
+        scopes: scopes.to_vec(),
         is_active: true,
         created_at: now,
         managed_by: MANAGED_BY_ENV.to_string(),
@@ -889,16 +921,15 @@ mod tests {
     }
 
     #[test]
-    fn the_deprecated_key_variable_keeps_its_implied_admin() {
+    fn the_deprecated_key_variable_still_declares_without_naming_scopes() {
         // It has never been a client-side variable — the CLI does not read it
-        // — and the demo stack plus every existing deployment declare the
-        // `default` client with it alone. Narrowing that would be a breaking
-        // change for the one spelling that has history.
+        // — so it needs no scopes to be unambiguous, and existing deployments
+        // rotate the `default` client with it alone. Naming no scopes is what
+        // limits it to rotating a client that exists (see #499).
         let d = parse_declarations(&vars(&[(LEGACY_KEY_VAR, "croniq_abc")])).unwrap();
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].name, DEFAULT_CLIENT_NAME);
         assert_eq!(d[0].scopes, None);
-        assert_eq!(d[0].effective_scopes_for_create(), vec!["admin"]);
     }
 
     #[test]
@@ -1095,6 +1126,9 @@ mod tests {
     fn decl_without_scopes(name: &str, key: &str) -> Declaration {
         Declaration {
             scopes: None,
+            // Since #502 the deprecated spelling is the only one that
+            // declares without naming scopes.
+            key_var: LEGACY_KEY_VAR.into(),
             ..decl(name, key, &[])
         }
     }
@@ -1122,28 +1156,6 @@ mod tests {
         assert_eq!(out[0].action, Action::Unchanged);
         let clients = s.list_clients().unwrap();
         assert_eq!(clients[0].scopes, vec!["jobs:trigger"]);
-    }
-
-    #[test]
-    fn a_bare_declaration_still_creates_an_admin_client() {
-        // The other half of the same rule: saying nothing about scopes is not
-        // a request to re-scope an existing client, but a client that does not
-        // exist yet still needs concrete scopes, and admin is what the bare
-        // variable has always seeded.
-        let s = store();
-        let out = reconcile(
-            &s,
-            &inputs(
-                vec![decl_without_scopes(DEFAULT_CLIENT_NAME, "croniq_new")],
-                false,
-                Duration::minutes(15),
-            ),
-        )
-        .unwrap();
-
-        assert_eq!(out[0].action, Action::Created);
-        let clients = s.list_clients().unwrap();
-        assert_eq!(clients[0].scopes, vec![Scope::ADMIN]);
     }
 
     #[test]
@@ -1192,6 +1204,92 @@ mod tests {
         assert_eq!(out[0].action, Action::ScopesUpdated);
         let clients = s.list_clients().unwrap();
         assert_eq!(clients[0].scopes, vec!["jobs:trigger"]);
+    }
+
+    fn legacy_decl(key: &str) -> Declaration {
+        Declaration {
+            name: DEFAULT_CLIENT_NAME.into(),
+            raw_key: key.into(),
+            scopes: None,
+            key_var: LEGACY_KEY_VAR.into(),
+        }
+    }
+
+    #[test]
+    fn the_deprecated_variable_does_not_recreate_a_deleted_client() {
+        // Issue #499: an operator deletes the `default` client after a key
+        // leak and leaves CRONIQ_INIT_API_KEY=<leaked> in the deployment. On
+        // v0.33.0 that was a no-op. Recreating it puts the leaked credential
+        // back, active and admin-scoped — and as managed_by=env, so the API
+        // delete then answers 409 and the operator cannot undo it at all.
+        let s = store();
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![legacy_decl("croniq_leaked")],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Skipped);
+        assert!(s.list_clients().unwrap().is_empty());
+        assert!(
+            s.find_api_key_by_hash(&hash_api_key("croniq_leaked"))
+                .unwrap()
+                .is_none(),
+            "the leaked key must not be installed anywhere"
+        );
+    }
+
+    #[test]
+    fn the_deprecated_variable_still_rotates_a_client_that_exists() {
+        // The behaviour it was introduced for (#217) is untouched: what it
+        // does not do is bring a client back, not rotate one.
+        let s = store();
+        let id = seed_client(&s, DEFAULT_CLIENT_NAME, &["admin"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_old");
+
+        let out = reconcile(
+            &s,
+            &inputs(vec![legacy_decl("croniq_new")], true, Duration::minutes(15)),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Rotated);
+        assert!(
+            s.find_api_key_by_hash(&hash_api_key("croniq_new"))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_current_spellings_still_create_a_missing_client() {
+        // Declaring a client that should exist is what they are for, and the
+        // one-step "render env, boot stack" flow depends on it.
+        let s = store();
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![
+                    Declaration {
+                        name: DEFAULT_CLIENT_NAME.into(),
+                        raw_key: "croniq_d".into(),
+                        scopes: Some(vec!["admin".into()]),
+                        key_var: KEY_VAR.into(),
+                    },
+                    decl("producer", "croniq_p", &["jobs:trigger"]),
+                ],
+                false,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert!(out.iter().all(|o| o.action == Action::Created), "{out:?}");
+        assert_eq!(s.list_clients().unwrap().len(), 2);
     }
 
     #[test]

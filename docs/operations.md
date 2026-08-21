@@ -552,16 +552,22 @@ it declares. Exporting a narrow key on the server so you can run `croniq` there
 authenticated as admin. Naming the scopes is what separates "this is my
 credential" from "this is the client I want to exist".
 
-`CRONIQ_INIT_API_KEY` remains an alias and keeps declaring an `admin` client on
-its own: it is not a client-side variable, so it carries no such ambiguity. It
-is deprecated but not going away.
+`CRONIQ_INIT_API_KEY` remains an alias and needs no scopes variable: it is not
+a client-side variable, so it carries no such ambiguity. What it cannot do is
+*create* a client — see below. It is deprecated but not going away.
 
-**Leaving the scopes variable unset is not the same as setting it to `admin`.**
-For the deprecated spelling, a `default` client that does not exist yet is
-created with `admin`, which is what it has always seeded. But an *existing*
-client keeps the scopes it has: if you narrowed `default` in the dashboard, a
-reconcile with no scopes variable set leaves that alone rather than putting it
-back. To change scopes from the environment, name them.
+**A declaration that names no scopes rotates, but never creates.** A key on its
+own says which credential should be live, not what a client is for, so it
+brings an existing client's key up to date and stops there. If the client does
+not exist, the reload reports `skipped` and logs why, rather than inventing an
+`admin` client from a value that never asked for one — the case that matters is
+a stale key left in a deployment after the client was deliberately deleted. On
+a fresh install `croniq init --api-key` seeds the client, so the usual
+first-run flow is unaffected.
+
+It also never changes an existing client's scopes: if you narrowed `default` in
+the dashboard, a reconcile with no scopes variable set leaves that alone rather
+than putting it back. To change scopes from the environment, name them.
 
 **Scopes are mandatory for a named client.** Omitting them is an error rather
 than a fall-back to `admin` — silently granting the wildcard is the problem
@@ -589,7 +595,8 @@ Two things are logged and skipped instead:
 
 | Situation | Without `CRONIQ_API_KEY_RECONCILE=1` | With it |
 |---|---|---|
-| Client does not exist | created | created |
+| Client does not exist, scopes named | created | created |
+| Client does not exist, no scopes named | skipped (logged) | skipped (logged) |
 | Store matches the declaration | no-op | no-op |
 | Declared key differs | logged, **not** rotated | rotated (see grace window) |
 | Declared scopes differ | logged, **not** changed | updated |
