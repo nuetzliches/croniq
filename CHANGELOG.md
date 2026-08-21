@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Python SDK's PyPI upload works again.** `pypa/gh-action-pypi-publish`
+  was pinned to a pre-v1.14.2 commit, whose image carries Twine 6 — and Twine 6
+  rejects the `Metadata-Version: 2.5` that current hatchling writes
+  (`'2.5' is not a valid metadata version`). It surfaced on the
+  `python-sdk-v0.4.0` tag: build and `twine check` passed, because that check
+  installs the latest Twine from PyPI, and only the upload failed. Pinned to
+  v1.14.2, the first release whose image ships Twine 7. Nothing was published,
+  so the tag was re-run rather than re-cut.
+
 ## [0.34.0] - 2026-08-21
 
 ### Added
