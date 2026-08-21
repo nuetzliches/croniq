@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An SDK release no longer takes over the repository's "Latest", which broke
+  `install.sh`.** Publishing the v0.34.0 cut put five SDK releases out after
+  the server one, so `croniq-runner v0.4.0` ended up as the latest release and
+  `/releases/latest` redirected to `…/tag/python-sdk-v0.4.0`. The installer
+  derives the server version from exactly that redirect by cutting at the last
+  `/v` — a tag with no `/v` in it leaves nothing to cut, so `CRONIQ_VERSION`
+  became the whole URL and the download 404'd on a nonsensical path. Anyone
+  running the documented `curl … | sh` one-liner in that window hit it.
+
+  The Python and Go release workflows now pass `make_latest: false` (the other
+  three SDKs publish to their registries and create no GitHub Release), and
+  `install.sh` checks that what it resolved looks like a version before using
+  it, so a redirect that lands somewhere unexpected fails with a message that
+  says so. The v0.34.0 release was flipped back to "Latest" by hand.
+
 - **The Python SDK's PyPI upload works again.** `pypa/gh-action-pypi-publish`
   was pinned to a pre-v1.14.2 commit, whose image carries Twine 6 — and Twine 6
   rejects the `Metadata-Version: 2.5` that current hatchling writes
