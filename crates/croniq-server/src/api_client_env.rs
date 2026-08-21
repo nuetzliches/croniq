@@ -224,10 +224,18 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
             let name = client_name_from_infix(infix).map_err(|e| format!("{var}: {e}"))?;
             set_key(&name, value, var, &mut partials)?;
         } else {
-            return Err(format!(
-                "{var} is not a recognised API-client declaration. Use \
+            // Not fatal: refusing to boot over a variable we do not read
+            // would claim the whole `CRONIQ_API_CLIENT_*` namespace for
+            // ourselves, and a deployment that happens to use it for its own
+            // tooling would stop starting on upgrade (issue #503). The typo
+            // that actually matters — a misspelled `_SCOPES` — still fails
+            // loudly further down, as "declares a key but no scopes".
+            tracing::warn!(
+                var = %var,
+                "ignoring {var}: not a recognised API-client declaration. Use \
                  {CLIENT_PREFIX}<NAME>_KEY (or _KEY_FILE) and {CLIENT_PREFIX}<NAME>_SCOPES"
-            ));
+            );
+            continue;
         }
     }
 
@@ -245,6 +253,22 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
             ));
         };
         if !raw_key.starts_with("croniq_") {
+            // The deprecated spelling warns and is dropped, because that is
+            // what v0.33.0 did ("env value ignored") and a leftover
+            // placeholder from an old template must not turn a version bump
+            // into a restart loop (issue #503). The current spellings are new
+            // in this release, so a malformed value there is a declaration the
+            // operator just wrote wrong, and saying so at boot is the whole
+            // point.
+            if key_var == LEGACY_KEY_VAR {
+                tracing::warn!(
+                    var = %key_var,
+                    "ignoring {key_var}: value does not start with 'croniq_', so it cannot be \
+                     an API key. Set {KEY_VAR}=croniq_… to declare the '{DEFAULT_CLIENT_NAME}' \
+                     client."
+                );
+                continue;
+            }
             return Err(format!(
                 "{key_var} must start with 'croniq_' (e.g. {key_var}=croniq_$(openssl rand -hex 32))"
             ));
@@ -866,15 +890,47 @@ mod tests {
     }
 
     #[test]
-    fn a_key_without_the_croniq_prefix_is_refused() {
-        let err = parse_declarations(&vars(&[(KEY_VAR, "hunter2")])).unwrap_err();
-        assert!(err.contains("croniq_"), "{err}");
+    fn an_unrecognised_attribute_is_ignored_rather_than_fatal() {
+        // Issue #503: this used to abort the boot. Croniq does not read
+        // `CRONIQ_API_CLIENT_FOO_SECRET`, so refusing to start over it claims
+        // a whole env namespace it has no use for — and turns a version bump
+        // into a restart loop for any deployment already using one.
+        let declared = parse_declarations(&vars(&[("CRONIQ_API_CLIENT_FOO_SECRET", "x")]))
+            .expect("an unread variable must not stop the server from booting");
+        assert!(declared.is_empty());
     }
 
     #[test]
-    fn an_unrecognised_attribute_names_the_valid_ones() {
-        let err = parse_declarations(&vars(&[("CRONIQ_API_CLIENT_FOO_SECRET", "x")])).unwrap_err();
-        assert!(err.contains("_KEY") && err.contains("_SCOPES"), "{err}");
+    fn a_misspelled_scopes_suffix_still_fails_loudly() {
+        // The reason ignoring unknown suffixes is safe: the typo that would
+        // actually change behaviour — scopes that never arrive — is caught by
+        // the missing-scopes check instead of the suffix check.
+        let err = parse_declarations(&vars(&[
+            ("CRONIQ_API_CLIENT_P_KEY", "croniq_p"),
+            ("CRONIQ_API_CLIENT_P_SCOPE", "jobs:read"),
+        ]))
+        .unwrap_err();
+        assert!(err.contains("no scopes"), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_legacy_key_is_ignored_the_way_v0_33_did() {
+        // A leftover `CRONIQ_INIT_API_KEY=changeme` from an old template was a
+        // warning on v0.33.0 and a fatal boot error after the upgrade, taking
+        // down a scheduler that had been running fine (issue #503).
+        let declared = parse_declarations(&vars(&[(LEGACY_KEY_VAR, "changeme")]))
+            .expect("a leftover placeholder in the deprecated variable must not be fatal");
+        assert!(declared.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_current_key_is_still_fatal() {
+        // The current spellings are new in this release: a bad value there is
+        // a declaration just written wrong, not a leftover.
+        let err = parse_declarations(&vars(&[(KEY_VAR, "hunter2")])).unwrap_err();
+        assert!(err.contains(KEY_VAR), "{err}");
+        let err = parse_declarations(&vars(&[("CRONIQ_API_CLIENT_P_KEY", "hunter2")])).unwrap_err();
+        assert!(err.contains("croniq_"), "{err}");
     }
 
     #[test]
