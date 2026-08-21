@@ -487,7 +487,7 @@ impl AuthStore for PgStoreHandle {
     fn set_api_key_expiry(
         &self,
         key_id: &str,
-        expires_at: DateTime<Utc>,
+        expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
         let key_id = key_id.to_owned();
         self.call(move |s| s.set_api_key_expiry(&key_id, expires_at))

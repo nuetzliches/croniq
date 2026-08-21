@@ -965,12 +965,12 @@ impl AuthStore for SqliteStore {
     fn set_api_key_expiry(
         &self,
         key_id: &str,
-        expires_at: DateTime<Utc>,
+        expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE api_keys SET expires_at = ?1 WHERE key_id = ?2",
-            params![dt_to_sql(&expires_at), key_id],
+            params![expires_at.as_ref().map(dt_to_sql), key_id],
         )
         .map_err(map_err)?;
         Ok(())

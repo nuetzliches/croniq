@@ -2756,7 +2756,7 @@ fn set_api_key_expiry_dates_a_key_without_revoking_it() {
         .unwrap();
 
     let deadline = utc(2026, 3, 29, 12, 15);
-    store.set_api_key_expiry("k1", deadline).unwrap();
+    store.set_api_key_expiry("k1", Some(deadline)).unwrap();
 
     let key = &store.list_api_keys("c1").unwrap()[0];
     assert_eq!(key.expires_at, Some(deadline));
@@ -2767,10 +2767,22 @@ fn set_api_key_expiry_dates_a_key_without_revoking_it() {
 
     // Unconditional setter: it moves the deadline in either direction.
     let earlier = utc(2026, 3, 29, 12, 5);
-    store.set_api_key_expiry("k1", earlier).unwrap();
+    store.set_api_key_expiry("k1", Some(earlier)).unwrap();
     assert_eq!(
         store.list_api_keys("c1").unwrap()[0].expires_at,
         Some(earlier)
+    );
+
+    // `None` clears it, returning the key to open-ended. That is what a
+    // rolled-back rotation needs: the environment re-declares the key it had
+    // retired, and without this the key died on a deadline nothing could
+    // clear (issue #500).
+    store.set_api_key_expiry("k1", None).unwrap();
+    let key = &store.list_api_keys("c1").unwrap()[0];
+    assert_eq!(key.expires_at, None);
+    assert!(
+        key.revoked_at.is_none(),
+        "clearing an expiry must not revoke"
     );
 
     // Revocation stays available as the immediate kill switch.

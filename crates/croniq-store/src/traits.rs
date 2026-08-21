@@ -346,8 +346,16 @@ pub trait AuthStore {
     /// life. Callers that must not extend an expiry (the rotation path is
     /// one) check the current value first; they already hold it from
     /// `list_api_keys`.
-    fn set_api_key_expiry(&self, key_id: &str, expires_at: DateTime<Utc>)
-    -> Result<(), StoreError>;
+    ///
+    /// `None` clears the expiry, returning the key to open-ended. That is how
+    /// a rotation gets rolled back: the environment re-declares the key it had
+    /// retired, and without a way to unstamp the deadline that key died on a
+    /// timer no reconcile could see (issue #500).
+    fn set_api_key_expiry(
+        &self,
+        key_id: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<(), StoreError>;
 
     // Password credentials
     fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError>;

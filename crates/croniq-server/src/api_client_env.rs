@@ -496,6 +496,9 @@ pub enum Action {
     Created,
     /// Declared key installed; the previous one is retired.
     Rotated,
+    /// The declared key was mid-retirement; its deadline was cleared so it
+    /// keeps working. What a rolled-back rotation needs (issue #500).
+    KeyRevived,
     /// Scopes brought in line with the declaration.
     ScopesUpdated,
     /// An existing api-owned client is now owned by the environment.
@@ -638,6 +641,11 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
     // Decide everything before writing anything: it keeps the dry-run honest
     // (one early return, not a write guard per statement) and keeps the
     // opt-in check in one place.
+    // The client's own row carrying the declared secret, if it has one. Note
+    // `revoked_at.is_none()`: a revoked row does not satisfy the declaration.
+    let declared_key = keys
+        .iter()
+        .find(|k| k.key_hash == declared_hash && k.revoked_at.is_none());
     let needs_ownership = client.managed_by != MANAGED_BY_ENV;
     // Only a *declared* scope set can drive a change. With the implied admin
     // stored in the declaration this read `client.scopes != ["admin"]`, so the
@@ -648,9 +656,14 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         .scopes
         .as_ref()
         .is_some_and(|declared| &client.scopes != declared);
-    let needs_key = !keys
-        .iter()
-        .any(|k| k.key_hash == declared_hash && k.revoked_at.is_none());
+    let needs_key = declared_key.is_none();
+    // A row that matches the declaration but carries a retirement deadline is
+    // the declared key mid-handover: a rotation stamped it, and the
+    // environment now declares it again. Checking only `revoked_at` made that
+    // look satisfied, so the reconcile reported `Unchanged` while the key went
+    // on dying at its deadline — and nothing else ever clears one, so every
+    // consumer 401'd for good with no reconcile able to say why (issue #500).
+    let needs_revive = declared_key.filter(|k| k.expires_at.is_some());
 
     let outcome = |action, detail| ClientOutcome {
         client: decl.name.clone(),
@@ -658,7 +671,7 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         detail,
     };
 
-    if !needs_ownership && !needs_scopes && !needs_key {
+    if !needs_ownership && !needs_scopes && !needs_key && needs_revive.is_none() {
         tracing::debug!(client = %decl.name, "API client matches its environment declaration");
         return Ok(outcome(Action::Unchanged, None));
     }
@@ -678,6 +691,9 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         if needs_key {
             pending.push("rotate the key");
         }
+        if needs_revive.is_some() {
+            pending.push("cancel the declared key's retirement");
+        }
         let detail = format!(
             "would {} — set {RECONCILE_VAR}=1 to apply",
             pending.join(", ")
@@ -687,7 +703,7 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         // boot would train operators to ignore the line that *does* mean
         // something — a key or scope change the environment asked for and
         // did not get.
-        if needs_key || needs_scopes {
+        if needs_key || needs_scopes || needs_revive.is_some() {
             tracing::warn!(
                 client = %decl.name,
                 var = %decl.key_var,
@@ -708,6 +724,8 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
     // owner, then scopes — report the loudest one.
     let action = if needs_key {
         Action::Rotated
+    } else if needs_revive.is_some() {
+        Action::KeyRevived
     } else if needs_ownership {
         Action::Adopted
     } else {
@@ -749,6 +767,20 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
                 "{RECONCILE_VAR}=1 — API client scopes updated from the environment"
             );
         }
+    }
+
+    if let Some(key) = needs_revive {
+        // Clearing the deadline rather than minting a second row with the same
+        // secret: `api_keys.key_hash` is not unique and `find_api_key_by_hash`
+        // does not order its result, so a duplicate would leave auth picking
+        // arbitrarily between the two.
+        store.set_api_key_expiry(&key.key_id, None)?;
+        tracing::warn!(
+            client = %decl.name,
+            var = %decl.key_var,
+            key_id = %key.key_id,
+            "{RECONCILE_VAR}=1 — the declared key was retiring; cleared its expiry so it              keeps working"
+        );
     }
 
     if needs_key {
@@ -833,7 +865,7 @@ fn retire_superseded_keys<S: AuthStore + ?Sized>(
         if k.expires_at.is_some_and(|e| e <= deadline) {
             continue;
         }
-        store.set_api_key_expiry(&k.key_id, deadline)?;
+        store.set_api_key_expiry(&k.key_id, Some(deadline))?;
         count += 1;
     }
     Ok(Retirement {
@@ -1410,6 +1442,105 @@ mod tests {
             1,
             "a scope change must not rotate the key"
         );
+    }
+
+    #[test]
+    fn rolling_a_rotation_back_revives_the_re_declared_key() {
+        // Issue #500: rotate A -> B with the opt-in, which stamps A with an
+        // expiry, then roll back so the environment declares A again. The
+        // match on `revoked_at` alone made that look satisfied, so reconcile
+        // reported Unchanged while A went on dying at its deadline — and
+        // nothing clears one, so every consumer 401'd for good.
+        let s = store();
+        let decl_a = decl("producer", "croniq_a", &["jobs:trigger"]);
+        let decl_b = decl("producer", "croniq_b", &["jobs:trigger"]);
+        reconcile(
+            &s,
+            &inputs(vec![decl_a.clone()], false, Duration::minutes(15)),
+        )
+        .unwrap();
+        reconcile(&s, &inputs(vec![decl_b], true, Duration::minutes(15))).unwrap();
+
+        let id = s.list_clients().unwrap()[0].client_id.clone();
+        let retired = s
+            .list_api_keys(&id)
+            .unwrap()
+            .into_iter()
+            .find(|k| k.key_hash == hash_api_key("croniq_a"))
+            .expect("A is still stored, just dated");
+        assert!(retired.expires_at.is_some(), "precondition: A is retiring");
+
+        // The rollback.
+        let out = reconcile(&s, &inputs(vec![decl_a], true, Duration::minutes(15))).unwrap();
+
+        assert_eq!(out[0].action, Action::KeyRevived);
+        let keys = s.list_api_keys(&id).unwrap();
+        let a = keys
+            .iter()
+            .find(|k| k.key_hash == hash_api_key("croniq_a"))
+            .unwrap();
+        assert_eq!(a.expires_at, None, "the deadline must be gone");
+        assert!(a.revoked_at.is_none());
+        assert_eq!(
+            keys.iter()
+                .filter(|k| k.key_hash == hash_api_key("croniq_a"))
+                .count(),
+            1,
+            "reviving must not mint a second row with the same secret —              find_api_key_by_hash does not order its result"
+        );
+    }
+
+    #[test]
+    fn a_retiring_declared_key_is_reported_rather_than_silently_dying() {
+        // Without the opt-in nothing may be written, but the outcome must say
+        // what is pending. Reporting `Unchanged` here is the part of #500 that
+        // made the bug undiagnosable.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_a");
+        let key_id = s.list_api_keys(&id).unwrap()[0].key_id.clone();
+        s.set_api_key_expiry(&key_id, Some(Utc::now() + Duration::minutes(5)))
+            .unwrap();
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_a", &["jobs:trigger"])],
+                false,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Blocked);
+        let detail = out[0].detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("retirement"), "{detail}");
+        // Still un-written: the opt-in gates every change.
+        assert!(
+            s.list_api_keys(&id).unwrap()[0].expires_at.is_some(),
+            "nothing may be written without the opt-in"
+        );
+    }
+
+    #[test]
+    fn an_open_ended_declared_key_stays_unchanged() {
+        // The common case must not be dragged into the revive path: a key with
+        // no deadline is already what the declaration asks for.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_a");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_a", &["jobs:trigger"])],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Unchanged);
     }
 
     #[test]
