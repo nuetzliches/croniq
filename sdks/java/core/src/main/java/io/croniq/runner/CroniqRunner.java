@@ -148,6 +148,11 @@ public final class CroniqRunner implements AutoCloseable {
                                 consecutiveAuthFailures,
                                 options.maxConsecutiveAuthFailures(),
                                 options.pollRetryDelay());
+                        // A 401 is not a 409, so it clears the conflict budget just
+                        // like any other non-409 failure. This branch continues
+                        // before reaching the reset below, so it has to do it here
+                        // (issue #508).
+                        consecutiveConflicts = 0;
                         sleep(options.pollRetryDelay());
                         continue;
                     }
@@ -194,8 +199,12 @@ public final class CroniqRunner implements AutoCloseable {
                     continue;
                 }
                 // Poll succeeded — the other instance must have died or released
-                // the identity, so the conflict streak starts over.
+                // the identity, so the conflict streak starts over. The auth budget
+                // starts over with it: the credential just worked, so an earlier 401
+                // must not still count against a runner that has been healthy since
+                // (issue #507).
                 consecutiveConflicts = 0;
+                consecutiveAuthFailures = 0;
                 if (response != null && response.cancel() != null) {
                     for (String id : response.cancel()) {
                         dispatcher.cancel(id);

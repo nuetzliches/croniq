@@ -254,6 +254,11 @@ class Runner:
                         opts.max_consecutive_auth_failures,
                         opts.poll_retry_delay_ms,
                     )
+                    # A 401 is not a 409, so it clears the conflict budget
+                    # just like any other non-409 failure. This branch
+                    # continues before reaching the reset below, so it has to
+                    # do it here (issue #508).
+                    consecutive_conflicts = 0
                     await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
                     continue
                 # Anything that is not a 401 clears the auth budget: a 5xx or
@@ -297,8 +302,12 @@ class Runner:
                 continue
 
             # Poll succeeded — the other instance must have died or released
-            # the identity, so the conflict streak starts over.
+            # the identity, so the conflict streak starts over. The auth
+            # budget starts over with it: the credential just worked, so an
+            # earlier 401 must not still count against a runner that has been
+            # healthy since (issue #507).
             consecutive_conflicts = 0
+            consecutive_auth_failures = 0
 
             self._handle_cancellations(response.cancel)
 
