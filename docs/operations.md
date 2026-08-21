@@ -711,10 +711,17 @@ The row carrying `expires_at` is the outgoing key. Once that instant passes
 it stops working; the row stays for audit.
 
 **Rolling a rotation back.** Re-declare the previous key and reload with
-`CRONIQ_API_KEY_RECONCILE=1`: the reconciler finds the key it had retired,
-clears the deadline, and reports `key_revived`. Without the opt-in nothing is
-written and the reload reports what is pending, so a rollback never looks like
-a no-op while the key quietly runs out its grace window.
+`CRONIQ_API_KEY_RECONCILE=1`: the reconciler finds the row it had superseded,
+clears its deadline *and* its revocation, retires the key that had replaced it,
+and reports `key_revived`. That is one path whether the old key was merely
+dated or already revoked — a rollback under
+`CRONIQ_API_KEY_ROTATION_GRACE=0s`, or after the outgoing key was ended by
+hand, lands on the same restore.
+
+The row is restored rather than re-created, so a rolled-back key keeps its
+`key_id` and there is never a second row for one secret. Without the opt-in
+nothing is written and the reload reports what is pending, so a rollback never
+looks like a no-op while the key quietly runs out its grace window.
 
 **A leaked key is a different problem.** The grace window deliberately keeps
 the old value alive, so it is the wrong tool. Either:
@@ -731,8 +738,11 @@ the old value alive, so it is the wrong tool. Either:
 
 Note that revoking a key alone does not un-leak an env-declared credential:
 if the declared value is unchanged, the next reconcile with
-`CRONIQ_INIT_API_KEY_RECONCILE=1` installs it again. Change the declared
-value first, then rotate.
+`CRONIQ_INIT_API_KEY_RECONCILE=1` puts it back — it restores the very row that
+was revoked, and reports `key_revived` for it. Change the declared value first,
+then rotate. Without the opt-in the reload says the restore is pending instead
+of doing it, which is the signal that a declaration still names the value you
+just revoked.
 
 ### How long a runner survives a rejected key
 

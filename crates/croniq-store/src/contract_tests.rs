@@ -2789,3 +2789,151 @@ fn set_api_key_expiry_dates_a_key_without_revoking_it() {
     store.revoke_api_key("k1", now()).unwrap();
     assert!(store.list_api_keys("c1").unwrap()[0].revoked_at.is_some());
 }
+
+/// `key_hash` is not unique — a revoked row is kept for audit, and a database
+/// written before issue #516 may hold several rows for one secret because a
+/// re-declared key was re-minted instead of revived. The lookup therefore has
+/// to pick the most usable row deterministically: without an `ORDER BY` the
+/// query planner decided, so the auth path rejected a working credential or
+/// not, depending on the plan.
+#[test]
+fn find_api_key_by_hash_prefers_the_most_usable_duplicate() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .create_client(&ApiClient {
+            client_id: "c1".into(),
+            name: "producer".into(),
+            scopes: vec!["jobs:trigger".into()],
+            is_active: true,
+            created_at: now(),
+            managed_by: "env".into(),
+        })
+        .unwrap();
+
+    let dup = |key_id: &str, created_at, expires_at, revoked_at| ApiKey {
+        key_id: key_id.into(),
+        client_id: "c1".into(),
+        key_hash: "hash-1".into(),
+        key_prefix: "croniq_aaaa".into(),
+        expires_at,
+        revoked_at,
+        created_at,
+    };
+
+    // Deliberately inserted oldest-usable-last so a plan that just returns
+    // insertion order fails the assertions below.
+    store
+        .create_api_key(&dup(
+            "revoked",
+            utc(2026, 3, 29, 11, 0),
+            None,
+            Some(utc(2026, 3, 29, 11, 30)),
+        ))
+        .unwrap();
+    store
+        .create_api_key(&dup(
+            "dated-early",
+            utc(2026, 3, 29, 11, 10),
+            Some(utc(2026, 3, 29, 12, 5)),
+            None,
+        ))
+        .unwrap();
+    store
+        .create_api_key(&dup(
+            "dated-late",
+            utc(2026, 3, 29, 11, 20),
+            Some(utc(2026, 3, 29, 12, 30)),
+            None,
+        ))
+        .unwrap();
+    store
+        .create_api_key(&dup("live", utc(2026, 3, 29, 11, 30), None, None))
+        .unwrap();
+
+    assert_eq!(
+        store
+            .find_api_key_by_hash("hash-1")
+            .unwrap()
+            .unwrap()
+            .key_id,
+        "live",
+        "an open-ended, un-revoked row wins"
+    );
+
+    // With no open-ended row left, the one that survives longest answers.
+    store.revoke_api_key("live", now()).unwrap();
+    assert_eq!(
+        store
+            .find_api_key_by_hash("hash-1")
+            .unwrap()
+            .unwrap()
+            .key_id,
+        "dated-late",
+        "among dated rows the latest deadline wins"
+    );
+
+    // All dead: still deterministic — the newest row, not an arbitrary one.
+    store.revoke_api_key("dated-late", now()).unwrap();
+    store.revoke_api_key("dated-early", now()).unwrap();
+    assert_eq!(
+        store
+            .find_api_key_by_hash("hash-1")
+            .unwrap()
+            .unwrap()
+            .key_id,
+        "live",
+        "with every row revoked the newest answers"
+    );
+}
+
+/// Restoring is the inverse of revoking, and the write behind a re-declared
+/// key being revived rather than re-minted (issue #516). Both columns have to
+/// go in one statement: a row can be dated *and* revoked — a rotation retired
+/// it, then an operator ended it early — and half a restore is still a key
+/// that stops working.
+#[test]
+fn restore_api_key_clears_both_the_deadline_and_the_revocation() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .create_client(&ApiClient {
+            client_id: "c1".into(),
+            name: "producer".into(),
+            scopes: vec!["jobs:trigger".into()],
+            is_active: true,
+            created_at: now(),
+            managed_by: "env".into(),
+        })
+        .unwrap();
+    store
+        .create_api_key(&ApiKey {
+            key_id: "k1".into(),
+            client_id: "c1".into(),
+            key_hash: "hash-1".into(),
+            key_prefix: "croniq_aaaa".into(),
+            expires_at: Some(utc(2026, 3, 29, 12, 15)),
+            revoked_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+    store.revoke_api_key("k1", now()).unwrap();
+
+    store.restore_api_key("k1").unwrap();
+
+    let key = &store.list_api_keys("c1").unwrap()[0];
+    assert_eq!(key.revoked_at, None);
+    assert_eq!(
+        key.expires_at, None,
+        "a restored key must not still be running out its old deadline"
+    );
+    assert!(
+        store.find_api_key_by_hash("hash-1").unwrap().is_some(),
+        "and the auth path must be able to find it"
+    );
+
+    // Unknown ids create nothing — the reconciler must not be able to
+    // conjure a credential through this path.
+    store.restore_api_key("nope").unwrap();
+    assert_eq!(store.list_api_keys("c1").unwrap().len(), 1);
+}

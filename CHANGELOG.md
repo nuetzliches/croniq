@@ -195,6 +195,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A re-declared key that had been revoked is restored, not duplicated
+  ([#516](https://github.com/nuetzliches/croniq/issues/516)).**
+  `api_keys.key_hash` carries a plain index, not a unique one — a revoked row is
+  kept for audit — and `find_api_key_by_hash` selected without an `ORDER BY`. So
+  once two rows held one secret, authentication answered from whichever row the
+  query planner happened to return, and the same credential was accepted or
+  rejected depending on the plan.
+
+  `sync_declared_client` produced exactly that pair. A revoked row did not
+  satisfy the declaration, so re-declaring a revoked key — a rotation rolled
+  back under `CRONIQ_API_KEY_ROTATION_GRACE=0s`, or one where the outgoing key
+  was ended with `DELETE /v1/api-keys/{id}`, which is the documented answer to a
+  leak — minted a *second* row for the same secret beside the revoked one.
+  [#500](https://github.com/nuetzliches/croniq/issues/500) closed the same hole
+  for a merely *dated* row; this was the other half.
+
+  The declared row is now restored instead. `restore_api_key` clears
+  `revoked_at` and `expires_at` in one statement — a row can be dated *and*
+  revoked, and half a restore is still a key that stops working — so the key
+  keeps its `key_id` and there stays one row per secret. The restore then
+  retires the key it supersedes, exactly as re-minting did: leaving that out
+  would have made a rollback the one way to end up with two live keys.
+  `CRONIQ_API_KEY_RECONCILE=1` still gates the write, and the blocked outcome
+  now names the restore, so an operator who revoked a value the environment
+  still declares reads that instead of watching it reappear.
+
+  `find_api_key_by_hash` is ordered regardless of which path wrote the rows —
+  un-revoked before revoked, open-ended before dated, latest deadline, newest
+  row — because databases written before this fix already hold duplicates. The
+  reconciler ranks candidate rows the same way, so it decides about the row the
+  auth path will actually use.
+
+  Deliberately no unique constraint on `key_hash`. It would have to be a
+  migration that collapses existing duplicates, i.e. deletes audit rows, and it
+  would turn one config mistake — the same key value declared for two clients —
+  from a reportable outcome into a write that fails at boot. The ordering makes
+  the duplicates that exist harmless; the reconciler no longer makes new ones.
+
 - **Four SDKs now actually reset their poll-loop budgets
   ([#507](https://github.com/nuetzliches/croniq/issues/507),
   [#508](https://github.com/nuetzliches/croniq/issues/508)).** The
@@ -382,8 +420,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   A declared key that is mid-retirement now has its deadline cleared rather
   than a second row minted with the same secret — `api_keys.key_hash` is not
-  unique and `find_api_key_by_hash` does not order its result, so a duplicate
-  would leave authentication picking arbitrarily between the two. Without
+  unique, so a duplicate would leave authentication choosing between the two
+  (the lookup is ordered as of #516). Without
   `CRONIQ_API_KEY_RECONCILE=1` nothing is written, but the outcome now says
   what is pending instead of claiming nothing is.
 
