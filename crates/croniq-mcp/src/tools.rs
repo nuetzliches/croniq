@@ -49,6 +49,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use croniq_config::compile::JobConfig;
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_scheduler::trigger::Trigger;
 use croniq_store::models::{
     DeadLetter, DeadLetterFilter, Execution, ExecutionState, JobDefinition, TriggerDefinition,
@@ -754,6 +755,20 @@ impl CroniqMcp {
         let states = store
             .list_job_states()
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        // A `job_states` row outlives the job that created it, so a raw
+        // listing offers an agent jobs that no longer exist — permanently
+        // overdue, and indistinguishable from live ones (issue #506). With no
+        // trigger snapshot to consult (the stdio binary) everything is
+        // listed, as `LiveJobs::Unknown` prescribes.
+        let live = match self.triggers.as_ref() {
+            Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
+            None => LiveJobs::Unknown,
+        };
+        let states: Vec<_> = states
+            .into_iter()
+            .filter(|s| live.includes(&s.job_key))
+            .collect();
 
         serde_json::to_string_pretty(&states)
             .map_err(|e| McpError::internal_error(e.to_string(), None))

@@ -230,9 +230,16 @@ pub async fn handle_list_states(
         None => Default::default(),
     };
 
+    // Rows whose job the running configuration no longer defines are dropped
+    // rather than reported permanently overdue (issue #506). The metrics
+    // exporter has filtered them since #470; this endpoint is what the
+    // dashboard reads, so a phantom here badges a job that no longer exists as
+    // stalled forever.
+    let live = state.live_jobs().await;
     let faults = state.config_faults.read().unwrap();
     let out = states
         .into_iter()
+        .filter(|s| live.includes(&s.job_key))
         .map(|s| {
             let overdue =
                 s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);

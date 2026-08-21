@@ -35,6 +35,8 @@ use crate::store::DynStore;
 use chrono::{DateTime, Duration, Utc};
 use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use croniq_scheduler::live_jobs::LiveJobs;
+use croniq_scheduler::trigger::Trigger;
 use croniq_store::models::{ExecutionState, JobStatus};
 
 /// Max execution rows deleted per prune DELETE statement. Bounds SQLite's
@@ -345,6 +347,14 @@ pub struct WatchdogLoop {
     /// [`CLAIM_SWEEP_LIMIT`] in production; tests shrink it to exercise
     /// the over-limit path without seeding hundreds of rows.
     claim_sweep_limit: u32,
+    /// Live trigger snapshot, for deciding which `job_states` rows still
+    /// belong to a job the configuration defines (issue #506).
+    ///
+    /// Not `self.jobs`: that is a boot-time DSL snapshot, so it knows nothing
+    /// about jobs registered through the API and filtering on it would silence
+    /// missed-fire alerts for exactly those (the #505 mistake). `None` reports
+    /// everything, as [`LiveJobs::Unknown`] does.
+    triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
 }
 
 impl WatchdogLoop {
@@ -384,7 +394,20 @@ impl WatchdogLoop {
             missed_fired: Arc::new(Mutex::new(HashSet::new())),
             email_sender,
             claim_sweep_limit: CLAIM_SWEEP_LIMIT,
+            triggers: None,
         }
+    }
+
+    /// Wire the shared trigger snapshot, so the missed-fire sweep can tell a
+    /// job the configuration still defines from a `job_states` row that
+    /// outlived one (issue #506). Without it the sweep reports every row, which
+    /// is the pre-#506 behaviour and the safe direction when there is nothing
+    /// to consult.
+    pub fn set_trigger_snapshot(
+        &mut self,
+        triggers: Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>,
+    ) {
+        self.triggers = Some(triggers);
     }
 
     /// Resolve `JobConfig` for a key: DSL map first, then store fallback.
@@ -603,7 +626,19 @@ impl WatchdogLoop {
             }
         };
 
+        // A `job_states` row outlives the job that created it, and a removed
+        // job's row stays permanently overdue — so without this the sweep
+        // paged someone about a job that no longer exists, again after every
+        // restart since `next_fire_at` never advances (issue #506).
+        let live = match self.triggers.as_ref() {
+            Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
+            None => LiveJobs::Unknown,
+        };
+
         for state in &states {
+            if !live.includes(&state.job_key) {
+                continue;
+            }
             // Only Active triggers have a meaningful "expected" fire; a
             // paused/disabled/exhausted job is not supposed to fire.
             if state.status != JobStatus::Active {
@@ -2234,6 +2269,20 @@ mod tests {
     use croniq_store::models::{JobState, JobStatus};
     use croniq_store::traits::JobStore;
 
+    /// A trigger just real enough to put a key in a snapshot; the sweep only
+    /// consults the keys.
+    fn test_trigger(job_key: &str) -> Trigger {
+        Trigger::new(
+            job_key.to_string(),
+            croniq_scheduler::schedule::Schedule::Disabled,
+            chrono_tz::UTC,
+            None,
+            None,
+            croniq_scheduler::misfire::MisfirePolicy::default(),
+            Utc::now(),
+        )
+    }
+
     fn missed_fire_rule(name: &str, glob: &str, grace: &str, channel: &str) -> RuleConfig {
         RuleConfig {
             name: name.into(),
@@ -2296,6 +2345,77 @@ mod tests {
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].rule_name, "backup-liveness");
         assert_eq!(deliveries[0].job_key, "billing:backup");
+    }
+
+    #[tokio::test]
+    async fn missed_fire_ignores_a_job_the_configuration_no_longer_defines() {
+        // Issue #506: a removed job's `job_states` row stays, permanently
+        // overdue because nothing advances `next_fire_at`. The sweep kept
+        // paging about it — and again after every restart, since the dedup set
+        // is in-memory.
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule(
+            "backup-liveness",
+            "billing:*",
+            "10m",
+            "ops",
+        )]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        // The configuration defines a different job — i.e. billing:backup was
+        // removed and its row left behind.
+        let mut triggers = HashMap::new();
+        triggers.insert("other:job".to_string(), test_trigger("other:job"));
+        watchdog.set_trigger_snapshot(Arc::new(tokio::sync::RwLock::new(triggers)));
+
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty(), "{:?}", result.missed_fires);
+        assert!(
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter::default())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn missed_fire_still_alerts_for_a_job_the_configuration_defines() {
+        // The other side of the filter: wiring a snapshot must not blunt the
+        // alarm for jobs that do exist.
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule(
+            "backup-liveness",
+            "billing:*",
+            "10m",
+            "ops",
+        )]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let mut triggers = HashMap::new();
+        triggers.insert("billing:backup".to_string(), test_trigger("billing:backup"));
+        watchdog.set_trigger_snapshot(Arc::new(tokio::sync::RwLock::new(triggers)));
+
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(
+            result.missed_fires,
+            vec![("backup-liveness".to_string(), "billing:backup".to_string())]
+        );
     }
 
     #[tokio::test]
