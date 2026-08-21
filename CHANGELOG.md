@@ -195,6 +195,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The same key value declared for two API clients is refused at boot
+  ([#520](https://github.com/nuetzliches/croniq/issues/520)).**
+  `parse_declarations` already guarded two variables naming one client with
+  different values; nothing guarded the mirror case — two clients named with
+  one value:
+
+  ```
+  CRONIQ_API_CLIENT_PRODUCER_KEY=croniq_shared
+  CRONIQ_API_CLIENT_PRODUCER_SCOPES=jobs:trigger
+  CRONIQ_API_CLIENT_RUNNER_KEY=croniq_shared
+  CRONIQ_API_CLIENT_RUNNER_SCOPES=work:poll
+  ```
+
+  Both declarations reconciled independently: two clients created, two
+  `api_keys` rows carrying the same `key_hash`. Keys resolve by hash, so the
+  credential authenticated as exactly one of them and carried only that
+  client's scopes — and which one was nobody's decision. Both rows are
+  un-revoked, open-ended and share a `created_at`, so
+  [#516](https://github.com/nuetzliches/croniq/issues/516)'s ordering had no
+  tie to break and the query plan decided. The losing client exists, is active,
+  has the scopes it was declared with, and `403`s on its own endpoints with
+  nothing in the reconcile output hinting why.
+
+  The declaration is now an error at parse time, naming both variables and both
+  clients, so nothing is written and no live credential has to be taken away
+  from one side. #516 could not have caught this: both of its fixes are
+  per-client, and no ordering repairs a secret that legitimately matches two
+  identities.
+
+  `CRONIQ_API_KEY` without `CRONIQ_API_KEY_SCOPES` is still the credential the
+  CLI presents rather than a declaration
+  ([#502](https://github.com/nuetzliches/croniq/issues/502)), so exporting a
+  client's own key on the server host to run `croniq` there is unaffected.
+  A key pasted in from a client created through `POST /v1/api-keys` is not
+  covered — only one side of that collision is in the environment.
+
 - **A re-declared key that had been revoked is restored, not duplicated
   ([#516](https://github.com/nuetzliches/croniq/issues/516)).**
   `api_keys.key_hash` carries a plain index, not a unique one — a revoked row is

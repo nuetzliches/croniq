@@ -520,10 +520,10 @@ its machine credentials by value, including scoped ones:
 ```yaml
 environment:
   # The runner only needs the pull protocol.
-  CRONIQ_API_CLIENT_RUNNER_KEY: croniq_...
+  CRONIQ_API_CLIENT_RUNNER_KEY: croniq_<runner secret>
   CRONIQ_API_CLIENT_RUNNER_SCOPES: work:poll,work:ack,work:renew
-  # The producer only needs to fire jobs.
-  CRONIQ_API_CLIENT_PRODUCER_KEY: croniq_...
+  # The producer only needs to fire jobs — its own key, not the runner's.
+  CRONIQ_API_CLIENT_PRODUCER_KEY: croniq_<producer secret>
   CRONIQ_API_CLIENT_PRODUCER_SCOPES: jobs:trigger
 ```
 
@@ -575,11 +575,25 @@ this feature exists to remove. An unknown scope (`job:reed`) is also a boot
 error: it would otherwise produce a credential that authorises nothing and
 fails at first use, in some other service, far from the file that caused it.
 
+**One key value belongs to one client.** Give each declared client its own
+key: declaring the same value for two clients is a boot error naming both
+variables. Keys resolve by hash, so one value can only ever authenticate as
+one client — reconciling both declarations would create both clients and both
+keys, and the credential would then answer as whichever one the database
+returned first, carrying only that client's scopes. The other client would
+exist, be active, hold the scopes it was declared with, and get `403`s. That is
+also why the example above gives each client a secret of its own (issue #520).
+
+`CRONIQ_API_KEY` without `CRONIQ_API_KEY_SCOPES` is not a declaration, so
+exporting a declared client's key on the server host to run `croniq` there is
+fine — it is the same credential being *presented*, not a second client.
+
 **What is fatal at boot, and what is only logged.** A malformed *current*
 declaration stops the server: a key that does not begin with `croniq_`, a
-named client without scopes, an unknown scope, or the same client declared
-twice with different values. All of those are a declaration written wrong, and
-booting past one means running without the credential that was asked for.
+named client without scopes, an unknown scope, the same client declared twice
+with different values, or one key value declared for two clients. All of those
+are a declaration written wrong, and booting past one means running without the
+credential that was asked for.
 
 Two things are logged and skipped instead:
 
