@@ -260,6 +260,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself, and the trailing hint explains that state instead of advising a
   revoke nobody needs.
 
+- **Jobs added or removed through the API keep their `croniq_job_*` series in
+  step ([#505](https://github.com/nuetzliches/croniq/issues/505)).** The
+  phantom-job filter of #470 decides which jobs may emit per-job metrics from
+  the shared trigger snapshot — but that snapshot was written only at boot and
+  on reload, while `POST /v1/jobs/register` and the other API mutation routes
+  reached the scheduler's own map alone. A job registered by a runner at
+  startup therefore had *no* `croniq_job_overdue`, `last_fire` or `next_fire`
+  series until the next reload, which on a server without `--watch` or a
+  `SIGHUP` means indefinitely: an operator's documented
+  `croniq_job_overdue == 1` alert silently covered none of their dynamically
+  registered jobs. The inverse of the false positive #470 removed.
+
+  The snapshot is now synced where every runtime command already converges, in
+  the scheduler task, rather than at each of the six routes that can send one.
+
 - **A store error no longer lets `DELETE /v1/api-clients/{id}` through
   ([#504](https://github.com/nuetzliches/croniq/issues/504)).** The env-managed
   refusal was reached via `if let Ok(Some(client))`, so a transient lock or IO

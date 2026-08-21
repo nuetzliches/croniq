@@ -767,7 +767,12 @@ async fn main() -> Result<()> {
                     }
                 }
                 Some(cmd) = scheduler_cmd_rx.recv() => {
-                    scheduler_loop.apply_command(cmd);
+                    // Syncs the shared trigger snapshot with the scheduler's
+                    // own map, so a job added or removed through the API keeps
+                    // its per-job metrics in step (issue #505).
+                    scheduler_loop
+                        .apply_command_synced(cmd, &scheduler_reload_snapshot)
+                        .await;
                 }
             }
         }
