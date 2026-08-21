@@ -337,6 +337,20 @@ impl ServerState {
         })
     }
 
+    /// The jobs the running configuration defines, for filtering the
+    /// `job_states` rows that outlive their jobs (issues #470, #506).
+    ///
+    /// Reads the trigger snapshot the scheduler keeps in step with its own map
+    /// (issue #505). An absent snapshot yields [`LiveJobs::Unknown`], which
+    /// reports everything — see that type for why that is the safe direction.
+    pub async fn live_jobs(&self) -> croniq_scheduler::live_jobs::LiveJobs {
+        use croniq_scheduler::live_jobs::LiveJobs;
+        match self.triggers.as_ref() {
+            Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
+            None => LiveJobs::Unknown,
+        }
+    }
+
     /// Compile the effective calendar set (DSL ∪ store, DSL wins) for
     /// attaching gates to API-managed triggers (issue #393). A missing store
     /// only degrades to the DSL-only set — the triggers being built here are

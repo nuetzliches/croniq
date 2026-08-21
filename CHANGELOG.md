@@ -260,6 +260,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself, and the trailing hint explains that state instead of advising a
   revoke nobody needs.
 
+- **A removed job stops being reported by the states API, the watchdog and the
+  MCP tool too ([#506](https://github.com/nuetzliches/croniq/issues/506)).**
+  #470 stopped the *metrics exporter* emitting series for jobs the
+  configuration no longer defines. Three other consumers of the same
+  never-deleted `job_states` rows kept doing it:
+
+  - `GET /v1/jobs/states` computed `overdue` from the stored row, so the
+    dashboard badged a job removed months ago as permanently stalled.
+  - The watchdog's missed-fire sweep dispatched `job_missed_fire` alerts for
+    it, and again after every restart — the dedup set is in-memory and
+    `next_fire_at` never advances, so it paged someone repeatedly about a job
+    that does not exist.
+  - The MCP `list_jobs` tool handed an agent the rows verbatim.
+
+  The rule now lives in one type, `LiveJobs`, rather than being restated per
+  consumer — chiefly so its fail-open half cannot be got backwards: "cannot
+  tell which jobs are live" has to mean "report everything", never "report
+  nothing". The watchdog gets the same trigger snapshot the exporter reads,
+  not its boot-time DSL job list, since filtering on that would have silenced
+  missed-fire alerts for every job registered through the API.
+
 - **Jobs added or removed through the API keep their `croniq_job_*` series in
   step ([#505](https://github.com/nuetzliches/croniq/issues/505)).** The
   phantom-job filter of #470 decides which jobs may emit per-job metrics from

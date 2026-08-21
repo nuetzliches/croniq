@@ -19,11 +19,14 @@ use axum::{
     http::{Request, StatusCode},
 };
 use chrono::{Duration, Utc};
+use croniq_auth::CallerType;
+use croniq_auth::jwt::{JwtConfig, issue_token_pair};
 use croniq_runner::AppState;
 use croniq_scheduler::misfire::MisfirePolicy;
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::Trigger;
 use croniq_server::api::ServerState;
+use croniq_server::api::server_router;
 use croniq_server::metrics::metrics_router;
 use croniq_server::sqlite_store;
 use croniq_server::store::DynStore;
@@ -50,7 +53,10 @@ fn overdue_state(job_key: &str, ago: Duration) -> JobState {
     }
 }
 
-async fn metrics_body(with_triggers: bool) -> String {
+/// The fixture both endpoints share: one live overdue job, one phantom whose
+/// job was removed 90 days ago, and optionally the trigger snapshot that says
+/// which of the two the configuration still defines.
+fn fixture(with_triggers: bool) -> Arc<ServerState> {
     let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
     store
         .upsert_job_state(&overdue_state(LIVE, Duration::minutes(5)))
@@ -58,9 +64,31 @@ async fn metrics_body(with_triggers: bool) -> String {
     store
         .upsert_job_state(&overdue_state(PHANTOM, Duration::days(90)))
         .unwrap();
+    // The `/v1` routes fail closed without a JWT config (issue #431), and the
+    // middleware checks the named user exists, so the states half of this
+    // fixture needs both. `/metrics` needs neither and ignores them.
+    let now = Utc::now();
+    store
+        .users_create(&croniq_store::models::User {
+            user_id: "test-user".into(),
+            username: "test-user".into(),
+            email: None,
+            display_name: None,
+            role: croniq_auth::Role::Viewer,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .unwrap();
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let mut state = ServerState::with_auth(AppState::new(), tx, None, Some(store));
+    let mut state = ServerState::with_auth(
+        AppState::new(),
+        tx,
+        Some(JwtConfig::for_tests()),
+        Some(store),
+    );
     if with_triggers {
         // Only the live job is loaded — exactly the state after the phantom
         // was removed from the Croniqfile and the server restarted.
@@ -79,7 +107,11 @@ async fn metrics_body(with_triggers: bool) -> String {
         );
         Arc::get_mut(&mut state).unwrap().triggers = Some(Arc::new(RwLock::new(triggers)));
     }
+    state
+}
 
+async fn metrics_body(with_triggers: bool) -> String {
+    let state = fixture(with_triggers);
     let resp = metrics_router(state)
         .oneshot(
             Request::builder()
@@ -127,6 +159,71 @@ async fn a_server_without_a_trigger_map_still_reports_every_job() {
     // "emit nothing" — otherwise an embedding without a trigger map silently
     // loses its per-job series.
     let body = metrics_body(false).await;
+    assert!(body.contains(LIVE), "{body}");
+    assert!(body.contains(PHANTOM), "{body}");
+}
+
+/// `GET /v1/jobs/states` is what the dashboard reads, and it computed
+/// `overdue` straight from the stored rows — so a removed job was badged
+/// permanently overdue in the UI long after #470 had cleaned up the metrics
+/// (issue #506).
+async fn states_body(with_triggers: bool) -> String {
+    let state = fixture(with_triggers);
+    let token = issue_token_pair(
+        state.jwt_config.as_ref().unwrap(),
+        "test-user",
+        "test-client",
+        CallerType::User,
+        Some("test-user"),
+        Some(croniq_auth::Role::Viewer),
+        croniq_auth::AuthMethod::Password,
+        &["jobs:read".to_string()],
+        None,
+    )
+    .unwrap()
+    .access_token;
+    let resp = server_router(Arc::clone(&state))
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/jobs/states")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    String::from_utf8(
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_states_endpoint_drops_a_removed_job() {
+    let body = states_body(true).await;
+    assert!(
+        body.contains(LIVE),
+        "the live job must still be listed:
+{body}"
+    );
+    assert!(
+        !body.contains(PHANTOM),
+        "a job the server does not know about must not be listed:
+{body}"
+    );
+}
+
+#[tokio::test]
+async fn the_states_endpoint_lists_everything_without_a_trigger_map() {
+    // Same fail-open rule as the exporter: "cannot tell" is not "show none".
+    let body = states_body(false).await;
     assert!(body.contains(LIVE), "{body}");
     assert!(body.contains(PHANTOM), "{body}");
 }

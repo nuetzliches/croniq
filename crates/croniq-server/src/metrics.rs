@@ -3,7 +3,6 @@
 //! Exposes key runtime metrics in Prometheus text exposition format at a
 //! configurable endpoint (default: `/metrics`).
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -16,6 +15,7 @@ use axum::{
 
 use crate::api::ServerState;
 use croniq_runner::RunnerStatus;
+use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_store::models::{
     JOB_DURATION_BUCKETS_SECONDS, JobExecutionMetrics, JobState, JobStatus,
 };
@@ -145,8 +145,8 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         // belongs here rather than in a retention policy.
         match store.list_job_states() {
             Ok(states) => {
-                let known = known_job_keys(&state).await;
-                render_job_state_metrics(&mut body, &states, now, known.as_ref());
+                let live = state.live_jobs().await;
+                render_job_state_metrics(&mut body, &states, now, &live);
             }
             Err(e) => tracing::warn!(error = %e, "metrics: list_job_states query failed"),
         }
@@ -235,39 +235,26 @@ fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
     }
 }
 
-/// The job keys the scheduler currently knows about, or `None` when the
-/// server has no trigger map to consult.
-///
-/// `None` means "cannot tell", and the caller then emits every stored state
-/// rather than none: a server wired up without a trigger map (some tests, and
-/// any future embedding) must not silently lose its per-job series.
-async fn known_job_keys(state: &ServerState) -> Option<HashSet<String>> {
-    let triggers = state.triggers.as_ref()?;
-    Some(triggers.read().await.keys().cloned().collect())
-}
-
 /// Append the per-job scheduling-liveness families from `job_states`
 /// (issue #250): last fire, next fire, and an overdue flag. Each family
 /// gets one `# HELP`/`# TYPE` header followed by its samples.
 ///
-/// `known` filters the stored rows down to the jobs the running configuration
-/// defines (issue #470); see [`known_job_keys`] for what `None` means.
+/// `live` filters the stored rows down to the jobs the running configuration
+/// defines (issue #470); see [`LiveJobs`] for what an unknown set means.
 fn render_job_state_metrics(
     out: &mut String,
     states: &[JobState],
     now: chrono::DateTime<chrono::Utc>,
-    known: Option<&HashSet<String>>,
+    live: &LiveJobs,
 ) {
-    // `None` means the caller could not determine the live job set; emit
-    // everything rather than nothing.
-    let live: Vec<&JobState> = states
+    let reportable: Vec<&JobState> = states
         .iter()
-        .filter(|s| known.is_none_or(|k| k.contains(&s.job_key)))
+        .filter(|s| live.includes(&s.job_key))
         .collect();
-    if live.is_empty() {
+    if reportable.is_empty() {
         return;
     }
-    let states = &live;
+    let states = &reportable;
 
     out.push_str(
         "# HELP croniq_job_last_fire_timestamp Unix time (seconds) of the last scheduled fire per job.\n\
@@ -621,7 +608,7 @@ mod tests {
             },
         ];
         let mut out = String::new();
-        render_job_state_metrics(&mut out, &states, now, None);
+        render_job_state_metrics(&mut out, &states, now, &LiveJobs::Unknown);
 
         assert!(out.contains("# TYPE croniq_job_last_fire_timestamp gauge"));
         assert!(
@@ -662,10 +649,10 @@ mod tests {
                 updated_at: now,
             },
         ];
-        let known: HashSet<String> = ["etl:sync".to_string()].into_iter().collect();
+        let live = LiveJobs::Known(["etl:sync".to_string()].into_iter().collect());
 
         let mut out = String::new();
-        render_job_state_metrics(&mut out, &states, now, Some(&known));
+        render_job_state_metrics(&mut out, &states, now, &live);
 
         // The live job still reports, overdue and all — the signal must keep
         // working for jobs that actually exist.
@@ -684,8 +671,8 @@ mod tests {
 
     #[test]
     fn job_state_metrics_emit_everything_when_the_live_set_is_unknown() {
-        // `None` means "cannot tell" — a server with no trigger map must not
-        // silently lose its per-job series.
+        // `Unknown` means "cannot tell" — a server with no trigger map must
+        // not silently lose its per-job series.
         let now = chrono::Utc::now();
         let states = vec![JobState {
             job_key: "etl:sync".into(),
@@ -697,7 +684,7 @@ mod tests {
         }];
 
         let mut out = String::new();
-        render_job_state_metrics(&mut out, &states, now, None);
+        render_job_state_metrics(&mut out, &states, now, &LiveJobs::Unknown);
         assert!(
             out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 0"),
             "{out}"

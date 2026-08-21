@@ -862,7 +862,7 @@ async fn main() -> Result<()> {
     // same `evaluate_failure` pipeline as `job_failed`, so a rule
     // with `throttle 10m` correctly suppresses both kinds of fires
     // in the same window.
-    let watchdog = WatchdogLoop::with_alerts(
+    let mut watchdog = WatchdogLoop::with_alerts(
         loaded.runtime.jobs.clone(),
         Arc::clone(&store),
         Arc::clone(&runner_state),
@@ -871,6 +871,11 @@ async fn main() -> Result<()> {
         croniq_server::watchdog::empty_sla_fired_set(),
         Arc::clone(&server_state.email_sender),
     );
+    // So the missed-fire sweep can tell a job the configuration defines from a
+    // `job_states` row that outlived one (issue #506). The same snapshot the
+    // metrics exporter filters on, kept in step with the scheduler's map by
+    // `apply_command_synced` (issue #505).
+    watchdog.set_trigger_snapshot(Arc::clone(&trigger_snapshot));
     let watchdog_store = Arc::clone(&store);
 
     // Age-based execution retention (issue #344). Parsed once at boot from

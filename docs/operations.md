@@ -1143,11 +1143,13 @@ to 500 rows per tick, oldest-due first; a larger backlog drains across ticks.
 A `singleton` job wedged by such an orphan therefore self-heals within one
 sweep after `timeout + grace` at the latest.
 
-### Per-job liveness series and removed jobs
+### Removed jobs stop being reported
 
 `croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp` and
 `croniq_job_overdue` are emitted only for jobs the running configuration
-defines.
+defines — and so are `GET /v1/jobs/states` (what the dashboard reads), the
+watchdog's `job_missed_fire` alerts, and the MCP `list_jobs` tool. All four
+read the same table, so all four apply the same rule.
 
 Their source, `job_states`, outlives the job that created it — nothing deletes
 a row when a job is removed from the Croniqfile. Until
@@ -1166,6 +1168,10 @@ curl -X DELETE -H "Authorization: ApiKey $ADMIN_KEY"   "$CRONIQ_URL/v1/jobs/demo
 ```
 
 which now removes the `job_states` row along with the definition.
+
+A server with no trigger map to consult — an embedding, or a store-only mode —
+reports **everything** rather than nothing. Losing every per-job signal is a
+worse failure than showing a stale one, and it would be silent.
 
 ### Watchdog metrics
 
