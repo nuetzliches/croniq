@@ -111,9 +111,32 @@ pub struct Declaration {
     /// Client name as stored, e.g. `default` or `runner-poll`.
     pub name: String,
     pub raw_key: String,
-    pub scopes: Vec<String>,
+    /// Scopes the environment actually asked for, or `None` when it named
+    /// none.
+    ///
+    /// `None` is only reachable for the `default` client, which may be
+    /// declared by its key alone. It means "the environment has no opinion",
+    /// which is deliberately *not* the same as asking for admin: a new client
+    /// still gets admin (that is the back-compat the bare variable has always
+    /// had), but an existing one keeps whatever scopes it has. Storing the
+    /// implied admin here instead made every reconcile look like a request to
+    /// re-escalate a client an operator had narrowed by hand (issue #501).
+    pub scopes: Option<Vec<String>>,
     /// Variable the key came from, so a message can name it.
     pub key_var: String,
+}
+
+impl Declaration {
+    /// Scopes to give this client when creating it from scratch.
+    ///
+    /// Only the `default` client can reach the fall-back, and admin is what
+    /// the bare variable has always seeded. Note this is *creation only* — an
+    /// undeclared scope set must never rewrite an existing client.
+    fn effective_scopes_for_create(&self) -> Vec<String> {
+        self.scopes
+            .clone()
+            .unwrap_or_else(|| vec![Scope::ADMIN.to_string()])
+    }
 }
 
 /// Partial state while folding variables into declarations.
@@ -274,12 +297,18 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
             ));
         }
         let scopes = match partial.scopes {
-            Some((s, _)) => s,
-            // Back-compat: the `default` client has always been admin-scoped
-            // when seeded from the environment. A *named* client with no
-            // scopes is a mistake, not a request for admin — silently
-            // granting the wildcard is the exact failure #471 is about.
-            None if name == DEFAULT_CLIENT_NAME => vec![Scope::ADMIN.to_string()],
+            Some((s, _)) => Some(s),
+            // The `default` client keeps working with no scopes variable at
+            // all, for back-compat — but "the operator said nothing" is not
+            // the same fact as "the operator asked for admin", and conflating
+            // the two let an upgrade silently re-escalate a narrowed client
+            // (issue #501). `None` carries the distinction; see
+            // [`Declaration::scopes`].
+            //
+            // A *named* client with no scopes is a mistake, not a request for
+            // admin — silently granting the wildcard is the exact failure
+            // #471 is about.
+            None if name == DEFAULT_CLIENT_NAME => None,
             None => {
                 return Err(format!(
                     "API client '{name}' is declared by {key_var} but has no scopes — add \
@@ -501,10 +530,15 @@ fn create_declared_client<S: AuthStore + ?Sized>(
     now: DateTime<Utc>,
     dry_run: bool,
 ) -> Result<ClientOutcome, StoreError> {
+    // A brand-new client needs concrete scopes, and the bare `default`
+    // declaration has always meant admin. Defaulting here rather than in the
+    // parse is what keeps "said nothing" from reading as "asked for admin"
+    // when an *existing* client is reconciled (issue #501).
+    let scopes = decl.effective_scopes_for_create();
     let outcome = ClientOutcome {
         client: decl.name.clone(),
         action: Action::Created,
-        detail: Some(format!("scopes {}", decl.scopes.join(","))),
+        detail: Some(format!("scopes {}", scopes.join(","))),
     };
     if dry_run {
         return Ok(outcome);
@@ -514,7 +548,7 @@ fn create_declared_client<S: AuthStore + ?Sized>(
     store.create_client(&ApiClient {
         client_id: client_id.clone(),
         name: decl.name.clone(),
-        scopes: decl.scopes.clone(),
+        scopes: scopes.clone(),
         is_active: true,
         created_at: now,
         managed_by: MANAGED_BY_ENV.to_string(),
@@ -522,7 +556,7 @@ fn create_declared_client<S: AuthStore + ?Sized>(
     store.create_api_key(&new_key_row(&client_id, &decl.raw_key, now))?;
     tracing::info!(
         client = %decl.name,
-        scopes = %decl.scopes.join(","),
+        scopes = %scopes.join(","),
         var = %decl.key_var,
         "created API client from environment declaration"
     );
@@ -543,7 +577,15 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
     // (one early return, not a write guard per statement) and keeps the
     // opt-in check in one place.
     let needs_ownership = client.managed_by != MANAGED_BY_ENV;
-    let needs_scopes = client.scopes != decl.scopes;
+    // Only a *declared* scope set can drive a change. With the implied admin
+    // stored in the declaration this read `client.scopes != ["admin"]`, so the
+    // first boot after an upgrade re-escalated any `default` client an
+    // operator had narrowed in the dashboard — in the granting direction,
+    // from an environment that had said nothing about scopes (issue #501).
+    let needs_scopes = decl
+        .scopes
+        .as_ref()
+        .is_some_and(|declared| &client.scopes != declared);
     let needs_key = !keys
         .iter()
         .any(|k| k.key_hash == declared_hash && k.revoked_at.is_none());
@@ -615,10 +657,16 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
 
     if needs_ownership || needs_scopes {
         // `create_client` upserts, so ownership and scopes land in one write.
+        // An adoption with no declared scopes keeps the stored ones: taking
+        // ownership says who decides from now on, not what the answer is.
+        let scopes = match &decl.scopes {
+            Some(declared) => declared.clone(),
+            None => client.scopes.clone(),
+        };
         store.create_client(&ApiClient {
             client_id: client.client_id.clone(),
             name: client.name.clone(),
-            scopes: decl.scopes.clone(),
+            scopes,
             is_active: client.is_active,
             created_at: client.created_at,
             managed_by: MANAGED_BY_ENV.to_string(),
@@ -631,11 +679,11 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
                  edits through the API will be refused"
             );
         }
-        if needs_scopes {
+        if let Some(declared) = decl.scopes.as_ref().filter(|_| needs_scopes) {
             tracing::warn!(
                 client = %decl.name,
                 from = %client.scopes.join(","),
-                to = %decl.scopes.join(","),
+                to = %declared.join(","),
                 "{RECONCILE_VAR}=1 — API client scopes updated from the environment"
             );
         }
@@ -762,12 +810,18 @@ mod tests {
         Declaration {
             name: name.into(),
             raw_key: key.into(),
-            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
             key_var: format!(
                 "CRONIQ_API_CLIENT_{}_KEY",
                 name.to_uppercase().replace('-', "_")
             ),
         }
+    }
+
+    fn seed_key(store: &SqliteStore, client_id: &str, raw: &str) {
+        store
+            .create_api_key(&new_key_row(client_id, raw, Utc::now()))
+            .unwrap();
     }
 
     fn seed_client(store: &SqliteStore, name: &str, scopes: &[&str], managed_by: &str) -> String {
@@ -788,11 +842,15 @@ mod tests {
     // ─── Declaration parsing ─────────────────────────────────────────────────
 
     #[test]
-    fn bare_key_declares_the_default_client_as_admin() {
+    fn bare_key_declares_the_default_client_without_naming_scopes() {
+        // The bare variable still *creates* an admin client, but the
+        // declaration records that no scopes were named — which is what stops
+        // it from rewriting an existing client's scopes (issue #501).
         let d = parse_declarations(&vars(&[(KEY_VAR, "croniq_abc")])).unwrap();
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].name, DEFAULT_CLIENT_NAME);
-        assert_eq!(d[0].scopes, vec!["admin"]);
+        assert_eq!(d[0].scopes, None);
+        assert_eq!(d[0].effective_scopes_for_create(), vec!["admin"]);
     }
 
     #[test]
@@ -834,7 +892,10 @@ mod tests {
         .unwrap();
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].name, "runner-poll");
-        assert_eq!(d[0].scopes, vec!["work:poll", "work:ack"]);
+        assert_eq!(
+            d[0].scopes.as_deref(),
+            Some(&["work:poll".to_string(), "work:ack".to_string()][..])
+        );
     }
 
     #[test]
@@ -852,8 +913,11 @@ mod tests {
         .unwrap();
         let names: Vec<&str> = d.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, vec!["producer", "runner"]);
-        assert_eq!(d[0].scopes, vec!["jobs:trigger"]);
-        assert_eq!(d[1].scopes.len(), 3);
+        assert_eq!(
+            d[0].scopes.as_deref(),
+            Some(&["jobs:trigger".to_string()][..])
+        );
+        assert_eq!(d[1].scopes.as_ref().map(Vec::len), Some(3));
     }
 
     #[test]
@@ -962,6 +1026,110 @@ mod tests {
     }
 
     // ─── Reconciliation ──────────────────────────────────────────────────────
+
+    /// A declaration whose scopes variable is unset, as the bare
+    /// `CRONIQ_API_KEY` / `CRONIQ_INIT_API_KEY` spelling produces.
+    fn decl_without_scopes(name: &str, key: &str) -> Declaration {
+        Declaration {
+            scopes: None,
+            ..decl(name, key, &[])
+        }
+    }
+
+    #[test]
+    fn an_undeclared_scope_set_never_narrows_or_widens_an_existing_client() {
+        // Issue #501: the implied admin was stored in the declaration, so a
+        // `default` client an operator had narrowed to jobs:trigger in the
+        // dashboard looked like a scope drift — and the first boot with the
+        // legacy reconcile pair set silently put it back to full admin.
+        let s = store();
+        let id = seed_client(&s, DEFAULT_CLIENT_NAME, &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_same");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl_without_scopes(DEFAULT_CLIENT_NAME, "croniq_same")],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Unchanged);
+        let clients = s.list_clients().unwrap();
+        assert_eq!(clients[0].scopes, vec!["jobs:trigger"]);
+    }
+
+    #[test]
+    fn a_bare_declaration_still_creates_an_admin_client() {
+        // The other half of the same rule: saying nothing about scopes is not
+        // a request to re-scope an existing client, but a client that does not
+        // exist yet still needs concrete scopes, and admin is what the bare
+        // variable has always seeded.
+        let s = store();
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl_without_scopes(DEFAULT_CLIENT_NAME, "croniq_new")],
+                false,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Created);
+        let clients = s.list_clients().unwrap();
+        assert_eq!(clients[0].scopes, vec![Scope::ADMIN]);
+    }
+
+    #[test]
+    fn adoption_without_declared_scopes_keeps_the_stored_ones() {
+        // Taking ownership settles who decides from now on; it is not itself
+        // an answer about what the scopes should be. Rewriting them to the
+        // implied admin here would be the same escalation by another route.
+        let s = store();
+        let id = seed_client(&s, DEFAULT_CLIENT_NAME, &["jobs:read"], "api");
+        seed_key(&s, &id, "croniq_same");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl_without_scopes(DEFAULT_CLIENT_NAME, "croniq_same")],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Adopted);
+        let clients = s.list_clients().unwrap();
+        assert_eq!(clients[0].managed_by, MANAGED_BY_ENV);
+        assert_eq!(clients[0].scopes, vec!["jobs:read"]);
+    }
+
+    #[test]
+    fn an_explicitly_declared_scope_set_still_syncs() {
+        // The feature itself must keep working: when the environment does name
+        // scopes, they win.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:read"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_p");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_p", &["jobs:trigger"])],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::ScopesUpdated);
+        let clients = s.list_clients().unwrap();
+        assert_eq!(clients[0].scopes, vec!["jobs:trigger"]);
+    }
 
     #[test]
     fn a_declared_client_is_created_without_the_opt_in() {
