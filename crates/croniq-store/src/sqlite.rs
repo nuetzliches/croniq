@@ -935,21 +935,27 @@ impl AuthStore for SqliteStore {
 
     fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE key_hash = ?1")
-            .map_err(map_err)?
-            .query_row(params![key_hash], |row| {
-                Ok(ApiKey {
-                    key_id: row.get(0)?,
-                    client_id: row.get(1)?,
-                    key_hash: row.get(2)?,
-                    key_prefix: row.get(3)?,
-                    expires_at: sql_to_opt_dt(row.get(4)?),
-                    revoked_at: sql_to_opt_dt(row.get(5)?),
-                    created_at: sql_to_dt(&row.get::<_, String>(6)?),
-                })
+        conn.prepare(
+            "SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at
+               FROM api_keys WHERE key_hash = ?1
+              ORDER BY revoked_at IS NULL DESC, expires_at IS NULL DESC,
+                       expires_at DESC, created_at DESC
+              LIMIT 1",
+        )
+        .map_err(map_err)?
+        .query_row(params![key_hash], |row| {
+            Ok(ApiKey {
+                key_id: row.get(0)?,
+                client_id: row.get(1)?,
+                key_hash: row.get(2)?,
+                key_prefix: row.get(3)?,
+                expires_at: sql_to_opt_dt(row.get(4)?),
+                revoked_at: sql_to_opt_dt(row.get(5)?),
+                created_at: sql_to_dt(&row.get::<_, String>(6)?),
             })
-            .optional()
-            .map_err(map_err)
+        })
+        .optional()
+        .map_err(map_err)
     }
 
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
@@ -957,6 +963,16 @@ impl AuthStore for SqliteStore {
         conn.execute(
             "UPDATE api_keys SET revoked_at = ?1 WHERE key_id = ?2",
             params![dt_to_sql(&now), key_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn restore_api_key(&self, key_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE api_keys SET revoked_at = NULL, expires_at = NULL WHERE key_id = ?1",
+            params![key_id],
         )
         .map_err(map_err)?;
         Ok(())

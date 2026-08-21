@@ -161,6 +161,44 @@ fn auth_api_clients_and_keys(store: &PgStore, s: &str) {
             .is_some()
     );
 
+    // Restoring clears both columns in one statement (issue #516).
+    store
+        .set_api_key_expiry(&key.key_id, Some(deadline))
+        .unwrap();
+    store.restore_api_key(&key.key_id).unwrap();
+    let restored = store
+        .find_api_key_by_hash(&key_hash)
+        .unwrap()
+        .expect("key exists");
+    assert_eq!(restored.expires_at, None);
+    assert_eq!(restored.revoked_at, None);
+
+    // `key_hash` is not unique, so the lookup's ORDER BY decides which row
+    // answers. `revoked_at IS NULL DESC` sorts a *boolean* in Postgres and an
+    // integer in SQLite — exactly the kind of divergence only a real server
+    // shows. A dead duplicate must not shadow the usable row.
+    let dead_dup = format!("key-dup-{s}");
+    store
+        .create_api_key(&ApiKey {
+            key_id: dead_dup.clone(),
+            client_id: client_id.clone(),
+            key_hash: key_hash.clone(),
+            key_prefix: "croniq_a".into(),
+            expires_at: None,
+            revoked_at: Some(ts()),
+            created_at: ts() + chrono::Duration::days(1),
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .find_api_key_by_hash(&key_hash)
+            .unwrap()
+            .expect("key exists")
+            .key_id,
+        key.key_id,
+        "a revoked duplicate must not shadow the usable row, even when newer"
+    );
+
     // delete_client cascades the api_keys deletion.
     store.delete_client(&client_id).unwrap();
     assert!(store.get_client(&client_id).unwrap().is_none());

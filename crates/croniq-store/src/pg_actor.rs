@@ -479,6 +479,11 @@ impl AuthStore for PgStoreHandle {
         self.call(move |s| s.revoke_api_key(&key_id, now))
     }
 
+    fn restore_api_key(&self, key_id: &str) -> Result<(), StoreError> {
+        let key_id = key_id.to_owned();
+        self.call(move |s| s.restore_api_key(&key_id))
+    }
+
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
         let client_id = client_id.to_owned();
         self.call(move |s| s.list_api_keys(&client_id))

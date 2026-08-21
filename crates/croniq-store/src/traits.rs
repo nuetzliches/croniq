@@ -329,8 +329,31 @@ pub trait AuthStore {
 
     // API Keys
     fn create_api_key(&self, key: &ApiKey) -> Result<(), StoreError>;
+    /// Look up a key by the hash of its secret.
+    ///
+    /// `key_hash` is not unique: a revoked row is kept for audit, and older
+    /// databases may hold several rows for one secret from before a
+    /// re-declared key was revived rather than re-minted (issue #516). So the
+    /// lookup is ordered, and implementations must keep that order
+    /// identical: prefer an un-revoked row, then an open-ended one, then the
+    /// latest deadline, then the newest row. Without it the auth path could
+    /// reject a credential that is supposed to work, intermittently,
+    /// depending on which row the query planner returned.
+    ///
+    /// The caller still checks `revoked_at` and `expires_at` — the order only
+    /// decides *which* row answers, never whether it is usable.
     fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError>;
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+    /// Make a key usable again: clear both `revoked_at` and `expires_at`.
+    ///
+    /// The inverse of [`Self::revoke_api_key`], and the write behind a
+    /// re-declared key being revived instead of re-minted. Both columns go in
+    /// one statement on purpose: a key can be dated *and* revoked (a rotation
+    /// retired it, then an operator ended it early), and a half-restored row
+    /// is either still dead or still dying.
+    ///
+    /// It does not create anything — an unknown `key_id` is a no-op.
+    fn restore_api_key(&self, key_id: &str) -> Result<(), StoreError>;
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError>;
     /// Stamp an expiry on an existing key, leaving it usable until then.
     ///

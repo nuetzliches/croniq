@@ -69,6 +69,7 @@
 //! credential — so it happens without the flag. That is what makes "render
 //! the env, boot the stack, get two scoped clients" work in one step.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Duration, Utc};
@@ -496,8 +497,10 @@ pub enum Action {
     Created,
     /// Declared key installed; the previous one is retired.
     Rotated,
-    /// The declared key was mid-retirement; its deadline was cleared so it
-    /// keeps working. What a rolled-back rotation needs (issue #500).
+    /// The declared key was dated or revoked; it was restored so it keeps
+    /// working, and the keys it supersedes were retired. What a rolled-back
+    /// rotation needs, whether the grace window dated the old key (issue
+    /// #500) or it was revoked outright (issue #516).
     KeyRevived,
     /// Scopes brought in line with the declaration.
     ScopesUpdated,
@@ -641,11 +644,29 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
     // Decide everything before writing anything: it keeps the dry-run honest
     // (one early return, not a write guard per statement) and keeps the
     // opt-in check in one place.
-    // The client's own row carrying the declared secret, if it has one. Note
-    // `revoked_at.is_none()`: a revoked row does not satisfy the declaration.
+    // The client's own row carrying the declared secret, if it has one — in
+    // any state, revoked included. A revoked row does not *satisfy* the
+    // declaration, but it is the row the declaration is about: minting a
+    // second one for the same secret leaves `api_keys` with a live and a dead
+    // row for one credential, and `key_hash` is not unique, so the auth path
+    // then rejects that credential or not depending on which row came back
+    // (issue #516).
+    //
+    // Ranked the way `find_api_key_by_hash` ranks: un-revoked before revoked,
+    // open-ended before dated, latest deadline, newest row. A database
+    // written before #516 may hold duplicates, and the reconciler has to be
+    // looking at the same row the auth path would.
     let declared_key = keys
         .iter()
-        .find(|k| k.key_hash == declared_hash && k.revoked_at.is_none());
+        .filter(|k| k.key_hash == declared_hash)
+        .min_by_key(|k| {
+            (
+                k.revoked_at.is_some(),
+                k.expires_at.is_some(),
+                Reverse(k.expires_at),
+                Reverse(k.created_at),
+            )
+        });
     let needs_ownership = client.managed_by != MANAGED_BY_ENV;
     // Only a *declared* scope set can drive a change. With the implied admin
     // stored in the declaration this read `client.scopes != ["admin"]`, so the
@@ -657,13 +678,17 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         .as_ref()
         .is_some_and(|declared| &client.scopes != declared);
     let needs_key = declared_key.is_none();
-    // A row that matches the declaration but carries a retirement deadline is
-    // the declared key mid-handover: a rotation stamped it, and the
-    // environment now declares it again. Checking only `revoked_at` made that
-    // look satisfied, so the reconcile reported `Unchanged` while the key went
-    // on dying at its deadline — and nothing else ever clears one, so every
-    // consumer 401'd for good with no reconcile able to say why (issue #500).
-    let needs_revive = declared_key.filter(|k| k.expires_at.is_some());
+    // A row that matches the declaration but is dated or revoked is the
+    // declared key mid-handover: a rotation stamped or ended it, and the
+    // environment now declares it again. Checking only `revoked_at` made the
+    // dated case look satisfied, so the reconcile reported `Unchanged` while
+    // the key went on dying at its deadline — and nothing else ever clears
+    // one, so every consumer 401'd for good with no reconcile able to say why
+    // (issue #500). The revoked case is the same rollback under
+    // `CRONIQ_API_KEY_ROTATION_GRACE=0`, or after an operator ended the key
+    // with `DELETE /v1/api-keys/{id}`; it used to mint a duplicate row
+    // instead (issue #516).
+    let needs_revive = declared_key.filter(|k| k.revoked_at.is_some() || k.expires_at.is_some());
 
     let outcome = |action, detail| ClientOutcome {
         client: decl.name.clone(),
@@ -691,8 +716,12 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
         if needs_key {
             pending.push("rotate the key");
         }
-        if needs_revive.is_some() {
-            pending.push("cancel the declared key's retirement");
+        if let Some(key) = needs_revive {
+            pending.push(if key.revoked_at.is_some() {
+                "restore the declared key, which is revoked"
+            } else {
+                "cancel the declared key's retirement"
+            });
         }
         let detail = format!(
             "would {} — set {RECONCILE_VAR}=1 to apply",
@@ -770,16 +799,38 @@ fn sync_declared_client<S: AuthStore + ?Sized>(
     }
 
     if let Some(key) = needs_revive {
-        // Clearing the deadline rather than minting a second row with the same
-        // secret: `api_keys.key_hash` is not unique and `find_api_key_by_hash`
-        // does not order its result, so a duplicate would leave auth picking
-        // arbitrarily between the two.
-        store.set_api_key_expiry(&key.key_id, None)?;
+        let was = if key.revoked_at.is_some() {
+            "revoked"
+        } else {
+            "retiring"
+        };
+        // Restoring the row rather than minting a second one with the same
+        // secret: `api_keys.key_hash` is not unique, so a duplicate leaves the
+        // auth path choosing between a live and a dead row for one credential
+        // (issue #516). Both columns are cleared in one write — a rotation may
+        // have dated the row before an operator ended it early, and half a
+        // restore is still a key that stops working.
+        store.restore_api_key(&key.key_id)?;
+        // Then finish the handover the way the rotation path does: whatever
+        // key was installed when this one was superseded is now the outgoing
+        // one. Re-minting used to do this via `retire_superseded_keys`, so
+        // leaving it out would have made a rollback the one way to end up
+        // with two live keys. Restoring before retiring means there is no
+        // instant with nothing working.
+        let superseded: Vec<ApiKey> = keys
+            .iter()
+            .filter(|k| k.key_id != key.key_id)
+            .cloned()
+            .collect();
+        let retired = retire_superseded_keys(store, &superseded, now, inputs.rotation_grace)?;
         tracing::warn!(
             client = %decl.name,
             var = %decl.key_var,
             key_id = %key.key_id,
-            "{RECONCILE_VAR}=1 — the declared key was retiring; cleared its expiry so it              keeps working"
+            retired = retired.count,
+            "{RECONCILE_VAR}=1 — the declared key was {was}; restored it and retired {} \
+             superseded key(s)",
+            retired.count
         );
     }
 
@@ -1486,7 +1537,162 @@ mod tests {
                 .filter(|k| k.key_hash == hash_api_key("croniq_a"))
                 .count(),
             1,
-            "reviving must not mint a second row with the same secret —              find_api_key_by_hash does not order its result"
+            "reviving must not mint a second row with the same secret — key_hash is not \
+             unique, so auth would be choosing between them"
+        );
+        let b = keys
+            .iter()
+            .find(|k| k.key_hash == hash_api_key("croniq_b"))
+            .expect("B is still stored");
+        assert!(
+            b.expires_at.is_some(),
+            "the rollback supersedes B, so B retires with the grace window — the same \
+             thing re-minting used to do"
+        );
+    }
+
+    #[test]
+    fn rolling_back_to_a_revoked_key_restores_it_instead_of_minting_a_duplicate() {
+        // Issue #516: under CRONIQ_API_KEY_ROTATION_GRACE=0 a rotation revokes
+        // the superseded key outright, so a rollback declares a key whose row
+        // is revoked. `needs_key` read that row as absent and minted a second
+        // one for the same secret — and `key_hash` is not unique, so auth then
+        // answered from whichever row the planner handed back, live or dead.
+        let s = store();
+        let decl_a = decl("producer", "croniq_a", &["jobs:trigger"]);
+        let decl_b = decl("producer", "croniq_b", &["jobs:trigger"]);
+        reconcile(&s, &inputs(vec![decl_a.clone()], false, Duration::zero())).unwrap();
+        reconcile(&s, &inputs(vec![decl_b], true, Duration::zero())).unwrap();
+
+        let id = s.list_clients().unwrap()[0].client_id.clone();
+        assert!(
+            s.list_api_keys(&id)
+                .unwrap()
+                .iter()
+                .find(|k| k.key_hash == hash_api_key("croniq_a"))
+                .expect("A is still stored")
+                .revoked_at
+                .is_some(),
+            "precondition: a zero grace revokes A outright"
+        );
+
+        let out = reconcile(&s, &inputs(vec![decl_a], true, Duration::zero())).unwrap();
+
+        assert_eq!(out[0].action, Action::KeyRevived);
+        let keys = s.list_api_keys(&id).unwrap();
+        let a: Vec<_> = keys
+            .iter()
+            .filter(|k| k.key_hash == hash_api_key("croniq_a"))
+            .collect();
+        assert_eq!(a.len(), 1, "the revoked row is restored, not duplicated");
+        assert_eq!(a[0].revoked_at, None);
+        assert_eq!(a[0].expires_at, None);
+        assert!(
+            keys.iter()
+                .find(|k| k.key_hash == hash_api_key("croniq_b"))
+                .expect("B is still stored")
+                .revoked_at
+                .is_some(),
+            "and B, now superseded, is revoked — a zero grace on the way back too"
+        );
+    }
+
+    #[test]
+    fn restoring_a_declared_key_clears_a_deadline_and_a_revocation_together() {
+        // A rotation dates the outgoing key, then an operator ends it early
+        // with DELETE /v1/api-keys/{id}. Re-declaring it has to clear both
+        // columns: a key that comes back still carrying the old deadline is a
+        // credential that works until it silently does not.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_a");
+        let key_id = s.list_api_keys(&id).unwrap()[0].key_id.clone();
+        s.set_api_key_expiry(&key_id, Some(Utc::now() + Duration::minutes(5)))
+            .unwrap();
+        s.revoke_api_key(&key_id, Utc::now()).unwrap();
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_a", &["jobs:trigger"])],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::KeyRevived);
+        let keys = s.list_api_keys(&id).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].revoked_at, None);
+        assert_eq!(keys[0].expires_at, None);
+    }
+
+    #[test]
+    fn a_revoked_declared_key_is_reported_rather_than_quietly_reinstalled() {
+        // The opt-in gates the restore like every other write, and the outcome
+        // has to name it: "revoking alone does not un-declare a credential" is
+        // only actionable if the reload says the environment is asking for the
+        // revoked value back.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_a");
+        let key_id = s.list_api_keys(&id).unwrap()[0].key_id.clone();
+        s.revoke_api_key(&key_id, Utc::now()).unwrap();
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_a", &["jobs:trigger"])],
+                false,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Blocked);
+        let detail = out[0].detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("revoked"), "{detail}");
+        let keys = s.list_api_keys(&id).unwrap();
+        assert_eq!(keys.len(), 1, "and no second row for the same secret");
+        assert!(
+            keys[0].revoked_at.is_some(),
+            "nothing may be written without the opt-in"
+        );
+    }
+
+    #[test]
+    fn a_dead_duplicate_does_not_drag_a_working_key_into_the_restore_path() {
+        // A database written before #516 can hold a revoked *and* a live row
+        // for one secret, because that is what re-declaring used to produce.
+        // The reconciler ranks them the way find_api_key_by_hash does, so it
+        // looks at the row auth would use: otherwise it would "restore" the
+        // dead one and report a change on every boot while the live row was
+        // already doing the job.
+        let s = store();
+        let id = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &id, "croniq_a");
+        let dead = s.list_api_keys(&id).unwrap()[0].key_id.clone();
+        s.revoke_api_key(&dead, Utc::now()).unwrap();
+        seed_key(&s, &id, "croniq_a");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_a", &["jobs:trigger"])],
+                true,
+                Duration::minutes(15),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Unchanged);
+        let keys = s.list_api_keys(&id).unwrap();
+        assert_eq!(keys.len(), 2, "and nothing is rewritten");
+        assert_eq!(
+            keys.iter().filter(|k| k.revoked_at.is_none()).count(),
+            1,
+            "the live row stays live and the dead one stays dead"
         );
     }
 
