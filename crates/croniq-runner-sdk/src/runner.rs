@@ -758,6 +758,20 @@ mod tests {
     }
 
     #[test]
+    fn a_401_resets_the_conflict_streak() {
+        // The specific instance of the rule above that four of the six SDKs
+        // got wrong: their 401 branch returned before reaching the reset, so
+        // 409, 409, 401, 409 counted as three consecutive conflicts and killed
+        // the runner with the wrong error (issue #508). Rust reaches it
+        // through `update_conflict_streak`'s catch-all `Err(_)` arm; this test
+        // is here so a future refactor of that match cannot quietly join them.
+        let mut streak = 2;
+        let action = update_conflict_streak(&unauthorized(), &mut streak, 3);
+        assert_eq!(action, PollLoopAction::Continue);
+        assert_eq!(streak, 0);
+    }
+
+    #[test]
     fn conflict_increments_and_bails_at_threshold() {
         let mut streak = 0;
         for expected_streak in 1..3 {

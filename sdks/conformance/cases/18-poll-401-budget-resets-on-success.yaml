@@ -1,0 +1,73 @@
+name: "A successful poll resets the 401 auth budget"
+description: |
+  Case 17 pins the auth ceiling by returning 401 forever, so it never
+  exercises the half of the rule that says the budget *resets*. Four of the
+  six SDKs turned out to increment the counter and never clear it on a
+  successful poll, so a runner that took two 401s during a rotation race and
+  then polled happily for days was killed by the next isolated 401 — a
+  lifetime allowance rather than a streak detector (issue #507).
+
+  That inverts what the budget is for. It exists so a narrow race around a key
+  handover (CRONIQ_API_KEY_ROTATION_GRACE, server issue #471) does not kill an
+  otherwise healthy runner; a counter that never resets makes every later blip
+  the last one the runner survives.
+
+  The ceiling is 2, and the server answers 401, 200, 401, then 500 forever. A
+  runner that does not reset dies on the second 401 — its third poll — for a
+  total of exactly three. One that resets treats that 401 as the first of a
+  new streak and keeps polling, so a fourth request is the observable proof.
+
+  The tail is 500 rather than 200 deliberately: an empty 200 makes the runner
+  loop with no delay, so it would spin up hundreds of requests inside the
+  window and any min_count would pass whether the budget reset or not. A 500
+  backs off on poll_retry_delay_ms, which keeps the count bounded and the
+  assertion meaningful. It reaches the runner only after the second 401 has
+  already been survived or not, so it cannot mask the property under test.
+
+  How the fatal error surfaces is language-specific and asserted in each SDK's
+  own tests; the wire can only see whether polling continued.
+
+runner_config:
+  runner_id: "conformance-401-reset"
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 1000
+  max_consecutive_auth_failures: 2
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 401
+      body:
+        error: "unauthorized"
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/poll"
+    match_count: 3
+    respond:
+      status: 401
+      body:
+        error: "unauthorized"
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 500
+      body:
+        error: "database unavailable"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 4
+      body_match:
+        runner_id: "conformance-401-reset"

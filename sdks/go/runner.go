@@ -412,6 +412,11 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 					"max_consecutive", r.opts.MaxConsecutiveAuthFailures,
 					"retry_after", r.opts.PollRetryDelay,
 				)
+				// A 401 is not a 409, so it clears the conflict budget just
+				// like any other non-409 failure. This branch returns before
+				// reaching the reset below, so it has to do it here (issue
+				// #508).
+				consecutiveConflicts = 0
 				select {
 				case <-ctx.Done():
 					return nil
@@ -472,8 +477,12 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 		}
 
 		// Poll succeeded — the other instance must have died or released
-		// the identity, so the conflict streak starts over.
+		// the identity, so the conflict streak starts over. The auth budget
+		// starts over with it: the credential just worked, so an earlier 401
+		// must not still count against a runner that has been healthy since
+		// (issue #507).
 		consecutiveConflicts = 0
+		consecutiveAuthFailures = 0
 
 		// Process server-initiated cancellations before dispatching new
 		// work: the cancelled ids may still be in our inflight set and

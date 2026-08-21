@@ -195,6 +195,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Four SDKs now actually reset their poll-loop budgets
+  ([#507](https://github.com/nuetzliches/croniq/issues/507),
+  [#508](https://github.com/nuetzliches/croniq/issues/508)).** The
+  `max_consecutive_auth_failures` note above states that the counter resets on
+  a successful poll, and the conflict budget is documented as clearing on any
+  non-409 failure. Rust and .NET did both; TypeScript, Go, Python and Java did
+  neither:
+
+  - The auth counter survived a successful poll, so a runner that took two
+    401s during a rotation race and then polled cleanly for days was killed by
+    the next isolated 401 — a lifetime allowance rather than a streak
+    detector, which inverts what the budget is for.
+  - The new 401 branch returned before reaching the conflict reset, so
+    `409, 409, 401, 409` counted as three consecutive conflicts and stopped the
+    runner with a conflict error naming a cause that was not the case.
+
+  Case `17-poll-401-auth-ceiling` returns 401 forever, so it never exercised
+  either reset — which is why five green bindings meant nothing here. Two
+  cases now do: `18-poll-401-budget-resets-on-success` and
+  `19-poll-401-clears-conflict-streak`. Both were checked to *fail* against the
+  unfixed code, and both end their script with a `500` rather than an empty
+  `200`, because a runner loops with no delay on the latter and would satisfy
+  any request-count assertion whether the budget reset or not.
+
 - **A removed job no longer reports `croniq_job_overdue` forever
   ([#470](https://github.com/nuetzliches/croniq/issues/470)).** The per-job
   liveness series are now emitted only for jobs the running configuration

@@ -1,0 +1,71 @@
+name: "A 401 clears the 409 conflict streak"
+description: |
+  The conflict budget of case 16 is documented as resetting on any non-409
+  failure — a 5xx is unrelated to instance ownership, so counting it would bail
+  on a merely unwell server. When the 401 budget (case 17) was added, four of
+  the six SDKs put its branch *before* that reset and returned from it, so a
+  401 left the conflict counter untouched instead of clearing it (issue #508).
+
+  The result is a runner killed with a conflict error for a streak that was
+  interrupted: 409, 409, 401, 409 counts as three consecutive conflicts even
+  though the third poll was not a conflict at all. Plausible mid-rotation with
+  a duplicate runner_id, and the error names the wrong cause.
+
+  The conflict ceiling is 2 and the auth ceiling is 3, so the single 401 cannot
+  trip its own budget. The server answers 409, 401, 409, then 500 forever. A
+  runner that skips the reset reaches two consecutive conflicts on its third
+  poll and dies there, for a total of exactly three. One that clears the streak
+  treats the second 409 as the first of a new one and keeps polling, so a
+  fourth request is the observable proof.
+
+  The tail is 500 rather than an empty 200 because the latter makes the runner
+  loop with no delay: it would spin up hundreds of requests inside the window
+  and any min_count would pass either way. A 500 backs off on
+  poll_retry_delay_ms, keeping the count bounded and the assertion meaningful.
+
+runner_config:
+  runner_id: "conformance-401-clears-409"
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 1000
+  max_consecutive_poll_conflicts: 2
+  max_consecutive_auth_failures: 3
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 409
+      body:
+        error: "runner instance conflict"
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    respond:
+      status: 401
+      body:
+        error: "unauthorized"
+  - on: "POST /v1/work/poll"
+    match_count: 3
+    respond:
+      status: 409
+      body:
+        error: "runner instance conflict"
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 500
+      body:
+        error: "database unavailable"
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 4
+      body_match:
+        runner_id: "conformance-401-clears-409"
