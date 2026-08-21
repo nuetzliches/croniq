@@ -244,6 +244,49 @@ impl SchedulerLoop {
         }
     }
 
+    /// Apply a runtime command, then bring `snapshot` into line with the
+    /// result for the key it touched.
+    ///
+    /// `snapshot` is the trigger map the HTTP side reads — the dashboard
+    /// forecast, and `metrics::known_job_keys`, which decides from it which
+    /// jobs may emit per-job series at all (issue #470). It used to be written
+    /// only at boot and on reload, while `AddJob`/`RemoveJob` reached the
+    /// scheduler's own map alone. So a job registered through the API had no
+    /// `croniq_job_*` series until the next reload, and on a server without
+    /// `--watch` or a `SIGHUP` that meant indefinitely: an operator's
+    /// `croniq_job_overdue == 1` alert silently covered none of their
+    /// dynamically registered jobs (issue #505).
+    ///
+    /// Syncing here, rather than at each of the API routes that can send a
+    /// command, is what keeps the next such route from forgetting to.
+    pub async fn apply_command_synced(
+        &mut self,
+        cmd: SchedulerCommand,
+        snapshot: &tokio::sync::RwLock<HashMap<String, Trigger>>,
+    ) {
+        // Read the key before `apply_command` consumes the command.
+        let touched = match &cmd {
+            SchedulerCommand::AddJob { job, .. } => Some(job.key.clone()),
+            SchedulerCommand::RemoveJob { job_key } => Some(job_key.clone()),
+            // Reload replaces the whole map, and `reload::apply_*` writes the
+            // snapshot itself as part of that.
+            SchedulerCommand::Reload { .. } => None,
+        };
+        self.apply_command(cmd);
+        let Some(key) = touched else { return };
+        // Whatever the scheduler now thinks about this key, the snapshot
+        // agrees — including "it is gone".
+        let mut snapshot = snapshot.write().await;
+        match self.triggers.get(&key) {
+            Some(trigger) => {
+                snapshot.insert(key, trigger.clone());
+            }
+            None => {
+                snapshot.remove(&key);
+            }
+        }
+    }
+
     /// Evaluate all triggers at `now`, fire due ones, return results.
     ///
     /// The span is emitted at `trace` (not the `#[instrument]` default of
@@ -591,6 +634,88 @@ mod tests {
             !result.fired[0].is_ephemeral,
             "a queued job must not be flagged ephemeral"
         );
+    }
+
+    #[tokio::test]
+    async fn adding_a_job_through_a_command_reaches_the_shared_snapshot() {
+        // Issue #505: AddJob only ever reached the scheduler's private map, so
+        // a job registered through the API was missing from the snapshot
+        // `metrics::known_job_keys` filters on — and lost every
+        // `croniq_job_*` series until the next reload.
+        let mut scheduler = SchedulerLoop::new(HashMap::new(), vec![], make_store(), make_runner());
+        let snapshot = tokio::sync::RwLock::new(HashMap::new());
+
+        scheduler
+            .apply_command_synced(
+                SchedulerCommand::AddJob {
+                    job: Box::new(make_job("test:job")),
+                    trigger: Box::new(make_trigger_due_now("test:job")),
+                },
+                &snapshot,
+            )
+            .await;
+
+        assert!(scheduler.triggers.contains_key("test:job"));
+        assert!(
+            snapshot.read().await.contains_key("test:job"),
+            "the snapshot the metrics filter reads must know the job too"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_a_job_through_a_command_clears_it_from_the_snapshot() {
+        // The other direction matters just as much: a stale entry would let a
+        // deleted job keep emitting series, which is the false positive #470
+        // set out to remove.
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), make_trigger_due_now("test:job"));
+        let mut scheduler = SchedulerLoop::new(
+            triggers.clone(),
+            vec![make_job("test:job")],
+            make_store(),
+            make_runner(),
+        );
+        let snapshot = tokio::sync::RwLock::new(triggers);
+
+        scheduler
+            .apply_command_synced(
+                SchedulerCommand::RemoveJob {
+                    job_key: "test:job".into(),
+                },
+                &snapshot,
+            )
+            .await;
+
+        assert!(!scheduler.triggers.contains_key("test:job"));
+        assert!(snapshot.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_command_for_an_unknown_job_leaves_the_snapshot_alone() {
+        // RemoveJob for a key the scheduler never had must not invent an entry
+        // or disturb its neighbours.
+        let mut keep = HashMap::new();
+        keep.insert("other:job".to_string(), make_trigger_due_now("other:job"));
+        let mut scheduler = SchedulerLoop::new(
+            keep.clone(),
+            vec![make_job("other:job")],
+            make_store(),
+            make_runner(),
+        );
+        let snapshot = tokio::sync::RwLock::new(keep);
+
+        scheduler
+            .apply_command_synced(
+                SchedulerCommand::RemoveJob {
+                    job_key: "never:existed".into(),
+                },
+                &snapshot,
+            )
+            .await;
+
+        let snapshot = snapshot.read().await;
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot.contains_key("other:job"));
     }
 
     #[tokio::test]
