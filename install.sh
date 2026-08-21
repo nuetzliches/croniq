@@ -72,6 +72,21 @@ if [ -z "$CRONIQ_VERSION" ]; then
   exit 1
 fi
 
+# The redirect only yields a version if it landed on a `v<semver>` server tag.
+# It can land elsewhere: the repository also publishes SDK releases (e.g.
+# `python-sdk-v0.4.0`), and one of those standing as "Latest" leaves the cut
+# above with nothing to strip — `$CRONIQ_VERSION` would then be the entire URL
+# and the download below would 404 on a nonsensical path. Fail here, where the
+# message can say what happened.
+case "$CRONIQ_VERSION" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *)
+    echo "Resolved an unexpected latest release: '${CRONIQ_VERSION}'." >&2
+    echo "Set CRONIQ_VERSION to a server version (e.g. CRONIQ_VERSION=0.34.0) and retry." >&2
+    exit 1
+    ;;
+esac
+
 # ── Download + verify + extract ──────────────────────────────────────────────
 
 ARCHIVE="croniq-${TARGET}.tar.gz"

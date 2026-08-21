@@ -205,3 +205,10 @@ jobs:
           body: ${{ steps.changelog.outputs.notes }}
           files: dist/*
           fail_on_unmatched_files: true
+          # Never claim the repository's "Latest" release: that redirect is
+          # how `install.sh` resolves the *server* version, and an SDK tag
+          # standing there resolves to nothing usable (the URL has no `/v`
+          # for it to cut on, so the whole URL becomes the version). A cut
+          # that ships the server and the SDKs together publishes the SDK
+          # releases last, which is exactly when this bites.
+          make_latest: false
