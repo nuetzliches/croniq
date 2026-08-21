@@ -16,7 +16,7 @@
 //!
 //! ```text
 //! CRONIQ_API_KEY                       key for the `default` client
-//! CRONIQ_API_KEY_SCOPES                its scopes (default: admin)
+//! CRONIQ_API_KEY_SCOPES                its scopes (required to declare)
 //!
 //! CRONIQ_API_CLIENT_<NAME>_KEY         key for client <name>
 //! CRONIQ_API_CLIENT_<NAME>_SCOPES      its scopes (required)
@@ -24,6 +24,14 @@
 //! CRONIQ_API_KEY_RECONCILE=1           opt in to changing stored state
 //! CRONIQ_API_KEY_ROTATION_GRACE        handover window on rotation
 //! ```
+//!
+//! `CRONIQ_API_KEY` declares a client only when `CRONIQ_API_KEY_SCOPES` says
+//! what that client is for. The same variable is what the CLI and the SDKs
+//! read to *present* a credential, so on a server host it is at least as
+//! likely to be a client key as a declaration — and reading a narrow key as an
+//! admin declaration silently widened it (issue #502). The deprecated
+//! `CRONIQ_INIT_API_KEY` has no such second meaning and keeps its implied
+//! admin.
 //!
 //! Every key-bearing variable also accepts the `<VAR>_FILE` form. `<NAME>` is
 //! `[A-Z0-9_]+`, lowercased with `_` → `-`, so `CRONIQ_API_CLIENT_RUNNER_POLL_KEY`
@@ -317,6 +325,28 @@ pub fn parse_declarations(vars: &BTreeMap<String, String>) -> Result<Vec<Declara
                 ));
             }
         };
+        // `CRONIQ_API_KEY` means two different things to two different
+        // processes: to the CLI and the SDKs it is the credential to *present*
+        // (see croniq-cli's `--api-key` env source), to the server it declares
+        // a client. An operator who exports it on the server host so they can
+        // run `croniq` there — which the CLI's own help tells them to do — was
+        // silently declaring an admin-scoped `default` client, and since keys
+        // resolve by hash, their deliberately narrow credential then
+        // authenticated as admin (issue #502).
+        //
+        // So the current spelling declares a client only when it says what the
+        // client is for. The deprecated spelling keeps its implied admin: it
+        // has never been a client-side variable, and the demo stack and every
+        // existing deployment rely on it.
+        if scopes.is_none() && key_var == KEY_VAR && !vars.contains_key(LEGACY_KEY_VAR) {
+            tracing::info!(
+                var = %KEY_VAR,
+                "{KEY_VAR} is set but {SCOPES_VAR} is not — treating it as a client credential \
+                 rather than a declaration. To declare the '{DEFAULT_CLIENT_NAME}' API client \
+                 from the environment, set {SCOPES_VAR} (e.g. {SCOPES_VAR}=admin)."
+            );
+            continue;
+        }
         out.push(Declaration {
             name,
             raw_key,
@@ -842,15 +872,47 @@ mod tests {
     // ─── Declaration parsing ─────────────────────────────────────────────────
 
     #[test]
-    fn bare_key_declares_the_default_client_without_naming_scopes() {
-        // The bare variable still *creates* an admin client, but the
-        // declaration records that no scopes were named — which is what stops
-        // it from rewriting an existing client's scopes (issue #501).
+    fn the_current_key_variable_declares_nothing_until_its_scopes_are_named() {
+        // Issue #502: `CRONIQ_API_KEY` is also what the CLI and SDKs read to
+        // *present* a credential. Exporting a narrow key on the server host —
+        // which the CLI's help tells operators to do — used to declare an
+        // admin-scoped `default` client, and because keys resolve by hash that
+        // same narrow key then authenticated as admin.
         let d = parse_declarations(&vars(&[(KEY_VAR, "croniq_abc")])).unwrap();
+        assert!(d.is_empty(), "a key with no scopes is a client credential");
+
+        let d = parse_declarations(&vars(&[(KEY_VAR, "croniq_abc"), (SCOPES_VAR, "jobs:read")]))
+            .unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].name, DEFAULT_CLIENT_NAME);
+        assert_eq!(d[0].scopes.as_deref(), Some(&["jobs:read".to_string()][..]));
+    }
+
+    #[test]
+    fn the_deprecated_key_variable_keeps_its_implied_admin() {
+        // It has never been a client-side variable — the CLI does not read it
+        // — and the demo stack plus every existing deployment declare the
+        // `default` client with it alone. Narrowing that would be a breaking
+        // change for the one spelling that has history.
+        let d = parse_declarations(&vars(&[(LEGACY_KEY_VAR, "croniq_abc")])).unwrap();
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].name, DEFAULT_CLIENT_NAME);
         assert_eq!(d[0].scopes, None);
         assert_eq!(d[0].effective_scopes_for_create(), vec!["admin"]);
+    }
+
+    #[test]
+    fn both_spellings_together_still_declare_the_default_client() {
+        // A deployment mid-migration sets both. The legacy variable's meaning
+        // wins, so the client keeps being declared rather than quietly
+        // disappearing because the new spelling has no scopes.
+        let d = parse_declarations(&vars(&[
+            (KEY_VAR, "croniq_abc"),
+            (LEGACY_KEY_VAR, "croniq_abc"),
+        ]))
+        .unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].name, DEFAULT_CLIENT_NAME);
     }
 
     #[test]
@@ -1017,6 +1079,7 @@ mod tests {
         // they cannot be mistaken for a client called `reconcile`.
         let d = parse_declarations(&vars(&[
             (KEY_VAR, "croniq_abc"),
+            (SCOPES_VAR, "admin"),
             (RECONCILE_VAR, "1"),
             (ROTATION_GRACE_VAR, "5m"),
         ]))
@@ -1468,9 +1531,14 @@ mod tests {
             let var = canonical_key_var(name);
             let mut vars = BTreeMap::new();
             vars.insert(var.clone(), "croniq_secret".to_string());
-            if var.starts_with(CLIENT_PREFIX) {
-                vars.insert(var.replace("_KEY", "_SCOPES"), "jobs:read".to_string());
-            }
+            // Every declaration needs its scopes named, `default` included
+            // since #502.
+            let scopes_var = if var == KEY_VAR {
+                SCOPES_VAR.to_string()
+            } else {
+                var.replace("_KEY", "_SCOPES")
+            };
+            vars.insert(scopes_var, "jobs:read".to_string());
             let declared = parse_declarations(&vars)
                 .unwrap_or_else(|e| panic!("{var} must be a valid declaration: {e}"));
             assert_eq!(
