@@ -1485,7 +1485,7 @@ impl AuthStore for PgStore {
     fn set_api_key_expiry(
         &self,
         key_id: &str,
-        expires_at: DateTime<Utc>,
+        expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
         let mut db = self.client.lock().unwrap();
         db.execute(

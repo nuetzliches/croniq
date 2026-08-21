@@ -323,6 +323,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   flow is untouched, and `croniq init --api-key` still seeds on a fresh data
   dir — the first-run path does not go through the reconciler.
 
+- **Rolling a key rotation back no longer leaves the key dying on a timer
+  ([#500](https://github.com/nuetzliches/croniq/issues/500)).** `needs_key`
+  asked only whether a matching key row was un-revoked, never whether it was
+  *expiring*. So after rotating A→B and rolling back to A, the reconciler saw
+  its declared key present and reported `unchanged` — while A still carried the
+  `expires_at` the rotation had stamped on it. Nothing clears one: the store's
+  setter took a non-optional timestamp, and a fresh row is only minted when
+  `needs_key` is true. Once the grace window elapsed every consumer of the
+  declared credential got `401`, permanently, with every reconcile still
+  reporting `unchanged`; the only way out was revoking the row by hand so a new
+  one would be minted.
+
+  A declared key that is mid-retirement now has its deadline cleared rather
+  than a second row minted with the same secret — `api_keys.key_hash` is not
+  unique and `find_api_key_by_hash` does not order its result, so a duplicate
+  would leave authentication picking arbitrarily between the two. Without
+  `CRONIQ_API_KEY_RECONCILE=1` nothing is written, but the outcome now says
+  what is pending instead of claiming nothing is.
+
 - **`CRONIQ_API_KEY` declares a client only when its scopes are named
   ([#502](https://github.com/nuetzliches/croniq/issues/502)).** The variable has
   two meanings: to the CLI and the SDKs it is the credential to *present* —

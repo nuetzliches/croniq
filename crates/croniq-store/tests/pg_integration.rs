@@ -130,13 +130,26 @@ fn auth_api_clients_and_keys(store: &PgStore, s: &str) {
 
     // Retirement (grace-window rotation) leaves the key usable but dated.
     let deadline = ts() + chrono::Duration::minutes(15);
-    store.set_api_key_expiry(&key.key_id, deadline).unwrap();
+    store
+        .set_api_key_expiry(&key.key_id, Some(deadline))
+        .unwrap();
     let retired = store
         .find_api_key_by_hash(&key_hash)
         .unwrap()
         .expect("key exists");
     assert_eq!(retired.expires_at, Some(deadline));
     assert!(retired.revoked_at.is_none());
+
+    // Clearing it is what a rolled-back rotation needs (issue #500). Checked
+    // against real Postgres because a NULL binding is exactly the kind of
+    // thing the driver, not the compiler, decides.
+    store.set_api_key_expiry(&key.key_id, None).unwrap();
+    let revived = store
+        .find_api_key_by_hash(&key_hash)
+        .unwrap()
+        .expect("key exists");
+    assert_eq!(revived.expires_at, None);
+    assert!(revived.revoked_at.is_none());
 
     store.revoke_api_key(&key.key_id, ts()).unwrap();
     assert!(

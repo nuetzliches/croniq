@@ -710,6 +710,12 @@ curl -H "Authorization: ApiKey $ADMIN_KEY" \
 The row carrying `expires_at` is the outgoing key. Once that instant passes
 it stops working; the row stays for audit.
 
+**Rolling a rotation back.** Re-declare the previous key and reload with
+`CRONIQ_API_KEY_RECONCILE=1`: the reconciler finds the key it had retired,
+clears the deadline, and reports `key_revived`. Without the opt-in nothing is
+written and the reload reports what is pending, so a rollback never looks like
+a no-op while the key quietly runs out its grace window.
+
 **A leaked key is a different problem.** The grace window deliberately keeps
 the old value alive, so it is the wrong tool. Either:
 
