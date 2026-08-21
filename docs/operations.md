@@ -588,6 +588,20 @@ also why the example above gives each client a secret of its own (issue #520).
 exporting a declared client's key on the server host to run `croniq` there is
 fine — it is the same credential being *presented*, not a second client.
 
+The same rule holds when only one side is in the environment — the colliding
+key was seeded by `croniq init --api-key`, or belongs to a client the
+environment used to declare. The reconciler reports `conflicted` for that
+declaration, names the client that already holds the value, and writes nothing:
+no client created, no key rotated, no scopes or ownership changed. It is
+reported rather than fatal because the colliding row is stored state, not a
+mistake in the declaration you just booted with, and it is reported on *every*
+pass — an already-collided pair needs no write, so `unchanged` would otherwise
+be the answer to the one state only the reconciler can see. The fix is to give
+the declared client a value of its own, or to end the other key with
+`DELETE /v1/api-keys/{id}` — a revoked or already-lapsed row never resolves, so
+it is not a collision and moving a value between clients that way works
+(issue #522).
+
 **What is fatal at boot, and what is only logged.** A malformed *current*
 declaration stops the server: a key that does not begin with `croniq_`, a
 named client without scopes, an unknown scope, the same client declared twice
@@ -616,6 +630,7 @@ Two things are logged and skipped instead:
 | Declared scopes differ | logged, **not** changed | updated |
 | No scopes variable set | no-op | no-op (the stored scopes stand) |
 | Client exists but is API-owned | logged, ownership unchanged | ownership moves to the environment |
+| Declared key is another client's live key | reported `conflicted`, nothing written | reported `conflicted`, nothing written |
 
 Creating a client is additive — it cannot break a credential that is already
 working — so it needs no flag. Everything that rewrites existing state does,

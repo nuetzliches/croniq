@@ -195,6 +195,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A declared key that is already another client's live credential is
+  reported, not installed
+  ([#522](https://github.com/nuetzliches/croniq/issues/522)).**
+  [#520](https://github.com/nuetzliches/croniq/issues/520) refuses two
+  *declarations* carrying one key value, which settles it when both sides come
+  from the environment. It cannot see the other half: the colliding row already
+  in the store. `croniq init --api-key` writes one, and so does a client the
+  environment has stopped declaring — a reconcile never touches an undeclared
+  client, so its key stays live indefinitely. Renaming a declared client by
+  editing `CRONIQ_API_CLIENT_PRODUCER_*` into `CRONIQ_API_CLIENT_TRIGGER_*`,
+  key value and all, is exactly that shape.
+
+  The reconciler used to install the declaration anyway, landing in the state
+  #520 describes from the other direction: two `api_keys` rows, one `key_hash`,
+  two clients. The credential then authenticates as whichever row the lookup
+  ranks first and carries only that client's scopes — #516 made the winner
+  stable rather than correct — and the loser is a client that exists, is
+  active, holds the scopes it was declared with, and `403`s.
+
+  Such a declaration now reports the new outcome `conflicted`, names the client
+  that already holds the value, and writes nothing: no client created, no key
+  rotated, no scopes or ownership changed. Half a declaration would be worse
+  than none — a client whose scopes came from the environment and whose
+  credential answers as someone else — and for a client that does not exist
+  there is nothing to create that could work, since `managed_by: "env"` also
+  means `POST /v1/api-keys` refuses to mint it a key of its own.
+
+  Reported rather than fatal, and reported on every pass. The colliding row is
+  stored state, so failing the boot would take a server down over a mistake
+  made on an earlier day — the objection that ruled out a unique constraint on
+  `key_hash` in #516. And an already-collided pair needs no write, so
+  `unchanged` was the reconciler's previous answer to the one state only it can
+  see. `CRONIQ_API_KEY_RECONCILE=1` makes no difference either way: there is no
+  write to gate.
+
+  Only rows that could answer a request count as a collision. A revoked row is
+  audit history and a lapsed `expires_at` is the tail of a finished rotation —
+  neither ever resolves — so ending a key on one client and declaring its value
+  on another still works, which is the fix the message itself suggests. A key
+  still inside its rotation grace does count: that window exists precisely
+  because the key is still in use.
+
+  Not a gap: `POST /v1/api-keys` cannot be made to collide, deliberately or
+  otherwise. It takes a `client_id` and nothing else, and mints the value
+  itself.
+
 - **The same key value declared for two API clients is refused at boot
   ([#520](https://github.com/nuetzliches/croniq/issues/520)).**
   `parse_declarations` already guarded two variables naming one client with

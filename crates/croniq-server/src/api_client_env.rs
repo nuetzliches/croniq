@@ -554,6 +554,9 @@ pub enum Action {
     /// The declaration asked for a client that does not exist but named no
     /// scopes, so nothing was created; see [`skip_implicit_creation`].
     Skipped,
+    /// The declared key value is already a live credential of a *different*
+    /// client, so nothing was written; see [`report_foreign_key`].
+    Conflicted,
 }
 
 /// Per-client result, surfaced on the reload response so a headless caller
@@ -581,8 +584,16 @@ pub fn reconcile<S: AuthStore + ?Sized>(
     }
     let existing = store.list_clients()?;
     let now = Utc::now();
+    let live_keys = LiveKeyOwners::build(store, &existing, &inputs.declarations, now)?;
 
     for decl in &inputs.declarations {
+        // Before anything else: a declared value that is already another
+        // client's live credential cannot be installed here, whatever else
+        // the declaration asks for (issue #522).
+        if let Some(other) = live_keys.other_owner(&decl.name, &hash_api_key(&decl.raw_key)) {
+            outcomes.push(report_foreign_key(decl, other));
+            continue;
+        }
         let outcome = match existing.iter().find(|c| c.name == decl.name) {
             // A declaration that never said what the client is for rotates
             // the key of one that exists, but does not bring one back that
@@ -598,6 +609,127 @@ pub fn reconcile<S: AuthStore + ?Sized>(
         outcomes.push(outcome);
     }
     Ok(outcomes)
+}
+
+/// Which client owns each declared key value, for the keys that could
+/// currently authenticate (issue #522).
+///
+/// #520 refuses two *declarations* carrying one value, which is the whole
+/// story when both sides come from the environment. This is the half that is
+/// not: the colliding row is already in the store, written by
+/// `croniq init --api-key`, by an earlier declaration, or by a declaration
+/// that has since been renamed — an undeclared client is never touched by a
+/// reconcile, so its key stays live indefinitely. Moving a value from one
+/// client to another by editing `CRONIQ_API_CLIENT_<OLD>_*` into
+/// `CRONIQ_API_CLIENT_<NEW>_*` is exactly that shape, and the operator's
+/// intent ("the key now belongs to the new client") is the one thing the
+/// store cannot express.
+///
+/// Only rows that could answer a request count. A revoked row is audit
+/// history and never resolves, and a lapsed expiry is the tail of a finished
+/// rotation — treating either as a conflict would refuse the legitimate
+/// handover of ending a key on one client and declaring it on another.
+struct LiveKeyOwners {
+    /// `key_hash` → every client holding a live row for it. Every one,
+    /// not the first found: when the collision is already in the store the
+    /// declared client is itself among the owners, and recording only one
+    /// would make reporting the collision depend on which client
+    /// `list_clients` returned first.
+    owners: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl LiveKeyOwners {
+    /// One `list_api_keys` per stored client. The reconcile runs at boot and
+    /// on an explicit reload, never per request, and the alternative —
+    /// `find_api_key_by_hash` per declaration — answers with a single row
+    /// ranked the way the auth path ranks, which hides a foreign row behind
+    /// the declared client's own.
+    fn build<S: AuthStore + ?Sized>(
+        store: &S,
+        existing: &[ApiClient],
+        declarations: &[Declaration],
+        now: DateTime<Utc>,
+    ) -> Result<Self, StoreError> {
+        let declared: BTreeSet<String> = declarations
+            .iter()
+            .map(|d| hash_api_key(&d.raw_key))
+            .collect();
+        let mut owners = BTreeMap::new();
+        if declared.is_empty() {
+            return Ok(Self { owners });
+        }
+        for client in existing {
+            for key in store.list_api_keys(&client.client_id)? {
+                if !declared.contains(&key.key_hash) || !is_live(&key, now) {
+                    continue;
+                }
+                owners
+                    .entry(key.key_hash)
+                    .or_insert_with(BTreeSet::new)
+                    .insert(client.name.clone());
+            }
+        }
+        Ok(Self { owners })
+    }
+
+    /// A client other than `name` holding `hash`. Name-ordered, so a hash
+    /// several clients hold names the same one on every pass.
+    fn other_owner(&self, name: &str, hash: &str) -> Option<&str> {
+        self.owners
+            .get(hash)?
+            .iter()
+            .map(String::as_str)
+            .find(|owner| *owner != name)
+    }
+}
+
+/// Whether a key could authenticate a request right now — the same two
+/// conditions the auth path applies after resolving a row by hash.
+fn is_live(key: &ApiKey, now: DateTime<Utc>) -> bool {
+    key.revoked_at.is_none() && key.expires_at.is_none_or(|deadline| deadline > now)
+}
+
+/// Report a declaration whose key value is another client's live credential,
+/// and write nothing (issue #522).
+///
+/// Installing it anyway is what #520 describes: two `api_keys` rows with one
+/// `key_hash` across two clients, and a credential that authenticates as
+/// whichever row wins the lookup, carrying only that client's scopes. #516
+/// made the winner stable rather than plan-dependent, which is not the same
+/// as correct — the loser is a client that exists, is active, holds the scopes
+/// it was declared with, and `403`s.
+///
+/// Reported rather than fatal, deliberately. The colliding row is *stored
+/// state*, not this declaration's doing, so failing the boot would take a
+/// server down over a mistake made on some earlier day — the objection that
+/// ruled out a unique constraint on `key_hash` in #516. And reported on every
+/// pass, not only when a write was pending: an already-collided pair needs no
+/// write, so `Unchanged` would otherwise be the reconciler's answer to the one
+/// state it alone can see.
+///
+/// The whole declaration is withheld, scopes and ownership included. Applying
+/// half of it would leave a client whose scopes came from the environment and
+/// whose credential answers as someone else, and for a client that does not
+/// exist yet there is nothing to create that could work: `managed_by = "env"`
+/// means `POST /v1/api-keys` refuses to mint it a key of its own.
+fn report_foreign_key(decl: &Declaration, other: &str) -> ClientOutcome {
+    let detail = format!(
+        "the key {} declares is already a live credential of API client '{other}' — a key \
+         authenticates as exactly one client, so nothing was written. Give '{}' a key of its \
+         own, or end the other one with DELETE /v1/api-keys/{{id}} first.",
+        decl.key_var, decl.name
+    );
+    tracing::warn!(
+        client = %decl.name,
+        var = %decl.key_var,
+        other_client = %other,
+        "declared API key collides with another client: {detail}"
+    );
+    ClientOutcome {
+        client: decl.name.clone(),
+        action: Action::Conflicted,
+        detail: Some(detail),
+    }
 }
 
 /// Report a declaration that names a client the store does not have, and did
@@ -1656,6 +1788,256 @@ mod tests {
             "the rollback supersedes B, so B retires with the grace window — the same \
              thing re-minting used to do"
         );
+    }
+
+    #[test]
+    fn a_declared_key_that_is_another_clients_live_credential_creates_nothing() {
+        // Issue #522. #520 refuses two declarations carrying one value, but
+        // the colliding row can already be in the store — seeded by
+        // `croniq init --api-key`, or left behind by a client the environment
+        // no longer declares. Creating the declared client anyway is the
+        // failure #520 describes: two rows, one hash, and a credential that
+        // answers as one client with only that client's scopes.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], "api");
+        seed_key(&s, &producer, "croniq_shared");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("runner", "croniq_shared", &["work:poll"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Conflicted);
+        let detail = out[0].detail.clone().unwrap();
+        assert!(detail.contains("producer"), "{detail}");
+        assert!(detail.contains("CRONIQ_API_CLIENT_RUNNER_KEY"), "{detail}");
+        assert!(
+            !s.list_clients().unwrap().iter().any(|c| c.name == "runner"),
+            "a client whose only credential answers as someone else must not be created — \
+             managed_by=env means POST /v1/api-keys cannot give it one either"
+        );
+        assert_eq!(
+            s.list_api_keys(&producer).unwrap().len(),
+            1,
+            "and the client that does own the value is untouched"
+        );
+    }
+
+    #[test]
+    fn renaming_a_client_by_moving_its_key_value_is_reported_not_duplicated() {
+        // The realistic shape: an operator renames a declared client by
+        // editing CRONIQ_API_CLIENT_PRODUCER_* into
+        // CRONIQ_API_CLIENT_TRIGGER_*, key value and all. A reconcile never
+        // touches a client the environment stopped declaring, so the old row
+        // keeps its live key forever and the value would end up on two
+        // clients — with the old one still authenticating.
+        let s = store();
+        reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_p", &["jobs:trigger"])],
+                false,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("trigger", "croniq_p", &["jobs:trigger"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Conflicted);
+        let clients = s.list_clients().unwrap();
+        assert_eq!(clients.len(), 1, "no second client for the same secret");
+        assert_eq!(clients[0].name, "producer");
+    }
+
+    #[test]
+    fn a_rotation_onto_another_clients_live_key_withholds_the_whole_declaration() {
+        // The declared client exists here, so the collision would be a
+        // *rotation* onto a foreign value. Scopes and ownership are withheld
+        // with it: applying half a declaration leaves a client whose scopes
+        // came from the environment and whose credential answers as someone
+        // else.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], "api");
+        seed_key(&s, &producer, "croniq_shared");
+        let runner = seed_client(&s, "runner", &["work:poll"], "api");
+        seed_key(&s, &runner, "croniq_r");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("runner", "croniq_shared", &["work:poll", "work:ack"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Conflicted);
+        let keys = s.list_api_keys(&runner).unwrap();
+        assert_eq!(keys.len(), 1, "no row minted for the foreign value");
+        assert_eq!(keys[0].key_hash, hash_api_key("croniq_r"));
+        assert_eq!(keys[0].revoked_at, None, "and the live key is not retired");
+        let stored = s.get_client(&runner).unwrap().unwrap();
+        assert_eq!(stored.scopes, vec!["work:poll".to_string()]);
+        assert_eq!(stored.managed_by, "api", "ownership is withheld too");
+    }
+
+    #[test]
+    fn a_collision_that_already_exists_is_reported_instead_of_unchanged() {
+        // Two rows for one secret across two clients, the state a database
+        // written before this check can hold. Nothing needs writing, so the
+        // reconciler's answer used to be `unchanged` — the one state it alone
+        // can see, reported as fine. It says so on every pass now, whichever
+        // of the two the environment declares.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], MANAGED_BY_ENV);
+        seed_key(&s, &producer, "croniq_shared");
+        let runner = seed_client(&s, "runner", &["work:poll"], MANAGED_BY_ENV);
+        seed_key(&s, &runner, "croniq_shared");
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("runner", "croniq_shared", &["work:poll"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(out[0].action, Action::Conflicted);
+        assert!(out[0].detail.clone().unwrap().contains("producer"));
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("producer", "croniq_shared", &["jobs:trigger"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(out[0].action, Action::Conflicted);
+        assert!(out[0].detail.clone().unwrap().contains("runner"));
+    }
+
+    #[test]
+    fn a_revoked_or_lapsed_key_on_another_client_is_not_a_collision() {
+        // Ending a key on one client and declaring the same value on another
+        // is a legitimate handover: a revoked row is audit history and never
+        // resolves, and a lapsed expiry is the tail of a finished rotation.
+        // Refusing either would make the check block the very fix its own
+        // message asks for.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], "api");
+        seed_key(&s, &producer, "croniq_revoked");
+        seed_key(&s, &producer, "croniq_lapsed");
+        let keys = s.list_api_keys(&producer).unwrap();
+        for key in &keys {
+            if key.key_hash == hash_api_key("croniq_revoked") {
+                s.revoke_api_key(&key.key_id, Utc::now()).unwrap();
+            } else {
+                s.set_api_key_expiry(&key.key_id, Some(Utc::now() - Duration::minutes(1)))
+                    .unwrap();
+            }
+        }
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![
+                    decl("runner", "croniq_revoked", &["work:poll"]),
+                    decl("trigger", "croniq_lapsed", &["jobs:trigger"]),
+                ],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Created, "{:?}", out[0].detail);
+        assert_eq!(out[1].action, Action::Created, "{:?}", out[1].detail);
+    }
+
+    #[test]
+    fn a_key_within_its_rotation_grace_still_belongs_to_its_client() {
+        // The other half of the test above: a dated row that has *not*
+        // lapsed yet is a credential still in use — that is what the grace
+        // window is for — so declaring its value elsewhere is the collision,
+        // not a handover.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], "api");
+        seed_key(&s, &producer, "croniq_retiring");
+        let key_id = s.list_api_keys(&producer).unwrap()[0].key_id.clone();
+        s.set_api_key_expiry(&key_id, Some(Utc::now() + Duration::minutes(10)))
+            .unwrap();
+
+        let out = reconcile(
+            &s,
+            &inputs(
+                vec![decl("runner", "croniq_retiring", &["work:poll"])],
+                true,
+                Duration::zero(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(out[0].action, Action::Conflicted);
+    }
+
+    #[test]
+    fn a_dry_run_reports_a_collision_without_needing_the_opt_in() {
+        // The reconcile writes nothing either way, so the collision is
+        // visible from `POST /v1/admin/reload-config?dry_run=true` and from a
+        // boot with no opt-in set — where `blocked` would otherwise be the
+        // answer, naming a rotation that could never have worked.
+        let s = store();
+        let producer = seed_client(&s, "producer", &["jobs:trigger"], "api");
+        seed_key(&s, &producer, "croniq_shared");
+        let runner = seed_client(&s, "runner", &["work:poll"], MANAGED_BY_ENV);
+        seed_key(&s, &runner, "croniq_r");
+
+        let declarations = vec![decl("runner", "croniq_shared", &["work:poll"])];
+        let out = reconcile(&s, &inputs(declarations.clone(), false, Duration::zero())).unwrap();
+        assert_eq!(out[0].action, Action::Conflicted);
+
+        let out = reconcile(
+            &s,
+            &ReconcileInputs {
+                declarations,
+                reconcile_enabled: true,
+                rotation_grace: Duration::zero(),
+                dry_run: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(out[0].action, Action::Conflicted);
+    }
+
+    #[test]
+    fn a_clients_own_declared_key_is_never_a_collision_with_itself() {
+        // The index records the declared client among a hash's owners, so the
+        // ordinary steady state — declaration satisfied by the client's own
+        // row — must not read as a conflict.
+        let s = store();
+        let declarations = vec![decl("runner", "croniq_r", &["work:poll"])];
+        reconcile(&s, &inputs(declarations.clone(), true, Duration::zero())).unwrap();
+
+        let out = reconcile(&s, &inputs(declarations, true, Duration::zero())).unwrap();
+        assert_eq!(out[0].action, Action::Unchanged);
     }
 
     #[test]
