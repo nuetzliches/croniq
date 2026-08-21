@@ -231,10 +231,27 @@ components:
         client: { type: string }
         action:
           type: string
-          enum: [created, rotated, scopes_updated, adopted, unchanged, blocked]
+          enum:
+            [
+              created,
+              rotated,
+              key_revived,
+              scopes_updated,
+              adopted,
+              unchanged,
+              blocked,
+              skipped,
+              conflicted,
+            ]
           description: >
             `blocked` means a change is pending but CRONIQ_API_KEY_RECONCILE=1
             is not set, so nothing was written; `detail` says what was withheld.
+            `key_revived` restored a declared key a rotation had dated or
+            revoked. `skipped` is a declaration that named no scopes for a
+            client that does not exist. `conflicted` means the declared key
+            value is already a live credential of a *different* client — a key
+            authenticates as exactly one client, so nothing was written and no
+            opt-in changes that; `detail` names the other client.
         detail: { type: string }
 
     ApiKeySummary:
