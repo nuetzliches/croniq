@@ -552,6 +552,22 @@ this feature exists to remove. An unknown scope (`job:reed`) is also a boot
 error: it would otherwise produce a credential that authorises nothing and
 fails at first use, in some other service, far from the file that caused it.
 
+**What is fatal at boot, and what is only logged.** A malformed *current*
+declaration stops the server: a key that does not begin with `croniq_`, a
+named client without scopes, an unknown scope, or the same client declared
+twice with different values. All of those are a declaration written wrong, and
+booting past one means running without the credential that was asked for.
+
+Two things are logged and skipped instead:
+
+- A `CRONIQ_API_CLIENT_*` variable with an unrecognised suffix. Croniq does not
+  read it, so refusing to start would claim the whole namespace for a variable
+  it has no use for. The typo that would actually change behaviour — a
+  misspelled `_SCOPES` — still fails, as the missing-scopes error above.
+- A `CRONIQ_INIT_API_KEY` whose value is not a `croniq_` key. The deprecated
+  variable behaved this way before v0.34, and a leftover placeholder from an
+  old template should not turn a version bump into a restart loop.
+
 #### What the reconciler will and will not do on its own
 
 | Situation | Without `CRONIQ_API_KEY_RECONCILE=1` | With it |

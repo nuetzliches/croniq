@@ -269,6 +269,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the delete now both surface their failure as a `500`, while a genuinely
   absent client stays the `204` it always was.
 
+- **An upgrade no longer fails to boot over env values v0.33.0 tolerated
+  ([#503](https://github.com/nuetzliches/croniq/issues/503)).** Two inputs
+  became fatal where they had been ignored, so a server that had been running
+  fine refused to start after the version bump — and since the scheduler *is*
+  the process, every job stopped until someone edited the environment:
+
+  - A `CRONIQ_INIT_API_KEY` that is not a `croniq_` key, e.g. a `changeme`
+    left in an old template. v0.33.0 logged "env value ignored" and booted; the
+    deprecated spelling does so again.
+  - A `CRONIQ_API_CLIENT_*` variable with an unrecognised suffix. Croniq never
+    reads those, so refusing to start claimed a whole environment namespace on
+    the strength of a variable it has no use for.
+
+  Both are now logged and skipped. Everything that is an actual declaration
+  written wrong — a malformed key in a *current* variable, a named client
+  without scopes, an unknown scope, one client declared twice — is still fatal,
+  because booting past one means running without the credential that was asked
+  for. The typo that matters, a misspelled `_SCOPES`, still fails loudly via
+  the missing-scopes check.
+
 - **The `env_managed` refusal names the variable that actually declares the
   client ([#481](https://github.com/nuetzliches/croniq/issues/481)).** Both the
   409 body and the dashboard's hint rebuilt the name as
