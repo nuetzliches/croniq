@@ -540,18 +540,28 @@ For a single admin credential the short form still works and names the client
 
 ```
 CRONIQ_API_KEY=croniq_...          # or CRONIQ_API_KEY_FILE
-CRONIQ_API_KEY_SCOPES=...          # optional; admin when creating
+CRONIQ_API_KEY_SCOPES=admin        # required for CRONIQ_API_KEY to declare
 ```
 
-`CRONIQ_INIT_API_KEY` remains an alias for the same thing. It is deprecated
-but not going away.
+**`CRONIQ_API_KEY` declares a client only when `CRONIQ_API_KEY_SCOPES` is set.**
+That variable has two jobs: on a client host it is the credential the CLI and
+the SDKs *present* (`croniq --api-key`, `CroniqRunner`), and on the server host
+it declares. Exporting a narrow key on the server so you can run `croniq` there
+— which the CLI's own help suggests — used to declare an `admin`-scoped
+`default` client, and since keys resolve by hash, that same narrow key then
+authenticated as admin. Naming the scopes is what separates "this is my
+credential" from "this is the client I want to exist".
+
+`CRONIQ_INIT_API_KEY` remains an alias and keeps declaring an `admin` client on
+its own: it is not a client-side variable, so it carries no such ambiguity. It
+is deprecated but not going away.
 
 **Leaving the scopes variable unset is not the same as setting it to `admin`.**
-A `default` client that does not exist yet is created with `admin`, which is
-what the bare variable has always seeded. But an *existing* client keeps the
-scopes it has: if you narrowed `default` in the dashboard, a reconcile with no
-`CRONIQ_API_KEY_SCOPES` set leaves that alone rather than putting it back. To
-change scopes from the environment, name them.
+For the deprecated spelling, a `default` client that does not exist yet is
+created with `admin`, which is what it has always seeded. But an *existing*
+client keeps the scopes it has: if you narrowed `default` in the dashboard, a
+reconcile with no scopes variable set leaves that alone rather than putting it
+back. To change scopes from the environment, name them.
 
 **Scopes are mandatory for a named client.** Omitting them is an error rather
 than a fall-back to `admin` — silently granting the wildcard is the problem

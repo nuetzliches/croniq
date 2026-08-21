@@ -304,6 +304,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for. The typo that matters, a misspelled `_SCOPES`, still fails loudly via
   the missing-scopes check.
 
+- **`CRONIQ_API_KEY` declares a client only when its scopes are named
+  ([#502](https://github.com/nuetzliches/croniq/issues/502)).** The variable has
+  two meanings: to the CLI and the SDKs it is the credential to *present* —
+  `croniq --api-key` reads it, and the docs tell operators to export it — while
+  to the server, new in this cycle, it declared an `admin`-scoped `default`
+  client. So exporting a deliberately narrow key on the server host, in order
+  to run `croniq` there, created an admin client keyed with it; because keys
+  resolve by hash, that same narrow key then authenticated as admin. Creation
+  is not gated by `CRONIQ_API_KEY_RECONCILE`, so nothing had to be opted into,
+  and v0.33.0 ignored the variable entirely.
+
+  Setting `CRONIQ_API_KEY_SCOPES` is now what makes `CRONIQ_API_KEY` a
+  declaration; without it the value is logged as a client credential and
+  skipped. The deprecated `CRONIQ_INIT_API_KEY` keeps declaring an `admin`
+  client on its own — it has never been a client-side variable, and the demo
+  stack and existing deployments rely on it — and setting both spellings still
+  declares, so a migration in progress is unaffected.
+
 - **An unset `CRONIQ_API_KEY_SCOPES` no longer re-escalates a narrowed client
   ([#501](https://github.com/nuetzliches/croniq/issues/501)).** v0.33.0's
   reconciler only ever rotated keys. This cycle's also force-syncs scopes — and
