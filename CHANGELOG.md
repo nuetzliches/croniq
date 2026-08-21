@@ -289,6 +289,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for. The typo that matters, a misspelled `_SCOPES`, still fails loudly via
   the missing-scopes check.
 
+- **An unset `CRONIQ_API_KEY_SCOPES` no longer re-escalates a narrowed client
+  ([#501](https://github.com/nuetzliches/croniq/issues/501)).** v0.33.0's
+  reconciler only ever rotated keys. This cycle's also force-syncs scopes — and
+  the declaration stored the *implied* admin of a bare `CRONIQ_API_KEY` /
+  `CRONIQ_INIT_API_KEY` as if the operator had asked for it. So a `default`
+  client narrowed to `jobs:trigger` in the dashboard looked like scope drift,
+  and the first boot with the documented legacy rotation pair set put it back
+  to full admin, in the granting direction, with a single `warn` as the only
+  trace.
+
+  "The environment named no scopes" and "the environment asked for admin" are
+  now distinct: a client that does not exist yet is still created with `admin`
+  (the back-compat the bare variable has always had), an existing one keeps
+  the scopes it has, and an adoption moves ownership without rewriting them.
+  Naming scopes explicitly syncs them exactly as before.
+
 - **The `env_managed` refusal names the variable that actually declares the
   client ([#481](https://github.com/nuetzliches/croniq/issues/481)).** Both the
   409 body and the dashboard's hint rebuilt the name as

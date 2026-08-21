@@ -540,11 +540,18 @@ For a single admin credential the short form still works and names the client
 
 ```
 CRONIQ_API_KEY=croniq_...          # or CRONIQ_API_KEY_FILE
-CRONIQ_API_KEY_SCOPES=...          # optional; default is admin
+CRONIQ_API_KEY_SCOPES=...          # optional; admin when creating
 ```
 
 `CRONIQ_INIT_API_KEY` remains an alias for the same thing. It is deprecated
 but not going away.
+
+**Leaving the scopes variable unset is not the same as setting it to `admin`.**
+A `default` client that does not exist yet is created with `admin`, which is
+what the bare variable has always seeded. But an *existing* client keeps the
+scopes it has: if you narrowed `default` in the dashboard, a reconcile with no
+`CRONIQ_API_KEY_SCOPES` set leaves that alone rather than putting it back. To
+change scopes from the environment, name them.
 
 **Scopes are mandatory for a named client.** Omitting them is an error rather
 than a fall-back to `admin` — silently granting the wildcard is the problem
@@ -576,6 +583,7 @@ Two things are logged and skipped instead:
 | Store matches the declaration | no-op | no-op |
 | Declared key differs | logged, **not** rotated | rotated (see grace window) |
 | Declared scopes differ | logged, **not** changed | updated |
+| No scopes variable set | no-op | no-op (the stored scopes stand) |
 | Client exists but is API-owned | logged, ownership unchanged | ownership moves to the environment |
 
 Creating a client is additive — it cannot break a credential that is already
