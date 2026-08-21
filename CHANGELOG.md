@@ -304,6 +304,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for. The typo that matters, a misspelled `_SCOPES`, still fails loudly via
   the missing-scopes check.
 
+- **A stale key no longer resurrects a deleted API client
+  ([#499](https://github.com/nuetzliches/croniq/issues/499)).** Creating a
+  declared client was ungated on the reasoning that it is additive and cannot
+  break a working credential. That holds for a client which never existed; it
+  does not hold for one an operator deliberately removed. Delete the `default`
+  client after a key leak, leave `CRONIQ_INIT_API_KEY=<leaked>` in the
+  deployment, and the next boot recreated it — active, `admin`-scoped, keyed
+  with the leaked value — where v0.33.0 had logged "only seeds on fresh
+  `croniq init`" and done nothing. The recreated row is `managed_by=env`, so
+  `DELETE /v1/api-clients/{id}` then answered 409 and the remediation could not
+  be repeated through the API at all.
+
+  A declaration now has to say what the client is *for* before it will create
+  one: a key with no scopes named rotates an existing client and reports
+  `skipped` when there is none. Naming scopes is an unambiguous statement that
+  the client should exist, so the one-step "render the env, boot the stack"
+  flow is untouched, and `croniq init --api-key` still seeds on a fresh data
+  dir — the first-run path does not go through the reconciler.
+
 - **`CRONIQ_API_KEY` declares a client only when its scopes are named
   ([#502](https://github.com/nuetzliches/croniq/issues/502)).** The variable has
   two meanings: to the CLI and the SDKs it is the credential to *present* —
