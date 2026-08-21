@@ -35,6 +35,7 @@ use croniq_auth::password::{dummy_verify, verify_password};
 use croniq_auth::totp::{hash_recovery_code, verify_code_with_step};
 use croniq_auth::{AuthMethod, CallerContext, CallerType, default_scopes_for_role};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
+use croniq_store::traits::StoreError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -1123,6 +1124,31 @@ pub async fn handle_update_client(
     Ok(Json(client))
 }
 
+/// Whether `DELETE /v1/api-clients/{id}` may proceed, given what the store
+/// said about the client.
+///
+/// Three outcomes, and the distinction between the first two is the point:
+///
+/// * `Err(_)` — the store could not answer. **Not** evidence of absence. The
+///   handler used to read it as one (`if let Ok(Some(_))`), which skipped the
+///   env-managed refusal on a transient lock or IO failure and deleted an
+///   env-owned client anyway, reporting `204` for it (issue #504).
+/// * `Ok(None)` — already gone. Delete was idempotent before the refusal
+///   existed and there is no reason for it to stop being.
+/// * `Ok(Some(_))` — refuse if the environment owns it, otherwise proceed.
+fn deletion_guard(lookup: Result<Option<ApiClient>, StoreError>) -> Result<(), ApiClientError> {
+    let Some(client) = lookup.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? else {
+        return Ok(());
+    };
+    // Deleting an env-declared client is worse than a no-op: the next
+    // reconcile recreates it, so the operator would watch it reappear with no
+    // explanation. Deletion happens by removing the declaration.
+    match refuse_env_managed(&client, "the next reconcile would recreate it") {
+        Some(refusal) => Err(refusal.into()),
+        None => Ok(()),
+    }
+}
+
 /// `DELETE /v1/api-clients/{id}`
 pub async fn handle_delete_client(
     State(state): State<Arc<ServerState>>,
@@ -1138,14 +1164,10 @@ pub async fn handle_delete_client(
     // reconcile recreates it, so the operator would watch it reappear with no
     // explanation. Deletion happens by removing the declaration.
     //
-    // A client that is already gone stays a 204 — delete was idempotent
-    // before this guard and there is no reason for it to stop being.
-    if let Ok(Some(client)) = store.get_client(&client_id)
-        && let Some(refusal) = refuse_env_managed(&client, "the next reconcile would recreate it")
-    {
-        return Err(refusal.into());
-    }
-    let _ = store.delete_client(&client_id);
+    deletion_guard(store.get_client(&client_id))?;
+    store
+        .delete_client(&client_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1618,5 +1640,41 @@ mod tests {
         .await
         .expect("keying a client within the caller's scopes still works");
         assert_eq!(status, StatusCode::CREATED);
+    }
+
+    fn client_owned_by(managed_by: &str) -> ApiClient {
+        ApiClient {
+            client_id: "c1".into(),
+            name: "default".into(),
+            scopes: vec!["admin".into()],
+            is_active: true,
+            created_at: Utc::now(),
+            managed_by: managed_by.into(),
+        }
+    }
+
+    #[test]
+    fn a_store_error_blocks_the_delete_instead_of_reading_as_absent() {
+        // Issue #504: the guard was `if let Ok(Some(client))`, so a store
+        // failure took the same branch as "no such client" — skipping the
+        // env-managed refusal and deleting the row with a 204.
+        let err = deletion_guard(Err(StoreError::Database("lock timeout".into())))
+            .expect_err("an unreadable store must not authorise a delete");
+        assert_eq!(err.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn deleting_an_absent_client_stays_idempotent() {
+        // The 204-on-absent behaviour predates the refusal and is deliberate;
+        // fixing the error path must not turn it into a 404.
+        assert!(deletion_guard(Ok(None)).is_ok());
+    }
+
+    #[test]
+    fn an_env_owned_client_is_refused_and_an_api_owned_one_is_not() {
+        let err = deletion_guard(Ok(Some(client_owned_by(MANAGED_BY_ENV))))
+            .expect_err("the environment owns this row");
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+        assert!(deletion_guard(Ok(Some(client_owned_by(MANAGED_BY_API)))).is_ok());
     }
 }
