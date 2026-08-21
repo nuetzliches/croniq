@@ -260,6 +260,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself, and the trailing hint explains that state instead of advising a
   revoke nobody needs.
 
+- **A store error no longer lets `DELETE /v1/api-clients/{id}` through
+  ([#504](https://github.com/nuetzliches/croniq/issues/504)).** The env-managed
+  refusal was reached via `if let Ok(Some(client))`, so a transient lock or IO
+  failure on the lookup took the same branch as "no such client": the guard was
+  skipped, the delete went ahead, and the handler answered `204` — for an
+  env-owned credential that only a boot or reload would restore. The lookup and
+  the delete now both surface their failure as a `500`, while a genuinely
+  absent client stays the `204` it always was.
+
 - **The `env_managed` refusal names the variable that actually declares the
   client ([#481](https://github.com/nuetzliches/croniq/issues/481)).** Both the
   409 body and the dashboard's hint rebuilt the name as
