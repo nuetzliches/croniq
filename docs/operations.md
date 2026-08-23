@@ -305,6 +305,33 @@ Docker/Kubernetes mounted secrets without exposing them in the process
 environment. If both the direct var and its `_FILE` are set, the direct var
 wins.
 
+**Two of those are seed-only.** `CRONIQ_ADMIN_PASSWORD` and
+`CRONIQ_INIT_API_KEY` are read by `croniq init` when the Docker entrypoint
+creates `$DATA_DIR/croniq.db`, and never again — the server itself never sees
+either value. Listing them beside the SMTP variables makes them look like live
+settings; they are not. Setting a new `CRONIQ_ADMIN_PASSWORD` on an existing
+deployment does nothing at all: **rotate the admin password in the app**
+(Settings in the UI, or `POST /v1/users/me/change-password`), and manage API
+keys under Settings → API Keys or with `croniq api-keys`.
+
+That distinction matters most when these values move into a secret manager.
+Because nothing reads them after the first boot, "the entry matches the
+password in force", "it was rotated in the app months ago" and "it was never
+right, and the database was seeded with the generated fallback" are
+indistinguishable from the outside — and all three appear to work. Since 0.35.0
+the entrypoint says so on every start where the database already exists and
+either variable is set (issue #530):
+
+```
+NOTE: CRONIQ_ADMIN_PASSWORD is set but the database already exists;
+      it is only read when seeding a new database and is ignored here.
+      Rotate it under Settings in the UI, or via POST /v1/users/me/change-password.
+```
+
+An entry in a secret store that nothing validates is worse than no entry — it
+will be trusted during an incident. Once the deployment is seeded, either drop
+these two from the store or label them as bootstrap-only.
+
 ## Authentication
 
 Croniq supports two UI sign-in methods: username + password (the default),

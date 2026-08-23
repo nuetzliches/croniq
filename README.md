@@ -765,7 +765,7 @@ environment and reload instead.
 | `RUST_LOG` | Log level filter | `info` |
 | `CRONIQ_JWT_SECRET` | JWT signing secret | random per-start |
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
-| `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset) | _generated_ |
+| `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset). **Seed-only** — read by `croniq init` when the entrypoint creates the database and never again; on an existing deployment it is ignored (the entrypoint says so at boot). Rotate the password in the app instead. | _generated_ |
 | `CRONIQ_API_KEY` | Declare the `default` API client's key. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). The client is created on boot if it does not exist. Changing the value later rotates the key only when `CRONIQ_API_KEY_RECONCILE=1` is also set. | — |
 | `CRONIQ_API_KEY_SCOPES` | Scopes for the `default` client, comma-separated. An unknown scope fails the boot rather than creating a credential that authorises nothing. | `admin` |
 | `CRONIQ_API_CLIENT_<NAME>_KEY` | Declare a **named** API client's key, so a deployment can pin least-privilege credentials from configuration alone — e.g. `CRONIQ_API_CLIENT_RUNNER_POLL_KEY` declares the client `runner-poll`. `<NAME>` is `A-Z`, `0-9`, `_`, lowercased with `_`→`-`. See [`docs/operations.md`](docs/operations.md). | — |
@@ -786,6 +786,8 @@ environment and reload instead.
 | `CRONIQ_SMTP_PASSWORD` | SMTP auth password. **Env-only**. | — |
 
 > **`<VAR>_FILE` convention** — `CRONIQ_SMTP_URL`, `CRONIQ_SMTP_HOST`, `CRONIQ_SMTP_USERNAME`, `CRONIQ_SMTP_PASSWORD`, `CRONIQ_API_KEY`, `CRONIQ_API_CLIENT_<NAME>_KEY`, `CRONIQ_INIT_API_KEY`, and `CRONIQ_ADMIN_PASSWORD` each also accept a `…_FILE` variant pointing at a file whose contents supply the value (trailing newline trimmed). Use it with Docker/Kubernetes mounted secrets so credentials never appear in the process environment. The direct env var wins when both are set. The `_FILE` form is also the only one that can be rotated without restarting the server: a mounted file changes under a live process where an env var cannot, and `SIGHUP` / `POST /v1/admin/reload-config` re-read it.
+>
+> Note that `CRONIQ_ADMIN_PASSWORD` and `CRONIQ_INIT_API_KEY` are **seed** credentials in either form: `croniq init` reads them when the entrypoint creates the database and nothing reads them afterwards, so no amount of rotation — env var or file — reaches a running deployment. Rotate the admin password under Settings in the UI (or `POST /v1/users/me/change-password`), and manage API keys under Settings → API Keys. See [Operations → the `<VAR>_FILE` convention](docs/operations.md).
 
 ---
 

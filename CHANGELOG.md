@@ -8,6 +8,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The Docker entrypoint now says when `CRONIQ_ADMIN_PASSWORD` is being
+  ignored ([#530](https://github.com/nuetzliches/croniq/issues/530)).**
+  `CRONIQ_ADMIN_PASSWORD` and `CRONIQ_INIT_API_KEY` are seed credentials:
+  `croniq init` reads them when the entrypoint creates the database and nothing
+  reads them again. That part is right — re-applying a bootstrap credential on
+  every start would be worse — but it happened in silence, and the value goes
+  on living in a compose `.env`, a CI secret, or a secret-manager entry. From
+  there, "matches the password in force", "was rotated in the UI months ago"
+  and "was never right, and the database was seeded with the generated
+  fallback" look identical, and all three appear to work, because nothing reads
+  the value any more.
+
+  Every start where the database already exists and either variable is set
+  (directly or through its `_FILE` sibling) now prints a `NOTE` on stderr
+  naming the variable and pointing at the rotation path that does work —
+  Settings in the UI or `POST /v1/users/me/change-password` for the password,
+  Settings → API Keys or `croniq api-keys` for the key. `README.md` and
+  `docs/operations.md` mark both variables seed-only where they were previously
+  listed alongside the live SMTP settings.
+
 - **An SDK release no longer takes over the repository's "Latest", which broke
   `install.sh`.** Publishing the v0.34.0 cut put five SDK releases out after
   the server one, so `croniq-runner v0.4.0` ended up as the latest release and
