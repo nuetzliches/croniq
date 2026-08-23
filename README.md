@@ -763,7 +763,8 @@ environment and reload instead.
 | Variable | Description | Default |
 |---|---|---|
 | `RUST_LOG` | Log level filter | `info` |
-| `CRONIQ_JWT_SECRET` | JWT signing secret | random per-start |
+| `CRONIQ_JWT_SECRET` | JWT signing secret. Also derives the at-rest key for stored TOTP seeds, so rotating it needs `CRONIQ_JWT_SECRET_PREVIOUS` (below). | random per-start |
+| `CRONIQ_JWT_SECRET_PREVIOUS` | The value `CRONIQ_JWT_SECRET` is being rotated away from. Used to **unwrap stored TOTP seeds only** — never to sign or validate a token. At boot the server re-wraps every stored seed under the new key, so a rotation no longer costs every enrolled user a re-enrolment; drop the variable once the log or `doctor` reports nothing left under the old key. | — |
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
 | `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset). **Seed-only** — read by `croniq init` when the entrypoint creates the database and never again; on an existing deployment it is ignored (the entrypoint says so at boot). Rotate the password in the app instead. | _generated_ |
 | `CRONIQ_API_KEY` | Declare the `default` API client's key. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). The client is created on boot if it does not exist. Changing the value later rotates the key only when `CRONIQ_API_KEY_RECONCILE=1` is also set. | — |

@@ -31,6 +31,20 @@ pub struct JwtConfig {
     pub refresh_ttl_secs: i64,
     /// Issuer claim.
     pub issuer: String,
+    /// The value `CRONIQ_JWT_SECRET` held before the current rotation, if the
+    /// operator named one (issue #531).
+    ///
+    /// **Never used for JWTs.** It does not sign, and it does not validate:
+    /// rotating a signing key ends every session in flight, and that is the
+    /// ordinary, accepted cost of the rotation. Its one job is unwrapping
+    /// *at-rest* secrets — TOTP seeds whose wrap key is HKDF-derived from the
+    /// signing secret — so a rotation stops destroying data that users, rather
+    /// than operators, have to restore. `totp_rewrap` re-wraps every such row
+    /// under the current key at boot, and this field is what lets a row the
+    /// sweep could not write still authenticate in the meantime.
+    ///
+    /// `jwt_previous_secret_never_validates_a_token` pins the boundary.
+    pub previous_secret: Option<String>,
 }
 
 /// Default access-token validity: 1 hour.
@@ -54,7 +68,15 @@ impl JwtConfig {
             access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
             refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
             issuer: JWT_ISSUER.into(),
+            previous_secret: None,
         }
+    }
+
+    /// Name the pre-rotation signing secret, for unwrapping at-rest secrets
+    /// only. See [`JwtConfig::previous_secret`].
+    pub fn with_previous_secret(mut self, previous: Option<String>) -> Self {
+        self.previous_secret = previous;
+        self
     }
 
     /// A config with a freshly generated random secret, for tests.

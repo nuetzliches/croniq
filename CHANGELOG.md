@@ -6,6 +6,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Rotating `CRONIQ_JWT_SECRET` no longer costs every enrolled user their
+  second factor ([#531](https://github.com/nuetzliches/croniq/issues/531)).**
+  The at-rest key for stored TOTP seeds is HKDF-derived from the signing
+  secret, so rotating the secret rotated the wrap key with it. The coupling is
+  deliberate — anyone who can read the signing secret can already mint admin
+  tokens — but there was no path that re-wrapped the seeds, so the only
+  documented procedure was: relax `auth { totp { required false } }`, rotate,
+  have every user re-enrol, re-enable. That lowers the security posture during
+  exactly the window where it should be highest, and it scales with the number
+  of users rather than the number of operators.
+
+  Name the outgoing value in **`CRONIQ_JWT_SECRET_PREVIOUS`** (or its `_FILE`
+  sibling) and the server re-wraps every stored seed under the new key at boot,
+  before it accepts traffic:
+
+  ```
+  INFO re-wrapped stored TOTP secrets under the current JWT secret
+       rewrapped=7 already_current=0 write_failed=0 undecryptable=0
+  INFO CRONIQ_JWT_SECRET_PREVIOUS can now be removed.
+  ```
+
+  A rotation becomes: set both → restart → drop the old value. Enforced 2FA
+  stays on throughout and nobody re-enrols. The variable is used to *unwrap*
+  only — it never signs a token, never validates one, and never wraps a new
+  secret, so anything enrolled after the rotation is under the current key by
+  construction.
+
+  The sweep is idempotent and never fails the boot: a row the store refuses to
+  write is logged and skipped, because a failed convenience migration should
+  not become an outage. Those rows still authenticate — the login path falls
+  back to the previous key, warns with the user id, and re-wraps the row on the
+  way through. A `CRONIQ_JWT_SECRET_PREVIOUS` that is *not* the value the rows
+  were stored with still fails closed.
+
+  This is also the cheap way out of the #408 upgrade path: a deployment that
+  fell through to a freshly generated `$DATA_DIR/jwt.secret` can name the old
+  `pull_api { auth … }` value and recover every enrolment.
+
+- **`doctor` reports stored TOTP secrets as a positive, and separates
+  "pending a re-wrap" from "lost".** `totp.secrets_undecryptable` used to be
+  the only thing said about stored seeds, and only when something was wrong.
+  Two findings join it: `totp.secrets_under_previous_key` (Warning — these
+  authenticate through the fallback, but the rotation is unfinished and
+  `CRONIQ_JWT_SECRET_PREVIOUS` cannot be dropped yet) and
+  `totp.secrets_decryptable` (Info — *N stored TOTP secret(s), all decryptable
+  under the current key*), so a completed rotation is visible rather than
+  merely un-complained-about. The remedy on `totp.secrets_undecryptable` now
+  leads with the re-wrap instead of a re-enrolment campaign.
+
 ### Fixed
 
 - **The Docker entrypoint now says when `CRONIQ_ADMIN_PASSWORD` is being

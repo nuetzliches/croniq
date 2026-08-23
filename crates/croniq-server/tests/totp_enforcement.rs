@@ -273,16 +273,29 @@ async fn auth_config_totp_not_required_by_default() {
 /// count the finding is built from.
 mod rotated_jwt_secret {
     use super::*;
-    use croniq_server::diagnostics::undecryptable_totp_secrets;
+    use croniq_server::diagnostics::{TotpSecretTally, tally_totp_secrets};
     use croniq_store::models::TotpSecret;
 
     const OLD_SECRET: &str = "the-secret-that-was-in-pull_api-auth";
     const NEW_SECRET: &str = "freshly-generated-jwt.secret";
-    const SEED_B32: &str = "JBSWY3DPEHPK3PXP";
+    // 160 bits: totp-rs refuses to build a generator below 128, and the
+    // #531 tests compute genuinely valid codes rather than asserting on a
+    // failure path only.
+    const SEED_B32: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
     /// One active user with a confirmed TOTP secret wrapped with `OLD_SECRET`,
     /// served by a router whose JWT secret is `NEW_SECRET`.
     fn app_after_secret_rotation() -> (axum::Router, croniq_server::store::DynStore) {
+        app_after_secret_rotation_with_previous(None)
+    }
+
+    /// The same fixture, but with `CRONIQ_JWT_SECRET_PREVIOUS` named on the
+    /// config — the shape `main` builds when an operator rotates deliberately
+    /// (issue #531). Passed on `JwtConfig` rather than through the environment
+    /// so the test does not race sibling tests over a process-global var.
+    fn app_after_secret_rotation_with_previous(
+        previous: Option<&str>,
+    ) -> (axum::Router, croniq_server::store::DynStore) {
         let store = sqlite_store(SqliteStore::in_memory().unwrap());
         let now = Utc::now();
         store
@@ -321,9 +334,20 @@ mod rotated_jwt_secret {
 
         let runner = AppState::new();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let jwt = JwtConfig::new(NEW_SECRET);
+        let jwt = JwtConfig::new(NEW_SECRET).with_previous_secret(previous.map(str::to_string));
         let state = ServerState::with_auth(runner, tx, Some(jwt), Some(store.clone()));
         (server_router(state), store)
+    }
+
+    /// The currently valid 6-digit code for [`SEED_B32`].
+    fn current_code() -> String {
+        let secret = totp_rs::Secret::Encoded(SEED_B32.to_string())
+            .to_bytes()
+            .unwrap();
+        totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 1, 30, secret)
+            .unwrap()
+            .generate_current()
+            .unwrap()
     }
 
     #[tokio::test]
@@ -370,8 +394,107 @@ mod rotated_jwt_secret {
     #[tokio::test]
     async fn diagnostics_count_the_affected_secrets() {
         let (_app, store) = app_after_secret_rotation();
-        assert_eq!(undecryptable_totp_secrets(&store, NEW_SECRET), 1);
+        assert_eq!(
+            tally_totp_secrets(&store, NEW_SECRET, None).undecryptable,
+            1
+        );
         // Restoring the old secret is the documented remedy — it must work.
-        assert_eq!(undecryptable_totp_secrets(&store, OLD_SECRET), 0);
+        assert_eq!(
+            tally_totp_secrets(&store, OLD_SECRET, None).undecryptable,
+            0
+        );
+    }
+
+    // ── Rotating with CRONIQ_JWT_SECRET_PREVIOUS (issue #531) ───────────
+
+    #[tokio::test]
+    async fn the_boot_sweep_makes_a_rotated_secret_readable_again() {
+        // The whole point of the issue: a rotation must stop costing every
+        // enrolled user a re-enrolment. After the sweep the row reads under
+        // the new key alone, so the previous value can be dropped.
+        let (_app, store) = app_after_secret_rotation();
+        let report = croniq_server::totp_rewrap::rewrap_all(&store, NEW_SECRET, OLD_SECRET);
+        assert_eq!(report.rewrapped, 1);
+        assert!(!report.still_needs_previous());
+        assert_eq!(
+            tally_totp_secrets(&store, NEW_SECRET, None),
+            TotpSecretTally {
+                under_current: 1,
+                under_previous: 0,
+                undecryptable: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_swept_user_logs_in_with_a_real_code() {
+        // End to end, through the wire: sweep, then sign in with a genuine
+        // TOTP code. Before #531 this could only be a 500.
+        let (app, store) = app_after_secret_rotation();
+        croniq_server::totp_rewrap::rewrap_all(&store, NEW_SECRET, OLD_SECRET);
+
+        let (status, body) = post_json(
+            app,
+            "/v1/auth/login",
+            serde_json::json!({
+                "username": "admin",
+                "password": PASSWORD,
+                "code": current_code(),
+            }),
+        )
+        .await;
+        let body = String::from_utf8_lossy(&body);
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert!(body.contains("access_token"), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn the_unwrap_fallback_carries_a_row_the_sweep_missed() {
+        // No sweep at all — only the previous secret named. The login still
+        // has to work, because a row the boot sweep could not write must not
+        // lock the user out.
+        let (app, store) = app_after_secret_rotation_with_previous(Some(OLD_SECRET));
+        let (status, body) = post_json(
+            app,
+            "/v1/auth/login",
+            serde_json::json!({
+                "username": "admin",
+                "password": PASSWORD,
+                "code": current_code(),
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body: {}",
+            String::from_utf8_lossy(&body)
+        );
+
+        // …and it re-wraps on the way through, so the next start needs no
+        // fallback for this row.
+        assert_eq!(
+            tally_totp_secrets(&store, NEW_SECRET, None).under_current,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wrong_previous_secret_still_fails_closed() {
+        // The fallback must not turn "I named the wrong old value" into a
+        // silent success — that would be a second key that authenticates
+        // nothing in particular.
+        let (app, _store) = app_after_secret_rotation_with_previous(Some("not-the-old-one"));
+        let (status, _body) = post_json(
+            app,
+            "/v1/auth/login",
+            serde_json::json!({
+                "username": "admin",
+                "password": PASSWORD,
+                "code": current_code(),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

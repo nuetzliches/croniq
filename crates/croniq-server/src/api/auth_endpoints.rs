@@ -26,7 +26,7 @@ use axum::{
 use chrono::Utc;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
-use croniq_auth::crypto::unwrap_totp_secret;
+use croniq_auth::crypto::{WrappedUnder, unwrap_totp_secret_with_previous};
 use croniq_auth::jwt::{
     issue_mfa_token, issue_token_pair, issue_totp_enroll_token, validate_mfa_token,
     validate_totp_enroll_token,
@@ -693,6 +693,39 @@ fn mint_user_tokens(
     })
 }
 
+/// Write a seed that only unwrapped under `CRONIQ_JWT_SECRET_PREVIOUS` back
+/// under the current key (issue #531).
+///
+/// Best-effort by design. This runs on a login that has already succeeded at
+/// decrypting the seed, so the user gets in either way; a store that refuses
+/// the write is the boot sweep's problem to report, not a reason to fail the
+/// sign-in. The row is written whole so `enabled` and `confirmed_at` survive —
+/// `totp_upsert` updates all three columns.
+fn rewrap_after_fallback(
+    store: &crate::store::DynStore,
+    user_id: &str,
+    secret_row: &croniq_store::models::TotpSecret,
+    current_secret: &str,
+    plaintext: &[u8],
+) {
+    let Ok(rewrapped) = croniq_auth::crypto::wrap_totp_secret(current_secret, plaintext) else {
+        return;
+    };
+    let updated = croniq_store::models::TotpSecret {
+        secret_enc: rewrapped,
+        ..secret_row.clone()
+    };
+    if let Err(e) = store.totp_upsert(&updated) {
+        tracing::error!(
+            user_id,
+            error = %e,
+            "could not re-wrap the stored TOTP secret under the current JWT secret; it \
+             stays under the previous one and keeps working only while \
+             CRONIQ_JWT_SECRET_PREVIOUS is set"
+        );
+    }
+}
+
 /// Verify a supplied second factor — exactly one of `code` (current 6-digit
 /// TOTP) or `recovery_code` (single-use) — against the user's enabled secret.
 /// Recovery codes are marked consumed here, *before* any token is minted, so
@@ -718,19 +751,38 @@ fn verify_second_factor(
             // page rendered as "cannot reach server" — so the real cause was
             // invisible on every surface (issue #408). Log it with the user id
             // so the operator can see the scope.
-            let raw =
-                unwrap_totp_secret(&jwt_config.secret, &secret_row.secret_enc).map_err(|e| {
-                    tracing::error!(
-                        user_id,
-                        error = %e,
-                        "stored TOTP secret could not be unwrapped — the JWT secret has most \
-                         likely changed since enrolment. Restore the previous value via \
-                         CRONIQ_JWT_SECRET, or have the user sign in with a recovery code and \
-                         re-enrol. `croniq-server doctor` reports this as \
-                         totp.secrets_undecryptable."
-                    );
-                    status_err(StatusCode::INTERNAL_SERVER_ERROR)
-                })?;
+            let (raw, under) = unwrap_totp_secret_with_previous(
+                &jwt_config.secret,
+                jwt_config.previous_secret.as_deref(),
+                &secret_row.secret_enc,
+            )
+            .map_err(|e| {
+                tracing::error!(
+                    user_id,
+                    error = %e,
+                    "stored TOTP secret could not be unwrapped — the JWT secret has most \
+                     likely changed since enrolment. Name the outgoing value in \
+                     CRONIQ_JWT_SECRET_PREVIOUS and restart to re-wrap the stored secrets \
+                     (issue #531), restore it as CRONIQ_JWT_SECRET, or have the user sign in \
+                     with a recovery code and re-enrol. `croniq-server doctor` reports this \
+                     as totp.secrets_undecryptable."
+                );
+                status_err(StatusCode::INTERNAL_SERVER_ERROR)
+            })?;
+            if under == WrappedUnder::Previous {
+                // The boot sweep re-wraps every stored secret before the
+                // server accepts traffic, so reaching this means it could not
+                // write *this* row. Say so rather than letting the fallback
+                // quietly paper over a half-finished rotation, and re-wrap
+                // opportunistically — the login already paid for the unwrap.
+                tracing::warn!(
+                    user_id,
+                    "stored TOTP secret is still under CRONIQ_JWT_SECRET_PREVIOUS; the \
+                     boot-time re-wrap did not cover it. Re-wrapping it now — keep the \
+                     variable set until a restart reports nothing left under the old key."
+                );
+                rewrap_after_fallback(store, user_id, secret_row, &jwt_config.secret, &raw);
+            }
             let secret_b32 = String::from_utf8(raw).map_err(|_| {
                 tracing::error!(user_id, "decrypted TOTP secret is not valid UTF-8");
                 status_err(StatusCode::INTERNAL_SERVER_ERROR)

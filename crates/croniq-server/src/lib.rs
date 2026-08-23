@@ -48,6 +48,7 @@ pub mod reload;
 pub mod scheduler;
 pub mod store;
 pub mod telemetry;
+pub mod totp_rewrap;
 pub mod trace_propagation;
 pub mod watchdog;
 pub mod watcher;
