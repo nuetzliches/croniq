@@ -29,6 +29,10 @@ pub async fn handle_diagnostics(
         retention_configured: state.retention_configured,
         store: state.store.as_ref(),
         jwt_secret: state.jwt_config.as_ref().map(|c| c.secret.as_str()),
+        previous_jwt_secret: state
+            .jwt_config
+            .as_ref()
+            .and_then(|c| c.previous_secret.as_deref()),
     });
     Ok(Json(diagnostics::run_diagnostics(&input)))
 }

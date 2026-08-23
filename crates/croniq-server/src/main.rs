@@ -254,7 +254,24 @@ async fn main() -> Result<()> {
         tracing::error!(error = %e, "could not resolve JWT secret");
         std::process::exit(1);
     });
-    let jwt_config = Some(croniq_auth::jwt::JwtConfig::new(jwt_secret));
+    // A rotation of that secret also rotates the at-rest key for stored TOTP
+    // seeds, which used to cost every enrolled user a re-enrolment (issue
+    // #531). Naming the outgoing value in CRONIQ_JWT_SECRET_PREVIOUS (or its
+    // _FILE sibling) makes the rotation an administrative step instead: sweep
+    // the stored seeds now, before the server accepts traffic, so nothing is
+    // left under the old key by the time anyone logs in.
+    let previous_jwt_secret =
+        croniq_server::env_secret::env_or_file(croniq_server::totp_rewrap::PREVIOUS_SECRET_VAR);
+    if let Some(previous) = previous_jwt_secret.as_deref() {
+        croniq_server::totp_rewrap::run_and_log(&store, &jwt_secret, previous);
+    }
+
+    // The previous secret rides along on JwtConfig for unwrapping only — never
+    // to sign or validate a token. It is the safety net for a row the sweep
+    // above could not write back.
+    let jwt_config = Some(
+        croniq_auth::jwt::JwtConfig::new(jwt_secret).with_previous_secret(previous_jwt_secret),
+    );
     // Scheduler command channel for live job registration via API
     let (scheduler_cmd_tx, mut scheduler_cmd_rx) =
         mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
@@ -411,6 +428,10 @@ async fn main() -> Result<()> {
             retention_configured: retention_configured(&loaded.runtime),
             store: server_state.store.as_ref(),
             jwt_secret: server_state.jwt_config.as_ref().map(|c| c.secret.as_str()),
+            previous_jwt_secret: server_state
+                .jwt_config
+                .as_ref()
+                .and_then(|c| c.previous_secret.as_deref()),
         });
         for d in run_diagnostics(&input) {
             let remedy = d.remedy.as_deref().unwrap_or("");
@@ -1239,6 +1260,7 @@ fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
         // No live store offline → the checks that read stored rows are skipped.
         store: None,
         jwt_secret: None,
+        previous_jwt_secret: None,
     });
 
     let findings = run_diagnostics(&input);

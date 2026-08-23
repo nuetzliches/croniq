@@ -464,10 +464,76 @@ they are SHA-256 hashed, not wrapped — so the way back in is:
 3. With no recovery code left either, an admin has to reset the user's second
    factor.
 
-**Rotating `CRONIQ_JWT_SECRET` deliberately** invalidates stored TOTP secrets
-the same way, so order the steps: relax enforcement
-(`auth { totp { required false } }`) → rotate → have users re-enrol →
-re-enable enforcement.
+#### Rotating `CRONIQ_JWT_SECRET` without a re-enrolment campaign
+
+Rotating the signing secret ends every session in flight. That is the ordinary,
+accepted cost of rotating a signing key. What used to make it much more
+expensive is that the same value derives the at-rest key for stored TOTP seeds,
+so a rotation also destroyed data that *users*, not operators, had to restore.
+The documented procedure was to relax enforcement, rotate, have everyone
+re-enrol, then re-enable — which lowers the security posture during exactly the
+window where it should be highest (the usual reason to rotate is a suspected
+leak) and scales with the number of users rather than the number of operators.
+In practice it did not happen, and the secret stayed as old as the deployment.
+
+Since 0.35.0, name the outgoing value in **`CRONIQ_JWT_SECRET_PREVIOUS`**
+(issue [#531]). It is used to *unwrap* only — it never signs a token, never
+validates one, and never wraps a new secret:
+
+```bash
+CRONIQ_JWT_SECRET=<the new value>
+CRONIQ_JWT_SECRET_PREVIOUS=<the value being retired>
+```
+
+At boot, before the server accepts any traffic, it reads every stored TOTP seed
+with the old key and writes it back under the new one, then reports what it did:
+
+```
+INFO re-wrapped stored TOTP secrets under the current JWT secret
+     rewrapped=7 already_current=0 write_failed=0 undecryptable=0
+INFO CRONIQ_JWT_SECRET_PREVIOUS can now be removed.
+```
+
+So a rotation is: **set both → restart → confirm the log (or `doctor`) reports
+nothing left under the old key → drop `CRONIQ_JWT_SECRET_PREVIOUS`.** Enforced
+2FA stays on throughout, and nobody re-enrols.
+
+`CRONIQ_JWT_SECRET_PREVIOUS` accepts the `_FILE` sibling like every other
+credential variable. It is read at boot only.
+
+A few properties worth knowing:
+
+* **The sweep is idempotent and never fails the boot.** Leaving the variable
+  set across several restarts re-examines the rows and changes nothing. A row
+  the store refuses to write is logged and skipped rather than taking the
+  server down — a failed convenience migration should not become an outage.
+* **Rows the sweep missed still authenticate.** The login path falls back to
+  the previous key, logs a `WARN` naming the user, and re-wraps the row on the
+  way through. `doctor` reports the remainder as
+  `totp.secrets_under_previous_key`; while that finding is present, the
+  variable has to stay set.
+* **Nothing new is ever written under the old key.** Anything enrolled after
+  the rotation is under the current key by construction, so dropping the
+  variable after a clean sweep cannot break it.
+* **A wrong value fails closed.** If `CRONIQ_JWT_SECRET_PREVIOUS` is not the
+  value the rows were stored with, they stay `totp.secrets_undecryptable` —
+  the fallback authenticates nothing it could not already decrypt.
+* **Multi-replica deployments want a full restart, not a rolling one.** The
+  first replica to boot re-wraps the shared rows under the new key, which the
+  not-yet-restarted replicas cannot read. Rotating a signing secret already
+  invalidates every session across all replicas, so a rolling restart buys
+  nothing here.
+
+This is also the cheap way out of the #408 upgrade path above: a deployment
+that fell through to a freshly generated `jwt.secret` can name the old
+`pull_api { auth … }` value in `CRONIQ_JWT_SECRET_PREVIOUS` and recover every
+enrolment, instead of re-enrolling everyone.
+
+`doctor` and `GET /v1/system/diagnostics` report the state as a positive once
+it is clean — `N stored TOTP secret(s), all decryptable under the current key`
+— so a completed rotation is visible, not merely un-complained-about.
+
+[#531]: https://github.com/nuetzliches/croniq/issues/531
 
 ### Session invalidation: `token_generation` (issue #431)
 

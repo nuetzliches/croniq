@@ -10,6 +10,13 @@
 //! Wrap format on disk: `base64(nonce || ciphertext || tag)` where the
 //! nonce is 12 bytes (Aes256Gcm default) and the tag is 16 bytes
 //! (appended by GCM).
+//!
+//! There is deliberately no key identifier in that format. Telling two keys
+//! apart is done by trial decryption instead, which is sound here rather than
+//! merely convenient: GCM authenticates, so the wrong key fails the tag check
+//! rather than yielding plausible garbage. That is what makes
+//! [`unwrap_totp_secret_with_previous`] — and the boot-time re-wrap built on
+//! it (issue #531) — able to report exactly which key a row is under.
 
 use aes_gcm::aead::{Aead, AeadCore, OsRng};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
@@ -75,6 +82,51 @@ pub fn unwrap_totp_secret(jwt_secret: &str, wrapped: &str) -> Result<Vec<u8>, Cr
     cipher.decrypt(&nonce, ct).map_err(|_| CryptoError::Decrypt)
 }
 
+/// Which of the two candidate keys a wrapped secret turned out to be under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrappedUnder {
+    /// The key derived from the current JWT secret — the ordinary case.
+    Current,
+    /// The key derived from `CRONIQ_JWT_SECRET_PREVIOUS`. The row predates a
+    /// rotation and has not been re-wrapped yet; the caller should say so.
+    Previous,
+}
+
+/// [`unwrap_totp_secret`] with a second key to fall back on.
+///
+/// Rotating the JWT secret rotates the at-rest wrap key with it, which used to
+/// mean every enrolled user had to re-enrol (issue #531). Naming the old value
+/// in `CRONIQ_JWT_SECRET_PREVIOUS` makes rows written before the rotation
+/// readable again, and the returned [`WrappedUnder`] tells the caller whether
+/// that fallback was needed so it can re-wrap the row and log the fact.
+///
+/// The previous key is only ever tried for *unwrapping*. It never signs, never
+/// validates a token, and never wraps a new secret — [`wrap_totp_secret`] has
+/// no such parameter, so anything written after the rotation is under the
+/// current key by construction.
+///
+/// A malformed wrapper is not a key problem, so [`CryptoError::InvalidFormat`]
+/// returns immediately rather than burning a second trial decryption. When
+/// both keys fail the tag check the error describes the current key, which is
+/// the one the caller is expected to act on.
+pub fn unwrap_totp_secret_with_previous(
+    current: &str,
+    previous: Option<&str>,
+    wrapped: &str,
+) -> Result<(Vec<u8>, WrappedUnder), CryptoError> {
+    match unwrap_totp_secret(current, wrapped) {
+        Ok(pt) => Ok((pt, WrappedUnder::Current)),
+        Err(CryptoError::InvalidFormat) => Err(CryptoError::InvalidFormat),
+        Err(e) => match previous {
+            Some(prev) => match unwrap_totp_secret(prev, wrapped) {
+                Ok(pt) => Ok((pt, WrappedUnder::Previous)),
+                Err(_) => Err(e),
+            },
+            None => Err(e),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +163,61 @@ mod tests {
     fn truncated_ciphertext_is_invalid_format() {
         let result = unwrap_totp_secret("secret", "Y3Jvbmlx"); // 6 bytes, < 12 + 16
         assert_eq!(result, Err(CryptoError::InvalidFormat));
+    }
+
+    #[test]
+    fn previous_key_unwraps_a_row_written_before_a_rotation() {
+        let wrapped = wrap_totp_secret("old-secret", b"JBSWY3DPEHPK3PXP").unwrap();
+        let (pt, under) =
+            unwrap_totp_secret_with_previous("new-secret", Some("old-secret"), &wrapped).unwrap();
+        assert_eq!(pt, b"JBSWY3DPEHPK3PXP");
+        assert_eq!(under, WrappedUnder::Previous);
+    }
+
+    #[test]
+    fn current_key_is_tried_first_and_reported_as_such() {
+        let wrapped = wrap_totp_secret("new-secret", b"seed").unwrap();
+        let (pt, under) =
+            unwrap_totp_secret_with_previous("new-secret", Some("old-secret"), &wrapped).unwrap();
+        assert_eq!(pt, b"seed");
+        assert_eq!(under, WrappedUnder::Current);
+    }
+
+    #[test]
+    fn a_row_under_neither_key_reports_the_current_keys_error() {
+        let wrapped = wrap_totp_secret("third-secret", b"seed").unwrap();
+        let result = unwrap_totp_secret_with_previous("new-secret", Some("old-secret"), &wrapped);
+        assert_eq!(result.map(|(pt, _)| pt), Err(CryptoError::Decrypt));
+    }
+
+    #[test]
+    fn no_previous_key_behaves_exactly_like_the_plain_unwrap() {
+        let wrapped = wrap_totp_secret("old-secret", b"seed").unwrap();
+        assert_eq!(
+            unwrap_totp_secret_with_previous("new-secret", None, &wrapped).map(|(pt, _)| pt),
+            Err(CryptoError::Decrypt)
+        );
+    }
+
+    #[test]
+    fn malformed_input_is_a_format_error_under_either_key() {
+        // Not a key problem — must not be reported as one, with or without a
+        // previous key to fall back on.
+        let result = unwrap_totp_secret_with_previous("new", Some("old"), "Y3Jvbmlx");
+        assert_eq!(result.map(|(pt, _)| pt), Err(CryptoError::InvalidFormat));
+    }
+
+    #[test]
+    fn wrapping_never_uses_the_previous_key() {
+        // The rotation is one-way: a secret written after it must be readable
+        // with the current key alone, or dropping CRONIQ_JWT_SECRET_PREVIOUS
+        // would break the very rows the re-wrap just fixed.
+        let wrapped = wrap_totp_secret("new-secret", b"seed").unwrap();
+        assert_eq!(unwrap_totp_secret("new-secret", &wrapped).unwrap(), b"seed");
+        assert_eq!(
+            unwrap_totp_secret("old-secret", &wrapped),
+            Err(CryptoError::Decrypt)
+        );
     }
 
     #[test]
