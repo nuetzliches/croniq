@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-08-23
+
 ### Added
 
 - **Rotating `CRONIQ_JWT_SECRET` no longer costs every enrolled user their

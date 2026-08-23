@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Croniq API
   description: Distributed job scheduling platform
-  version: 0.34.0
+  version: 0.35.0
   license:
     name: MIT OR Apache-2.0
 
