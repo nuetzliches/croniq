@@ -36,6 +36,22 @@ load_secret_file() {
 load_secret_file CRONIQ_ADMIN_PASSWORD
 load_secret_file CRONIQ_INIT_API_KEY
 
+# `CRONIQ_ADMIN_PASSWORD` and `CRONIQ_INIT_API_KEY` are *seed* credentials:
+# `croniq init` reads them on the very first start and nothing reads them
+# again. That is the right behaviour — re-applying a bootstrap credential on
+# every start would be worse — but the silence costs something, because the
+# value keeps living in whatever holds the deployment's configuration. From
+# there, "matches what is in force", "was rotated in the app months ago" and
+# "was never right, the DB was seeded with the generated fallback" are
+# indistinguishable, and all three appear to work (issue #530). The entrypoint
+# is the only component that ever sees these variables, so it is the only place
+# that can say so.
+warn_seed_only() {
+  echo "NOTE: $1 is set but the database already exists;" >&2
+  echo "      it is only read when seeding a new database and is ignored here." >&2
+  echo "      $2" >&2
+}
+
 DB_FILE="$DATA_DIR/croniq.db"
 
 # Auto-initialize on first run if DB doesn't exist
@@ -109,6 +125,15 @@ if [ ! -f "$DB_FILE" ]; then
     echo "================================================================"
     echo "  Set CRONIQ_ADMIN_PASSWORD to use a fixed password instead."
     echo ""
+  fi
+else
+  if [ -n "$CRONIQ_ADMIN_PASSWORD" ]; then
+    warn_seed_only CRONIQ_ADMIN_PASSWORD \
+      "Rotate it under Settings in the UI, or via POST /v1/users/me/change-password."
+  fi
+  if [ -n "$CRONIQ_INIT_API_KEY" ]; then
+    warn_seed_only CRONIQ_INIT_API_KEY \
+      "Manage API keys under Settings → API Keys in the UI, or via 'croniq api-keys'."
   fi
 fi
 
