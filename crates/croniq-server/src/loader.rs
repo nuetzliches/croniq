@@ -368,17 +368,18 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
 ///   `next_fire_after` used to return `None`): it is re-armed by recomputing
 ///   `next_fire_at` from `now`, unless its `not_after` bound has passed.
 /// - `Active` in DB     → `next_fire_at` restored from the stored value so
-///   the next tick fires at the correct time instead of re-computing from now.
-///   Exception (#391): a stored instant the trigger's calendar/window gate
-///   disallows can only have been written by a pre-#391 build (the fixed
-///   `compute_next_fire` never emits one) — it is recomputed from `now`
-///   instead, so a stale "overdue" never survives a restart.
+///   the next tick fires at the correct time instead of re-computing from now,
+///   as long as the instant can still belong to the schedule now loaded —
+///   `Trigger::carry_over_pending_fire` owns that judgement and names the two
+///   exceptions: a gate-disallowed instant from a pre-#391 build, and one
+///   later than this schedule's own next fire, which outlived the schedule
+///   that produced it (#535, typically a shortened interval).
 /// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
 ///
 /// States healed here (re-armed exhausted triggers, recomputed gate-blocked
-/// fires) are persisted back to the store immediately, so the UI and the
-/// missed-fire watchdog see the corrected `next_fire_at` right after boot
-/// instead of only after the next fire (#391).
+/// fires, instants that outlived their schedule) are persisted back to the
+/// store immediately, so the UI and the missed-fire watchdog see the corrected
+/// `next_fire_at` right after boot instead of only after the next fire (#391).
 pub fn restore_trigger_states(
     triggers: &mut HashMap<String, Trigger>,
     store: &dyn JobStore,
