@@ -1082,6 +1082,42 @@ by `POST /v1/admin/reload-config` as `pending_restart`, so a caller can report
 `alerts { }` block is compared as a fingerprint, never by value — a channel can
 carry an HMAC signing key, which must not reach the log.
 
+#### When a changed schedule takes effect
+
+A job that is already running carries a *pending fire time* — the instant its
+next run is due. A reload (and a restart, which reads it back from the
+`job_states` table) keeps that instant rather than recomputing it, so neither
+skips nor double-fires a job that happened to be between runs.
+
+That carry-over is skipped when the pending instant cannot belong to the
+schedule just loaded — specifically when it is **later than the new schedule's
+own next fire**. Shortening an interval used to leave the job silent until the
+old, longer fire elapsed: `every 1 hour` → `every 1 minute` cost up to an hour,
+`every 1 day` → `every 1 hour` up to a day, with the Croniqfile, the reload log
+line, `GET /v1/schedules` and `GET /v1/jobs` all reporting the new schedule as
+active throughout (issue #535). The recompute is logged:
+
+```
+INFO reload: pending fire outlived its schedule (shortened?) — recomputed
+     (#535) job_key=etl:sync pending=2026-08-27T22:45:12Z
+     next_fire_at=2026-08-27T22:05:31Z schedule="every 1 minute"
+```
+
+The restart-time path logs the same thing as `trigger restore: stored
+next_fire_at outlived its schedule (shortened?) — recomputed (#535)`, and
+writes the corrected instant back to `job_states` immediately.
+
+It only ever moves a pending fire *earlier*, so nothing due can be lost this
+way. A pending fire that is already **overdue** is untouched — that is a missed
+fire, and `misfire_policy` decides what happens to it. Lengthening an interval
+needs no heal: the pending fire is sooner than the new interval would produce,
+it runs as the old schedule promised, and the new cadence takes over from
+there.
+
+The effective instant is readable per job as `next_fire_at` in
+`GET /v1/jobs` / `GET /v1/jobs/{job_key}`, and exported as
+`croniq_job_next_fire_timestamp`.
+
 ## Configuration diagnostics
 
 croniq surfaces recommended-but-missing configuration in three places, all

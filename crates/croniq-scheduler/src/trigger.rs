@@ -73,6 +73,23 @@ impl TimeWindow {
     }
 }
 
+/// Outcome of [`Trigger::carry_over_pending_fire`] — whether the pending fire
+/// time from before a config load survived, and if not, why not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingFire {
+    /// The carried-over instant is a valid fire time for this trigger and was
+    /// adopted unchanged.
+    Adopted,
+    /// The carried-over instant is blocked by this trigger's calendar/window
+    /// gate (only a pre-#391 build could have written it); `next_fire_at` was
+    /// recomputed from `now` and the trigger re-armed.
+    HealedGateClosed,
+    /// The carried-over instant is later than this schedule's own next fire —
+    /// it outlived the schedule that produced it (#535, e.g. a shortened
+    /// interval); `next_fire_at` was recomputed from `now`.
+    HealedOutlivedSchedule,
+}
+
 impl Trigger {
     /// Create a new trigger, computing the initial next fire time.
     pub fn new(
@@ -211,6 +228,55 @@ impl Trigger {
         } else {
             self.state = TriggerState::Exhausted;
         }
+    }
+
+    /// Adopt a pending fire time carried over from before a config load
+    /// (a restart's persisted `job_states` row, or the previous in-memory
+    /// trigger on hot-reload) onto this freshly-built trigger.
+    ///
+    /// Carrying the pending instant over is what keeps a restart from
+    /// skipping or double-firing. But the instant was computed under the
+    /// *previous* schedule and gates, so it is only adopted when it can still
+    /// belong to this one:
+    ///
+    /// - gate-disallowed (#391): only a pre-#391 build could have written it —
+    ///   the fixed `compute_next_fire` never emits one. Recomputed.
+    /// - later than this schedule's own next fire from `now` (#535):
+    ///   `compute_next_fire` is monotone in its argument, so an instant
+    ///   computed at any earlier moment under *this* schedule can never be
+    ///   later than `compute_next_fire(now)`. A later one therefore belongs
+    ///   to a schedule that no longer applies — typically an interval that
+    ///   has since been shortened, which would otherwise stay silent for up
+    ///   to the whole *old* interval (a day, for daily → hourly). Recomputed.
+    /// - otherwise adopted as-is, past instants included: a gate-allowed
+    ///   overdue fire is a missed fire, and `MisfirePolicy::FireNow` catches
+    ///   it up once.
+    ///
+    /// The staleness heal only ever moves the pending fire *earlier* (it
+    /// replaces `stored` with a strictly smaller instant), so no pending fire
+    /// can be delayed or lost by it.
+    ///
+    /// `state` is left as the freshly-built trigger set it, except on the
+    /// gate heal where `resume` re-arms as it did before this method existed.
+    pub fn carry_over_pending_fire(
+        &mut self,
+        stored: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> PendingFire {
+        if !self.gate_allows(stored) {
+            self.resume(now);
+            return PendingFire::HealedGateClosed;
+        }
+
+        if let Some(fresh) = self.compute_next_fire(now)
+            && fresh < stored
+        {
+            self.next_fire_at = Some(fresh);
+            return PendingFire::HealedOutlivedSchedule;
+        }
+
+        self.next_fire_at = Some(stored);
+        PendingFire::Adopted
     }
 
     /// Pause this trigger.
@@ -829,6 +895,149 @@ mod tests {
         // Monday noon: open.
         assert!(gated.gate_closed_reason(utc(2026, 3, 30, 12, 0)).is_none());
         assert!(gated.gate_allows(utc(2026, 3, 30, 12, 0)));
+    }
+
+    // ─── Carrying a pending fire across a config load (#535) ───
+
+    #[test]
+    fn unchanged_interval_adopts_pending_fire() {
+        // The ordinary restart: the pending instant was computed a moment ago
+        // under the same schedule, so it must survive verbatim — recomputing
+        // would let a restart loop postpone the job indefinitely.
+        let now = utc(2026, 3, 29, 12, 4);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 300 }, now);
+        let pending = utc(2026, 3, 29, 12, 7); // last fire 12:02 + 5 min
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(pending, now),
+            PendingFire::Adopted
+        );
+        assert_eq!(trigger.next_fire_at, Some(pending));
+    }
+
+    #[test]
+    fn overdue_pending_fire_is_adopted_not_recomputed() {
+        // A gate-allowed instant in the past is a *missed* fire, which
+        // MisfirePolicy::FireNow catches up. Recomputing would swallow it.
+        let now = utc(2026, 3, 29, 12, 4);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 300 }, now);
+        let missed = utc(2026, 3, 29, 11, 50);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(missed, now),
+            PendingFire::Adopted
+        );
+        assert_eq!(trigger.next_fire_at, Some(missed));
+    }
+
+    #[test]
+    fn shortened_interval_discards_the_old_longer_pending_fire() {
+        // Issue #535: 1 hour -> 1 minute. The hourly fire computed before the
+        // edit is 41 minutes out; adopting it would keep the job silent that
+        // whole time while every API surface reports `every 1 minute`.
+        let now = utc(2026, 3, 29, 22, 4);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 60 }, now);
+        let pending_hourly = utc(2026, 3, 29, 22, 45);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(pending_hourly, now),
+            PendingFire::HealedOutlivedSchedule
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 22, 5)));
+    }
+
+    #[test]
+    fn lengthened_interval_adopts_the_earlier_pending_fire() {
+        // The other direction is not a fault: the pending fire is sooner than
+        // the new interval would produce, and firing it is what the old
+        // schedule promised. The new cadence takes over from there.
+        let now = utc(2026, 3, 29, 12, 0);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 3600 }, now);
+        let pending_minutely = utc(2026, 3, 29, 12, 1);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(pending_minutely, now),
+            PendingFire::Adopted
+        );
+        assert_eq!(trigger.next_fire_at, Some(pending_minutely));
+    }
+
+    #[test]
+    fn wall_clock_schedule_moved_earlier_discards_the_old_pending_fire() {
+        // Not interval-specific: daily 23:00 -> daily 13:00, edited at noon.
+        let now = utc(2026, 3, 29, 12, 0);
+        let mut trigger = make_trigger(
+            Schedule::Daily {
+                time: NaiveTime::from_hms_opt(13, 0, 0).unwrap(),
+            },
+            now,
+        );
+        let pending_2300 = utc(2026, 3, 29, 23, 0);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(pending_2300, now),
+            PendingFire::HealedOutlivedSchedule
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 13, 0)));
+    }
+
+    #[test]
+    fn unchanged_wall_clock_schedule_adopts_its_own_pending_fire() {
+        // The recompute must not fire on an untouched wall-clock job: its own
+        // next tick equals the stored one, and equality is adopted.
+        let now = utc(2026, 3, 29, 12, 0);
+        let mut trigger = make_trigger(
+            Schedule::Daily {
+                time: NaiveTime::from_hms_opt(13, 0, 0).unwrap(),
+            },
+            now,
+        );
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(utc(2026, 3, 29, 13, 0), now),
+            PendingFire::Adopted
+        );
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 13, 0)));
+    }
+
+    #[test]
+    fn gate_disallowed_pending_fire_is_healed_before_the_staleness_check() {
+        // Pre-existing #391 behaviour, kept: a gate-blocked instant is
+        // recomputed and the trigger re-armed, whatever its distance.
+        let now = utc(2026, 3, 28, 12, 0); // Saturday
+        let mut trigger = Trigger::new(
+            "test:job".into(),
+            Schedule::Interval { seconds: 3600 },
+            tz_utc(),
+            Some(business_hours_calendar()),
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        let saturday_pending = utc(2026, 3, 28, 13, 0);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(saturday_pending, now),
+            PendingFire::HealedGateClosed
+        );
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 8, 0)));
+    }
+
+    #[test]
+    fn exhausted_once_schedule_adopts_its_pending_fire() {
+        // `compute_next_fire` returns None for a once-schedule whose instant
+        // has passed. That is not evidence of staleness — the pending fire is
+        // the one thing left to run.
+        let at = utc(2026, 3, 29, 12, 0);
+        let now = utc(2026, 3, 29, 12, 5);
+        let mut trigger = make_trigger(Schedule::Once { at }, utc(2026, 3, 29, 11, 0));
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(at, now),
+            PendingFire::Adopted
+        );
+        assert_eq!(trigger.next_fire_at, Some(at));
     }
 
     // ─── The calendar's own zone (#450) ───

@@ -17,7 +17,7 @@ use croniq_scheduler::{
     calendar::Calendar,
     misfire::MisfirePolicy,
     schedule::Schedule,
-    trigger::{TimeWindow, Trigger, TriggerState},
+    trigger::{PendingFire, TimeWindow, Trigger, TriggerState},
 };
 use croniq_store::{
     models::{JobState, JobStatus},
@@ -368,17 +368,18 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
 ///   `next_fire_after` used to return `None`): it is re-armed by recomputing
 ///   `next_fire_at` from `now`, unless its `not_after` bound has passed.
 /// - `Active` in DB     → `next_fire_at` restored from the stored value so
-///   the next tick fires at the correct time instead of re-computing from now.
-///   Exception (#391): a stored instant the trigger's calendar/window gate
-///   disallows can only have been written by a pre-#391 build (the fixed
-///   `compute_next_fire` never emits one) — it is recomputed from `now`
-///   instead, so a stale "overdue" never survives a restart.
+///   the next tick fires at the correct time instead of re-computing from now,
+///   as long as the instant can still belong to the schedule now loaded —
+///   `Trigger::carry_over_pending_fire` owns that judgement and names the two
+///   exceptions: a gate-disallowed instant from a pre-#391 build, and one
+///   later than this schedule's own next fire, which outlived the schedule
+///   that produced it (#535, typically a shortened interval).
 /// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
 ///
 /// States healed here (re-armed exhausted triggers, recomputed gate-blocked
-/// fires) are persisted back to the store immediately, so the UI and the
-/// missed-fire watchdog see the corrected `next_fire_at` right after boot
-/// instead of only after the next fire (#391).
+/// fires, instants that outlived their schedule) are persisted back to the
+/// store immediately, so the UI and the missed-fire watchdog see the corrected
+/// `next_fire_at` right after boot instead of only after the next fire (#391).
 pub fn restore_trigger_states(
     triggers: &mut HashMap<String, Trigger>,
     store: &dyn JobStore,
@@ -450,31 +451,38 @@ pub fn restore_trigger_states(
             }
             JobStatus::Active => {
                 // Restore the stored next_fire_at so the trigger doesn't skip
-                // or double-fire due to restart timing differences.
+                // or double-fire due to restart timing differences — unless it
+                // cannot belong to the schedule now loaded (see
+                // `carry_over_pending_fire`).
                 if let Some(stored) = job_state.next_fire_at {
                     trigger.fire_count = job_state.fire_count;
-                    if trigger.gate_allows(stored) {
-                        // Keeping a gate-allowed past instant is deliberate:
-                        // MisfirePolicy::FireNow catches it up once.
-                        trigger.next_fire_at = Some(stored);
-                        tracing::debug!(
-                            job_key = %job_state.job_key,
-                            next_fire_at = ?job_state.next_fire_at,
-                            "trigger restore: next_fire_at restored"
-                        );
-                    } else {
-                        // A gate-disallowed instant can only come from a
-                        // pre-#391 build — the fixed compute_next_fire never
-                        // emits one. Recompute instead of resurrecting the
-                        // stale "overdue".
-                        trigger.resume(now);
-                        tracing::warn!(
-                            job_key = %job_state.job_key,
-                            stored = %stored,
-                            next_fire_at = ?trigger.next_fire_at,
-                            "trigger restore: healed calendar/window-disallowed next_fire_at (pre-#391 row)"
-                        );
-                        persist_healed_state(store, trigger, &job_state, now);
+                    match trigger.carry_over_pending_fire(stored, now) {
+                        PendingFire::Adopted => {
+                            tracing::debug!(
+                                job_key = %job_state.job_key,
+                                next_fire_at = ?job_state.next_fire_at,
+                                "trigger restore: next_fire_at restored"
+                            );
+                        }
+                        PendingFire::HealedGateClosed => {
+                            tracing::warn!(
+                                job_key = %job_state.job_key,
+                                stored = %stored,
+                                next_fire_at = ?trigger.next_fire_at,
+                                "trigger restore: healed calendar/window-disallowed next_fire_at (pre-#391 row)"
+                            );
+                            persist_healed_state(store, trigger, &job_state, now);
+                        }
+                        PendingFire::HealedOutlivedSchedule => {
+                            tracing::info!(
+                                job_key = %job_state.job_key,
+                                stored = %stored,
+                                next_fire_at = ?trigger.next_fire_at,
+                                schedule = %trigger.schedule.summary(),
+                                "trigger restore: stored next_fire_at outlived its schedule (shortened?) — recomputed (#535)"
+                            );
+                            persist_healed_state(store, trigger, &job_state, now);
+                        }
                     }
                 }
             }
@@ -1661,6 +1669,73 @@ mod tests {
             stored_next.timestamp()
         );
         assert_eq!(trigger.fire_count, 7);
+    }
+
+    #[test]
+    fn restore_active_recomputes_pending_fire_of_a_shortened_schedule() {
+        // Issue #535: the job ran `every 1 hour`, was edited to
+        // `every 1 minute`, and the server restarted. The persisted fire time
+        // belongs to the hourly phase — adopting it would keep the job silent
+        // for up to an hour while every API surface reports `every 1 minute`.
+        let src = r#"job etl:sync { every 1 minutes }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        let now = Utc::now();
+        let stale_hourly = now + chrono::Duration::minutes(41);
+        seed_job_state(
+            &store,
+            "etl:sync",
+            croniq_store::models::JobStatus::Active,
+            Some(stale_hourly),
+            7,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["etl:sync"];
+        assert_eq!(
+            trigger.next_fire_at,
+            Some(now + chrono::Duration::minutes(1)),
+            "the pending hourly fire must not outlive the schedule that produced it"
+        );
+        assert_eq!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.fire_count, 7);
+
+        // Healed state is persisted, so /v1/jobs and the missed-fire watchdog
+        // stop reporting the stale instant right away (#391 pattern).
+        let row = store
+            .list_job_states()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.job_key == "etl:sync")
+            .unwrap();
+        assert_eq!(row.next_fire_at, trigger.next_fire_at);
+        assert_eq!(row.fire_count, 7);
+    }
+
+    #[test]
+    fn restore_active_keeps_a_pending_fire_the_schedule_still_allows() {
+        // Counterpart to the test above: an untouched job must keep its
+        // persisted instant across a restart, or a restart loop could
+        // postpone it forever.
+        let src = r#"job etl:sync { every 1 hours }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        let now = Utc::now();
+        let pending = now + chrono::Duration::minutes(3);
+        seed_job_state(
+            &store,
+            "etl:sync",
+            croniq_store::models::JobStatus::Active,
+            Some(pending),
+            2,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        assert_eq!(cfg.triggers["etl:sync"].next_fire_at, Some(pending));
     }
 
     #[test]
