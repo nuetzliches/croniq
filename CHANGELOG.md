@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Shortening a job's interval now takes effect on the next reload instead of
+  after the old, longer fire elapses
+  ([#535](https://github.com/nuetzliches/croniq/issues/535)).** A running job
+  carries a pending fire time, and a reload (or a restart, which reads it back
+  from `job_states`) kept it so the job neither skips nor double-fires while
+  the config changes underneath it. It was kept unconditionally, though — so an
+  interval edited *downwards* stayed on the old cadence for one more round:
+  `every 1 hour` → `every 1 minute` bought up to an hour of silence, `every 1
+  day` → `every 1 hour` up to a day.
+
+  What made it expensive is that nothing said so. The Croniqfile, the
+  `configuration loaded` line, `GET /v1/schedules` and `is_active` on
+  `GET /v1/jobs` all report the new schedule as active for the whole window,
+  restarting the container does not clear it (the instant is persisted, not
+  in-memory), and the failure is indistinguishable from a job that is simply
+  broken.
+
+  A carried-over instant is now adopted only while it can still belong to the
+  schedule just loaded — that is, while it is no later than that schedule's own
+  next fire. `compute_next_fire` is monotone in its argument, so a later
+  instant provably came from a schedule (or a calendar/window gate) that no
+  longer applies, and is recomputed from now with an `INFO` naming the job. The
+  check only ever moves a pending fire *earlier*, so nothing due can be lost by
+  it: an already-overdue fire is a missed fire and still goes to
+  `misfire_policy`, and lengthening an interval still runs the sooner fire the
+  old schedule promised before picking up the new cadence. Both load paths are
+  covered — hot-reload (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`)
+  and the restart-time restore from `job_states`, where the recomputed instant
+  is persisted immediately so `GET /v1/jobs` and the missed-fire watchdog stop
+  reporting the stale one.
+
 ## [0.35.0] - 2026-08-23
 
 ### Added

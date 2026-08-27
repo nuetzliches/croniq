@@ -17,7 +17,7 @@ use croniq_bridge::job_to_work_item;
 use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::AppState;
 use croniq_scheduler::schedule::Schedule;
-use croniq_scheduler::trigger::{Trigger, TriggerState};
+use croniq_scheduler::trigger::{PendingFire, Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus, MaintenanceState};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -166,6 +166,7 @@ impl SchedulerLoop {
     /// Preserves trigger state (fire_count, next_fire_at) for jobs that
     /// still exist. New jobs get fresh triggers; removed jobs are dropped.
     pub fn reload(&mut self, new_triggers: HashMap<String, Trigger>, new_jobs: Vec<JobConfig>) {
+        let now = Utc::now();
         let new_jobs_map: HashMap<String, JobConfig> =
             new_jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
 
@@ -189,8 +190,23 @@ impl SchedulerLoop {
                         new_trigger.state = TriggerState::Exhausted;
                         new_trigger.next_fire_at = None;
                     }
-                } else if old_trigger.next_fire_at.is_some() {
-                    new_trigger.next_fire_at = old_trigger.next_fire_at;
+                } else if let Some(pending) = old_trigger.next_fire_at {
+                    // Carry the pending fire over so a reload neither skips
+                    // nor double-fires — but only while it can still belong
+                    // to the schedule just loaded. A shortened interval used
+                    // to stay silent until the *old*, longer fire elapsed
+                    // (#535).
+                    if new_trigger.carry_over_pending_fire(pending, now)
+                        == PendingFire::HealedOutlivedSchedule
+                    {
+                        tracing::info!(
+                            job_key = %key,
+                            pending = %pending,
+                            next_fire_at = ?new_trigger.next_fire_at,
+                            schedule = %new_trigger.schedule.summary(),
+                            "reload: pending fire outlived its schedule (shortened?) — recomputed (#535)"
+                        );
+                    }
                 }
             }
             merged.insert(key, new_trigger);
@@ -837,6 +853,68 @@ mod tests {
         let t = &scheduler.triggers["test:job"];
         assert_eq!(t.state, TriggerState::Armed);
         assert!(t.next_fire_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_recomputes_a_pending_fire_the_new_schedule_outlived() {
+        // Regression for #535: `--watch` picks up `every 1 hour` -> `every 1
+        // minute`, but the pending hourly fire was carried over unconditionally
+        // and the job stayed silent until it elapsed — up to a day for a
+        // daily -> hourly edit.
+        let store = make_store();
+        let runner = make_runner();
+
+        let old = make_trigger_future("test:job"); // Interval 1h, fires in 1h
+        let pending = old.next_fire_at.unwrap();
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), old);
+
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert(
+            "test:job".to_string(),
+            Trigger::new(
+                "test:job".into(),
+                Schedule::Interval { seconds: 60 },
+                chrono_tz::UTC,
+                None,
+                None,
+                MisfirePolicy::FireNow,
+                Utc::now(),
+            ),
+        );
+        scheduler.reload(new_triggers, vec![make_job("test:job")]);
+
+        let t = &scheduler.triggers["test:job"];
+        assert_eq!(t.state, TriggerState::Armed);
+        let next = t.next_fire_at.unwrap();
+        assert!(
+            next < pending,
+            "pending hourly fire {pending} must not survive the switch to every 1 minute"
+        );
+        assert!(next <= Utc::now() + ChronoDuration::seconds(61));
+    }
+
+    #[tokio::test]
+    async fn reload_carries_over_a_still_valid_pending_fire() {
+        // The common case: an unrelated edit reloads the file. The pending
+        // fire must survive, or a `--watch` save could postpone every job.
+        let store = make_store();
+        let runner = make_runner();
+
+        let old = make_trigger_due_now("test:job"); // overdue by 5s
+        let pending = old.next_fire_at.unwrap();
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), old);
+
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+
+        let mut new_triggers = HashMap::new();
+        new_triggers.insert("test:job".to_string(), make_trigger_due_now("test:job"));
+        scheduler.reload(new_triggers, vec![make_job("test:job")]);
+
+        assert_eq!(scheduler.triggers["test:job"].next_fire_at, Some(pending));
     }
 
     #[tokio::test]
