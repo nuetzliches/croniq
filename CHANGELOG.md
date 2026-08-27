@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-08-27
+
 ### Fixed
 
 - **Shortening a job's interval now takes effect on the next reload instead of
