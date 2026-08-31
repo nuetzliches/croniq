@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.35.2] - 2026-08-31
+
 ### Fixed
 
 - **`ephemeral` jobs are dispatched again — since v0.29.0 the poll path
