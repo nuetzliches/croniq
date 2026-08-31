@@ -1126,14 +1126,46 @@ async fn try_dequeue_for(
     }
     drop(q);
 
+    // Ephemeral tallies for the scheduler heartbeat (issue #541). Only this
+    // side of the hop can see what a poll did with a non-persisted item, and
+    // an ephemeral job keeps no execution history to look wrong — so a fire
+    // that never reaches a runner is invisible unless it is counted here.
+    // Items skipped for a capability mismatch are not counted: they stay
+    // queued for a runner that fits, they are not lost.
+    let mut ephemeral_dispatched: HashMap<String, u64> = HashMap::new();
+    let mut ephemeral_dropped: HashMap<String, u64> = HashMap::new();
     let assignments: Vec<WorkAssignment> = {
         let mut reg = state.runner.registry.write().await;
         items
             .into_iter()
-            .filter(|item| reg.claim(runner_id, &item.execution_id))
-            .map(WorkAssignment::from)
+            .filter_map(|item| {
+                let claimed = reg.claim(runner_id, &item.execution_id);
+                if item.is_ephemeral {
+                    let tally = if claimed {
+                        &mut ephemeral_dispatched
+                    } else {
+                        &mut ephemeral_dropped
+                    };
+                    *tally.entry(item.job_key.clone()).or_insert(0) += 1;
+                }
+                claimed.then(|| WorkAssignment::from(item))
+            })
             .collect()
     };
+    for (job_key, count) in ephemeral_dispatched {
+        state
+            .runner
+            .record_ephemeral_dispatched(&job_key, count)
+            .await;
+    }
+    for (job_key, count) in ephemeral_dropped {
+        tracing::warn!(
+            job_key = %job_key,
+            count,
+            "ephemeral work dropped at dispatch — the runner registry refused the claim;              the fire is gone and leaves no execution row behind"
+        );
+        state.runner.record_ephemeral_dropped(&job_key, count).await;
+    }
 
     // A dispatch starts the execution's lease (issue #438): the claim is
     // live from the moment it is handed out, before the runner's first
@@ -2865,6 +2897,74 @@ mod tests {
         );
         assert_eq!(work[0]["execution_id"].as_str().unwrap(), exec_id);
         assert_eq!(state.runner.queue.read().await.len(), 0);
+    }
+
+    /// Both halves of the ephemeral hop are tallied for the heartbeat
+    /// (issue #541): a dispatched fire counts as dispatched…
+    #[tokio::test]
+    async fn poll_tallies_a_dispatched_ephemeral_fire() {
+        let (state, _store, _rx) = make_guard_state();
+        let now = Utc::now();
+
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            job_key: "beat:tick".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: true,
+        });
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 5, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(resp["work"].as_array().unwrap().len(), 1);
+
+        let stats = state.runner.take_ephemeral_stats().await;
+        let tally = stats.get("beat:tick").expect("dispatch tallied");
+        assert_eq!(tally.dispatched, 1);
+        assert_eq!(tally.dropped, 0);
+    }
+
+    /// …and a fire the registry refuses to hand out counts as dropped, so it
+    /// cannot vanish quietly the way #539 did. `reg.claim` only refuses for a
+    /// runner the registry does not know, which a real poll registers first —
+    /// hence the direct call.
+    #[tokio::test]
+    async fn dispatch_tallies_a_dropped_ephemeral_fire() {
+        let (state, _store, _rx) = make_guard_state();
+        let now = Utc::now();
+
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            job_key: "beat:tick".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: true,
+        });
+
+        let assignments = try_dequeue_for(&state, "never-registered", &[], 5).await;
+        assert!(assignments.is_empty(), "unknown runner gets no work");
+
+        let stats = state.runner.take_ephemeral_stats().await;
+        let tally = stats.get("beat:tick").expect("drop tallied");
+        assert_eq!(tally.dropped, 1);
+        assert_eq!(tally.dispatched, 0);
     }
 
     /// The counterpart of the test above: a persisted item whose row is gone

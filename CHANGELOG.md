@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The scheduler heartbeat now reports what became of each ephemeral fire,
+  not just how many there were
+  ([#541](https://github.com/nuetzliches/croniq/issues/541)).** The dispatch
+  bug in [#539](https://github.com/nuetzliches/croniq/issues/539) went
+  unnoticed for six minor releases because nothing could see it: an ephemeral
+  job keeps no execution history by design, so one that fires and never
+  reaches a runner looks exactly like one running perfectly — on the
+  dashboard, in `GET /v1/executions`, and in the job list alike. The v0.29.0
+  heartbeat counted fires, which is the scheduler's own side of the hop, and
+  fires were never the half that was broken.
+
+  Both ends are now counted — the scheduler when it enqueues, the poll path
+  when it hands work out — and folded into the same `INFO` heartbeat
+  (~5 min), so the format of its `ephemeral=` field changes from
+  `[<key>:N, …]` to one `; `-separated entry per job:
+
+  ```text
+  scheduler heartbeat — alive ephemeral=[beat:tick fired=300 dispatched=299 superseded=1]
+  ```
+
+  `fired` and `dispatched` are always shown so the two can be compared at a
+  glance; `dropped` and `superseded` appear only when non-zero. **`fired=N
+  dispatched=0` is the signature of #539.** `superseded` counts fires
+  replaced by a newer one before any runner claimed them (the "keep only the
+  latest" rule from
+  [#263](https://github.com/nuetzliches/croniq/issues/263)) — expected
+  whenever runners poll slower than a job fires, and the honest explanation
+  for a `fired` that exceeds `dispatched` on a healthy server, so the numbers
+  add up instead of crying wolf. A `dropped` fire additionally logs a `WARN`
+  naming the job key, since after #539 there is no benign reason for one.
+
 ## [0.35.2] - 2026-08-31
 
 ### Fixed
