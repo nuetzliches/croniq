@@ -193,6 +193,7 @@ mod tests {
             prefer: vec![],
             metadata: serde_json::Value::Null,
             timeout: "5m".into(),
+            is_ephemeral: false,
         }
     }
 
@@ -346,6 +347,7 @@ mod tests {
             prefer: vec![],
             metadata: serde_json::Value::Null,
             timeout: "5m".into(),
+            is_ephemeral: false,
         }
     }
 

@@ -79,6 +79,7 @@ mod tests {
             prefer: prefer.into_iter().map(String::from).collect(),
             metadata: serde_json::Value::Null,
             timeout: "5m".into(),
+            is_ephemeral: false,
         }
     }
 

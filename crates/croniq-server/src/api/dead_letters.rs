@@ -333,6 +333,9 @@ pub async fn handle_replay(
                 .collect(),
         ),
         timeout,
+        // A replay always persists a fresh execution row above, so the
+        // dispatch path has a claim target (issue #539).
+        is_ephemeral: false,
     };
 
     {

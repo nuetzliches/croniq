@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ephemeral` jobs are dispatched again — since v0.29.0 the poll path
+  silently dropped every one of them
+  ([#539](https://github.com/nuetzliches/croniq/issues/539)).** The scheduler
+  fired them and queued the work item as designed, but dispatch then validated
+  each item against a store row and dropped it when the store answered
+  `NotFound` — which is the *expected* answer for an ephemeral execution:
+  `ExecutionMode::Ephemeral` skips the insert by definition and tracks the id
+  in `ephemeral_inflight` instead. So every ephemeral fire ended in
+  `work item dropped — execution is no longer queued in the store`, one WARN
+  per fire, and no runner ever saw the work.
+
+  The mode is documented as skipping *persistence*, not dispatch, and the
+  failure was invisible from the outside: ephemeral jobs have no execution
+  history by design, so a job that never ran once looks exactly like one
+  running perfectly. An `ephemeral every 1 minute` job on a green server could
+  do nothing for months.
+
+  Work items now carry `is_ephemeral`, set from the job's execution mode where
+  the item is built, and dispatch skips the store claim for those instead of
+  interpreting its answer — there is no row to claim, and never will be. This
+  also stops the `ephemeral_inflight` entries leaking: a dropped item never
+  reported a completion, so its tracking entry lingered until the max-age
+  sweep. The refused-claim guard from
+  [#374](https://github.com/nuetzliches/croniq/issues/374) is unchanged for
+  persisted executions — a `Conflict`, or a missing row for a queued
+  execution, still drops the item. Every other producer of a work item
+  (retry, requeue, replay, `POST /v1/trigger`, MCP enqueue) writes its
+  execution row first and is unaffected.
+
 ## [0.35.1] - 2026-08-27
 
 ### Fixed

@@ -16,6 +16,7 @@ fn make_item(id: usize, require: Vec<&str>) -> WorkItem {
         prefer: vec![],
         metadata: serde_json::Value::Null,
         timeout: "5m".into(),
+        is_ephemeral: false,
     }
 }
 
