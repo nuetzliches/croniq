@@ -877,6 +877,7 @@ impl CroniqMcp {
             prefer: p.prefer,
             metadata,
             timeout: p.timeout,
+            is_ephemeral: false,
         };
 
         let depth = {
@@ -978,6 +979,7 @@ impl CroniqMcp {
             prefer: p.prefer,
             metadata,
             timeout: p.timeout,
+            is_ephemeral: false,
         };
 
         let depth = {
@@ -1163,6 +1165,7 @@ impl CroniqMcp {
             timeout: job
                 .and_then(|j| j.timeout.clone())
                 .unwrap_or_else(|| "5m".into()),
+            is_ephemeral: false,
         };
 
         let depth = {

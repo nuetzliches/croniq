@@ -113,6 +113,13 @@ pub struct WorkItem {
     pub metadata: serde_json::Value,
     /// Timeout hint for the runner (e.g. "15m").
     pub timeout: String,
+    /// True when this item's execution is *not* persisted (issue #263): the
+    /// scheduler skipped the store insert and tracks the id in
+    /// `AppState::ephemeral_inflight` instead. Dispatch must not look for a
+    /// store row for such an item — there is none, and there never will be
+    /// (issue #539).
+    #[serde(default)]
+    pub is_ephemeral: bool,
 }
 
 // ─── HTTP request / response types ───────────────────────────────────────────
@@ -369,6 +376,7 @@ mod tests {
             prefer: vec!["eu-central".into()],
             metadata: serde_json::json!({}),
             timeout: "15m".into(),
+            is_ephemeral: false,
         };
         let assignment = WorkAssignment::from(item);
         assert_eq!(assignment.execution_id, "exec-1");

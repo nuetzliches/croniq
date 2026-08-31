@@ -5,7 +5,7 @@
 //! `croniq-execution` need to actually execute the job.
 
 use chrono::{DateTime, Utc};
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_execution::pipeline::ExecutionPolicy;
 use croniq_runner::WorkItem;
 
@@ -40,6 +40,10 @@ pub fn job_to_work_item(
         prefer: job.runner.prefer.clone(),
         metadata: metadata_to_json(&job.metadata),
         timeout: job.timeout.clone().unwrap_or_else(|| "5m".to_string()),
+        // Carried on the item so the dispatch path knows there is no store
+        // row to claim (issue #539). Every other producer of a `WorkItem`
+        // persists an execution row first and passes `false`.
+        is_ephemeral: job.execution_mode == ExecutionMode::Ephemeral,
     }
 }
 

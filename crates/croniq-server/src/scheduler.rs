@@ -1046,6 +1046,46 @@ mod tests {
         );
     }
 
+    /// The *queued item* — not just the `FiredExecution` — carries the
+    /// ephemeral flag, which is what lets the poll dispatch path skip the
+    /// store claim for work that has no row (issue #539).
+    #[tokio::test]
+    async fn ephemeral_fire_flags_the_queued_work_item() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("beat:tick".into(), make_trigger_due_now("beat:tick"));
+        triggers.insert("etl:sync".into(), make_trigger_due_now("etl:sync"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_ephemeral_job("beat:tick"), make_job("etl:sync")],
+            store,
+            Arc::clone(&runner),
+        );
+
+        scheduler.tick(Utc::now()).await;
+
+        let q = runner.queue.read().await;
+        let items = q.peek_n(q.len());
+        let ephemeral = items
+            .iter()
+            .find(|i| i.job_key == "beat:tick")
+            .expect("ephemeral item queued");
+        let queued = items
+            .iter()
+            .find(|i| i.job_key == "etl:sync")
+            .expect("queued item queued");
+        assert!(
+            ephemeral.is_ephemeral,
+            "an ephemeral fire must flag its work item — otherwise dispatch              looks for a store row that was never written"
+        );
+        assert!(
+            !queued.is_ephemeral,
+            "a persisted fire must not be flagged ephemeral"
+        );
+    }
+
     /// A fresh ephemeral fire replaces the previous still-queued one and the
     /// queued item carries the newest execution id.
     #[tokio::test]

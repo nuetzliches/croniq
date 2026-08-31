@@ -286,6 +286,7 @@ where
         prefer: job.runner.prefer.clone(),
         metadata: serde_json::json!(execution.metadata),
         timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+        is_ephemeral: false,
     };
 
     runner.queue.write().await.enqueue(item)
@@ -1873,6 +1874,7 @@ mod tests {
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
                 timeout: "10m".into(),
+                is_ephemeral: false,
             });
         }
 

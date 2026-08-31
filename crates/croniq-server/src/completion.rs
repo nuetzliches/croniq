@@ -385,6 +385,7 @@ impl CompletionProcessor {
                             prefer: job.runner.prefer.clone(),
                             metadata: serde_json::json!(execution.metadata),
                             timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+                            is_ephemeral: false,
                         };
                         self.runner.queue.write().await.enqueue(item);
                         self.runner.work_notify.notify_waiters();
