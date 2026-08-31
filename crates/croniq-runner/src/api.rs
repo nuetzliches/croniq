@@ -412,6 +412,7 @@ mod tests {
                 prefer: vec![],
                 metadata: serde_json::json!({}),
                 timeout: "15m".into(),
+                is_ephemeral: false,
             });
         }
 
@@ -452,6 +453,7 @@ mod tests {
                 prefer: vec![],
                 metadata: serde_json::json!({}),
                 timeout: "5m".into(),
+                is_ephemeral: false,
             });
         }
 
@@ -495,6 +497,7 @@ mod tests {
                     prefer: vec![],
                     metadata: serde_json::json!({}),
                     timeout: "5m".into(),
+                    is_ephemeral: false,
                 });
             }
         }
@@ -578,6 +581,7 @@ mod tests {
                     prefer: vec![],
                     metadata: serde_json::json!({}),
                     timeout: "5m".into(),
+                    is_ephemeral: false,
                 });
             }
         }

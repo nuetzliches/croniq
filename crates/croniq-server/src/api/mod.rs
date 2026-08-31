@@ -1082,6 +1082,16 @@ async fn try_dequeue_for(
     if let Some(ref store) = state.store {
         let now = Utc::now();
         items.retain(|item| {
+            // Ephemeral executions (issue #263) have no store row by design:
+            // the scheduler skips the insert and records the id in
+            // `ephemeral_inflight` instead. There is no claim to persist and
+            // no store answer to interpret — asking anyway returns `NotFound`
+            // and the arm below would drop every ephemeral dispatch, silently,
+            // for the lifetime of the job (issue #539). The renew path in
+            // `work.rs` recognises the same intentional absence.
+            if item.is_ephemeral {
+                return true;
+            }
             let Ok(id) = uuid::Uuid::parse_str(&item.execution_id) else {
                 return true;
             };
@@ -1526,6 +1536,7 @@ async fn handle_trigger(
         prefer: req.prefer,
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
         timeout: req.timeout,
+        is_ephemeral: false,
     };
 
     let queued = {
@@ -1787,6 +1798,7 @@ mod tests {
                 prefer: vec![],
                 metadata: serde_json::json!({}),
                 timeout: "15m".into(),
+                is_ephemeral: false,
             });
         }
 
@@ -2804,8 +2816,94 @@ mod tests {
             prefer: vec![],
             metadata: serde_json::json!({ MAX_CONCURRENT_METADATA_KEY: limit.to_string() }),
             timeout: "5m".into(),
+            is_ephemeral: false,
         });
         id
+    }
+
+    /// Issue #539: an ephemeral execution has no store row by design, so the
+    /// dispatch path must not read the store's `NotFound` as "this item went
+    /// stale". Treating it that way dropped every ephemeral fire before it
+    /// reached a runner — invisibly, because ephemeral jobs have no execution
+    /// history to look wrong.
+    #[tokio::test]
+    async fn poll_dispatches_ephemeral_work_without_store_row() {
+        let (state, _store, _rx) = make_guard_state();
+        let exec_id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        // Deliberately no `create_execution`: this is exactly the state the
+        // scheduler leaves behind for an ephemeral fire.
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: exec_id.clone(),
+            job_key: "test:ephemeral-1m".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec!["testcap".into()],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: true,
+        });
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": ["testcap"], "max_inflight": 5, "inflight": []
+            }),
+        )
+        .await;
+
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            1,
+            "ephemeral item must be dispatched, got: {resp}"
+        );
+        assert_eq!(work[0]["execution_id"].as_str().unwrap(), exec_id);
+        assert_eq!(state.runner.queue.read().await.len(), 0);
+    }
+
+    /// The counterpart of the test above: a persisted item whose row is gone
+    /// (cancelled, completed, or claimed via another path) must still be
+    /// dropped. The ephemeral exemption must not widen the #374 guard.
+    #[tokio::test]
+    async fn poll_drops_non_ephemeral_work_without_store_row() {
+        let (state, _store, _rx) = make_guard_state();
+        let now = Utc::now();
+
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            job_key: "test:queued-1m".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: false,
+        });
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 5, "inflight": []
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "an execution with no queued store row must not be handed out: {resp}"
+        );
+        assert_eq!(state.runner.queue.read().await.len(), 0);
     }
 
     #[tokio::test]
@@ -3015,6 +3113,7 @@ mod tests {
             prefer: vec![],
             metadata: serde_json::json!({}),
             timeout: "5m".into(),
+            is_ephemeral: false,
         });
 
         let app = server_router(Arc::clone(&state));
