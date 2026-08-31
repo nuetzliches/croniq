@@ -6,7 +6,7 @@
 //!    enqueues a `WorkItem` in the runner queue, advances the trigger.
 //! 3. Persists the updated trigger state (via `JobState` in the store).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use chrono_tz;
 use croniq_bridge::job_to_work_item;
 use croniq_config::compile::{ExecutionMode, JobConfig};
-use croniq_runner::AppState;
+use croniq_runner::{AppState, EphemeralTally};
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{PendingFire, Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus, MaintenanceState};
@@ -519,6 +519,13 @@ impl SchedulerLoop {
                         chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
                     )
                     .await;
+                // Tally both halves of the replacement for the heartbeat
+                // (issue #541): this fire, and the older ones it just
+                // dropped out of the queue unclaimed.
+                self.runner.record_ephemeral_fired(&job.key, 1).await;
+                self.runner
+                    .record_ephemeral_superseded(&job.key, replaced.len() as u64)
+                    .await;
             } else {
                 self.runner.queue.write().await.enqueue(item);
                 self.runner.work_notify.notify_waiters();
@@ -549,6 +556,41 @@ impl SchedulerLoop {
 
         TickResult { fired }
     }
+}
+
+/// Render the per-job ephemeral tallies for the scheduler heartbeat
+/// (issues #275, #541).
+///
+/// `[]` when nothing ephemeral fired. Otherwise one `; `-separated entry per
+/// job, `fired` and `dispatched` always shown so the two ends of the hop can
+/// be compared at a glance, `dropped` / `superseded` only when non-zero:
+///
+/// ```text
+/// ephemeral=[beat:tick fired=300 dispatched=299 superseded=1]
+/// ```
+///
+/// `fired=N dispatched=0` is the signature of issue #539 — fires that never
+/// reach a runner — and the reason this line reports both numbers rather than
+/// the fire count alone.
+pub fn render_ephemeral_stats(stats: &BTreeMap<String, EphemeralTally>) -> String {
+    if stats.is_empty() {
+        return "[]".to_string();
+    }
+    let body = stats
+        .iter()
+        .map(|(job_key, t)| {
+            let mut entry = format!("{job_key} fired={} dispatched={}", t.fired, t.dispatched);
+            if t.dropped > 0 {
+                entry.push_str(&format!(" dropped={}", t.dropped));
+            }
+            if t.superseded > 0 {
+                entry.push_str(&format!(" superseded={}", t.superseded));
+            }
+            entry
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("[{body}]")
 }
 
 #[cfg(test)]
@@ -1044,6 +1086,82 @@ mod tests {
             result.fired[0].is_ephemeral,
             "an ephemeral job must be flagged ephemeral"
         );
+    }
+
+    /// The heartbeat's ephemeral summary reports both ends of the hop, so
+    /// `fired=N dispatched=0` — the #539 signature — is readable at a glance
+    /// (issue #541).
+    #[test]
+    fn render_ephemeral_stats_shows_both_ends_of_the_hop() {
+        assert_eq!(render_ephemeral_stats(&BTreeMap::new()), "[]");
+
+        let mut stats = BTreeMap::new();
+        stats.insert(
+            "beat:tick".to_string(),
+            EphemeralTally {
+                fired: 300,
+                dispatched: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            render_ephemeral_stats(&stats),
+            "[beat:tick fired=300 dispatched=0]"
+        );
+
+        // dropped / superseded appear only when they have something to say,
+        // and jobs render in a stable (BTreeMap) order.
+        stats.insert(
+            "audit:sweep".to_string(),
+            EphemeralTally {
+                fired: 5,
+                dispatched: 3,
+                dropped: 1,
+                superseded: 1,
+            },
+        );
+        assert_eq!(
+            render_ephemeral_stats(&stats),
+            concat!(
+                "[audit:sweep fired=5 dispatched=3 dropped=1 superseded=1; ",
+                "beat:tick fired=300 dispatched=0]"
+            )
+        );
+    }
+
+    /// Every ephemeral fire is tallied, and a fire that replaces a still-queued
+    /// predecessor tallies that predecessor as superseded rather than leaving
+    /// it to look like a loss (issue #541).
+    #[tokio::test]
+    async fn ephemeral_fires_and_replacements_are_tallied() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("beat:tick".into(), make_trigger_due_now("beat:tick"));
+
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_ephemeral_job("beat:tick")],
+            store,
+            Arc::clone(&runner),
+        );
+
+        // Three fires, nothing ever dequeued: one survives in the queue, two
+        // were replaced.
+        let mut now = Utc::now();
+        for _ in 0..3 {
+            scheduler.tick(now).await;
+            now += ChronoDuration::seconds(60);
+        }
+
+        let stats = runner.take_ephemeral_stats().await;
+        let tally = stats.get("beat:tick").expect("ephemeral job tallied");
+        assert_eq!(tally.fired, 3);
+        assert_eq!(tally.superseded, 2, "two fires were replaced unclaimed");
+        assert_eq!(tally.dispatched, 0, "no poll ran");
+        assert_eq!(tally.dropped, 0);
+        // Draining is what makes the heartbeat per-interval.
+        assert!(runner.take_ephemeral_stats().await.is_empty());
     }
 
     /// The *queued item* — not just the `FiredExecution` — carries the

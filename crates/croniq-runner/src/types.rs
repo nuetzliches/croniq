@@ -122,6 +122,30 @@ pub struct WorkItem {
     pub is_ephemeral: bool,
 }
 
+/// Per-job tally of ephemeral fires and what became of each, since the last
+/// scheduler heartbeat (issue #541).
+///
+/// Ephemeral jobs keep no execution history, so a job that fires but never
+/// reaches a runner is indistinguishable from one running perfectly — that is
+/// what kept #539 invisible for six minor releases. Counting both ends of the
+/// fire→dispatch hop turns that class of failure into a visible
+/// `fired=N dispatched=0`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EphemeralTally {
+    /// Fires the scheduler enqueued.
+    pub fired: u64,
+    /// Fires a poll handed to a runner.
+    pub dispatched: u64,
+    /// Fires dropped at the dispatch hop. Expected to stay 0 — a drop here
+    /// means a runner was offered work it could not be given.
+    pub dropped: u64,
+    /// Fires replaced by a newer one before any runner claimed them
+    /// ("keep only the latest", issue #263). Expected whenever runners poll
+    /// slower than the job fires, and the honest explanation for a `fired`
+    /// that exceeds `dispatched` on a healthy server.
+    pub superseded: u64,
+}
+
 // ─── HTTP request / response types ───────────────────────────────────────────
 
 /// Runner → server: poll for work.

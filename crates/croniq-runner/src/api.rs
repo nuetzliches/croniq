@@ -1,7 +1,7 @@
 //! HTTP Pull-API: axum handlers for `POST /v1/poll`, `POST /v1/complete`,
 //! and `GET /health`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -18,8 +18,8 @@ use crate::{
     queue::WorkQueue,
     registry::RunnerRegistry,
     types::{
-        CompleteRequest, CompleteResponse, HealthResponse, PollRequest, PollResponse, RunnerStatus,
-        WorkAssignment,
+        CompleteRequest, CompleteResponse, EphemeralTally, HealthResponse, PollRequest,
+        PollResponse, RunnerStatus, WorkAssignment,
     },
 };
 
@@ -74,6 +74,14 @@ pub struct AppState {
     /// entry is fresh — renewing one execution does not keep the reaper off
     /// the runner's other claims.
     pub lease_renewals: RwLock<HashMap<String, LeaseRenewal>>,
+    /// Per-job ephemeral tallies since the last scheduler heartbeat
+    /// (issue #541). Both ends of the fire→dispatch hop count into it — the
+    /// scheduler on firing, the poll path on handing work out — because
+    /// neither side can see the other, and an ephemeral job that fires
+    /// without ever being dispatched looks exactly like a healthy one. The
+    /// heartbeat drains the map. `BTreeMap` keeps the rendered order stable
+    /// across heartbeats.
+    pub ephemeral_stats: RwLock<BTreeMap<String, EphemeralTally>>,
 }
 
 impl AppState {
@@ -86,6 +94,7 @@ impl AppState {
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
+            ephemeral_stats: RwLock::new(BTreeMap::new()),
         })
     }
 
@@ -98,6 +107,7 @@ impl AppState {
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
+            ephemeral_stats: RwLock::new(BTreeMap::new()),
         })
     }
 
@@ -165,6 +175,51 @@ impl AppState {
         }
     }
 
+    /// Count `count` ephemeral fires the scheduler enqueued (issue #541).
+    pub async fn record_ephemeral_fired(&self, job_key: &str, count: u64) {
+        self.bump_ephemeral(job_key, count, |t, n| t.fired += n)
+            .await;
+    }
+
+    /// Count ephemeral fires a poll handed to a runner.
+    pub async fn record_ephemeral_dispatched(&self, job_key: &str, count: u64) {
+        self.bump_ephemeral(job_key, count, |t, n| t.dispatched += n)
+            .await;
+    }
+
+    /// Count ephemeral fires dropped at the dispatch hop — the shape of
+    /// failure that made #539 invisible.
+    pub async fn record_ephemeral_dropped(&self, job_key: &str, count: u64) {
+        self.bump_ephemeral(job_key, count, |t, n| t.dropped += n)
+            .await;
+    }
+
+    /// Count ephemeral fires replaced by a newer fire before dispatch. Not a
+    /// fault: it is why `fired` may exceed `dispatched` on a healthy server.
+    pub async fn record_ephemeral_superseded(&self, job_key: &str, count: u64) {
+        self.bump_ephemeral(job_key, count, |t, n| t.superseded += n)
+            .await;
+    }
+
+    async fn bump_ephemeral(
+        &self,
+        job_key: &str,
+        count: u64,
+        add: impl FnOnce(&mut EphemeralTally, u64),
+    ) {
+        if count == 0 {
+            return;
+        }
+        let mut stats = self.ephemeral_stats.write().await;
+        add(stats.entry(job_key.to_string()).or_default(), count);
+    }
+
+    /// Drain the ephemeral tallies. The heartbeat reports per-interval
+    /// numbers, so reading them clears them.
+    pub async fn take_ephemeral_stats(&self) -> BTreeMap<String, EphemeralTally> {
+        std::mem::take(&mut *self.ephemeral_stats.write().await)
+    }
+
     /// Grace window for per-execution lease liveness, shared with the
     /// stale-claim reaper's threshold (issue #374): a lease refreshed within
     /// this window counts as live.
@@ -228,6 +283,7 @@ impl Default for AppState {
             cancel_queues: RwLock::new(HashMap::new()),
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
+            ephemeral_stats: RwLock::new(BTreeMap::new()),
         }
     }
 }
