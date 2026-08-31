@@ -2,7 +2,9 @@
 //!
 //! Tested against Authentik, Keycloak, Auth0. Scope is deliberately
 //! limited to the parts Croniq needs:
-//!   1. Discovery: GET `<issuer>/.well-known/openid-configuration`
+//!   1. Discovery: GET `<issuer>/.well-known/openid-configuration`.
+//!      The issuer and every endpoint the document advertises must be
+//!      `https://` (loopback exempted) — see `require_https`.
 //!   2. Authorize URL build (no PKCE — Croniq is a confidential client
 //!      and the client_secret is already the binding factor).
 //!   3. Token exchange: POST to the token endpoint with `code` +
@@ -30,6 +32,7 @@ use rand::RngCore;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use thiserror::Error;
+use url::Url;
 
 use croniq_store::models::Role;
 
@@ -120,15 +123,37 @@ struct Userinfo {
 
 pub struct OidcProvider {
     pub config: OidcConfig,
+    /// Discovery and JWKS: public documents, redirects allowed.
     http: HttpClient,
+    /// Token exchange and userinfo: both send a credential, so this client
+    /// refuses to follow redirects. See [`OidcProvider::discover`].
+    http_credentialed: HttpClient,
     discovery: Discovery,
 }
 
 impl OidcProvider {
     /// Fetch discovery doc, build the long-lived HTTP client.
     pub async fn discover(config: OidcConfig) -> Result<Self, OidcError> {
+        // The issuer is the one URL an operator types by hand, and every
+        // other endpoint below is taken from the document it serves. If that
+        // first hop is plaintext, a network attacker rewrites the whole
+        // discovery document — including `jwks_uri`, which decides whose
+        // signature counts as a valid ID token. Refuse before we fetch.
+        require_https("issuer", &config.issuer)?;
+
         let http = HttpClient::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| OidcError::Discovery(e.to_string()))?;
+
+        // Separate client for the two requests that carry a credential: the
+        // token POST sends `client_id:client_secret` as Basic auth, and
+        // userinfo sends the access token as a bearer. reqwest already drops
+        // those headers on a cross-origin redirect, but a redirect chain has
+        // no legitimate role in either call, so refuse to follow one at all.
+        let http_credentialed = HttpClient::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| OidcError::Discovery(e.to_string()))?;
 
@@ -152,9 +177,29 @@ impl OidcProvider {
                 discovery.issuer
             )));
         }
+
+        // Every endpoint below is a URL this process will call, taken verbatim
+        // from a document fetched over the network. The issuer match above
+        // proves the document belongs to the configured issuer; it says
+        // nothing about the scheme of the endpoints inside it. A single
+        // `http://` entry would put the client_secret (token endpoint) or the
+        // signing keys (jwks_uri) on the wire in the clear.
+        //
+        // Deliberately *not* a same-host check: real providers split these
+        // across hosts (Google's issuer is accounts.google.com while its JWKS
+        // lives on www.googleapis.com), so host pinning would reject valid
+        // deployments while https already closes the transport gap.
+        require_https("authorization_endpoint", &discovery.authorization_endpoint)?;
+        require_https("token_endpoint", &discovery.token_endpoint)?;
+        require_https("jwks_uri", &discovery.jwks_uri)?;
+        if let Some(userinfo) = &discovery.userinfo_endpoint {
+            require_https("userinfo_endpoint", userinfo)?;
+        }
+
         Ok(Self {
             config,
             http,
+            http_credentialed,
             discovery,
         })
     }
@@ -182,7 +227,7 @@ impl OidcProvider {
     pub async fn exchange(&self, code: &str, expected_nonce: &str) -> Result<OidcUser, OidcError> {
         // Token exchange via Basic auth on the token endpoint.
         let resp = self
-            .http
+            .http_credentialed
             .post(&self.discovery.token_endpoint)
             .basic_auth(&self.config.client_id, Some(&self.config.client_secret))
             .form(&[
@@ -214,7 +259,7 @@ impl OidcProvider {
         let mut display_name = claims.name.clone();
         if let Some(userinfo_url) = &self.discovery.userinfo_endpoint
             && let Ok(resp) = self
-                .http
+                .http_credentialed
                 .get(userinfo_url)
                 .bearer_auth(&tokens.access_token)
                 .send()
@@ -401,6 +446,34 @@ pub fn config_from_env() -> Result<OidcConfig, OidcError> {
 
 // ─── small helpers ──────────────────────────────────────────────────────────
 
+/// Reject an OIDC endpoint that is not reachable over TLS.
+///
+/// Loopback is exempt: a developer running Keycloak on `http://localhost:8080`
+/// has no transport to attack, and requiring a certificate there would push
+/// people toward disabling the check outright.
+fn require_https(label: &str, raw: &str) -> Result<(), OidcError> {
+    let parsed = Url::parse(raw)
+        .map_err(|e| OidcError::Discovery(format!("{label} is not a valid URL ({raw}): {e}")))?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback(&parsed) => Ok(()),
+        other => Err(OidcError::Discovery(format!(
+            "{label} must use https, got {other}:// ({raw})"
+        ))),
+    }
+}
+
+/// True when the URL's host is the local machine. `Url::host()` already
+/// normalises `[::1]` to an `Ipv6` host, so no bracket handling is needed.
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 fn random_token() -> String {
     let mut buf = [0u8; 24];
     rand::rng().fill_bytes(&mut buf);
@@ -425,3 +498,56 @@ fn url_enc(s: &str) -> String {
 // the inevitable future JWKS-cache without making the lint angry.
 #[allow(dead_code)]
 const _: fn() -> HashMap<String, String> = HashMap::new;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn https_endpoints_pass() {
+        assert!(require_https("token_endpoint", "https://idp.example/token").is_ok());
+        // Cross-host is fine: Google's JWKS does not live on its issuer host.
+        assert!(require_https("jwks_uri", "https://www.googleapis.com/oauth2/v3/certs").is_ok());
+    }
+
+    #[test]
+    fn plaintext_endpoints_are_rejected() {
+        let err = require_https("jwks_uri", "http://idp.example/keys").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("jwks_uri"), "names the endpoint: {msg}");
+        assert!(msg.contains("https"), "names the requirement: {msg}");
+    }
+
+    #[test]
+    fn loopback_stays_usable_over_plaintext() {
+        // A local Keycloak/Authentik is the normal development setup; there is
+        // no transport between the two processes for an attacker to sit on.
+        for url in [
+            "http://localhost:8080/realms/croniq",
+            "http://127.0.0.1:8080/token",
+            "http://[::1]:8080/token",
+        ] {
+            assert!(require_https("issuer", url).is_ok(), "{url} should pass");
+        }
+    }
+
+    #[test]
+    fn a_host_that_merely_looks_local_is_not_loopback() {
+        // `localhost.evil.example` resolves wherever its owner points it.
+        for url in [
+            "http://localhost.evil.example/token",
+            "http://notlocalhost/token",
+            "http://127.0.0.1.evil.example/token",
+        ] {
+            assert!(require_https("issuer", url).is_err(), "{url} should fail");
+        }
+    }
+
+    #[test]
+    fn non_http_schemes_are_rejected() {
+        // `file://` and friends would make the URL an SSRF primitive rather
+        // than an HTTP call.
+        assert!(require_https("issuer", "file:///etc/passwd").is_err());
+        assert!(require_https("issuer", "not a url").is_err());
+    }
+}

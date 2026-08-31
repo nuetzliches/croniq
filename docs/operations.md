@@ -381,6 +381,25 @@ operator to either re-enable password login or finish the OIDC config —
 quietly booting into a state where nobody can sign in would be a much
 worse failure mode.
 
+#### Transport requirement
+
+The configured issuer, and every endpoint its discovery document
+advertises (`authorization_endpoint`, `token_endpoint`, `jwks_uri`,
+`userinfo_endpoint`), must use `https://`. Discovery fails with a
+message naming the offending endpoint otherwise.
+
+The strict part is `jwks_uri`: it decides whose signature counts as a
+valid ID token, so a plaintext fetch lets anyone on the path mint
+logins. `token_endpoint` carries the `client_secret`. Endpoints are
+*not* required to share the issuer's host — real providers split them
+(Google's issuer is `accounts.google.com`, its JWKS lives on
+`www.googleapis.com`).
+
+Loopback issuers are exempt, so a local `http://localhost:8080`
+Keycloak or Authentik still works for development. The token exchange
+and the userinfo call also refuse to follow HTTP redirects, so the
+credentials they carry cannot be bounced to another host.
+
 ### `auth.totp.required` — enforced 2FA
 
 ```hcl

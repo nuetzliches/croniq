@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **OIDC discovery now requires TLS on every endpoint it is handed.** The
+  discovery document at `<issuer>/.well-known/openid-configuration` is fetched
+  over the network and then trusted for four URLs this server calls:
+  `authorization_endpoint`, `token_endpoint`, `jwks_uri` and
+  `userinfo_endpoint`. The issuer-match check that already ran proves the
+  document belongs to the configured issuer; it said nothing about the scheme
+  of the endpoints inside it.
+
+  That gap mattered most at `jwks_uri`, which decides whose signature counts
+  as a valid ID token: a plaintext fetch lets anyone on the path serve their
+  own key set and mint logins for any account. `token_endpoint` carries the
+  `client_secret` as Basic auth. Both, plus the configured issuer itself, must
+  now be `https://`; discovery fails with a message naming the offending
+  endpoint.
+
+  Endpoints are deliberately **not** required to share the issuer's host —
+  real providers split them (Google's issuer is `accounts.google.com` while
+  its JWKS lives on `www.googleapis.com`), so host pinning would reject valid
+  deployments without closing anything https does not already close.
+  Loopback issuers stay exempt, so a local `http://localhost:8080` Keycloak or
+  Authentik still works for development.
+
+  The token exchange and the userinfo call additionally refuse to follow HTTP
+  redirects, so neither the `client_secret` nor the access token can be
+  bounced to another host. Discovery and JWKS keep the default redirect
+  policy — they carry no credential.
+
+  Raised by CodeQL as `rust/request-forgery` (alerts 40, 41).
+
 ## [0.36.0] - 2026-08-31
 
 ### Added

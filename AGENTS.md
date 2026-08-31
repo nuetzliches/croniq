@@ -43,6 +43,17 @@
   "false positive" via the GitHub API (`gh api -X PATCH
   repos/.../code-scanning/alerts/<n> -f state=dismissed -f 'dismissed_reason=false positive'`).
   Eight prior alerts were dismissed for this exact pattern as of v0.11.0.
+- **CodeQL cannot see `#[cfg(test)]`.** Its Rust data-flow treats
+  `assert!(cond, "{value:?}")` inside an inline `mod tests` as a log sink, and
+  a fixture literal there as a hard-coded credential — so test modules keep
+  regenerating `rust/cleartext-logging` and
+  `rust/hard-coded-cryptographic-value` alerts. Path filters do not help;
+  these modules live in the same file as the code they test. Before
+  dismissing as `used in tests`, verify two things and say so in the comment:
+  the flagged line is past the file's `#[cfg(test)]` marker (name the line
+  number), and the tainted value reaches no `tracing!`/`println!` in the
+  production half (grep it). Alerts 1-3, 16, 25-31, 37-39 were closed this
+  way.
 - **Genuine credentials must never be logged.** API keys, JWT secrets,
   passwords, OAuth tokens, signing keys — never print or log these in
   plain form. Init/quickstart roadmap items (`TTY-aware secret output`)
