@@ -210,6 +210,10 @@ job ops:db-dump {
   # execution stays queued until it finishes. `singleton` is shorthand
   # for `max_concurrent 1`; use `max_concurrent N` to allow up to N
   # overlapping executions instead (the two are mutually exclusive).
+  # The guard is per job and does not compose across jobs: to make a set
+  # of jobs share one budget (a common upstream rate limit, say), see
+  # "Serializing jobs against a shared upstream limit" in
+  # docs/operations.md.
   singleton
 }
 

@@ -1254,6 +1254,92 @@ protocol* section for the semantics and the
   work requests get `503` rather than being waved through. Runners retry, so
   this self-heals when the store recovers.
 
+## Serializing jobs against a shared upstream limit
+
+`singleton` / `max_concurrent` are **per job**: they cap how many executions of
+*that one job* may be in flight. They do not compose across jobs, so they
+cannot express "these N jobs share one budget" — the shape you get whenever
+several jobs call the same third-party API under one account-wide rate limit,
+where any two of them running at once blows the quota regardless of *which*
+two.
+
+What expresses it today is runner topology: pin the whole set to a capability
+that exactly one runner advertises, and give that runner a capacity of one.
+
+1. **Require the same capability on every job in the set.**
+
+   ```hcl
+   job sync:tickets  { every day at 03:00; runner { require api-x } }
+   job sync:contacts { every day at 03:15; runner { require api-x } }
+   job push:status   { every 15 minutes;   runner { require api-x } }
+   ```
+
+   It must be `require`, not `prefer`. Dispatch matches on `require` alone;
+   `prefer` travels to the runner as metadata and never influences which
+   runner receives an item.
+
+2. **Run exactly one runner advertising `api-x`, with an inflight capacity of
+   one.** That single slot *is* the shared budget. The setting is
+   `max_inflight` (Rust, Python), `maxInflight` (TypeScript, Java),
+   `WithMaxInflight` (Go) or `MaxInflight` (.NET); the demo runner image reads
+   `RUNNER_MAX_INFLIGHT`. **It defaults to 5 in every SDK**, so leaving it
+   unset gives the set five concurrent slots, not one.
+
+3. **Keep the jobs in `queued` mode** (the default) — see the ephemeral caveat
+   below.
+
+### What this guarantees
+
+Within such a pool the jobs are **serialized, not merely throttled**: the work
+queue is FIFO and the poll hands out at most one item at a time, so a job
+enqueued after another one runs after it. That is a stronger property than the
+rate limit you were reaching for, and it is worth knowing you have it — it is
+what lets a status-push job be ordered after the sync job whose row it would
+otherwise overwrite.
+
+Pinning a set of jobs to a saturated pool does **not** stall anything else.
+An item the requesting runner cannot execute is skipped in place rather than
+blocking the queue head, so other runners keep draining their own work while
+the `api-x` pool is busy.
+
+### Caveats
+
+Each of these is invisible from the Croniqfile, which is why they are listed
+here rather than left to be discovered:
+
+- **A second runner advertising the same capability silently doubles the
+  budget.** There is no validation error and no warning: capabilities are
+  announced by runners at poll time, so nothing at config-compile time can
+  know how many processes claim `api-x`. The limit is a property of the
+  upstream API but lives in your deployment topology — scaling the pool and
+  honouring the quota are the same knob, pulled in opposite directions. Treat
+  the replica count of that runner as a documented invariant, not a capacity
+  dial.
+- **The pool is a single point of failure.** One runner is the whole capacity,
+  so while it is down the set does not run at all. The work is not lost —
+  queued executions wait, and the watchdog sweeps recover anything that was
+  claimed — but there is no failover, by construction. Supervise the process.
+- **FIFO means *enqueue* order, not `scheduled_for` order.** A watchdog
+  requeue of a stale claim, or a runner takeover that requeues a lost
+  session's claims, puts the execution at the *back* of the queue. So a
+  retried job can land after work that was scheduled later than it. If you
+  need ordering by logical time, this recipe does not give it.
+- **`ephemeral` jobs do not belong in such a pool.** They are subject to the
+  runner's capacity like anything else, but an ephemeral job keeps only its
+  latest fire: when the next one fires, any earlier still-unclaimed item for
+  that job is dropped from the queue (issue #263). Waiting behind a serialized
+  pool is exactly the situation that makes a fire wait, so fires will be
+  discarded silently and leave no execution row to notice them by. Use
+  `queued` whenever every fire has to run. (Relatedly, `singleton` /
+  `max_concurrent` on an `ephemeral` job is rejected at config-validation
+  time — issue #302.)
+- **The queue is in-memory; a server restart re-derives it from the store.**
+  Queued rows are re-enqueued by the watchdog's reconcile sweep, so the set
+  resumes, but the pre-restart enqueue order is not preserved.
+
+For a declarative alternative that does not depend on runner topology, see
+issue #546 (`concurrency_group`).
+
 ## Orphaned claims (issue #374)
 
 A `claimed` execution whose runner process vanished is recovered by
