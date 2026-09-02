@@ -255,12 +255,18 @@ impl TriggerRequestBuilder<'_> {
     }
 
     /// Capabilities a runner **must** have to be assigned this execution.
+    ///
+    /// Leave it unset to inherit the job's `runner { require … }` from the
+    /// server-side configuration, so the trigger routes like a scheduled fire;
+    /// setting it overrides that for this execution.
     pub fn require(mut self, require: Vec<String>) -> Self {
         self.body.require = Some(require);
         self
     }
 
     /// Capabilities used to *prefer* runners when several are eligible.
+    ///
+    /// Unset inherits the job's `runner { prefer … }`; setting it overrides.
     pub fn prefer(mut self, prefer: Vec<String>) -> Self {
         self.body.prefer = Some(prefer);
         self

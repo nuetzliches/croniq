@@ -1429,6 +1429,19 @@ async fn handle_trigger(
         }
     }
 
+    // Resolve the DSL job once: everything below that a trigger inherits from
+    // the job config — the queue-overflow cap (#299), the compiled metadata
+    // (#89) and the runner capabilities (#549) — reads off this one lookup
+    // instead of taking the `dsl_jobs` read lock again per field. `dsl_jobs`
+    // unset (store-less dev servers, tests) or an unknown `job_key` leaves
+    // every one of them at its default.
+    let dsl_job = if let Some(ref dsl_jobs) = state.dsl_jobs {
+        let jobs = dsl_jobs.read().await;
+        jobs.iter().find(|j| j.key == req.job_key).cloned()
+    } else {
+        None
+    };
+
     // Per-job queue-overflow cap (#299). The scheduler bounds *scheduled*
     // fires at `max_queue_depth` (per-job override, default 10 — see
     // `scheduler::tick`); a manual `POST /v1/trigger` must honour the same cap
@@ -1436,17 +1449,11 @@ async fn handle_trigger(
     // can pile queued executions up unbounded for one job — the exact overflow
     // the scheduler guard prevents. Checked after dedup (a coalesced trigger
     // adds nothing to the queue) and before persisting the execution row, so a
-    // rejected trigger leaves no orphan row behind. `dsl_jobs` unset (store-less
-    // dev servers, tests) or an unknown `job_key` falls back to the default 10.
-    let max_queue_depth = if let Some(ref dsl_jobs) = state.dsl_jobs {
-        let jobs = dsl_jobs.read().await;
-        jobs.iter()
-            .find(|j| j.key == req.job_key)
-            .and_then(|j| j.max_queue_depth)
-            .unwrap_or(10)
-    } else {
-        10
-    } as usize;
+    // rejected trigger leaves no orphan row behind.
+    let max_queue_depth = dsl_job
+        .as_ref()
+        .and_then(|j| j.max_queue_depth)
+        .unwrap_or(10) as usize;
     let queued_for_job = state.runner.queue.read().await.count_for_job(&req.job_key);
     if queued_for_job >= max_queue_depth {
         tracing::warn!(
@@ -1481,15 +1488,10 @@ async fn handle_trigger(
     // __runner_exec (and other DSL-stamped keys) survive into the WorkItem
     // and the DB execution row. The caller's req.metadata values are overlaid
     // on top so they can still override or extend individual entries.
-    let mut metadata: HashMap<String, String> = if let Some(ref dsl_jobs) = state.dsl_jobs {
-        let jobs = dsl_jobs.read().await;
-        jobs.iter()
-            .find(|j| j.key == req.job_key)
-            .map(|j| j.metadata.clone())
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let mut metadata: HashMap<String, String> = dsl_job
+        .as_ref()
+        .map(|j| j.metadata.clone())
+        .unwrap_or_default();
     if let serde_json::Value::Object(ref map) = req.metadata {
         for (k, v) in map {
             // The `__`-prefixed namespace is reserved for keys the
@@ -1512,16 +1514,51 @@ async fn handle_trigger(
             metadata.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
         }
     }
-    if !req.require.is_empty() {
+    // Runner capabilities: an explicit request value overrides, an omitted one
+    // inherits the DSL job's `runner { require … }` (issue #549). Both fields
+    // are `#[serde(default)]`, so "omitted" and "empty" are the same wire
+    // state — and an empty `require` on the WorkItem means *any* runner may
+    // claim it (`Queue::dequeue_for_where`), which is exactly the wrong
+    // default for a job pinned to a capability. Every other WorkItem producer
+    // — scheduler fire (`job_to_work_item`), retry (`completion.rs`), watchdog
+    // requeue and dead-letter replay — already falls back to the job config;
+    // the trigger path was the outlier, so the same execution routed
+    // differently before and after the watchdog touched it.
+    //
+    // Capabilities cannot ride in on the inherited `job.metadata` above the
+    // way `__runner_exec` and `__max_concurrent` do: the compiler never stamps
+    // them there, the scheduler adds them only as it persists the row
+    // (`scheduler.rs`), so the fallback has to read `job.runner` directly.
+    let require = if req.require.is_empty() {
+        dsl_job
+            .as_ref()
+            .map(|j| j.runner.require.clone())
+            .unwrap_or_default()
+    } else {
+        req.require.clone()
+    };
+    let prefer = if req.prefer.is_empty() {
+        dsl_job
+            .as_ref()
+            .map(|j| j.runner.prefer.clone())
+            .unwrap_or_default()
+    } else {
+        req.prefer.clone()
+    };
+    // Stamp the effective capabilities the way the scheduler does, so the
+    // persisted row carries them too: the store-side claim filter matches on
+    // `__require` in row metadata, and a later dead-letter replay reads them
+    // off the row rather than depending on the job still existing.
+    if !require.is_empty() {
         metadata.insert(
             "__require".into(),
-            serde_json::to_string(&req.require).unwrap_or_default(),
+            serde_json::to_string(&require).unwrap_or_default(),
         );
     }
-    if !req.prefer.is_empty() {
+    if !prefer.is_empty() {
         metadata.insert(
             "__prefer".into(),
-            serde_json::to_string(&req.prefer).unwrap_or_default(),
+            serde_json::to_string(&prefer).unwrap_or_default(),
         );
     }
 
@@ -1564,8 +1601,8 @@ async fn handle_trigger(
         fire_at: now,
         scheduled_for: now,
         attempt: 1,
-        require: req.require,
-        prefer: req.prefer,
+        require,
+        prefer,
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
         timeout: req.timeout,
         is_ephemeral: false,
@@ -1755,6 +1792,17 @@ mod tests {
         // Auth fails closed (issue #431), so the router needs a real signing
         // key and the request helpers below need a real admin token.
         Arc::get_mut(&mut state).unwrap().jwt_config = Some(test_auth::jwt());
+        (state, rx)
+    }
+
+    /// Like [`make_state`], but with a compiled DSL job set behind `dsl_jobs`,
+    /// so trigger tests can exercise what a manual fire inherits from a job's
+    /// configuration (issues #89, #299, #549).
+    fn make_state_with_dsl_jobs(
+        jobs: Vec<croniq_config::compile::JobConfig>,
+    ) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
+        let (mut state, rx) = make_state();
+        Arc::get_mut(&mut state).unwrap().dsl_jobs = Some(Arc::new(tokio::sync::RwLock::new(jobs)));
         (state, rx)
     }
 
@@ -2166,7 +2214,20 @@ mod tests {
         assert_eq!(status, 503);
     }
 
-    // ─── Trigger endpoint: DSL metadata propagation (issue #89) ─────────────
+    // ─── Trigger endpoint: DSL job inheritance (issues #89, #549) ──────────
+
+    /// The DSL both trigger-inheritance tests fire: a job pinned to one
+    /// capability, with a shell command whose `{{…}}` must survive the
+    /// round-trip through metadata.
+    const PINNED_JOB_DSL: &str = r#"
+        job test:docker-ps {
+            every 1 hour
+            runner { require shell-runner }
+            runner shell {
+                command "docker ps --format '{{.Image}}'"
+            }
+        }
+    "#;
 
     #[tokio::test]
     async fn trigger_inherits_dsl_runner_exec_metadata() {
@@ -2176,57 +2237,14 @@ mod tests {
         use crate::loader::load_str;
         use croniq_config::compile::RUNNER_EXEC_METADATA_KEY;
 
-        let dsl = r#"
-            job test:docker-ps {
-                every 1 hour
-                runner { require shell-runner }
-                runner shell {
-                    command "docker ps --format '{{.Image}}'"
-                }
-            }
-        "#;
-        let loaded = load_str(dsl).unwrap();
-        let jobs = loaded.runtime.jobs;
+        let jobs = load_str(PINNED_JOB_DSL).unwrap().runtime.jobs;
         assert!(
             jobs[0].metadata.contains_key(RUNNER_EXEC_METADATA_KEY),
             "compile should stamp __runner_exec: {:?}",
             jobs[0].metadata
         );
 
-        let runner = AppState::new();
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let dsl_jobs = Arc::new(tokio::sync::RwLock::new(jobs));
-        let state = Arc::new(ServerState {
-            runner,
-            completion_tx: tx,
-            long_poll_timeout: Duration::from_millis(50),
-            jwt_config: Some(test_auth::jwt()),
-            store: None,
-            scheduler_tx: None,
-            triggers: None,
-            dsl_jobs: Some(dsl_jobs),
-            dsl_calendars: None,
-            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            policy_strict_calendars: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            config_path: None,
-            boot_only_settings: None,
-            reload_counters: ReloadCounters::new(),
-            watchdog_counters: WatchdogCounters::new(),
-            config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            email_sender: crate::email::default_sender(),
-            app_base_url: None,
-            oidc: None,
-            password_login_enabled: true,
-            require_totp: false,
-            retention_configured: false,
-            alerts: croniq_config::compile::AlertsConfig::default(),
-            console_hub: None,
-            scheduler_heartbeat: None,
-            trigger_dedup_window_secs: DEFAULT_TRIGGER_DEDUP_WINDOW_SECS,
-            maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
-            runner_identity_binding: true,
-            login_throttle: login_throttle::LoginThrottle::default(),
-        });
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
         let app = server_router(Arc::clone(&state));
 
         let resp = post_json(
@@ -2254,6 +2272,122 @@ mod tests {
         assert!(
             items[0].metadata.get(RUNNER_EXEC_METADATA_KEY).is_some(),
             "__runner_exec must be present in WorkItem.metadata; got: {:?}",
+            items[0].metadata
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_inherits_dsl_runner_require() {
+        // Regression for issue #549: a trigger that omits `require` must
+        // inherit the job's `runner { require … }`. It used to enqueue with an
+        // empty `require`, which matches *every* runner — so a job pinned to a
+        // capability ran on a runner that lacked it.
+        use crate::loader::load_str;
+
+        let jobs = load_str(PINNED_JOB_DSL).unwrap().runtime.jobs;
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        let resp = post_json(
+            app,
+            "/v1/trigger",
+            // `require` / `prefer` omitted entirely — the wire state a caller
+            // that only knows the job key produces.
+            serde_json::json!({ "job_key": "test:docker-ps" }),
+        )
+        .await;
+        assert!(
+            resp["execution_id"].is_string(),
+            "expected execution_id in response, got: {resp}"
+        );
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1, "one item should be queued");
+        assert_eq!(
+            items[0].require,
+            vec!["shell-runner".to_string()],
+            "WorkItem must inherit the job's require"
+        );
+        // Stamped into the metadata too, mirroring the scheduler: it is what
+        // the store-side claim filter and a later dead-letter replay read.
+        assert_eq!(
+            items[0].metadata.get("__require").and_then(|v| v.as_str()),
+            Some(r#"["shell-runner"]"#),
+            "metadata must carry __require; got: {:?}",
+            items[0].metadata
+        );
+
+        // A runner without the capability must not be able to claim it; one
+        // with it must.
+        drop(q);
+        let mut q = state.runner.queue.write().await;
+        assert!(
+            q.dequeue_for(&[]).is_none(),
+            "a runner without shell-runner must not claim a pinned job"
+        );
+        assert!(
+            q.dequeue_for(&["shell-runner".to_string()]).is_some(),
+            "a runner with shell-runner must claim it"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_require_overrides_dsl_runner_require() {
+        // The inheritance from #549 is a fallback, not a lock: an explicit
+        // `require` in the request still wins, as it did before.
+        use crate::loader::load_str;
+
+        let jobs = load_str(PINNED_JOB_DSL).unwrap().runtime.jobs;
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "test:docker-ps",
+                "require": ["gpu"]
+            }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1, "one item should be queued");
+        assert_eq!(
+            items[0].require,
+            vec!["gpu".to_string()],
+            "an explicit request require must override the job config"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_for_unknown_job_keeps_empty_require() {
+        // No DSL job to inherit from (API-registered job, store-less dev
+        // server, unknown key): the caller's fields stand as before — the
+        // fallback must not invent capabilities.
+        let (state, _rx) = make_state_with_dsl_jobs(vec![]);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "test:not-in-dsl" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1, "one item should be queued");
+        assert!(
+            items[0].require.is_empty(),
+            "no job config means no inherited require; got: {:?}",
+            items[0].require
+        );
+        assert!(
+            items[0].metadata.get("__require").is_none(),
+            "nothing to stamp; got: {:?}",
             items[0].metadata
         );
     }
