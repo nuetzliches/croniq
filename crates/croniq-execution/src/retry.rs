@@ -182,9 +182,73 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     parse_duration_checked(s).ok()
 }
 
+/// Validate a caller-supplied optional duration on a write path.
+///
+/// Applies the two rules every ingress needs, in the one place both the server
+/// and the MCP surface can reach, so they cannot drift apart:
+///
+/// 1. A blank value counts as *absent* (issue #553) - empty is not a duration,
+///    and a client that sends an empty string for an omitted field plainly
+///    means "inherit" rather than "reject my request".
+/// 2. Anything else must parse. A non-blank but malformed value ("5min",
+///    "10 minutes") is a caller bug, and silently substituting a default for
+///    it is actively misleading (issue #559): because a *missing* timeout
+///    means "inherit the job's", a typo on a `timeout 2h` job used to yield
+///    2h rather than the 5m the author thought they were asking for - a 24x
+///    difference, reported by nothing.
+///
+/// Returns the trimmed value so callers persist the normalised form. The error
+/// is [`parse_duration_checked`]'s, which already names the offending input
+/// and the accepted grammar, so no ingress has to invent wording of its own.
+pub fn validate_optional_duration(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(trimmed) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    parse_duration_checked(trimmed)?;
+    Ok(Some(trimmed.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- write-path validation (issue #559) ---
+
+    #[test]
+    fn validate_optional_duration_treats_blank_as_absent() {
+        // Issue #553: an omitted field and an empty string are the same wire
+        // state for many clients, so blank must inherit rather than 400.
+        assert_eq!(validate_optional_duration(None), Ok(None));
+        assert_eq!(validate_optional_duration(Some("")), Ok(None));
+        assert_eq!(validate_optional_duration(Some("   ")), Ok(None));
+    }
+
+    #[test]
+    fn validate_optional_duration_rejects_malformed_values() {
+        // The values from issue #559. Each used to be accepted and then
+        // silently replaced by a default at whichever consumer read it.
+        for bad in ["5min", "abc", "10 minutes", "2 h", "-5m"] {
+            let err = validate_optional_duration(Some(bad))
+                .expect_err("malformed value must be rejected, not substituted");
+            assert!(
+                err.contains(bad),
+                "error for {bad:?} should name the offending value, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_optional_duration_returns_the_trimmed_value() {
+        // Callers persist what comes back, so the stored form is normalised.
+        assert_eq!(
+            validate_optional_duration(Some("  2h  ")),
+            Ok(Some("2h".to_string()))
+        );
+        assert_eq!(
+            validate_optional_duration(Some("45")),
+            Ok(Some("45".to_string()))
+        );
+    }
 
     #[test]
     fn exponential_backoff_delays() {
