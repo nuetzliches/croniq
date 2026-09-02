@@ -278,9 +278,10 @@ fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String,
 
 // ── Job options (the job block beyond the schedule line) ───────────
 
-/// Retry strategy from the form. `strategy` is `exponential` (uses
-/// base/cap/jitter) or `fixed` (uses delay); `max_attempts` applies to
-/// both. Empty/None fields are simply omitted from the emitted block.
+/// Retry strategy from the form. `strategy` is `exponential` (base/cap/
+/// jitter), `linear` (base/step/cap) or `fixed` (delay); `max_attempts`
+/// applies to all three. Empty/None fields are simply omitted from the
+/// emitted block.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RetryPayload {
     #[serde(default)]
@@ -295,6 +296,11 @@ pub struct RetryPayload {
     pub jitter: Option<f64>,
     #[serde(default)]
     pub delay: Option<String>,
+    /// Per-attempt increment for the `linear` strategy — the one field that
+    /// only that strategy reads. `croniq-execution` has implemented linear
+    /// backoff all along; it was simply unreachable from a form.
+    #[serde(default)]
+    pub step: Option<String>,
 }
 
 /// Dead-letter config from the form. All fields optional — omitted ones
@@ -629,6 +635,14 @@ fn retry_loose_line(r: Option<&RetryPayload>) -> Option<String> {
     } else {
         if let Some(b) = opt_str(&r.base) {
             inner.push(format!("base {b}"));
+        }
+        // `step` is linear-only: on an exponential schedule it is inert, and
+        // emitting an inert key invites the reader to believe it does
+        // something.
+        if strat == "linear"
+            && let Some(st) = opt_str(&r.step)
+        {
+            inner.push(format!("step {st}"));
         }
         if let Some(c) = opt_str(&r.cap) {
             inner.push(format!("cap {c}"));
@@ -1099,17 +1113,37 @@ const TOP_LEVEL_BLOCKS: &[&str] = &[
     "observability",
     "defaults",
     "alerts",
+    // `auth { password { … } totp { … } }` — sub-blocks only, same shape as
+    // `observability`.
+    "auth",
+    // `concurrency_group <name> { max_concurrent N }` (issue #546). The only
+    // block here that is *named*, which is what `qualifier` on
+    // `formatTopLevelBlock` exists for.
+    "concurrency_group",
 ];
 
 /// Render a top-level block (`server { … }`, `observability { … }`, …)
 /// from a directive tree. Empty directives/args/sub-blocks are skipped;
 /// unknown block names and parse failures are surfaced as thrown values.
+///
+/// `qualifier` names the block for the kinds that take a name —
+/// `concurrency_group crm-api { … }`. Pass `null`/`undefined` for every other
+/// block; a name on a block that does not take one would not parse, so it is
+/// rejected rather than quietly dropped.
 #[wasm_bindgen(js_name = formatTopLevelBlock)]
-pub fn format_top_level_block(name: &str, directives: JsValue) -> Result<String, JsValue> {
+pub fn format_top_level_block(
+    name: &str,
+    directives: JsValue,
+    qualifier: Option<String>,
+) -> Result<String, JsValue> {
     let dirs: Vec<DirectivePayload> = serde_wasm_bindgen::from_value(directives)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    format_top_level_block_inner(name, &dirs).map_err(|e| JsValue::from_str(&e))
+    format_top_level_block_inner(name, qualifier.as_deref(), &dirs)
+        .map_err(|e| JsValue::from_str(&e))
 }
+
+/// Top-level blocks that take a name (`concurrency_group crm-api { … }`).
+const NAMED_TOP_LEVEL_BLOCKS: &[&str] = &["concurrency_group"];
 
 /// Render one directive (leaf or nested sub-block) at the given indent.
 /// Returns `None` when the directive is effectively empty (blank field /
@@ -1164,16 +1198,40 @@ fn emit_directive(d: &DirectivePayload, indent: usize) -> Option<String> {
     Some(format!("{pad}{key} {}", args.join(" ")))
 }
 
-fn format_top_level_block_inner(name: &str, dirs: &[DirectivePayload]) -> Result<String, String> {
+fn format_top_level_block_inner(
+    name: &str,
+    qualifier: Option<&str>,
+    dirs: &[DirectivePayload],
+) -> Result<String, String> {
     let name = name.trim();
     if !TOP_LEVEL_BLOCKS.contains(&name) {
         return Err(format!("unsupported top-level block: '{name}'"));
     }
+    let qualifier = qualifier.map(str::trim).filter(|q| !q.is_empty());
+    let named = NAMED_TOP_LEVEL_BLOCKS.contains(&name);
+    match (named, qualifier) {
+        // A named block without its name would parse as something else
+        // entirely, so say what is missing instead of emitting it.
+        (true, None) => {
+            return Err(format!(
+                "`{name}` needs a name, e.g. `{name} crm-api {{ … }}`"
+            ));
+        }
+        (false, Some(q)) => {
+            return Err(format!("`{name}` does not take a name, got '{q}'"));
+        }
+        _ => {}
+    }
+
     let lines: Vec<String> = dirs.iter().filter_map(|d| emit_directive(d, 1)).collect();
     if lines.is_empty() {
         return Err("no settings — fill at least one field".into());
     }
-    let src = format!("{name} {{\n{}\n}}\n", lines.join("\n"));
+    let head = match qualifier {
+        Some(q) => format!("{name} {}", quote_if_needed(q)),
+        None => name.to_string(),
+    };
+    let src = format!("{head} {{\n{}\n}}\n", lines.join("\n"));
     let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
     Ok(croniq_config::format::format(&ast))
 }
@@ -1456,6 +1514,7 @@ mod tests {
                 cap: Some("2m".into()),
                 jitter: Some(0.3),
                 delay: None,
+                step: None,
             }),
             ..Default::default()
         };
@@ -1803,6 +1862,35 @@ mod tests {
         rest[..end].to_string()
     }
 
+    /// Keys a JS local carries in `site/generator.js`: both the properties
+    /// assigned onto it (`opts.foo = …`) and the ones its declaration seeds it
+    /// with (`const r = { strategy: … }`).
+    ///
+    /// Both forms count, because to the payload struct on the other side of
+    /// the boundary they are the same thing — and a guard that saw only one of
+    /// them would report a field as unreachable while the form fills it.
+    fn js_payload_keys(js: &str, local: &str) -> std::collections::BTreeSet<String> {
+        let mut keys = js_assigned_keys(js, local);
+        // Single-line declarations, which is how all four locals are written.
+        let decl = format!("const {local} = {{");
+        for line in js.lines() {
+            let Some(idx) = line.find(&decl) else {
+                continue;
+            };
+            let body = &line[idx + decl.len()..];
+            let body = body.split('}').next().unwrap_or("");
+            for part in body.split(',') {
+                if let Some((key, _)) = part.split_once(':') {
+                    let key = key.trim();
+                    if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        keys.insert(key.to_string());
+                    }
+                }
+            }
+        }
+        keys
+    }
+
     /// Keys assigned onto a JS local in `site/generator.js`, e.g. every
     /// `opts.foo = …` for `local = "opts"`.
     fn js_assigned_keys(js: &str, local: &str) -> std::collections::BTreeSet<String> {
@@ -1858,7 +1946,7 @@ mod tests {
         ];
 
         for (local, valid) in cases {
-            let assigned = js_assigned_keys(js, local);
+            let assigned = js_payload_keys(js, local);
             assert!(
                 !assigned.is_empty(),
                 "found no `{local}.<key> =` assignments in site/generator.js — the guard has \
@@ -1877,17 +1965,28 @@ mod tests {
     fn generator_js_sets_every_job_option_the_bridge_offers() {
         // The other direction: a directive this bridge can emit but the form
         // never sets is unreachable for anyone using the generator — which is
-        // how per-job `dead_letter` sat unusable while fully implemented here.
+        // how per-job `dead_letter` sat unusable while fully implemented here,
+        // and how `RetryPayload::step` (linear backoff) sat unusable one level
+        // down.
         let js = build_job_options_body(include_str!("../../../site/generator.js"));
-        let offered = payload_keys::<JobOptions>();
-        let set = js_assigned_keys(&js, "opts");
 
-        let unreachable: Vec<&String> = offered.iter().filter(|k| !set.contains(*k)).collect();
-        assert!(
-            unreachable.is_empty(),
-            "the bridge accepts {unreachable:?} but site/generator.js never sets them, so the \
-             generator cannot produce those directives"
-        );
+        // (JS local, the payload it fills). Same locals as the forward guard.
+        let cases: Vec<(&str, std::collections::BTreeSet<String>)> = vec![
+            ("opts", payload_keys::<JobOptions>()),
+            ("r", payload_keys::<RetryPayload>()),
+            ("dl", payload_keys::<DeadLetterPayload>()),
+            ("re", payload_keys::<RunnerExecPayload>()),
+        ];
+
+        for (local, offered) in cases {
+            let set = js_payload_keys(&js, local);
+            let unreachable: Vec<&String> = offered.iter().filter(|k| !set.contains(*k)).collect();
+            assert!(
+                unreachable.is_empty(),
+                "the bridge accepts {unreachable:?} on `{local}` but site/generator.js never \
+                 sets them, so the generator cannot produce those directives"
+            );
+        }
     }
 
     #[test]
@@ -1956,7 +2055,7 @@ mod tests {
                 ],
             ),
         ];
-        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        let out = format_top_level_block_inner("alerts", None, &dirs).unwrap();
         assert!(out.contains("channel \"oncall\" {"), "{out}");
         assert!(out.contains("rule \"prod-failures\" {"), "{out}");
         assert!(out.contains("when job_failed"), "{out}");
@@ -1982,7 +2081,7 @@ mod tests {
                 vec![dir("email", &["a@example.com", "b@example.com"])],
             ),
         ];
-        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        let out = format_top_level_block_inner("alerts", None, &dirs).unwrap();
         assert!(out.contains("channel \"hook\" {"), "{out}");
         assert!(out.contains("webhook https://hooks.example.com/x"), "{out}");
         assert!(out.contains("channel \"team\" {"), "{out}");
@@ -1997,7 +2096,7 @@ mod tests {
             dir("data_dir", &["/var/lib/croniq"]),
             dir("db", &["sqlite"]),
         ];
-        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        let out = format_top_level_block_inner("server", None, &dirs).unwrap();
         assert_eq!(
             out,
             "server {\n  listen :4000\n  data_dir /var/lib/croniq\n  db sqlite\n}\n"
@@ -2014,7 +2113,7 @@ mod tests {
             dir("security", &["starttls"]),
             dir("from", &["Croniq <noreply@example.com>"]),
         ];
-        let out = format_top_level_block_inner("smtp", &dirs).unwrap();
+        let out = format_top_level_block_inner("smtp", None, &dirs).unwrap();
         assert!(
             out.contains("from \"Croniq <noreply@example.com>\""),
             "{out}"
@@ -2028,7 +2127,7 @@ mod tests {
             dir("enabled", &["true"]),
             dir("allowed_hosts", &["localhost:8443", "[::1]:8443"]),
         ];
-        let out = format_top_level_block_inner("mcp", &dirs).unwrap();
+        let out = format_top_level_block_inner("mcp", None, &dirs).unwrap();
         // `[::1]:8443` contains `[` `]` → quoted; the plain host stays bare.
         assert!(
             out.contains("allowed_hosts localhost:8443 \"[::1]:8443\""),
@@ -2043,7 +2142,7 @@ mod tests {
             dir("default_tz", &["Europe/Vienna"]),
             dir("region", &["eu"]),
         ];
-        let out = format_top_level_block_inner("vars", &dirs).unwrap();
+        let out = format_top_level_block_inner("vars", None, &dirs).unwrap();
         assert!(out.contains("default_tz Europe/Vienna"), "{out}");
         assert!(out.contains("region eu"), "{out}");
         Parser::parse(&out).unwrap();
@@ -2057,15 +2156,133 @@ mod tests {
             dir("", &["ignored"]),
             dir("db", &[""]),
         ];
-        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        let out = format_top_level_block_inner("server", None, &dirs).unwrap();
         assert_eq!(out, "server {\n  listen :4000\n}\n");
         // Nothing set at all → error (the UI shows a hint instead).
-        assert!(format_top_level_block_inner("server", &[]).is_err());
+        assert!(format_top_level_block_inner("server", None, &[]).is_err());
+    }
+
+    // ── auth / concurrency_group top-level blocks ────────────────────────────
+
+    #[test]
+    fn top_level_auth_sub_blocks() {
+        let dirs = vec![
+            block("password", None, vec![dir("enabled", &["false"])]),
+            block("totp", None, vec![dir("required", &["true"])]),
+        ];
+        let out = format_top_level_block_inner("auth", None, &dirs).unwrap();
+        assert!(out.contains("password { enabled false }"), "{out}");
+        assert!(out.contains("totp { required true }"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_concurrency_group_is_named() {
+        let dirs = vec![dir("max_concurrent", &["1"])];
+        let out =
+            format_top_level_block_inner("concurrency_group", Some("crm-api"), &dirs).unwrap();
+        assert!(out.contains("concurrency_group crm-api {"), "{out}");
+        assert!(out.contains("max_concurrent 1"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_concurrency_group_without_a_name_errors() {
+        // Emitting `concurrency_group { … }` would parse as something else
+        // entirely, so the missing name is named rather than dropped.
+        let dirs = vec![dir("max_concurrent", &["1"])];
+        let err = format_top_level_block_inner("concurrency_group", None, &dirs).unwrap_err();
+        assert!(err.contains("needs a name"), "{err}");
+    }
+
+    #[test]
+    fn top_level_unnamed_block_rejects_a_name() {
+        let dirs = vec![dir("listen", &[":4000"])];
+        let err = format_top_level_block_inner("server", Some("oops"), &dirs).unwrap_err();
+        assert!(err.contains("does not take a name"), "{err}");
+    }
+
+    #[test]
+    fn top_level_concurrency_group_name_is_quoted_when_it_has_to_be() {
+        let dirs = vec![dir("max_concurrent", &["2"])];
+        let out =
+            format_top_level_block_inner("concurrency_group", Some("crm api"), &dirs).unwrap();
+        assert!(out.contains("concurrency_group \"crm api\""), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    // ── retry: the linear strategy and its `step` ───────────────────────────
+
+    #[test]
+    fn job_block_retry_linear_emits_step() {
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "linear".into(),
+                max_attempts: Some(4),
+                base: Some("10s".into()),
+                step: Some("10s".into()),
+                cap: Some("2m".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(out.contains("retry linear {"), "{out}");
+        assert!(out.contains("step 10s"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_retry_step_is_dropped_on_a_non_linear_strategy() {
+        // `step` is only read by linear backoff. Emitting it on an exponential
+        // schedule would be an inert key that reads as if it did something.
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "exponential".into(),
+                base: Some("2s".into()),
+                step: Some("10s".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(!out.contains("step"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn defaults_retry_linear_round_trips_through_compile() {
+        // The whole point of reaching `step`: it has to survive into the
+        // compiled retry config, not just parse.
+        let dirs = vec![block(
+            "retry",
+            Some("linear"),
+            vec![
+                dir("max_attempts", &["4"]),
+                dir("base", &["10s"]),
+                dir("step", &["10s"]),
+                dir("cap", &["2m"]),
+            ],
+        )];
+        let out = format_top_level_block_inner("defaults", None, &dirs).unwrap();
+        // `defaults { }` is folded into each job at compile time, so the
+        // assertion has to go through a job to see it at all.
+        let src = format!(
+            "{out}
+job ops:check {{ every 5 minutes }}
+"
+        );
+        let ast = Parser::parse(&src).unwrap();
+        let cfg = croniq_config::compile::compile(&ast);
+        let retry = &cfg.jobs[0].retry;
+        assert_eq!(retry.strategy, "linear", "{src}");
+        assert_eq!(retry.step.as_deref(), Some("10s"), "{src}");
+        assert_eq!(retry.max_attempts, 4, "{src}");
     }
 
     #[test]
     fn top_level_rejects_unknown_block() {
-        assert!(format_top_level_block_inner("not_a_block", &[dir("x", &["y"])]).is_err());
+        assert!(format_top_level_block_inner("not_a_block", None, &[dir("x", &["y"])]).is_err());
     }
 
     // ── Nested config blocks (Phase 3b) ────────────────────────────
@@ -2088,7 +2305,7 @@ mod tests {
                 vec![dir("listen", &[":9900"]), dir("path", &["/metrics"])],
             ),
         ];
-        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        let out = format_top_level_block_inner("observability", None, &dirs).unwrap();
         assert!(
             out.contains("log { level info; format json; output stderr }"),
             "{out}"
@@ -2107,7 +2324,7 @@ mod tests {
             block("log", None, vec![dir("level", &["info"])]),
             block("metrics", None, vec![dir("listen", &[""])]),
         ];
-        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        let out = format_top_level_block_inner("observability", None, &dirs).unwrap();
         assert!(out.contains("log {"), "{out}");
         assert!(
             !out.contains("metrics"),
@@ -2128,7 +2345,7 @@ mod tests {
             ),
             block("dead_letter", None, vec![dir("retention", &["30d"])]),
         ];
-        let out = format_top_level_block_inner("defaults", &dirs).unwrap();
+        let out = format_top_level_block_inner("defaults", None, &dirs).unwrap();
         assert!(out.contains("timezone Europe/Vienna"), "{out}");
         assert!(
             out.contains("retry exponential { max_attempts 3; base 2s }"),
@@ -2145,7 +2362,7 @@ mod tests {
             dir("client_id", &["croniq"]),
             dir("default_role", &["viewer"]),
         ];
-        let out = format_top_level_block_inner("oidc", &dirs).unwrap();
+        let out = format_top_level_block_inner("oidc", None, &dirs).unwrap();
         assert!(out.contains("issuer https://id.example.com"), "{out}");
         assert!(out.contains("client_id croniq"), "{out}");
         Parser::parse(&out).unwrap();
@@ -2166,7 +2383,7 @@ mod tests {
         );
         // A pull_api directive with a placeholder arg round-trips as a placeholder.
         let dirs = vec![dir("listen", &["{env.CRONIQ_PULL_LISTEN}"])];
-        let out = format_top_level_block_inner("pull_api", &dirs).unwrap();
+        let out = format_top_level_block_inner("pull_api", None, &dirs).unwrap();
         assert!(out.contains("listen {env.CRONIQ_PULL_LISTEN}"), "{out}");
         assert!(
             !out.contains("\"{env"),

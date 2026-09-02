@@ -8,6 +8,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The DSL generator's config tab covers every top-level block and directive
+  the DSL has.** Same drift as the job form (#555 follow-up), one level up: the
+  config tab is a hand-maintained mirror of `croniq-config`'s
+  known-directive tables and nothing connected the two. Now offered:
+
+  - `server { execution_retention }`, `pull_api { runner_identity_binding }`,
+    `policy { strict_calendars }`
+  - `defaults { dead_letter { enabled } }` — the on/off switch, next to the
+    retention knobs that were already there
+  - **`auth { password { enabled } / totp { required } }`** — the block was
+    absent from the picker entirely
+  - **`concurrency_group <name> { max_concurrent N }`**
+    ([#546](https://github.com/nuetzliches/croniq/issues/546)) — the first
+    *named* top-level block the generator can emit. `formatTopLevelBlock` grew
+    an optional block name for it, and refuses a named block without its name
+    (which would parse as something else) as well as a name on a block that
+    takes none.
+  - **the `linear` retry strategy and its `step`**, in both the config tab and
+    the job form. `croniq-execution` has implemented linear backoff
+    (base/step/cap) all along, but no form offered the strategy, so `step` was
+    unreachable — and the wasm bridge's `RetryPayload` had no `step` field at
+    all. `step` is emitted only for `linear`, where it is the one strategy that
+    reads it; on an exponential schedule it would be an inert key that reads as
+    if it did something.
+
 - **The DSL generator can produce every job directive the bridge supports
   ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
   public Croniqfile generator's job form had fallen behind the DSL. It now
@@ -163,6 +188,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serialise identically, so no wire behaviour changes for existing payloads.
 
 ### Fixed
+
+- **The DSL generator's config tab can no longer drift from the directive
+  tables.** Two `cargo test` guards now read the shipped `site/generator.js`
+  and `site/generator.html` and check, in both directions, that every block in
+  `CONFIG_SCHEMA` matches the `croniq-config` table it mirrors — a key the form
+  offers that no table has (the generator would emit config the server rejects
+  as an unknown directive), and a table key the form never offers (a knob
+  nobody can reach). A third asserts the block picker offers exactly the
+  configured blocks, since a `CONFIG_SCHEMA` entry with no `<option>` is
+  unreachable however complete its field list is.
+
+  They live next to the tables they compare against, the way the job-form
+  guards live next to the payload structs, and both directions were verified to
+  fire on injected drift. Together the two crates' guards close the loop on all
+  five gaps that had accumulated in the generator.
+
+  The job-form guards also grew to cover the *nested* payloads (`retry`,
+  `dead_letter`, `runner exec`), not just the top-level job options — which is
+  what surfaced the missing `step` above — and now read a local's object-literal
+  initialiser as well as its property assignments, since to the struct on the
+  other side of the boundary those are the same thing.
 
 - **A job option the DSL generator misspells is no longer silently dropped
   ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
