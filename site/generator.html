@@ -564,6 +564,7 @@
                     <label for="sch-opt-retry-strategy">Strategy</label>
                     <select id="sch-opt-retry-strategy">
                       <option value="exponential">exponential</option>
+                      <option value="linear">linear</option>
                       <option value="fixed">fixed</option>
                     </select>
                   </div>
@@ -574,6 +575,7 @@
                 </div>
                 <div class="field-row" id="sch-opt-retry-exp">
                   <div class="field"><label for="sch-opt-retry-base">Base</label><input id="sch-opt-retry-base" type="text" value="5s" spellcheck="false"></div>
+                  <div class="field" id="sch-opt-retry-step-field" hidden><label for="sch-opt-retry-step">Step</label><input id="sch-opt-retry-step" type="text" value="10s" spellcheck="false"></div>
                   <div class="field"><label for="sch-opt-retry-cap">Cap</label><input id="sch-opt-retry-cap" type="text" value="2m" spellcheck="false"></div>
                   <div class="field"><label for="sch-opt-retry-jitter">Jitter</label><input id="sch-opt-retry-jitter" type="number" step="0.05" min="0" max="1" value="0.3"></div>
                 </div>
@@ -808,10 +810,12 @@
                 <option value="smtp">smtp — outbound email</option>
                 <option value="pull_api">pull_api — runner pull endpoint</option>
                 <option value="mcp">mcp — Model Context Protocol server</option>
-                <option value="policy">policy — DSL adoption policy</option>
+                <option value="policy">policy — DSL adoption &amp; calendar policy</option>
                 <option value="oidc">oidc — single sign-on</option>
+                <option value="auth">auth — password login &amp; enforced 2FA</option>
                 <option value="observability">observability — logging &amp; metrics</option>
                 <option value="defaults">defaults — job-wide defaults</option>
+                <option value="concurrency_group">concurrency_group — budget shared by a set of jobs</option>
                 <option value="alerts">alerts — channels &amp; rules</option>
                 <option value="vars">vars — reusable variables</option>
               </select>
@@ -848,6 +852,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-09-02a"></script>
+  <script type="module" src="./generator.js?v=2026-09-02b"></script>
 </body>
 </html>

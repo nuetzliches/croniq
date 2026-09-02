@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-09-02a'
+const WASM_VERSION = '2026-09-02b'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-09-02a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-09-02b'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ const schState = {
   opts: {
     description: '',
     timeout: '',
-    retry: { enabled: false, strategy: 'exponential', max: 3, base: '5s', cap: '2m', jitter: 0.3, delay: '10s' },
+    retry: { enabled: false, strategy: 'exponential', max: 3, base: '5s', step: '10s', cap: '2m', jitter: 0.3, delay: '10s' },
     // Per-job `dead_letter { … }`. `enabled` is tri-state: 'inherit' omits
     // the key entirely, which differs from an explicit `enabled true`.
     deadLetter: { enabled: 'inherit', retention: '', replayMaxAge: '', operatorHint: '' },
@@ -207,6 +207,7 @@ bindText('sch-opt-runner-require', () => O.runnerRequire, (v) => { O.runnerRequi
 bindText('sch-opt-runner-prefer', () => O.runnerPrefer, (v) => { O.runnerPrefer = v })
 bindText('sch-opt-tags', () => O.tags, (v) => { O.tags = v })
 bindText('sch-opt-retry-base', () => O.retry.base, (v) => { O.retry.base = v })
+bindText('sch-opt-retry-step', () => O.retry.step, (v) => { O.retry.step = v })
 bindText('sch-opt-retry-cap', () => O.retry.cap, (v) => { O.retry.cap = v })
 bindText('sch-opt-retry-delay', () => O.retry.delay, (v) => { O.retry.delay = v })
 bindNumber('sch-opt-retry-max', () => O.retry.max, (v) => { O.retry.max = v })
@@ -235,10 +236,13 @@ retryEnabledEl.addEventListener('change', () => {
 const retryStrategyEl = document.getElementById('sch-opt-retry-strategy')
 const retryExpEl = document.getElementById('sch-opt-retry-exp')
 const retryFixedEl = document.getElementById('sch-opt-retry-fixed')
+const retryStepFieldEl = document.getElementById('sch-opt-retry-step-field')
 function syncRetryStrategy() {
   const fixed = O.retry.strategy === 'fixed'
   retryExpEl.hidden = fixed
   retryFixedEl.hidden = !fixed
+  // `step` is read by linear backoff alone.
+  retryStepFieldEl.hidden = O.retry.strategy !== 'linear'
 }
 retryStrategyEl.value = O.retry.strategy
 retryStrategyEl.addEventListener('change', () => {
@@ -342,6 +346,9 @@ function buildJobOptions() {
       if (O.retry.delay.trim()) r.delay = O.retry.delay.trim()
     } else {
       if (O.retry.base.trim()) r.base = O.retry.base.trim()
+      // The bridge drops `step` on a non-linear strategy anyway; not sending
+      // it keeps the payload honest about what was asked for.
+      if (O.retry.strategy === 'linear' && O.retry.step.trim()) r.step = O.retry.step.trim()
       if (O.retry.cap.trim()) r.cap = O.retry.cap.trim()
       if (typeof O.retry.jitter === 'number') r.jitter = O.retry.jitter
     }
@@ -1090,6 +1097,7 @@ const CONFIG_SCHEMA = {
     { key: 'data_dir', label: 'Data directory', placeholder: '/var/lib/croniq' },
     { key: 'db', label: 'Database', placeholder: 'sqlite' },
     { key: 'app_url', label: 'App URL', placeholder: 'https://cron.example.com' },
+    { key: 'execution_retention', label: 'Execution retention', placeholder: '30d — omit to keep forever' },
   ],
   smtp: [
     { key: 'host', label: 'Host', placeholder: 'smtp.example.com' },
@@ -1101,6 +1109,7 @@ const CONFIG_SCHEMA = {
     { key: 'listen', label: 'Listen address', placeholder: ':4000' },
     { key: 'lease_ttl', label: 'Lease TTL', placeholder: '60s' },
     { key: 'trigger_dedup_window', label: 'Trigger dedup window', placeholder: '10m' },
+    { key: 'runner_identity_binding', label: 'Runner identity binding', type: 'select', options: ['', 'strict', 'off'] },
   ],
   mcp: [
     { key: 'enabled', label: 'Enabled', type: 'select', options: ['', 'true', 'false'] },
@@ -1108,6 +1117,7 @@ const CONFIG_SCHEMA = {
   ],
   policy: [
     { key: 'dsl_adopt_on_mutate', label: 'Adopt DSL on mutate', type: 'select', options: ['', 'true', 'false'] },
+    { key: 'strict_calendars', label: 'Strict calendars', type: 'select', options: ['', 'true', 'false'] },
   ],
   oidc: [
     { key: 'issuer', label: 'Issuer', placeholder: 'https://id.example.com' },
@@ -1116,6 +1126,14 @@ const CONFIG_SCHEMA = {
     { key: 'default_role', label: 'Default role', placeholder: 'viewer' },
     { key: 'provider_name', label: 'Provider name' },
     { key: 'post_login_redirect', label: 'Post-login redirect' },
+  ],
+  auth: [
+    { sub: 'password', label: 'Password login', fields: [
+      { key: 'enabled', label: 'Enabled', type: 'select', options: ['', 'true', 'false'] },
+    ] },
+    { sub: 'totp', label: 'TOTP (2FA)', fields: [
+      { key: 'required', label: 'Required', type: 'select', options: ['', 'true', 'false'] },
+    ] },
   ],
   observability: [
     { sub: 'log', label: 'Logging', fields: [
@@ -1136,19 +1154,32 @@ const CONFIG_SCHEMA = {
     { key: 'queue_ttl', label: 'Queue TTL', placeholder: '1h · none' },
     { key: 'max_queue_depth', label: 'Max queue depth', type: 'number', placeholder: '10' },
     { key: 'keep_last', label: 'Keep last N runs', type: 'number', placeholder: '500' },
-    { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'fixed'] }, fields: [
+    // `linear` is a real strategy in croniq-execution (base/step/cap); it and
+    // its `step` were simply never offered by a form.
+    { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'linear', 'fixed'] }, fields: [
       { key: 'max_attempts', label: 'Max attempts', type: 'number' },
       { key: 'base', label: 'Base', placeholder: '2s' },
+      { key: 'step', label: 'Step (linear only)', placeholder: '10s' },
       { key: 'cap', label: 'Cap', placeholder: '30s' },
       { key: 'jitter', label: 'Jitter', type: 'number' },
-      { key: 'delay', label: 'Delay', placeholder: '10s' },
+      { key: 'delay', label: 'Delay (fixed only)', placeholder: '10s' },
     ] },
     { sub: 'dead_letter', label: 'Dead letter', fields: [
+      { key: 'enabled', label: 'Enabled', type: 'select', options: ['', 'true', 'false'] },
       { key: 'retention', label: 'Retention', placeholder: '30d' },
       { key: 'replay_max_age', label: 'Replay max age', placeholder: '7d' },
       { key: 'operator_hint', label: 'Operator hint' },
     ] },
   ],
+  // The only named block: `concurrency_group <name> { max_concurrent N }`
+  // (#546). `blockName` tells the renderer to draw a name input and
+  // `refreshConfig` to pass it through as the block's qualifier.
+  concurrency_group: {
+    blockName: { label: 'Group name', placeholder: 'e.g. crm-api' },
+    fields: [
+      { key: 'max_concurrent', label: 'Max concurrent', type: 'number', placeholder: '1' },
+    ],
+  },
   alerts: 'alerts',
   vars: 'freeform',
 }
@@ -1156,6 +1187,9 @@ const CONFIG_SCHEMA = {
 const cfgState = {
   block: 'server',
   values: {},
+  // Block-level names, per block, for the named blocks (`concurrency_group
+  // <name> { … }`). Keyed by block so switching away and back keeps it.
+  names: {},
   varsText: 'default_tz Europe/Vienna',
   alerts: {
     channels: [{ name: 'oncall', kind: 'shell', shell: '/usr/bin/page-oncall.sh', webhook: '', timeout: '', email: '' }],
@@ -1171,6 +1205,23 @@ const cfgErrEl = document.getElementById('cfg-error')
 function cfgVals() {
   if (!cfgState.values[cfgState.block]) cfgState.values[cfgState.block] = {}
   return cfgState.values[cfgState.block]
+}
+
+// A named block declares `{ blockName, fields }`; every other block is a plain
+// field array. Normalising here keeps the render and emit paths from each
+// having to know which shape they got.
+function cfgSchemaParts(schema) {
+  if (Array.isArray(schema)) return { blockName: null, fields: schema }
+  return { blockName: schema.blockName, fields: schema.fields }
+}
+
+// The name for the current block, or null when it does not take one. An empty
+// name is null too — the bridge rejects a named block without its name, and
+// the resulting message is the prompt the user needs.
+function cfgBlockName(schema) {
+  const { blockName } = cfgSchemaParts(schema)
+  if (!blockName) return null
+  return (cfgState.names[cfgState.block] || '').trim() || null
 }
 
 function renderConfigFields() {
@@ -1198,7 +1249,29 @@ function renderConfigFields() {
     return
   }
   const vals = cfgVals()
-  schema.forEach((entry) => {
+  const { blockName, fields } = cfgSchemaParts(schema)
+  if (blockName) {
+    const field = document.createElement('div')
+    field.className = 'field'
+    const id = `cfg-${cfgState.block}-__name`
+    const label = document.createElement('label')
+    label.setAttribute('for', id)
+    label.textContent = blockName.label
+    const input = document.createElement('input')
+    input.id = id
+    input.type = 'text'
+    input.spellcheck = false
+    if (blockName.placeholder) input.placeholder = blockName.placeholder
+    input.value = cfgState.names[cfgState.block] || ''
+    input.addEventListener('input', () => {
+      cfgState.names[cfgState.block] = input.value
+      refreshConfig()
+    })
+    field.appendChild(label)
+    field.appendChild(input)
+    cfgFieldsEl.appendChild(field)
+  }
+  fields.forEach((entry) => {
     if (entry.sub) {
       // Sub-block: a small heading, an optional qualifier select, then
       // its leaf fields keyed as `<sub>.<field>`.
@@ -1368,14 +1441,14 @@ function buildConfigDirectives() {
       .filter((d) => d.key)
   }
   const vals = cfgVals()
-  const schema = CONFIG_SCHEMA[cfgState.block]
+  const { fields } = cfgSchemaParts(CONFIG_SCHEMA[cfgState.block])
   const dirs = []
   const leaf = (key, f) => {
     const v = (vals[key] ?? '').trim()
     if (!v) return null
     return { key: f.key, args: f.multi ? v.split(/\s+/) : [v] }
   }
-  schema.forEach((entry) => {
+  fields.forEach((entry) => {
     if (entry.sub) {
       const children = []
       entry.fields.forEach((f) => {
@@ -1407,7 +1480,11 @@ async function refreshConfig() {
   }
   cfgErrEl.style.color = ''
   try {
-    cfgDslEl.textContent = wasm.formatTopLevelBlock(cfgState.block, dirs)
+    cfgDslEl.textContent = wasm.formatTopLevelBlock(
+      cfgState.block,
+      dirs,
+      cfgBlockName(CONFIG_SCHEMA[cfgState.block]),
+    )
   } catch (e) {
     cfgDslEl.textContent = ''
     cfgErrEl.hidden = false
