@@ -661,7 +661,14 @@ impl CroniqMcp {
             );
         }
 
+        // A blank value counts as absent (issue #553): empty is not a
+        // duration, so inheriting the job's beats handing the runner one it
+        // cannot parse.
         let timeout = caller_timeout
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
             .or_else(|| job.and_then(|j| j.timeout.clone()))
             .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.to_string());
 
@@ -2561,6 +2568,34 @@ mod tests {
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
                 timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(sole_queued_item(&server).await.timeout, "2h");
+    }
+
+    #[tokio::test]
+    async fn job_trigger_blank_timeout_is_treated_as_absent() {
+        // Issue #553, MCP side: a blank timeout inherits rather than
+        // overriding — empty is not a duration.
+        let server = make_server_with_jobs(
+            r#"
+            job billing:invoice {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: Some("  ".into()),
             }))
             .await
             .unwrap();

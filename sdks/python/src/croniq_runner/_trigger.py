@@ -149,9 +149,13 @@ class TriggerClient:
         :param metadata: Arbitrary JSON passed to the handler; merged over the
             job's DSL metadata. Keys starting with ``__`` are reserved.
         :param require: Capabilities a runner must have to be assigned this run.
+            Omitted -- or empty -- inherits the job's ``runner { require ... }``.
         :param prefer: Capabilities used to prefer runners when several match.
+            Omitted or empty inherits the job's ``runner { prefer ... }``.
         :param timeout: Execution timeout as a duration string (``"30s"``,
-            ``"5m"``); the server default applies when omitted.
+            ``"5m"``). Omitted or blank inherits the job's configured
+            ``timeout``; the server falls back to 5m only when the job declares
+            none either.
         :param idempotency_key: Optional dedup key. Servers with trigger
             idempotency coalesce repeat triggers carrying the same key onto the
             existing execution (see :attr:`TriggerResult.deduplicated`); older
@@ -167,11 +171,22 @@ class TriggerClient:
 
         request = TriggerRequest(
             job_key=job_key,
-            metadata=metadata,
-            require=require,
-            prefer=prefer,
-            timeout=timeout,
-            idempotency_key=idempotency_key,
+            # An explicitly EMPTY collection or BLANK string is normalized to
+            # None so it is omitted rather than sent (issue #553). The server
+            # already reads an empty ``require`` as "inherit the job's", so
+            # ``"require": []`` is only a second wire spelling of a message
+            # that has one -- and ``"timeout": ""`` is not a parseable duration
+            # at all, so honouring it as an override would hand the runner a
+            # broken value where omitting it inherits ``timeout 2h``.
+            metadata=metadata or None,
+            require=require or None,
+            prefer=prefer or None,
+            timeout=timeout.strip() if timeout and timeout.strip() else None,
+            idempotency_key=(
+                idempotency_key.strip()
+                if idempotency_key and idempotency_key.strip()
+                else None
+            ),
         )
         # exclude_none omits unset optionals so they never reach the wire as
         # `null`; mode="json" preserves nested metadata structure/types.

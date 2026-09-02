@@ -124,6 +124,13 @@ pub struct TriggerResult {
 /// Wire body for `POST /v1/trigger`. All optional fields skip serialization
 /// when unset so they are omitted from the JSON body rather than sent as
 /// `null`.
+///
+/// The builder also normalizes an *explicitly empty* value to `None` (issue
+/// #553), so a caller passing `vec![]` or `""` produces the same body as one
+/// who passed nothing. The server reads an empty `require` as "inherit the
+/// job's" exactly as it reads an absent one, so a second wire spelling would
+/// only invite a future reader to ascribe it a meaning it has never had — and
+/// `timeout: ""` is not a parseable duration at all.
 #[derive(Debug, Clone, Serialize)]
 struct TriggerRequest {
     job_key: String,
@@ -249,8 +256,11 @@ impl TriggerRequestBuilder<'_> {
     /// Metadata forwarded to the handler as a JSON object, merged over the
     /// job's DSL metadata. Values may be any JSON (strings, numbers, bools,
     /// nested objects/arrays). Keys starting with `__` are reserved.
+    ///
+    /// An empty map is treated as unset — see [the wire struct's
+    /// note](TriggerRequest) on why empty normalizes to absent.
     pub fn metadata(mut self, metadata: HashMap<String, serde_json::Value>) -> Self {
-        self.body.metadata = Some(metadata);
+        self.body.metadata = (!metadata.is_empty()).then_some(metadata);
         self
     }
 
@@ -258,17 +268,19 @@ impl TriggerRequestBuilder<'_> {
     ///
     /// Leave it unset to inherit the job's `runner { require … }` from the
     /// server-side configuration, so the trigger routes like a scheduled fire;
-    /// setting it overrides that for this execution.
+    /// setting it overrides that for this execution. An empty list is treated
+    /// as unset, so it inherits rather than clearing the job's requirement.
     pub fn require(mut self, require: Vec<String>) -> Self {
-        self.body.require = Some(require);
+        self.body.require = (!require.is_empty()).then_some(require);
         self
     }
 
     /// Capabilities used to *prefer* runners when several are eligible.
     ///
-    /// Unset inherits the job's `runner { prefer … }`; setting it overrides.
+    /// Unset — or empty — inherits the job's `runner { prefer … }`; a
+    /// non-empty value overrides.
     pub fn prefer(mut self, prefer: Vec<String>) -> Self {
-        self.body.prefer = Some(prefer);
+        self.body.prefer = (!prefer.is_empty()).then_some(prefer);
         self
     }
 
@@ -277,9 +289,12 @@ impl TriggerRequestBuilder<'_> {
     /// Leave it unset to inherit the job's configured `timeout`, so a manual
     /// fire is bounded like a scheduled one (issue #551); the server falls
     /// back to `5m` only when the job declares none either. Setting it — to
-    /// `"5m"` included — is an explicit override.
+    /// `"5m"` included — is an explicit override. A blank string is treated as
+    /// unset: it is not a duration, so inheriting beats sending the runner
+    /// something it cannot parse.
     pub fn timeout(mut self, timeout: impl Into<String>) -> Self {
-        self.body.timeout = Some(timeout.into());
+        let timeout = timeout.into();
+        self.body.timeout = (!timeout.trim().is_empty()).then_some(timeout);
         self
     }
 
@@ -287,8 +302,12 @@ impl TriggerRequestBuilder<'_> {
     /// trigger-idempotency support coalesce repeat triggers carrying the same
     /// key onto the existing execution (see
     /// [`TriggerResult::deduplicated`]); older servers ignore it.
+    ///
+    /// A blank key is treated as unset — the server already reads an empty
+    /// string as absent, so sending it only adds a byte.
     pub fn idempotency_key(mut self, key: impl Into<String>) -> Self {
-        self.body.idempotency_key = Some(key.into());
+        let key = key.into();
+        self.body.idempotency_key = (!key.trim().is_empty()).then_some(key);
         self
     }
 
@@ -350,6 +369,43 @@ mod tests {
         assert!(!obj.contains_key("prefer"));
         assert!(!obj.contains_key("timeout"));
         assert!(!obj.contains_key("idempotency_key"));
+    }
+
+    #[test]
+    fn omits_explicitly_empty_optionals() {
+        // Issue #553: empty normalizes to absent, so a caller passing `vec![]`
+        // or `""` produces the same body as one who passed nothing. Without
+        // this the server would see `require: []` (which it already reads as
+        // "inherit") and, worse, `timeout: ""` — not a parseable duration.
+        let client = TriggerClient::builder("http://example.test:4000").build();
+        let req = client
+            .trigger("etl:data-sync")
+            .metadata(HashMap::new())
+            .require(vec![])
+            .prefer(vec![])
+            .timeout("   ")
+            .idempotency_key("");
+        let body = serde_json::to_value(&req.body).unwrap();
+
+        assert_eq!(
+            body,
+            json!({ "job_key": "etl:data-sync" }),
+            "explicitly empty optionals must not reach the wire"
+        );
+    }
+
+    #[test]
+    fn keeps_non_empty_optionals() {
+        // The normalization must not swallow real values.
+        let client = TriggerClient::builder("http://example.test:4000").build();
+        let req = client
+            .trigger("etl:data-sync")
+            .require(vec!["gpu".into()])
+            .timeout("15m");
+        let body = serde_json::to_value(&req.body).unwrap();
+
+        assert_eq!(body["require"], json!(["gpu"]));
+        assert_eq!(body["timeout"], "15m");
     }
 
     #[test]

@@ -91,6 +91,49 @@ class CroniqTriggerClientTest {
     }
 
     @Test
+    void omitsExplicitlyEmptyOptionalFields() throws Exception {
+        // Issue #553: empty normalizes to absent. The server already reads an
+        // empty `require` as "inherit the job's", so sending `[]` is a second
+        // wire spelling of a message that has one -- and `timeout: ""` is not
+        // a parseable duration, so honouring it would hand the runner a broken
+        // value where omitting it inherits the job's own timeout.
+        server.respond(200, "{\"execution_id\":\"exec-1\",\"queued\":1}");
+        CroniqTriggerClient client = client("croniq_trigger_key", null);
+
+        client.trigger(TriggerRequest.builder("etl:data-sync")
+                .metadata(Map.of())
+                .require(List.of())
+                .prefer(List.of())
+                .timeout("   ")
+                .idempotencyKey("")
+                .build());
+
+        JsonNode body = JSON.readTree(server.last().body());
+        assertThat(body.get("job_key").asText()).isEqualTo("etl:data-sync");
+        assertThat(body.has("metadata")).isFalse();
+        assertThat(body.has("require")).isFalse();
+        assertThat(body.has("prefer")).isFalse();
+        assertThat(body.has("timeout")).isFalse();
+        assertThat(body.has("idempotency_key")).isFalse();
+    }
+
+    @Test
+    void keepsNonEmptyOptionalFields() throws Exception {
+        // The empty-normalization must not swallow real values.
+        server.respond(200, "{\"execution_id\":\"exec-1\",\"queued\":1}");
+        CroniqTriggerClient client = client("croniq_trigger_key", null);
+
+        client.trigger(TriggerRequest.builder("etl:data-sync")
+                .require(List.of("gpu"))
+                .timeout(" 15m ")
+                .build());
+
+        JsonNode body = JSON.readTree(server.last().body());
+        assertThat(body.get("require").get(0).asText()).isEqualTo("gpu");
+        assertThat(body.get("timeout").asText()).isEqualTo("15m");
+    }
+
+    @Test
     void missingDeduplicatedFlagDefaultsToFalse() {
         // Older servers don't send `deduplicated` at all.
         server.respond(200, "{\"execution_id\":\"exec-1\",\"queued\":0}");

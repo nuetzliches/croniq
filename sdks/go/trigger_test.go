@@ -108,6 +108,43 @@ func TestTriggerOmitsUnsetOptionalFields(t *testing.T) {
 	}
 }
 
+// TestTriggerOmitsExplicitlyEmptyOptionalFields pins conformance case
+// 12-trigger-empty-optionals (issue #553): a caller who passes an EMPTY
+// collection or BLANK string must produce the same body as one who passed
+// nothing. Go gets this from `omitempty`, which is why it is the reference
+// behaviour the other SDKs normalize toward — but it is a contract worth
+// pinning rather than an artefact to rely on: dropping `omitempty` from one
+// field would silently start emitting "require": [] (which the server already
+// reads as "inherit") or "timeout": "" (not a parseable duration at all).
+func TestTriggerOmitsExplicitlyEmptyOptionalFields(t *testing.T) {
+	stub := newTriggerStub(t, http.StatusOK, `{"execution_id":"exec-1","queued":1}`)
+	tc := NewTriggerClient(stub.srv.URL).WithAPIKey("k")
+
+	req := &TriggerRequest{
+		JobKey:         "etl:data-sync",
+		Metadata:       map[string]any{},
+		Require:        []string{},
+		Prefer:         []string{},
+		Timeout:        "",
+		IdempotencyKey: "",
+	}
+	if _, err := tc.Trigger(context.Background(), req); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+
+	if stub.body["job_key"] != "etl:data-sync" {
+		t.Errorf("job_key = %v", stub.body["job_key"])
+	}
+	for _, key := range []string{"metadata", "require", "prefer", "timeout", "idempotency_key"} {
+		if _, present := stub.body[key]; present {
+			t.Errorf("optional field %q must be omitted when explicitly empty, but was present", key)
+		}
+	}
+	if len(stub.body) != 1 {
+		t.Errorf("body must carry job_key only, got %v", stub.body)
+	}
+}
+
 // TestTriggerMetadataPreservesTypes pins conformance case
 // 03-trigger-metadata: nested objects and non-string values survive
 // serialisation as JSON (a binding that stringifies or flattens metadata

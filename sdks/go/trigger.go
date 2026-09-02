@@ -18,8 +18,16 @@ const DefaultTriggerRequestTimeout = 30 * time.Second
 //
 // Optional fields use `omitempty` so a value the caller never supplied is
 // omitted from the JSON entirely rather than sent as null/empty: the server
-// distinguishes "unset" (apply its own default) from an explicit value, and
-// a producer must not fabricate defaults on the wire.
+// distinguishes "unset" (inherit the job's configured value) from an explicit
+// value, and a producer must not fabricate defaults on the wire.
+//
+// `omitempty` also drops an EXPLICITLY empty value — a nil-or-empty slice, a
+// blank string — and that is the intended contract, not an artefact (issue
+// #553). The server already reads an empty Require as "inherit the job's
+// runner { require … }", so "require": [] would only be a second wire spelling
+// of a message that has one. And Timeout "" is not a parseable duration:
+// sending it would hand the runner a broken value where omitting it inherits
+// the job's own timeout. The other SDKs normalize empty to absent to match.
 type TriggerRequest struct {
 	// JobKey is the job to fire, e.g. "billing:invoice". Required.
 	JobKey string `json:"job_key"`
@@ -31,7 +39,7 @@ type TriggerRequest struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 
 	// Require lists capabilities a runner MUST have to be assigned this
-	// execution.
+	// execution. Empty → inherit the job's runner { require … }.
 	Require []string `json:"require,omitempty"`
 
 	// Prefer lists capabilities used to prefer runners when several are
@@ -39,7 +47,8 @@ type TriggerRequest struct {
 	Prefer []string `json:"prefer,omitempty"`
 
 	// Timeout is the execution timeout as a server duration string
-	// (e.g. "30s", "5m"). Empty → the server applies its default.
+	// (e.g. "30s", "5m"). Empty → inherit the job's configured timeout; the
+	// server falls back to 5m only when the job declares none either.
 	Timeout string `json:"timeout,omitempty"`
 
 	// IdempotencyKey is an optional dedup key scoped per job_key. A server

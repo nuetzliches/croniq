@@ -31,6 +31,9 @@ import java.util.Objects;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record TriggerRequest(
+        // Optionals left null -- or supplied empty, which the constructor
+        // normalizes to null (issue #553) -- are omitted from the JSON body
+        // rather than sent as null/[]/"".
         @JsonProperty("job_key") String jobKey,
         @JsonProperty("metadata") Map<String, Object> metadata,
         @JsonProperty("require") List<String> require,
@@ -40,6 +43,30 @@ public record TriggerRequest(
 
     public TriggerRequest {
         Objects.requireNonNull(jobKey, "jobKey");
+        // An explicitly EMPTY collection or BLANK string is normalized to null
+        // so @JsonInclude(NON_NULL) omits it (issue #553). The server already
+        // reads an empty `require` as "inherit the job's", so `"require": []`
+        // is only a second wire spelling of a message that has one -- and
+        // `"timeout": ""` is not a parseable duration, so honouring it as an
+        // override would hand the runner a broken value where omitting it
+        // inherits the job's own timeout.
+        //
+        // Normalizing in the compact constructor rather than the Builder
+        // covers direct record construction too -- it is the one choke point
+        // both paths go through.
+        metadata = (metadata == null || metadata.isEmpty()) ? null : metadata;
+        require = (require == null || require.isEmpty()) ? null : require;
+        prefer = (prefer == null || prefer.isEmpty()) ? null : prefer;
+        timeout = blankToNull(timeout);
+        idempotencyKey = blankToNull(idempotencyKey);
+    }
+
+    private static String blankToNull(String v) {
+        if (v == null) {
+            return null;
+        }
+        String trimmed = v.strip();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /** Start building a trigger for {@code jobKey}. */
