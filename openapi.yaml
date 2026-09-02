@@ -2080,8 +2080,20 @@ paths:
               required: [job_key]
               properties:
                 job_key: { type: string }
-                require: { type: array, items: { type: string } }
-                prefer: { type: array, items: { type: string } }
+                require:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Capabilities a runner MUST have to claim this execution.
+                    Omitted or empty inherits the job's `runner { require … }`
+                    from the configuration; supplying it overrides that.
+                prefer:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Preferred but not mandatory capabilities. Omitted or empty
+                    inherits the job's `runner { prefer … }`; supplying it
+                    overrides that.
                 metadata:
                   type: object
                   description: >

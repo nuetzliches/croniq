@@ -118,18 +118,22 @@ pub struct EnqueueJobParams {
     /// Job key in `namespace:name` format, e.g. `billing:invoice-generate`.
     pub job_key: String,
 
-    /// Capabilities a runner MUST have to execute this job.
+    /// Capabilities a runner MUST have to execute this job. Omit to inherit
+    /// the job's `runner { require … }` from the configuration; supplying it
+    /// overrides that.
     #[serde(default)]
     pub require: Vec<String>,
 
-    /// Capabilities that are preferred but not mandatory.
+    /// Capabilities that are preferred but not mandatory. Omit to inherit the
+    /// job's `runner { prefer … }`.
     #[serde(default)]
     pub prefer: Vec<String>,
 
-    /// Optional metadata forwarded to the runner as-is (arbitrary JSON).
-    /// Keys prefixed with `__` are reserved for the scheduler
-    /// (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are
-    /// dropped — use `require` / `prefer` to influence routing.
+    /// Optional metadata forwarded to the runner, overlaid on the job's own
+    /// compiled metadata. Keys prefixed with `__` are reserved for the
+    /// scheduler (`__runner_exec`, `__require`, `__prefer`,
+    /// `__max_concurrent`) and are dropped from caller input — use `require` /
+    /// `prefer` to influence routing.
     #[serde(default)]
     pub metadata: serde_json::Value,
 
@@ -153,18 +157,22 @@ pub struct JobTriggerParams {
     /// Job key in `namespace:name` format, e.g. `billing:invoice-generate`.
     pub job_key: String,
 
-    /// Capabilities a runner MUST have to execute this job. Defaults to none.
+    /// Capabilities a runner MUST have to execute this job. Omit to inherit
+    /// the job's `runner { require … }` from the configuration; supplying it
+    /// overrides that.
     #[serde(default)]
     pub require: Vec<String>,
 
-    /// Capabilities that are preferred but not mandatory.
+    /// Capabilities that are preferred but not mandatory. Omit to inherit the
+    /// job's `runner { prefer … }`.
     #[serde(default)]
     pub prefer: Vec<String>,
 
-    /// Optional metadata forwarded to the runner as-is (arbitrary JSON).
-    /// Keys prefixed with `__` are reserved for the scheduler
-    /// (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are
-    /// dropped — use `require` / `prefer` to influence routing.
+    /// Optional metadata forwarded to the runner, overlaid on the job's own
+    /// compiled metadata. Keys prefixed with `__` are reserved for the
+    /// scheduler (`__runner_exec`, `__require`, `__prefer`,
+    /// `__max_concurrent`) and are dropped from caller input — use `require` /
+    /// `prefer` to influence routing.
     #[serde(default)]
     pub metadata: serde_json::Value,
 
@@ -579,6 +587,75 @@ impl CroniqMcp {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    /// Resolve what a manually fired execution inherits from its job config:
+    /// the DSL-compiled metadata (so `__runner_exec` reaches the shell runner,
+    /// issue #89) and the runner capabilities (issue #549).
+    ///
+    /// `dlq_retry` has always taken `require` / `prefer` / `timeout` off
+    /// `self.jobs`; `job_trigger` and `enqueue_job` did not, so an MCP-fired
+    /// job reached the queue with an empty `require` — and an empty `require`
+    /// matches *every* runner in `Queue::dequeue_for_where`, so a job pinned to
+    /// a capability ran on a runner that lacked it. It also arrived without the
+    /// job's own metadata, i.e. without the command a shell job needs.
+    ///
+    /// Caller metadata is overlaid on the job's, with the reserved `__`
+    /// namespace stripped from it first, and the effective capabilities are
+    /// stamped back in the way the scheduler does — so the persisted execution
+    /// row, the in-memory work item and the store-side claim filter all agree.
+    ///
+    /// An explicit `require` / `prefer` from the caller overrides the job
+    /// config; an unknown `job_key` (or a server built without `self.jobs`)
+    /// leaves both empty, exactly as before.
+    fn inherit_job_dispatch(
+        &self,
+        tool: &str,
+        job_key: &str,
+        caller_metadata: serde_json::Value,
+        caller_require: Vec<String>,
+        caller_prefer: Vec<String>,
+    ) -> (HashMap<String, String>, Vec<String>, Vec<String>) {
+        let job = self.jobs.get(job_key);
+
+        let mut metadata: HashMap<String, String> =
+            job.map(|j| j.metadata.clone()).unwrap_or_default();
+        let caller_metadata = strip_reserved_metadata(tool, job_key, caller_metadata);
+        if let serde_json::Value::Object(map) = caller_metadata {
+            for (k, v) in map {
+                let v = v
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string());
+                metadata.insert(k, v);
+            }
+        }
+
+        let require = if caller_require.is_empty() {
+            job.map(|j| j.runner.require.clone()).unwrap_or_default()
+        } else {
+            caller_require
+        };
+        let prefer = if caller_prefer.is_empty() {
+            job.map(|j| j.runner.prefer.clone()).unwrap_or_default()
+        } else {
+            caller_prefer
+        };
+
+        if !require.is_empty() {
+            metadata.insert(
+                "__require".into(),
+                serde_json::to_string(&require).unwrap_or_default(),
+            );
+        }
+        if !prefer.is_empty() {
+            metadata.insert(
+                "__prefer".into(),
+                serde_json::to_string(&prefer).unwrap_or_default(),
+            );
+        }
+
+        (metadata, require, prefer)
+    }
+
     /// Returns `Ok(())` if mutations are enabled, otherwise an MCP error.
     fn require_mutations(&self) -> Result<(), McpError> {
         if !self.mutations_enabled {
@@ -837,6 +914,9 @@ impl CroniqMcp {
 
         let now = Utc::now();
 
+        let (metadata, require, prefer) =
+            self.inherit_job_dispatch("enqueue_job", &p.job_key, p.metadata, p.require, p.prefer);
+
         // Persist to store if available.
         if let Some(store) = &self.store {
             let id = Uuid::parse_str(&execution_id).map_err(|e| {
@@ -857,7 +937,7 @@ impl CroniqMcp {
                 error: None,
                 dead_reason: None,
                 idempotency_key: None,
-                metadata: HashMap::new(),
+                metadata: metadata.clone(),
                 created_at: now,
             };
             store
@@ -865,17 +945,15 @@ impl CroniqMcp {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         }
 
-        let metadata = strip_reserved_metadata("enqueue_job", &p.job_key, p.metadata);
-
         let item = WorkItem {
             execution_id: execution_id.clone(),
             job_key: p.job_key.clone(),
             fire_at: now,
             scheduled_for: now,
             attempt: 1,
-            require: p.require,
-            prefer: p.prefer,
-            metadata,
+            require,
+            prefer,
+            metadata: serde_json::to_value(&metadata).unwrap_or_default(),
             timeout: p.timeout,
             is_ephemeral: false,
         };
@@ -942,6 +1020,9 @@ impl CroniqMcp {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        let (metadata, require, prefer) =
+            self.inherit_job_dispatch("job_trigger", &p.job_key, p.metadata, p.require, p.prefer);
+
         // Persist to store if available.
         if let Some(store) = &self.store {
             let execution = Execution {
@@ -959,7 +1040,7 @@ impl CroniqMcp {
                 error: None,
                 dead_reason: None,
                 idempotency_key: None,
-                metadata: HashMap::new(),
+                metadata: metadata.clone(),
                 created_at: now,
             };
             store
@@ -967,17 +1048,15 @@ impl CroniqMcp {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         }
 
-        let metadata = strip_reserved_metadata("job_trigger", &p.job_key, p.metadata);
-
         let item = WorkItem {
             execution_id: id.to_string(),
             job_key: p.job_key.clone(),
             fire_at: now,
             scheduled_for: now,
             attempt: 1,
-            require: p.require,
-            prefer: p.prefer,
-            metadata,
+            require,
+            prefer,
+            metadata: serde_json::to_value(&metadata).unwrap_or_default(),
             timeout: p.timeout,
             is_ephemeral: false,
         };
@@ -1892,6 +1971,17 @@ mod tests {
         CroniqMcp::new_with_store(AppState::new(), store, vec![], true)
     }
 
+    /// Like [`make_server_with_mutations`], but with the given DSL jobs in
+    /// `self.jobs`, so tests can exercise what a fired execution inherits from
+    /// its job configuration (issues #89, #549).
+    fn make_server_with_jobs(dsl: &str) -> CroniqMcp {
+        use croniq_store::sqlite::SqliteStore;
+        let ast = croniq_config::parser::Parser::parse(dsl).unwrap();
+        let jobs = croniq_config::compile::compile(&ast).jobs;
+        let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
+        CroniqMcp::new_with_store(AppState::new(), store, jobs, true)
+    }
+
     #[tokio::test]
     async fn list_runners_empty() {
         let server = make_server();
@@ -2333,6 +2423,143 @@ mod tests {
             .unwrap();
 
         assert_reserved_keys_stripped(&sole_queued_metadata(&server).await);
+    }
+
+    // ─── Job-config inheritance on the fire paths (issues #89, #549) ──────
+    //
+    // `dlq_retry` has always taken require/prefer/timeout off `self.jobs`.
+    // `job_trigger` and `enqueue_job` did not: they enqueued with the caller's
+    // (defaulted-empty) `require`, which matches every runner, and without the
+    // job's own metadata — so a pinned job ran on the wrong runner, and a shell
+    // job arrived without its command.
+
+    const PINNED_JOB_DSL: &str = r#"
+        job billing:invoice {
+            every 1 hour
+            runner { require shell-runner }
+            runner shell { command "echo hi" }
+        }
+    "#;
+
+    /// The single item currently on the dispatch queue.
+    async fn sole_queued_item(server: &CroniqMcp) -> croniq_runner::WorkItem {
+        let queue = server.state.queue.read().await;
+        let items = queue.peek_n(2);
+        assert_eq!(items.len(), 1, "expected exactly one queued work item");
+        items[0].clone()
+    }
+
+    #[tokio::test]
+    async fn job_trigger_inherits_job_require_and_metadata() {
+        let server = make_server_with_jobs(PINNED_JOB_DSL);
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                // Omitted by the caller — the JSON-schema default.
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: "5m".into(),
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        assert_eq!(
+            item.require,
+            vec!["shell-runner".to_string()],
+            "work item must inherit the job's require"
+        );
+        assert!(
+            item.metadata.get(RUNNER_EXEC_METADATA_KEY).is_some(),
+            "work item must carry the job's __runner_exec; got: {:?}",
+            item.metadata
+        );
+        assert_eq!(
+            item.metadata.get("__require").and_then(|v| v.as_str()),
+            Some(r#"["shell-runner"]"#),
+            "effective capabilities must be stamped into the metadata"
+        );
+
+        // The persisted row carries the same metadata — it is what the
+        // store-side claim filter and a later replay read.
+        let store = server.store.as_ref().unwrap();
+        let executions = store
+            .list_executions(&croniq_store::models::ExecutionFilter::default())
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(
+            executions[0].metadata.get("__require").map(String::as_str),
+            Some(r#"["shell-runner"]"#),
+            "persisted execution must record the capabilities it requires"
+        );
+    }
+
+    #[tokio::test]
+    async fn enqueue_job_inherits_job_require() {
+        let server = make_server_with_jobs(PINNED_JOB_DSL);
+
+        server
+            .enqueue_job(Parameters(EnqueueJobParams {
+                execution_id: Uuid::new_v4().to_string(),
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: "5m".into(),
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        assert_eq!(item.require, vec!["shell-runner".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn job_trigger_require_overrides_job_config() {
+        // The inheritance is a fallback, not a lock.
+        let server = make_server_with_jobs(PINNED_JOB_DSL);
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec!["gpu".into()],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: "5m".into(),
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        assert_eq!(item.require, vec!["gpu".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn job_trigger_for_unknown_job_keeps_empty_require() {
+        // No job config to inherit from: the caller's fields stand, and the
+        // fallback must not invent capabilities.
+        let server = make_server_with_mutations();
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: "5m".into(),
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        assert!(item.require.is_empty(), "got: {:?}", item.require);
+        assert!(
+            item.metadata.get("__require").is_none(),
+            "nothing to stamp; got: {:?}",
+            item.metadata
+        );
     }
 
     #[tokio::test]

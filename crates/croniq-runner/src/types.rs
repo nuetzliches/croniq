@@ -279,10 +279,17 @@ pub struct TriggerRequest {
     pub job_key: String,
 
     /// Capabilities a runner MUST have to execute this job.
+    ///
+    /// Empty (the default) inherits the job's `runner { require … }` from the
+    /// configuration — a manual trigger routes like a scheduled fire (issue
+    /// #549). A non-empty value overrides the job config.
     #[serde(default)]
     pub require: Vec<String>,
 
     /// Capabilities that are preferred but not mandatory.
+    ///
+    /// Empty (the default) inherits the job's `runner { prefer … }`; a
+    /// non-empty value overrides it.
     #[serde(default)]
     pub prefer: Vec<String>,
 

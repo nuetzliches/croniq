@@ -6,6 +6,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`POST /v1/trigger` now inherits a job's `runner { require … }` — a manually
+  triggered job could be claimed by any runner
+  ([#549](https://github.com/nuetzliches/croniq/issues/549)).** `handle_trigger`
+  built the work item with the caller's `require` field verbatim and no
+  fallback. That field is `#[serde(default)]`, so a trigger that simply names a
+  job key produced an *empty* `require` — and an empty `require` matches every
+  runner in `Queue::dequeue_for_where`. A job pinned to `require api-x` ran on a
+  runner that had no `api-x`: wrong host, missing credentials, missing binary,
+  and nothing logged, because from the queue's perspective there was no
+  requirement to violate.
+
+  Capabilities could not ride in on the metadata inheritance that already makes
+  `__runner_exec` ([#89](https://github.com/nuetzliches/croniq/issues/89)) and
+  `__max_concurrent` work on this path: the compiler never stamps them into
+  `job.metadata` — the scheduler adds `__require` / `__prefer` only as it
+  persists the execution row — so there was nothing there to inherit.
+
+  The trigger path was the only work-item producer without the fallback. The
+  scheduler fire, the retry, the watchdog requeue and the dead-letter replay all
+  read `job.runner.require`; the watchdog is the clearest evidence that
+  inheritance was the intent, since an abandoned triggered execution came back
+  with the *correct* `require` after a requeue — the same execution routing
+  differently before and after the watchdog touched it.
+
+  An omitted `require` / `prefer` now falls back to the job's runner config; an
+  explicit value in the request still overrides, as before. The effective
+  capabilities are also stamped into the persisted row's metadata the way the
+  scheduler does, so the in-memory queue and the store-side claim filter agree
+  and a later dead-letter replay can read them off the row instead of depending
+  on the job still existing. Caller metadata in the reserved `__` namespace is
+  dropped as it already was, so the stamp is purely additive.
+
+  The MCP `job_trigger` and `enqueue_job` tools had the same gap, and one more
+  besides: they enqueued without the job's compiled metadata, so an MCP-fired
+  shell job reached the runner with no `__runner_exec` — no command to run —
+  and persisted an execution row with no metadata at all. Both now inherit the
+  job config the way `dlq_retry` in the same file always has: metadata as the
+  base with caller metadata overlaid, capabilities as the fallback, and the
+  effective set stamped onto the persisted row.
+
+  `timeout` keeps its existing behaviour on both paths: it defaults to `"5m"`,
+  so a triggered execution still ignores the job's configured timeout and the
+  server cannot distinguish an omitted field from a literal `5m`. Closing that
+  needs an `Option<String>` on the public `TriggerRequest` and is tracked
+  separately.
+
 ### Security
 
 - **OIDC discovery now requires TLS on every endpoint it is handed.** The
