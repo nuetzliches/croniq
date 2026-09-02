@@ -13,16 +13,19 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use chrono::{DateTime, Utc};
 #[allow(unused_imports)]
 use chrono_tz;
-use croniq_bridge::job_to_work_item;
+use croniq_bridge::{job_execution_metadata, job_to_work_item};
 use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::{AppState, EphemeralTally};
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{PendingFire, Trigger, TriggerState};
-use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus, MaintenanceState};
+use croniq_store::models::{
+    Execution, ExecutionState, JobRegisterFire, JobState, JobStatus, MaintenanceState,
+};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::quota::QuotaGuard;
+use crate::register_fire::{self, PendingRegisterFire};
 use crate::store::DynStore;
 
 /// How long an unacknowledged ephemeral dispatch stays tracked before it is
@@ -118,6 +121,10 @@ pub struct SchedulerLoop {
     store: DynStore,
     runner: Arc<AppState>,
     quota: QuotaGuard,
+    /// `run_on_register` fires this loop still owes (issue #555). Armed from
+    /// the store on every config load, drained by `tick` once each entry's
+    /// gate-permitted instant arrives.
+    pending_register_fires: Vec<PendingRegisterFire>,
     /// Shared global maintenance switch (from `ServerState`). Defaults to an
     /// all-off handle; wired by `set_maintenance_handle` at boot.
     maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
@@ -131,14 +138,20 @@ impl SchedulerLoop {
         runner: Arc<AppState>,
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
-        Self {
+        let mut loop_ = Self {
             triggers,
             jobs,
             store,
             runner,
             quota: QuotaGuard::new(),
+            pending_register_fires: Vec::new(),
             maintenance: Arc::new(std::sync::RwLock::new(MaintenanceState::default())),
-        }
+        };
+        // Boot is an adoption event like any other config load (issue #555).
+        // Arming here rather than at the call site is what keeps the next
+        // construction path from silently skipping it.
+        loop_.arm_register_fires(Utc::now());
+        loop_
     }
 
     /// Wire the shared maintenance switch (from `ServerState`) so the tick can
@@ -225,12 +238,239 @@ impl SchedulerLoop {
         self.triggers = merged;
         self.jobs = new_jobs_map;
 
+        // A reload is an adoption event: a job may have appeared, or its
+        // definition may have changed under an unchanged key (issue #555).
+        self.arm_register_fires(now);
+
         tracing::info!(
             total = self.triggers.len(),
             added,
             removed,
             "configuration reloaded"
         );
+    }
+
+    /// Re-decide which `run_on_register` jobs owe an adoption fire, and when
+    /// (issue #555).
+    ///
+    /// Runs on every config load — boot and each reload — and rebuilds the
+    /// pending set from scratch rather than merging into it: the store, not
+    /// this loop's memory, is the record of what has already fired, so a
+    /// re-plan always agrees with what a fresh boot would decide. A fire
+    /// already dispatched has its hash recorded and is therefore not re-armed;
+    /// a deferred one is re-armed at the same instant.
+    ///
+    /// Also prunes records for jobs that have dropped the directive, so
+    /// re-adding it later counts as a fresh adoption
+    /// ([`register_fire::stale_records`]).
+    ///
+    /// Store errors are logged, not fatal: a load that cannot read the records
+    /// leaves the pending set empty and tries again on the next reload, rather
+    /// than firing every such job blind.
+    pub fn arm_register_fires(&mut self, now: DateTime<Utc>) {
+        let rows = match self.store.list_register_fires() {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "run_on_register: could not read adoption records — no adoption fires \
+                     armed for this config load"
+                );
+                self.pending_register_fires.clear();
+                return;
+            }
+        };
+
+        let recorded = register_fire::recorded_hashes(rows);
+        let jobs: Vec<JobConfig> = self.jobs.values().cloned().collect();
+
+        for job_key in register_fire::stale_records(&jobs, &recorded) {
+            match self.store.delete_register_fire(&job_key) {
+                Ok(()) => tracing::info!(
+                    job_key = %job_key,
+                    "run_on_register: directive removed — forgetting the adoption record so a \
+                     later re-add fires again"
+                ),
+                Err(e) => tracing::warn!(
+                    job_key = %job_key,
+                    error = %e,
+                    "run_on_register: could not forget the adoption record"
+                ),
+            }
+        }
+
+        self.pending_register_fires = register_fire::plan(&jobs, &self.triggers, &recorded, now);
+        if !self.pending_register_fires.is_empty() {
+            tracing::info!(
+                count = self.pending_register_fires.len(),
+                job_keys = %self
+                    .pending_register_fires
+                    .iter()
+                    .map(|p| p.job_key.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                "run_on_register: adoption fires armed"
+            );
+        }
+    }
+
+    /// Dispatch every armed adoption fire whose instant has arrived.
+    ///
+    /// Takes the same path a manual `POST /v1/trigger` does — an execution row
+    /// then a work item, without touching the trigger's own `next_fire_at` —
+    /// because that is what an adoption fire is: an extra fire, not a
+    /// scheduled one. The job's `singleton` / `max_concurrent` guard rides in
+    /// on the row metadata and is enforced at claim time exactly as for a
+    /// scheduled fire.
+    ///
+    /// An entry that cannot be dispatched right now (queue at its per-job
+    /// depth cap, or a failed store write) stays pending and is retried on the
+    /// next tick. Dropping it would lose the reconcile the operator asked for;
+    /// firing past the cap would defeat the guard the cap exists for.
+    async fn dispatch_due_register_fires(
+        &mut self,
+        now: DateTime<Utc>,
+        fired: &mut Vec<FiredExecution>,
+    ) {
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_register_fires)
+            .into_iter()
+            .partition(|p| p.due_at <= now);
+        self.pending_register_fires = later;
+
+        for pending in due {
+            let Some(job) = self.jobs.get(&pending.job_key).cloned() else {
+                tracing::warn!(
+                    job_key = %pending.job_key,
+                    "run_on_register: job vanished before its adoption fire — dropping it"
+                );
+                continue;
+            };
+
+            let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
+
+            // Per-job queue-depth cap, the same guard the scheduled fire and
+            // `POST /v1/trigger` (#299) apply. Ephemeral jobs are exempt for
+            // the reason given in `tick`: they self-bound to one queued item.
+            if !is_ephemeral {
+                let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
+                let queued = self
+                    .runner
+                    .queue
+                    .read()
+                    .await
+                    .count_for_job(&pending.job_key);
+                if queued >= max_depth {
+                    tracing::debug!(
+                        job_key = %pending.job_key,
+                        queued,
+                        max = max_depth,
+                        "run_on_register: queue at its depth cap — adoption fire stays pending"
+                    );
+                    self.pending_register_fires.push(pending);
+                    continue;
+                }
+            }
+
+            let execution_id = Uuid::new_v4();
+            let exec_id_str = execution_id.to_string();
+
+            if !is_ephemeral {
+                let execution = Execution {
+                    id: execution_id,
+                    job_key: job.key.clone(),
+                    fire_at: now,
+                    // Adoption fire: the logical time is the moment of
+                    // adoption itself, like a manual trigger.
+                    scheduled_for: now,
+                    attempt: 1,
+                    state: ExecutionState::Queued,
+                    runner_id: None,
+                    claimed_at: None,
+                    started_at: None,
+                    completed_at: None,
+                    duration_ms: None,
+                    error: None,
+                    dead_reason: None,
+                    idempotency_key: None,
+                    metadata: job_execution_metadata(&job),
+                    created_at: now,
+                };
+                if let Err(e) = self.store.create_execution(&execution) {
+                    // Enqueueing anyway would hand a runner an execution_id
+                    // with no backing row, so its completion could never be
+                    // recorded. Keep it pending and retry next tick.
+                    tracing::error!(
+                        job_key = %job.key,
+                        error = %e,
+                        "run_on_register: could not persist the adoption execution — staying pending"
+                    );
+                    self.pending_register_fires.push(pending);
+                    continue;
+                }
+            }
+
+            let mut item = job_to_work_item(&job, &exec_id_str, now, now, 1);
+            crate::trace_propagation::inject_into_metadata(&mut item.metadata);
+            if is_ephemeral {
+                // Replace-latest, matching the scheduled ephemeral path
+                // (issue #263): a runner gap must not accumulate stale
+                // non-persisted work.
+                let replaced = {
+                    let mut q = self.runner.queue.write().await;
+                    let replaced = q.remove_job(&job.key);
+                    q.enqueue(item);
+                    replaced
+                };
+                self.runner.work_notify.notify_waiters();
+                self.runner.forget_ephemeral(&replaced).await;
+                self.runner
+                    .record_ephemeral(
+                        &exec_id_str,
+                        now,
+                        chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
+                    )
+                    .await;
+                self.runner.record_ephemeral_fired(&job.key, 1).await;
+                self.runner
+                    .record_ephemeral_superseded(&job.key, replaced.len() as u64)
+                    .await;
+            } else {
+                self.runner.queue.write().await.enqueue(item);
+                self.runner.work_notify.notify_waiters();
+            }
+
+            // Recorded only now: a crash before this point leaves the job
+            // un-reconciled and the next boot fires again, which is the safe
+            // direction for a reconciler.
+            if let Err(e) = self.store.upsert_register_fire(&JobRegisterFire {
+                job_key: job.key.clone(),
+                config_hash: pending.config_hash.clone(),
+                fired_at: now,
+            }) {
+                tracing::error!(
+                    job_key = %job.key,
+                    error = %e,
+                    "run_on_register: adoption fire dispatched but could not be recorded — \
+                     the next config load will fire it again"
+                );
+            }
+
+            fired.push(FiredExecution {
+                execution_id,
+                job_key: job.key.clone(),
+                fire_at: now,
+                attempt: 1,
+                is_ephemeral,
+            });
+
+            tracing::info!(
+                job_key = %job.key,
+                execution_id = %execution_id,
+                reason = pending.reason.as_str(),
+                config_hash = %pending.config_hash,
+                "run_on_register: adoption fire dispatched"
+            );
+        }
     }
 
     /// Process a runtime command (add/remove job, or full reload).
@@ -327,6 +567,14 @@ impl SchedulerLoop {
             .read()
             .map(|m| m.is_active(now))
             .unwrap_or(false);
+
+        // Adoption fires first (issue #555): they are the fire an operator is
+        // watching for right after a deploy. Unlike a scheduled fire, a frozen
+        // one is *held*, not advanced past — there is no schedule to fall
+        // behind, and dropping it would lose the reconcile entirely.
+        if !maintenance_active && !self.pending_register_fires.is_empty() {
+            self.dispatch_due_register_fires(now, &mut fired).await;
+        }
 
         for trigger in self.triggers.values_mut() {
             let Some(fire_at) = trigger.evaluate(now) else {
@@ -454,22 +702,10 @@ impl SchedulerLoop {
                     error: None,
                     dead_reason: None,
                     idempotency_key: None,
-                    metadata: {
-                        let mut m = job.metadata.clone();
-                        if !job.runner.require.is_empty() {
-                            m.insert(
-                                "__require".into(),
-                                serde_json::to_string(&job.runner.require).unwrap_or_default(),
-                            );
-                        }
-                        if !job.runner.prefer.is_empty() {
-                            m.insert(
-                                "__prefer".into(),
-                                serde_json::to_string(&job.runner.prefer).unwrap_or_default(),
-                            );
-                        }
-                        m
-                    },
+                    // Compiled job metadata plus the effective runner
+                    // capabilities. Shared with the adoption fire below so
+                    // the two rows cannot drift (see `job_execution_metadata`).
+                    metadata: job_execution_metadata(job),
                     created_at: now,
                 };
                 self.store
@@ -631,6 +867,7 @@ mod tests {
             keep_last: None,
             max_concurrent: None,
             tags: vec![],
+            run_on_register: false,
         }
     }
 
@@ -870,6 +1107,333 @@ mod tests {
 
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 2);
+    }
+
+    // ── run_on_register adoption fires (issue #555) ──────────────────────────
+
+    /// A `run_on_register` job whose schedule is an hour out, so nothing but
+    /// the adoption fire can produce an execution in these tests.
+    fn make_adopting_job(key: &str) -> JobConfig {
+        JobConfig {
+            run_on_register: true,
+            ..make_job(key)
+        }
+    }
+
+    fn adopting_scheduler(store: DynStore, runner: Arc<AppState>, job: JobConfig) -> SchedulerLoop {
+        let mut triggers = HashMap::new();
+        triggers.insert(job.key.clone(), make_trigger_future(&job.key));
+        SchedulerLoop::new(triggers, vec![job], store, runner)
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_dispatches_on_first_registration() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            Arc::clone(&runner),
+            make_adopting_job("test:job"),
+        );
+
+        let result = scheduler.tick(Utc::now()).await;
+
+        assert_eq!(result.fired.len(), 1, "the adoption fire is a fire");
+        assert_eq!(result.fired[0].job_key, "test:job");
+        let execution = store
+            .get_execution(result.fired[0].execution_id)
+            .unwrap()
+            .expect("adoption fire persists an execution row like any other");
+        assert_eq!(execution.state, ExecutionState::Queued);
+        assert_eq!(execution.attempt, 1);
+        assert_eq!(runner.queue.read().await.count_for_job("test:job"), 1);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_leaves_the_trigger_untouched() {
+        // It is an extra fire, not a scheduled one: consuming the schedule's
+        // next_fire_at would make the deploy *delay* the next real run.
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(store, make_runner(), make_adopting_job("test:job"));
+        let before = scheduler.triggers["test:job"].next_fire_at;
+
+        scheduler.tick(Utc::now()).await;
+
+        let trigger = &scheduler.triggers["test:job"];
+        assert_eq!(trigger.fire_count, 0);
+        assert_eq!(trigger.next_fire_at, before);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_does_not_repeat_on_the_next_tick() {
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(store, make_runner(), make_adopting_job("test:job"));
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_does_not_repeat_on_a_restart() {
+        // The whole point of persisting the hash: a restart storm would fire
+        // every such job at once, and so would every `--watch` save.
+        let store = make_store();
+        let mut first = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(first.tick(Utc::now()).await.fired.len(), 1);
+
+        let mut rebooted = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(rebooted.tick(Utc::now()).await.fired.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_repeats_when_the_definition_changes() {
+        let store = make_store();
+        let mut first = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(first.tick(Utc::now()).await.fired.len(), 1);
+
+        // The deploy the directive exists for: the job's definition changed,
+        // so the reconcile has to run now rather than at its next fire.
+        let changed = JobConfig {
+            timeout: Some("30m".into()),
+            ..make_adopting_job("test:job")
+        };
+        let mut redeployed = adopting_scheduler(Arc::clone(&store), make_runner(), changed.clone());
+        assert_eq!(redeployed.tick(Utc::now()).await.fired.len(), 1);
+
+        // …and once, not on every tick thereafter.
+        assert_eq!(redeployed.tick(Utc::now()).await.fired.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_cosmetic_edit_does_not_produce_an_adoption_fire() {
+        let store = make_store();
+        let mut first = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(first.tick(Utc::now()).await.fired.len(), 1);
+
+        let reworded = JobConfig {
+            description: Some("now with a longer explanation".into()),
+            ..make_adopting_job("test:job")
+        };
+        let mut redeployed = adopting_scheduler(Arc::clone(&store), make_runner(), reworded);
+        assert_eq!(
+            redeployed.tick(Utc::now()).await.fired.len(),
+            0,
+            "rewording a description must not re-run a credential rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_job_without_the_directive_produces_no_adoption_fire() {
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(store, make_runner(), make_job("test:job"));
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_carries_the_jobs_concurrency_guard_and_capabilities() {
+        // The guard is enforced at claim time off the row metadata, so the
+        // adoption fire has to stamp it exactly as a scheduled fire does —
+        // otherwise `singleton` silently does not apply to it.
+        let store = make_store();
+        let runner = make_runner();
+        let mut job = make_adopting_job("test:job");
+        job.metadata
+            .insert("__max_concurrent".into(), "1".to_string());
+        job.runner.require = vec!["credentials".into()];
+
+        let mut scheduler = adopting_scheduler(Arc::clone(&store), Arc::clone(&runner), job);
+        let result = scheduler.tick(Utc::now()).await;
+
+        let execution = store
+            .get_execution(result.fired[0].execution_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            execution
+                .metadata
+                .get("__max_concurrent")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            execution.metadata.get("__require").map(String::as_str),
+            Some(r#"["credentials"]"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_of_an_ephemeral_job_persists_no_row() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut job = make_adopting_job("beat:tick");
+        job.execution_mode = ExecutionMode::Ephemeral;
+
+        let mut scheduler = adopting_scheduler(Arc::clone(&store), Arc::clone(&runner), job);
+        let result = scheduler.tick(Utc::now()).await;
+
+        assert_eq!(result.fired.len(), 1);
+        assert!(result.fired[0].is_ephemeral);
+        assert!(
+            store
+                .get_execution(result.fired[0].execution_id)
+                .unwrap()
+                .is_none(),
+            "ephemeral executions are never persisted"
+        );
+        assert_eq!(runner.queue.read().await.count_for_job("beat:tick"), 1);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_is_held_during_maintenance_not_dropped() {
+        // A scheduled fire is advanced past while dispatch is frozen (no
+        // catch-up backlog). An adoption fire has no schedule to fall behind,
+        // and dropping it would lose the reconcile entirely.
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        let maintenance = Arc::new(std::sync::RwLock::new(MaintenanceState {
+            manual_active: true,
+            ..MaintenanceState::default()
+        }));
+        scheduler.set_maintenance_handle(Arc::clone(&maintenance));
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 0);
+
+        maintenance.write().unwrap().manual_active = false;
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_waits_for_its_gate_to_open() {
+        let store = make_store();
+        let now = Utc::now();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        // Re-arm with a gate that opens in an hour, at a controlled `now`.
+        scheduler.triggers.get_mut("test:job").unwrap().not_before =
+            Some(now + ChronoDuration::hours(1));
+        scheduler.arm_register_fires(now);
+
+        assert_eq!(scheduler.tick(now).await.fired.len(), 0, "deferred");
+        assert_eq!(
+            scheduler
+                .tick(now + ChronoDuration::hours(1))
+                .await
+                .fired
+                .len(),
+            1,
+            "and fired once the gate opened"
+        );
+    }
+
+    #[tokio::test]
+    async fn adoption_fire_stays_pending_while_the_queue_is_at_its_cap() {
+        // Firing past the cap would defeat the guard; dropping the fire would
+        // lose the reconcile. So it waits.
+        let store = make_store();
+        let runner = make_runner();
+        let mut job = make_adopting_job("test:job");
+        job.max_queue_depth = Some(1);
+
+        let mut scheduler =
+            adopting_scheduler(Arc::clone(&store), Arc::clone(&runner), job.clone());
+        runner.queue.write().await.enqueue(job_to_work_item(
+            &job,
+            "occupant",
+            Utc::now(),
+            Utc::now(),
+            1,
+        ));
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 0);
+
+        runner.queue.write().await.remove_job("test:job");
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_arms_an_adoption_fire_for_a_changed_definition() {
+        // The `--watch` / SIGHUP path: the key is unchanged, so nothing else
+        // in the reload notices, but the definition is not the one that fired.
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+
+        let changed = JobConfig {
+            timeout: Some("30m".into()),
+            ..make_adopting_job("test:job")
+        };
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), make_trigger_future("test:job"));
+        scheduler.reload(triggers, vec![changed]);
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dropping_the_directive_forgets_the_record_so_a_re_add_fires() {
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        assert_eq!(store.list_register_fires().unwrap().len(), 1);
+
+        // Directive removed: the record describes a contract that is gone.
+        let mut triggers = HashMap::new();
+        triggers.insert("test:job".to_string(), make_trigger_future("test:job"));
+        scheduler.reload(triggers.clone(), vec![make_job("test:job")]);
+        assert!(store.list_register_fires().unwrap().is_empty());
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 0);
+
+        // Added back: a fresh adoption, so it fires — even though nothing else
+        // about the job changed.
+        scheduler.reload(triggers, vec![make_adopting_job("test:job")]);
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_does_not_forget_the_record_of_a_job_absent_from_the_config() {
+        // Same judgement `restore_trigger_states` makes about orphan
+        // `job_states`: this pass cannot tell "deleted" from "commented out".
+        let store = make_store();
+        let mut scheduler = adopting_scheduler(
+            Arc::clone(&store),
+            make_runner(),
+            make_adopting_job("test:job"),
+        );
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+
+        scheduler.reload(HashMap::new(), vec![]);
+        assert_eq!(store.list_register_fires().unwrap().len(), 1);
     }
 
     #[tokio::test]

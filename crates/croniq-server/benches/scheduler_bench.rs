@@ -45,6 +45,7 @@ fn make_job(key: &str, mode: ExecutionMode) -> JobConfig {
         keep_last: None,
         max_concurrent: None,
         tags: vec![],
+        run_on_register: false,
     }
 }
 

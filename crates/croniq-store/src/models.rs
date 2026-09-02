@@ -24,6 +24,28 @@ pub struct JobState {
     pub updated_at: DateTime<Utc>,
 }
 
+/// The definition a `run_on_register` job was last fired for (issue #555).
+///
+/// One row per job key that declares the directive. Its whole purpose is to
+/// answer "has this exact definition already been reconciled?" across
+/// restarts — that is what separates `run_on_register` from "fire on every
+/// boot", which would storm every such job on a restart and on every
+/// `--watch` save.
+///
+/// Deliberately separate from [`JobState`]: that row is the scheduler's
+/// per-tick state (`next_fire_at`, `fire_count`) and is written on every fire,
+/// while this one is written only when an adoption fire actually goes out, and
+/// is read once per config load. It also has to outlive a job's absence from
+/// the config without being confused for scheduler state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobRegisterFire {
+    pub job_key: String,
+    /// `JobConfig::config_hash()` of the definition that fired.
+    pub config_hash: String,
+    /// When the adoption fire was dispatched.
+    pub fired_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {

@@ -186,6 +186,25 @@ job migration:schema-v2 {
   timeout 30m
 }
 
+# A job that reconciles state which changes at DEPLOY time — pushing a rotated
+# credential to an external component, warming a cache from new config — has a
+# blind window between the deploy and its next scheduled fire. `run_on_register`
+# closes it: the job fires once when croniq first sees the key, and again
+# whenever its compiled definition changes.
+job integration:credential-sync {
+  every day at 04:20
+  # Not on every reload or restart: croniq records which definition it last
+  # fired for, so a restart storm and a `--watch` save that changes nothing
+  # both fire nothing. Any behavioural change counts (schedule, runner,
+  # timeout, metadata, the shell command …); reworded `description` and
+  # changed `tags` do not.
+  run_on_register
+  # The adoption fire is claimed like any other, so this still applies: it
+  # will not double up on a run already in flight.
+  singleton
+  runner { require credentials }
+}
+
 job legacy:old-report {
   disabled
   timeout 5m

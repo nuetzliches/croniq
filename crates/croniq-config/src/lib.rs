@@ -4,6 +4,7 @@ pub mod calendar_args;
 pub mod compile;
 pub mod convert;
 pub mod diff;
+pub mod fingerprint;
 pub mod format;
 pub mod import;
 pub mod lexer;

@@ -44,6 +44,7 @@ pub mod metrics;
 pub mod notify;
 pub mod oidc;
 pub mod quota;
+pub mod register_fire;
 pub mod reload;
 pub mod scheduler;
 pub mod store;

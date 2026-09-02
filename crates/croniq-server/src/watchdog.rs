@@ -1233,6 +1233,7 @@ mod tests {
             keep_last: None,
             max_concurrent: None,
             tags: vec![],
+            run_on_register: false,
         }
     }
 

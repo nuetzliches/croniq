@@ -982,6 +982,9 @@ pub fn job_config_from_definition(
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,
         tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
+        // `run_on_register` is a Croniqfile directive; an API/runner-registered
+        // job has no Croniqfile definition to be adopted from (issue #555).
+        run_on_register: false,
     }
 }
 
@@ -1046,6 +1049,9 @@ pub fn job_config_from_job_def(
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,
         tags: job_def.tags.clone(),
+        // `run_on_register` is a Croniqfile directive; an API/runner-registered
+        // job has no Croniqfile definition to be adopted from (issue #555).
+        run_on_register: false,
     }
 }
 

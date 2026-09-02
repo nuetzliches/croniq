@@ -633,6 +633,7 @@ mod tests {
             keep_last: None,
             max_concurrent: None,
             tags: vec![],
+            run_on_register: false,
         }
     }
 
@@ -810,6 +811,9 @@ mod tests {
                 upsert_job_state(state: &JobState) -> ();
                 list_job_states() -> Vec<JobState>;
                 delete_job_state(job_key: &str) -> ();
+                list_register_fires() -> Vec<croniq_store::models::JobRegisterFire>;
+                upsert_register_fire(record: &croniq_store::models::JobRegisterFire) -> ();
+                delete_register_fire(job_key: &str) -> ();
             }
         }
 

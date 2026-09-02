@@ -46,6 +46,8 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Execution modes** — `queued` (default) persists every execution with full retry and restart recovery. `ephemeral` skips persistence for high-frequency fire-and-forget jobs. Configurable per-job or globally in `defaults {}`. Catch-up policies (`all` / `latest` / `none`) control missed-fire behaviour on restart. Queue TTL and per-job depth limits prevent runaway backlogs.
 
+**Deploy-time reconciliation** — `run_on_register` fires a job once when croniq adopts its definition: the first time the key is seen, and again whenever the compiled job changes. Closes the blind window between a deploy that changes what a reconciling job has to do and that job's next scheduled fire, without firing on every restart or `--watch` save. Gated jobs defer to their next permitted instant rather than skipping.
+
 **Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization is enforced on every endpoint: a token must carry the matching scope (e.g. `jobs:write`, `dead-letters:write`, `runners:read`) or the wildcard `admin` scope. See [Scopes](#scopes) below.
 
 **React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (admin-only, server-sent events, level filters, scroll-lock, copy + `.ndjson` download).
@@ -341,6 +343,46 @@ job etl:sync {
   # executions. `ephemeral` jobs are not persisted, so `singleton` /
   # `max_concurrent` there is rejected at validation time — use `queued`
   # if a fire-and-forget poll must never overlap itself.
+}
+
+# Reconcile-on-deploy job: fires once when croniq adopts the definition,
+# on top of its schedule. For jobs whose work changes at deploy time —
+# pushing a rotated credential to an external component, warming a cache
+# from new config — where waiting for the next scheduled fire leaves a
+# blind window (a 10:00 deploy and `every day at 04:20` leaves 18 hours of
+# it). `catch_up` does not cover this: it replays *missed* fires, and a
+# newly registered job has none.
+job integration:credential-sync {
+  every day at 04:20
+
+  # Fires when the job key is first seen, and again whenever the job's
+  # compiled definition changes. Explicitly NOT on every reload or restart:
+  # croniq persists which definition it last fired for, so a restart storm
+  # and a `--watch` save that changes nothing both fire nothing.
+  #
+  # "Changed" means any behavioural field — schedule, timezone, runner
+  # placement or shell command, timeout, retry, metadata, the queue and
+  # concurrency knobs. Prose and labels are not: rewording `description` or
+  # editing `tags` fires nothing.
+  #
+  # The adoption fire takes the normal path — an execution row, then a work
+  # item — so `singleton` / `max_concurrent`, `runner { require … }`,
+  # `timeout`, retry and dead-letter all apply exactly as for a scheduled
+  # fire, and it shows up in run history like any other execution.
+  #
+  # A `calendar`, `window` or `not_before` does not suppress it, it defers
+  # it to the first instant that gate permits. `not_after` is the exception:
+  # past it there is no later instant, so the fire is skipped with a warning.
+  # A job paused by an unresolved calendar reference does not fire until the
+  # reload that fixes it.
+  #
+  # Removing the directive makes croniq forget the record, so adding it back
+  # later fires again. Dropping the job from the Croniqfile does not (a job
+  # commented out for a week and restored unchanged has not changed).
+  run_on_register
+
+  singleton
+  runner { require credentials }
 }
 
 # High-frequency monitoring job — fire-and-forget, no DB overhead

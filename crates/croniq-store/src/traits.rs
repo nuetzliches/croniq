@@ -32,6 +32,26 @@ pub trait JobStore {
 
     /// Delete job state.
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError>;
+
+    /// Every recorded `run_on_register` adoption fire (issue #555).
+    ///
+    /// Read once per config load and compared against each job's current
+    /// `config_hash`, so it is a list rather than N point lookups.
+    fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError>;
+
+    /// Record that an adoption fire went out for this exact definition.
+    ///
+    /// Written **after** the fire is dispatched, never before: a crash
+    /// between the two must leave the job un-reconciled (so the next boot
+    /// fires again) rather than marked as done.
+    fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError>;
+
+    /// Forget a job's adoption-fire record.
+    ///
+    /// Used when a job stops declaring `run_on_register`: the row records a
+    /// contract that no longer exists, and re-adding the directive later is a
+    /// fresh adoption that has to fire.
+    fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError>;
 }
 
 /// Execution persistence.

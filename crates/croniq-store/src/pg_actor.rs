@@ -168,6 +168,20 @@ impl JobStore for PgStoreHandle {
         let job_key = job_key.to_owned();
         self.call(move |s| s.delete_job_state(&job_key))
     }
+
+    fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError> {
+        self.call(|s| s.list_register_fires())
+    }
+
+    fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError> {
+        let record = record.clone();
+        self.call(move |s| s.upsert_register_fire(&record))
+    }
+
+    fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError> {
+        let job_key = job_key.to_owned();
+        self.call(move |s| s.delete_register_fire(&job_key))
+    }
 }
 
 // ─── ExecutionStore ───

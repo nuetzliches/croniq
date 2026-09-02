@@ -82,6 +82,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "027_dead_letter_execution_index",
         include_str!("027_dead_letter_execution_index.sql"),
     ),
+    (
+        "028_job_register_fires",
+        include_str!("028_job_register_fires.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -180,6 +184,59 @@ mod tests {
             )
             .unwrap();
         assert_eq!(owner, "client-a");
+    }
+
+    #[test]
+    fn migration_028_creates_register_fire_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "027_dead_letter_execution_index").unwrap();
+
+        // Pre-condition: no table yet, so every `run_on_register` job in an
+        // upgraded deployment starts un-reconciled and fires once. Firing a
+        // reconciler one extra time is the safe direction; silently treating
+        // it as already done is not.
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'job_register_fires'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "028_job_register_fires")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        conn.execute(
+            "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
+             VALUES ('integration:credential-sync', 'abc123', '2026-09-02T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        // job_key is the primary key: one recorded definition per job, so a
+        // second fire replaces rather than accumulates.
+        assert!(
+            conn.execute(
+                "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
+                 VALUES ('integration:credential-sync', 'def456', '2026-09-02T11:00:00Z')",
+                [],
+            )
+            .is_err()
+        );
+
+        let hash: String = conn
+            .query_row(
+                "SELECT config_hash FROM job_register_fires WHERE job_key = 'integration:credential-sync'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hash, "abc123");
     }
 
     #[test]
