@@ -311,11 +311,14 @@ pub async fn handle_replay(
         .and_then(|v| serde_json::from_str(v).ok())
         .or_else(|| job.as_ref().map(|j| j.runner.prefer.clone()))
         .unwrap_or_default();
-    // Timeout: use the job's configured timeout instead of a hard-coded 5m.
-    let timeout = job
-        .as_ref()
-        .and_then(|j| j.timeout.clone())
-        .unwrap_or_else(|| "5m".into());
+    // Timeout: the one the dead letter recorded for its original fire, else the
+    // job's configured timeout, else 5m (issues #558, #553). Same precedence as
+    // require/prefer above — a replay reproduces the conditions the execution
+    // ran under rather than today's config.
+    let timeout = crate::duration::effective_timeout(
+        &dl.metadata,
+        job.as_ref().and_then(|j| j.timeout.as_deref()),
+    );
 
     // Enqueue work item
     let item = WorkItem {

@@ -673,6 +673,15 @@ impl CroniqMcp {
             .or_else(|| job.and_then(|j| j.timeout.clone()))
             .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.to_string());
 
+        // Stamped like the capabilities above so the server's stale-claim
+        // reaper judges the execution by the timeout it is running under rather
+        // than the job config's (issue #558) — these tools accept a per-fire
+        // override too.
+        metadata.insert(
+            croniq_config::compile::TIMEOUT_METADATA_KEY.into(),
+            timeout.clone(),
+        );
+
         (metadata, require, prefer, timeout)
     }
 
@@ -2574,6 +2583,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(sole_queued_item(&server).await.timeout, "2h");
+    }
+
+    #[tokio::test]
+    async fn job_trigger_stamps_the_effective_timeout() {
+        // Issue #558, MCP side: these tools accept a per-fire override too, so
+        // the resolved value has to reach the row for the server's reaper.
+        let server = make_server_with_jobs(
+            r#"
+            job billing:invoice {
+                every 1 hour
+                timeout 30s
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: Some("4h".into()),
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        assert_eq!(item.timeout, "4h");
+        assert_eq!(
+            item.metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("4h"),
+            "got: {:?}",
+            item.metadata
+        );
+
+        // And on the persisted row, which is what the reaper actually reads.
+        let executions = server
+            .store
+            .as_ref()
+            .unwrap()
+            .list_executions(&croniq_store::models::ExecutionFilter::default())
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(
+            executions[0]
+                .metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .map(String::as_str),
+            Some("4h")
+        );
     }
 
     #[tokio::test]

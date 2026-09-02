@@ -6,6 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stale-claim reaper no longer reaps live work when a fire carried its own
+  `timeout` ([#558](https://github.com/nuetzliches/croniq/issues/558)).** The
+  reaper computed its threshold from the *job config's* timeout, but
+  `POST /v1/trigger` and the MCP fire tools both accept a per-fire override, and
+  `Execution` has no timeout field to record what was actually in force. So a
+  trigger asking for `4h` on a job declaring `timeout 30s` was declared stale
+  30s + grace after being claimed — while its runner was legitimately still
+  working — requeued, and picked up by a second runner. The original's
+  completion was then discarded as late by the
+  [#374](https://github.com/nuetzliches/croniq/issues/374) guard: the work ran
+  twice and the first result was thrown away, with nothing logging a mismatch
+  because from the reaper's view the claim had simply aged out.
+
+  The mirror case was slower recovery rather than duplication: a `30s` override
+  on a `timeout 2h` job waited 2h + grace to be recovered. A quieter variant
+  needed no override at all — reloading the Croniqfile to a different `timeout`
+  re-judged executions already in flight.
+
+  The effective timeout is now stamped onto the execution row as `__timeout` at
+  fire time, and the reaper prefers it, falling back to the job config so rows
+  written before the stamp keep their previous behaviour. Precedence is
+  `__timeout` → job config → `5m`, with a blank or unparseable value falling
+  through rather than being honoured — otherwise a malformed stamp would shadow
+  a good job config and re-create the bug in the other direction. The key sits
+  in the reserved `__` namespace, so a caller cannot grant itself an arbitrary
+  grace period against the reaper.
+
+  Stamping happens in the shared `job_execution_metadata` helper introduced by
+  [#560](https://github.com/nuetzliches/croniq/issues/560), so the scheduler and
+  register-fire paths are covered by construction; the trigger handler and the
+  MCP fire tools stamp their own resolved value. Every path that rebuilds a work
+  item from a persisted execution — the retry, the watchdog requeue and the
+  dead-letter replay — now reads the same precedence, so the reaper and the
+  runner cannot disagree about how long an execution is allowed to take.
+
+  A `timeout` column on `executions` was considered and rejected for now: better
+  typed, but it costs a migration plus both store backends, the trait,
+  `pg_actor` forwarding and contract tests, for a value only the reaper reads.
+
 ### Added
 
 - **The DSL generator's config tab covers every top-level block and directive

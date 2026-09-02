@@ -384,7 +384,14 @@ impl CompletionProcessor {
                             require: job.runner.require.clone(),
                             prefer: job.runner.prefer.clone(),
                             metadata: serde_json::json!(execution.metadata),
-                            timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+                            // A retry runs under the timeout its original fire
+                            // ran under, not whatever the job config says now
+                            // (issue #558). The metadata carrying it is cloned
+                            // forward just above, so row and item agree.
+                            timeout: crate::duration::effective_timeout(
+                                &execution.metadata,
+                                job.timeout.as_deref(),
+                            ),
                             is_ephemeral: false,
                         };
                         self.runner.queue.write().await.enqueue(item);

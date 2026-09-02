@@ -571,6 +571,25 @@ pub const MAX_CONCURRENT_METADATA_KEY: &str = "__max_concurrent";
 /// the row that *counts* toward it always come from the same stamp.
 pub const CONCURRENCY_GROUP_METADATA_KEY: &str = "__concurrency_group";
 
+/// Metadata key carrying the execution timeout that was in force when an
+/// execution was fired (issue #558).
+///
+/// The timeout can be overridden per fire — `POST /v1/trigger` and the MCP fire
+/// tools both accept one — so the job config is not a reliable answer for an
+/// execution already in flight, and a reload can change it under one. The
+/// watchdog's stale-claim reaper needs the value that was actually in force to
+/// tell a wedged claim from a legitimately long one, and the persisted row is
+/// the only place it can read that from.
+///
+/// Lives here rather than beside `REQUIRE_METADATA_KEY` in `croniq-bridge`
+/// because `croniq-mcp` stamps it too and does not depend on that crate; this
+/// module already hosts the majority of the reserved keys.
+///
+/// In the reserved `__` namespace, so caller-supplied metadata can never set it
+/// (see [`is_reserved_metadata_key`]) — otherwise a client could hand itself an
+/// arbitrary grace period against the reaper.
+pub const TIMEOUT_METADATA_KEY: &str = "__timeout";
+
 /// Metadata key carrying the resolved `max_concurrent` of the job's
 /// concurrency group (issue #546). Stamped alongside
 /// [`CONCURRENCY_GROUP_METADATA_KEY`] so the claim path can decide from the
