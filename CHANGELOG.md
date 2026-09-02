@@ -6,78 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- **A malformed `timeout` on a write path is now rejected with a `400`
-  instead of being silently substituted
-  ([#559](https://github.com/nuetzliches/croniq/issues/559)).** A non-blank
-  but unparseable value (`"5min"`, `"abc"`, `"10 minutes"`) was accepted and
-  then degraded to a default at each consumer. Since
-  [#551](https://github.com/nuetzliches/croniq/issues/551) made an *absent*
-  `timeout` mean "inherit the job's", that substitution became actively
-  misleading: `"5min"` on a job declaring `timeout 2h` no longer yielded five
-  minutes, it yielded **two hours** — a typo making the execution run 24x
-  longer than intended, reported by nothing. The reverse was just as bad, a
-  bad value on a job with no `timeout` yielding `5m` where the caller asked
-  for hours.
-
-  Validation now runs at ingress on every path that accepts a duration:
-  `POST /v1/trigger`, the MCP `job_trigger` and `enqueue_job` fire tools, and
-  `POST /v1/jobs` / `PUT /v1/jobs/{job_key}` plus the MCP `create_job` /
-  `update_job` equivalents. The stored-job paths matter most — a bad timeout
-  persisted on a job silently mis-bounds *every future fire* of it, and the
-  DSL has always validated at compile time, so this closes the gap between
-  DSL-managed and API-managed jobs.
-
-  A blank value still counts as absent and inherits
-  ([#553](https://github.com/nuetzliches/croniq/issues/553)); only a
-  present-but-malformed one is refused. Rejection happens before any side
-  effect, so a refused trigger enqueues nothing and a refused update leaves
-  the stored value untouched. The job endpoints return the parser's own
-  message in the body (`{"error", "field", "message"}`);
-  the trigger endpoint keeps its established status-only error shape and logs
-  the reason. Both rules live in one shared
-  `croniq_execution::retry::validate_optional_duration`, so the server and
-  the MCP surface cannot drift apart.
-
-- **The stale-claim reaper no longer reaps live work when a fire carried its own
-  `timeout` ([#558](https://github.com/nuetzliches/croniq/issues/558)).** The
-  reaper computed its threshold from the *job config's* timeout, but
-  `POST /v1/trigger` and the MCP fire tools both accept a per-fire override, and
-  `Execution` has no timeout field to record what was actually in force. So a
-  trigger asking for `4h` on a job declaring `timeout 30s` was declared stale
-  30s + grace after being claimed — while its runner was legitimately still
-  working — requeued, and picked up by a second runner. The original's
-  completion was then discarded as late by the
-  [#374](https://github.com/nuetzliches/croniq/issues/374) guard: the work ran
-  twice and the first result was thrown away, with nothing logging a mismatch
-  because from the reaper's view the claim had simply aged out.
-
-  The mirror case was slower recovery rather than duplication: a `30s` override
-  on a `timeout 2h` job waited 2h + grace to be recovered. A quieter variant
-  needed no override at all — reloading the Croniqfile to a different `timeout`
-  re-judged executions already in flight.
-
-  The effective timeout is now stamped onto the execution row as `__timeout` at
-  fire time, and the reaper prefers it, falling back to the job config so rows
-  written before the stamp keep their previous behaviour. Precedence is
-  `__timeout` → job config → `5m`, with a blank or unparseable value falling
-  through rather than being honoured — otherwise a malformed stamp would shadow
-  a good job config and re-create the bug in the other direction. The key sits
-  in the reserved `__` namespace, so a caller cannot grant itself an arbitrary
-  grace period against the reaper.
-
-  Stamping happens in the shared `job_execution_metadata` helper introduced by
-  [#560](https://github.com/nuetzliches/croniq/issues/560), so the scheduler and
-  register-fire paths are covered by construction; the trigger handler and the
-  MCP fire tools stamp their own resolved value. Every path that rebuilds a work
-  item from a persisted execution — the retry, the watchdog requeue and the
-  dead-letter replay — now reads the same precedence, so the reaper and the
-  runner cannot disagree about how long an execution is allowed to take.
-
-  A `timeout` column on `executions` was considered and rejected for now: better
-  typed, but it costs a migration plus both store backends, the trait,
-  `pg_actor` forwarding and contract tests, for a value only the reaper reads.
+## [0.37.0] - 2026-09-02
 
 ### Added
 
@@ -261,6 +190,77 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serialise identically, so no wire behaviour changes for existing payloads.
 
 ### Fixed
+
+- **A malformed `timeout` on a write path is now rejected with a `400`
+  instead of being silently substituted
+  ([#559](https://github.com/nuetzliches/croniq/issues/559)).** A non-blank
+  but unparseable value (`"5min"`, `"abc"`, `"10 minutes"`) was accepted and
+  then degraded to a default at each consumer. Since
+  [#551](https://github.com/nuetzliches/croniq/issues/551) made an *absent*
+  `timeout` mean "inherit the job's", that substitution became actively
+  misleading: `"5min"` on a job declaring `timeout 2h` no longer yielded five
+  minutes, it yielded **two hours** — a typo making the execution run 24x
+  longer than intended, reported by nothing. The reverse was just as bad, a
+  bad value on a job with no `timeout` yielding `5m` where the caller asked
+  for hours.
+
+  Validation now runs at ingress on every path that accepts a duration:
+  `POST /v1/trigger`, the MCP `job_trigger` and `enqueue_job` fire tools, and
+  `POST /v1/jobs` / `PUT /v1/jobs/{job_key}` plus the MCP `create_job` /
+  `update_job` equivalents. The stored-job paths matter most — a bad timeout
+  persisted on a job silently mis-bounds *every future fire* of it, and the
+  DSL has always validated at compile time, so this closes the gap between
+  DSL-managed and API-managed jobs.
+
+  A blank value still counts as absent and inherits
+  ([#553](https://github.com/nuetzliches/croniq/issues/553)); only a
+  present-but-malformed one is refused. Rejection happens before any side
+  effect, so a refused trigger enqueues nothing and a refused update leaves
+  the stored value untouched. The job endpoints return the parser's own
+  message in the body (`{"error", "field", "message"}`);
+  the trigger endpoint keeps its established status-only error shape and logs
+  the reason. Both rules live in one shared
+  `croniq_execution::retry::validate_optional_duration`, so the server and
+  the MCP surface cannot drift apart.
+
+- **The stale-claim reaper no longer reaps live work when a fire carried its own
+  `timeout` ([#558](https://github.com/nuetzliches/croniq/issues/558)).** The
+  reaper computed its threshold from the *job config's* timeout, but
+  `POST /v1/trigger` and the MCP fire tools both accept a per-fire override, and
+  `Execution` has no timeout field to record what was actually in force. So a
+  trigger asking for `4h` on a job declaring `timeout 30s` was declared stale
+  30s + grace after being claimed — while its runner was legitimately still
+  working — requeued, and picked up by a second runner. The original's
+  completion was then discarded as late by the
+  [#374](https://github.com/nuetzliches/croniq/issues/374) guard: the work ran
+  twice and the first result was thrown away, with nothing logging a mismatch
+  because from the reaper's view the claim had simply aged out.
+
+  The mirror case was slower recovery rather than duplication: a `30s` override
+  on a `timeout 2h` job waited 2h + grace to be recovered. A quieter variant
+  needed no override at all — reloading the Croniqfile to a different `timeout`
+  re-judged executions already in flight.
+
+  The effective timeout is now stamped onto the execution row as `__timeout` at
+  fire time, and the reaper prefers it, falling back to the job config so rows
+  written before the stamp keep their previous behaviour. Precedence is
+  `__timeout` → job config → `5m`, with a blank or unparseable value falling
+  through rather than being honoured — otherwise a malformed stamp would shadow
+  a good job config and re-create the bug in the other direction. The key sits
+  in the reserved `__` namespace, so a caller cannot grant itself an arbitrary
+  grace period against the reaper.
+
+  Stamping happens in the shared `job_execution_metadata` helper introduced by
+  [#560](https://github.com/nuetzliches/croniq/issues/560), so the scheduler and
+  register-fire paths are covered by construction; the trigger handler and the
+  MCP fire tools stamp their own resolved value. Every path that rebuilds a work
+  item from a persisted execution — the retry, the watchdog requeue and the
+  dead-letter replay — now reads the same precedence, so the reaper and the
+  runner cannot disagree about how long an execution is allowed to take.
+
+  A `timeout` column on `executions` was considered and rejected for now: better
+  typed, but it costs a migration plus both store backends, the trait,
+  `pg_actor` forwarding and contract tests, for a value only the reaper reads.
 
 - **The DSL generator's config tab can no longer drift from the directive
   tables.** Two `cargo test` guards now read the shipped `site/generator.js`
@@ -1361,7 +1361,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `post_login_redirect`; a caller that explicitly asks for
   `Accept: application/json` still gets the JSON body. No token ever appears in
   a URL, in browser history, or in a proxy log.
-
 
 - **An API client's refresh token was minted but never stored, so it could not
   be redeemed** (#463). `POST /v1/api-clients/{id}/tokens` returned a full
