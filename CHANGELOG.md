@@ -8,6 +8,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The DSL generator can produce every job directive the bridge supports
+  ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
+  public Croniqfile generator's job form had fallen behind the DSL. It now
+  offers:
+
+  - `run_on_register` — a checkbox, the directive added in #555
+  - `keep_last N` — the per-job run-history cap from
+    [#344](https://github.com/nuetzliches/croniq/issues/344), also added to the
+    `defaults { }` block alongside its `queue_ttl` / `max_queue_depth` siblings
+  - job-level `timezone` from
+    [#426](https://github.com/nuetzliches/croniq/issues/426) — previously only
+    the *schedule-option* spelling was reachable, which the parser rejects on
+    `once` / `disabled`, so a one-shot job's wall-clock time could not be given
+    a zone at all and silently meant UTC
+  - per-job `dead_letter { enabled / retention / replay_max_age /
+    operator_hint }` — the wasm bridge has emitted this since the block was
+    added and it was covered by tests, but no form ever set it, so it was
+    unreachable for anyone using the generator. `enabled` is deliberately
+    tri-state: *inherit* omits the key so `defaults { dead_letter … }` keeps
+    applying, which is not the same as writing `enabled true`.
+  - `concurrency_group` from
+    [#546](https://github.com/nuetzliches/croniq/issues/546) — reached the
+    bridge but not the form, and was caught by the new parity guard below
+    rather than by anyone noticing
+
 - **`run_on_register`: fire a job once when croniq adopts its definition
   ([#555](https://github.com/nuetzliches/croniq/issues/555)).** A job that
   reconciles state which changes *at deploy time* — pushing a rotated
@@ -138,6 +163,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serialise identically, so no wire behaviour changes for existing payloads.
 
 ### Fixed
+
+- **A job option the DSL generator misspells is no longer silently dropped
+  ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
+  generator builds the wasm payloads as plain JS object literals that cross the
+  boundary as an untyped `JsValue`. Serde ignores unknown fields, so a
+  misspelled key — or one the form sets that the bridge never grew — produced a
+  job block quietly missing that directive: no error in the generator, no
+  failure in CI. There are no TypeScript types for those shapes (`JobOptions`
+  is not in the generated `.d.ts`), the site has no test harness, and nothing
+  in CI read that file.
+
+  Two `cargo test` guards now read the shipped `site/generator.js` and check
+  both directions against the payload structs — a key the form sets that the
+  bridge does not have, and a directive the bridge accepts that the form never
+  sets. The valid key set is derived from the structs themselves, so it cannot
+  fall behind them. It caught the last of the gaps above on its first run
+  against `main` — `concurrency_group`, added hours earlier — and would have
+  caught every one of them at the commit that introduced it; it follows the
+  existing
+  `example_croniqfile_has_no_unknown_directives` pattern of validating a
+  shipped non-Rust file from a Rust test.
+
+  The generator's cache-busting version is bumped in the same change, so no
+  visitor gets a cached JS half of the pair against a freshly built wasm.
 
 - **The .NET SDK now runs the shared trigger conformance corpus
   ([#554](https://github.com/nuetzliches/croniq/issues/554)).** It was the only

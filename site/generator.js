@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-07-15f'
+const WASM_VERSION = '2026-09-02a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-07-15f'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-09-02a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -59,11 +59,23 @@ const schState = {
     description: '',
     timeout: '',
     retry: { enabled: false, strategy: 'exponential', max: 3, base: '5s', cap: '2m', jitter: 0.3, delay: '10s' },
+    // Per-job `dead_letter { … }`. `enabled` is tri-state: 'inherit' omits
+    // the key entirely, which differs from an explicit `enabled true`.
+    deadLetter: { enabled: 'inherit', retention: '', replayMaxAge: '', operatorHint: '' },
     runnerRequire: '',
     runnerPrefer: '',
     tags: '',
     concurrency: 'default', // 'default' | 'singleton' | 'max_concurrent'
     maxConcurrent: 3,
+    // Shared budget across a set of jobs (#546) — composes with the per-job
+    // guard above, so it is a separate field and not another `concurrency`
+    // mode.
+    concurrencyGroup: '',
+    // Job-level `timezone` — distinct from `schedTimezone`, which is the
+    // schedule-option spelling and is dropped on once/disabled.
+    jobTimezone: '',
+    keepLast: '',
+    runOnRegister: false,
     // Phase 2 — schedule constraints (recurring modes only) + execution.
     schedCalendar: '',
     schedTimezone: '',
@@ -169,6 +181,14 @@ function bindSelect(id, getter, setter) {
     refreshSchedule()
   })
 }
+function bindCheckbox(id, getter, setter) {
+  const el = document.getElementById(id)
+  el.checked = getter()
+  el.addEventListener('change', () => {
+    setter(el.checked)
+    refreshSchedule()
+  })
+}
 
 bindText('sch-key', () => schState.key, (v) => { schState.key = v })
 bindNumber('sch-int-count', () => schState.interval.count, (v) => { schState.interval.count = v })
@@ -242,6 +262,7 @@ concurrencyEl.addEventListener('change', () => {
 })
 syncConcurrency()
 bindNumber('sch-opt-maxc', () => O.maxConcurrent, (v) => { O.maxConcurrent = v })
+bindText('sch-opt-concurrency-group', () => O.concurrencyGroup, (v) => { O.concurrencyGroup = v })
 
 // Phase 2 — schedule constraints + execution directives.
 bindText('sch-opt-calendar', () => O.schedCalendar, (v) => { O.schedCalendar = v })
@@ -252,8 +273,34 @@ bindText('sch-opt-not-before', () => O.notBefore, (v) => { O.notBefore = v })
 bindText('sch-opt-not-after', () => O.notAfter, (v) => { O.notAfter = v })
 bindText('sch-opt-queue-ttl', () => O.queueTtl, (v) => { O.queueTtl = v })
 bindText('sch-opt-max-queue', () => O.maxQueueDepth, (v) => { O.maxQueueDepth = v })
+bindText('sch-opt-keep-last', () => O.keepLast, (v) => { O.keepLast = v })
+bindText('sch-opt-job-timezone', () => O.jobTimezone, (v) => { O.jobTimezone = v })
+bindCheckbox('sch-opt-run-on-register', () => O.runOnRegister, (v) => { O.runOnRegister = v })
 bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
 bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
+
+// Dead letter. `enabled false` drops the letter entirely, so the detail
+// fields below it stop meaning anything — hide them rather than emit
+// settings that will never apply.
+const DL = O.deadLetter
+bindText('sch-opt-dl-retention', () => DL.retention, (v) => { DL.retention = v })
+bindText('sch-opt-dl-replay-max-age', () => DL.replayMaxAge, (v) => { DL.replayMaxAge = v })
+bindText('sch-opt-dl-operator-hint', () => DL.operatorHint, (v) => { DL.operatorHint = v })
+const dlEnabledEl = document.getElementById('sch-opt-dl-enabled')
+const dlFieldsEl = document.getElementById('sch-opt-dl-fields')
+const dlHintFieldEl = document.getElementById('sch-opt-dl-hint-field')
+function syncDeadLetter() {
+  const off = DL.enabled === 'false'
+  dlFieldsEl.hidden = off
+  dlHintFieldEl.hidden = off
+}
+dlEnabledEl.value = DL.enabled
+dlEnabledEl.addEventListener('change', () => {
+  DL.enabled = dlEnabledEl.value
+  syncDeadLetter()
+  refreshSchedule()
+})
+syncDeadLetter()
 
 // Runner command (Phase 3c).
 const RE = O.runnerExec
@@ -300,6 +347,21 @@ function buildJobOptions() {
     }
     opts.retry = r
   }
+  // Dead letter: only emit the block when something in it is actually set.
+  // 'inherit' + empty fields must stay absent so `defaults { dead_letter … }`
+  // keeps applying (the compiler field-merges per key).
+  {
+    const dl = {}
+    if (DL.enabled !== 'inherit') dl.enabled = DL.enabled === 'true'
+    // A disabled dead letter keeps nothing, so its retention/hint would be
+    // dead config — mirrors the hidden fields above.
+    if (DL.enabled !== 'false') {
+      if (DL.retention.trim()) dl.retention = DL.retention.trim()
+      if (DL.replayMaxAge.trim()) dl.replay_max_age = DL.replayMaxAge.trim()
+      if (DL.operatorHint.trim()) dl.operator_hint = DL.operatorHint.trim()
+    }
+    if (Object.keys(dl).length) opts.dead_letter = dl
+  }
   const req = O.runnerRequire.split(/[\s,]+/).filter(Boolean)
   const pref = O.runnerPrefer.split(/[\s,]+/).filter(Boolean)
   if (req.length) opts.runner_require = req
@@ -308,6 +370,7 @@ function buildJobOptions() {
   if (tags.length) opts.tags = tags
   if (O.concurrency === 'singleton') opts.concurrency = 'singleton'
   else if (O.concurrency === 'max_concurrent') opts.concurrency = String(O.maxConcurrent)
+  if (O.concurrencyGroup.trim()) opts.concurrency_group = O.concurrencyGroup.trim()
 
   // Recurring-only scheduling constraints — the schedule-options block is
   // invalid on once/disabled, so don't emit them there (the wasm bridge
@@ -326,6 +389,13 @@ function buildJobOptions() {
   if (O.catchUp !== 'default') opts.catch_up = O.catchUp
   if (O.queueTtl.trim()) opts.queue_ttl = O.queueTtl.trim()
   if (O.maxQueueDepth) opts.max_queue_depth = parseInt(O.maxQueueDepth, 10)
+  if (O.keepLast) opts.keep_last = parseInt(O.keepLast, 10)
+  // Job-level `timezone`, valid in every schedule mode — unlike
+  // `schedule_timezone` above, which the bridge drops on once/disabled. Both
+  // may be set; the schedule option is the more specific spelling and wins.
+  if (O.jobTimezone.trim()) opts.timezone = O.jobTimezone.trim()
+  // Bare directive: only the `true` case emits anything at all.
+  if (O.runOnRegister) opts.run_on_register = true
 
   // Runner command payload. The wasm side omits it when there's no
   // command/args, so an incomplete draft simply produces no runner block.
@@ -1063,6 +1133,9 @@ const CONFIG_SCHEMA = {
     { key: 'timeout', label: 'Timeout', placeholder: '5m' },
     { key: 'execution_mode', label: 'Execution mode', type: 'select', options: ['', 'queued', 'ephemeral'] },
     { key: 'catch_up', label: 'Catch-up', type: 'select', options: ['', 'all', 'latest', 'none'] },
+    { key: 'queue_ttl', label: 'Queue TTL', placeholder: '1h · none' },
+    { key: 'max_queue_depth', label: 'Max queue depth', type: 'number', placeholder: '10' },
+    { key: 'keep_last', label: 'Keep last N runs', type: 'number', placeholder: '500' },
     { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'fixed'] }, fields: [
       { key: 'max_attempts', label: 'Max attempts', type: 'number' },
       { key: 'base', label: 'Base', placeholder: '2s' },
