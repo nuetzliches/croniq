@@ -365,7 +365,12 @@ impl Trigger {
     /// Same result as the old single-zone interval intersection when the zones
     /// coincide, and still O(days-to-opening) — the day-jumping happens inside
     /// each gate's own scan, not by iterating here.
-    fn next_gate_open(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    ///
+    /// Public because a fire that does not come from the schedule needs the
+    /// same answer: `run_on_register` defers its adoption fire to the next
+    /// gate-open instant rather than firing through a closed window or
+    /// dropping it (issue #555).
+    pub fn next_gate_open(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
         // Each round advances past at least one gate boundary. Both gates have
         // O(1) boundaries per day, so this only has to out-last the boundaries
         // of a single day; the day-scale search is `next_instant_in`'s job and

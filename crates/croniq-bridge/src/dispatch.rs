@@ -47,6 +47,46 @@ pub fn job_to_work_item(
     }
 }
 
+/// Metadata key carrying a job's required runner capabilities into the
+/// execution row and the work item. The store-side claim filter matches on it.
+pub const REQUIRE_METADATA_KEY: &str = "__require";
+
+/// Metadata key carrying a job's preferred runner capabilities.
+pub const PREFER_METADATA_KEY: &str = "__prefer";
+
+/// The metadata an execution row for `job` has to carry: the job's compiled
+/// metadata (`__runner_exec`, `__max_concurrent`, operator keys …) plus its
+/// effective runner capabilities stamped as [`REQUIRE_METADATA_KEY`] /
+/// [`PREFER_METADATA_KEY`].
+///
+/// The capabilities cannot ride in on `job.metadata`: the compiler keeps them
+/// on `job.runner` and only the row-writing paths stamp them. Every one of
+/// those paths needs the same stamping — the scheduler's tick, and the
+/// adoption fire of `run_on_register` (issue #555) — and a path that forgets
+/// writes a row that a later dead-letter replay or watchdog requeue routes to
+/// the wrong runner, which is exactly how #549 happened on the trigger
+/// endpoint. Sharing one function is what keeps the next producer honest.
+///
+/// Empty vectors are omitted rather than written as `[]`: an empty `require`
+/// on a work item means *any* runner may claim it, and the claim filter reads
+/// absence, not emptiness.
+pub fn job_execution_metadata(job: &JobConfig) -> std::collections::HashMap<String, String> {
+    let mut metadata = job.metadata.clone();
+    if !job.runner.require.is_empty() {
+        metadata.insert(
+            REQUIRE_METADATA_KEY.into(),
+            serde_json::to_string(&job.runner.require).unwrap_or_default(),
+        );
+    }
+    if !job.runner.prefer.is_empty() {
+        metadata.insert(
+            PREFER_METADATA_KEY.into(),
+            serde_json::to_string(&job.runner.prefer).unwrap_or_default(),
+        );
+    }
+    metadata
+}
+
 fn metadata_to_json(meta: &std::collections::HashMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         meta.iter()
@@ -111,6 +151,7 @@ mod tests {
             keep_last: None,
             max_concurrent: None,
             tags: vec![],
+            run_on_register: false,
         }
     }
 
@@ -201,6 +242,41 @@ mod tests {
         let job = base_job();
         let item = job_to_work_item(&job, "exec-1", Utc::now(), Utc::now(), 1);
         assert!(item.metadata.as_object().unwrap().is_empty());
+    }
+
+    // ─── job_execution_metadata ───────────────────────────────────────────────
+
+    #[test]
+    fn execution_metadata_carries_compiled_job_metadata() {
+        let mut job = base_job();
+        job.metadata.insert("env".into(), "prod".into());
+        job.metadata
+            .insert("__runner_exec".into(), "{\"kind\":\"shell\"}".into());
+
+        let meta = job_execution_metadata(&job);
+        assert_eq!(meta["env"], "prod");
+        assert_eq!(meta["__runner_exec"], "{\"kind\":\"shell\"}");
+    }
+
+    #[test]
+    fn execution_metadata_stamps_runner_capabilities() {
+        let mut job = base_job();
+        job.runner.require = vec!["billing".into(), "eu-central".into()];
+        job.runner.prefer = vec!["priority".into()];
+
+        let meta = job_execution_metadata(&job);
+        assert_eq!(meta[REQUIRE_METADATA_KEY], r#"["billing","eu-central"]"#);
+        assert_eq!(meta[PREFER_METADATA_KEY], r#"["priority"]"#);
+    }
+
+    #[test]
+    fn execution_metadata_omits_empty_capabilities() {
+        // An empty `require` on the row is not the same as `[]`: the claim
+        // filter reads absence, and `[]` would be a routing constraint that
+        // matches nothing sensible.
+        let meta = job_execution_metadata(&base_job());
+        assert!(!meta.contains_key(REQUIRE_METADATA_KEY));
+        assert!(!meta.contains_key(PREFER_METADATA_KEY));
     }
 
     // ─── job_to_execution_policy ──────────────────────────────────────────────

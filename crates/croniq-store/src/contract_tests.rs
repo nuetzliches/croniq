@@ -130,6 +130,102 @@ fn job_state_not_found() {
     assert!(store.get_job_state("nonexistent:job").unwrap().is_none());
 }
 
+// ─── JobStore: run_on_register adoption fires (issue #555) ───
+
+#[test]
+fn register_fire_upsert_and_list() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .upsert_register_fire(&JobRegisterFire {
+            job_key: "integration:credential-sync".into(),
+            config_hash: "hash-a".into(),
+            fired_at: now(),
+        })
+        .unwrap();
+
+    let list = store.list_register_fires().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].job_key, "integration:credential-sync");
+    assert_eq!(list[0].config_hash, "hash-a");
+    assert_eq!(list[0].fired_at, now());
+}
+
+#[test]
+fn register_fire_upsert_replaces_the_previous_definition() {
+    // One row per job: the question the row answers is "which definition
+    // fired last", not "which definitions have ever fired".
+    let store = create_memory_store().unwrap();
+
+    for (hash, at) in [("hash-a", now()), ("hash-b", utc(2026, 3, 29, 13, 0))] {
+        store
+            .upsert_register_fire(&JobRegisterFire {
+                job_key: "integration:credential-sync".into(),
+                config_hash: hash.into(),
+                fired_at: at,
+            })
+            .unwrap();
+    }
+
+    let list = store.list_register_fires().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].config_hash, "hash-b");
+    assert_eq!(list[0].fired_at, utc(2026, 3, 29, 13, 0));
+}
+
+#[test]
+fn register_fire_delete_makes_the_job_un_reconciled_again() {
+    let store = create_memory_store().unwrap();
+
+    store
+        .upsert_register_fire(&JobRegisterFire {
+            job_key: "integration:credential-sync".into(),
+            config_hash: "hash-a".into(),
+            fired_at: now(),
+        })
+        .unwrap();
+    store
+        .delete_register_fire("integration:credential-sync")
+        .unwrap();
+
+    assert!(store.list_register_fires().unwrap().is_empty());
+}
+
+#[test]
+fn register_fire_delete_of_an_unknown_job_is_not_an_error() {
+    // The prune pass deletes unconditionally rather than reading first.
+    let store = create_memory_store().unwrap();
+    store.delete_register_fire("nobody:here").unwrap();
+}
+
+#[test]
+fn register_fires_are_listed_per_job() {
+    let store = create_memory_store().unwrap();
+
+    for key in ["b:job", "a:job"] {
+        store
+            .upsert_register_fire(&JobRegisterFire {
+                job_key: key.into(),
+                config_hash: format!("hash-{key}"),
+                fired_at: now(),
+            })
+            .unwrap();
+    }
+
+    let list = store.list_register_fires().unwrap();
+    assert_eq!(list.len(), 2);
+    let keys: Vec<&str> = list.iter().map(|r| r.job_key.as_str()).collect();
+    assert_eq!(keys, vec!["a:job", "b:job"], "listed ordered by job_key");
+}
+
+#[test]
+fn register_fires_are_empty_on_a_fresh_store() {
+    // The upgrade path: a deployment that has never run the directive has no
+    // rows, so every `run_on_register` job fires once on first boot.
+    let store = create_memory_store().unwrap();
+    assert!(store.list_register_fires().unwrap().is_empty());
+}
+
 #[test]
 fn create_execution_and_advance_job_state_persists_both() {
     let store = create_memory_store().unwrap();

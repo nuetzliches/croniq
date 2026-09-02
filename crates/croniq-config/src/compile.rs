@@ -483,6 +483,16 @@ pub struct JobConfig {
     /// runner capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Fire once when this job is adopted — the first time the key is seen,
+    /// and again whenever [`JobConfig::config_hash`] changes (`run_on_register`,
+    /// issue #555). Closes the blind window between a deploy that changes what
+    /// a reconciling job has to do and that job's next scheduled fire.
+    ///
+    /// Deliberately *not* "fire on every reload/restart": the server persists
+    /// the hash it last fired for per job key, so a restart storm or a
+    /// `--watch` save that changes nothing fires nothing.
+    #[serde(default)]
+    pub run_on_register: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1344,6 +1354,7 @@ fn compile_job(
     let mut keep_last = defaults.keep_last;
     let mut max_concurrent: Option<u32> = None;
     let mut tags: Vec<String> = Vec::new();
+    let mut run_on_register = false;
 
     for dob in &job.directives {
         match dob {
@@ -1387,6 +1398,11 @@ fn compile_job(
                 // surfaces them as errors, matching how other directives
                 // split lenient compilation from diagnostics.
                 "singleton" => max_concurrent = Some(1),
+                // Bare directive (issue #555): no value, presence is the
+                // whole signal. The adoption fire itself lives in the
+                // server — the compiler only records the intent and the
+                // hash the server compares against.
+                "run_on_register" => run_on_register = true,
                 "max_concurrent" => {
                     max_concurrent = first_arg(d, vars)
                         .and_then(|v| v.parse().ok())
@@ -1500,6 +1516,7 @@ fn compile_job(
         keep_last,
         max_concurrent,
         tags,
+        run_on_register,
     }
 }
 
@@ -2196,6 +2213,48 @@ mod tests {
         let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
         let cfg = compile(&ast);
         assert!(cfg.jobs[0].tags.is_empty());
+    }
+
+    // ── run_on_register (issue #555) ─────────────────────────────────────────
+
+    #[test]
+    fn compile_run_on_register_directive_sets_the_flag() {
+        let ast = Parser::parse(
+            r#"
+            job integration:credential-sync {
+              every day at 04:20
+              run_on_register
+              singleton
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].run_on_register);
+        assert_eq!(
+            cfg.jobs[0].max_concurrent,
+            Some(1),
+            "the adoption fire is claimed like any other, so `singleton` still has to compile"
+        );
+    }
+
+    #[test]
+    fn compile_without_run_on_register_leaves_the_flag_off() {
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(!cfg.jobs[0].run_on_register);
+    }
+
+    #[test]
+    fn compile_run_on_register_survives_ephemeral_mode() {
+        // `ephemeral` strips the queue-only settings (catch_up, queue_ttl,
+        // max_concurrent …). The adoption fire is not one of them — it is
+        // just a fire, and an ephemeral job can have one (issue #555).
+        let ast = Parser::parse(r#"job beat:tick { ephemeral every 1 minute; run_on_register }"#)
+            .unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].run_on_register);
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
     }
 
     // ── singleton / max_concurrent (issue #278) ──────────────────────────────

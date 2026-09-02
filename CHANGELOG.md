@@ -6,6 +6,76 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`run_on_register`: fire a job once when croniq adopts its definition
+  ([#555](https://github.com/nuetzliches/croniq/issues/555)).** A job that
+  reconciles state which changes *at deploy time* — pushing a rotated
+  credential to an external component, warming a cache from new config — had a
+  blind window between the deploy and its next scheduled fire, and croniq
+  offered nothing to close it. In the incident that prompted this, a
+  credential-sync job moved out of its consuming app's start-up (which covered
+  the deploy moment but never expiry) into `every day at 04:20` (which covers
+  expiry but not the deploy): a 10:00 deploy left 18 hours of rejected inbound
+  webhooks until someone triggered the job by hand.
+
+  `catch_up` cannot cover it — it replays *missed* fires of an
+  already-registered trigger, and a newly registered job has none.
+
+  ```
+  job integration:credential-sync {
+    every day at 04:20
+    run_on_register
+    singleton
+    runner { require credentials }
+  }
+  ```
+
+  A bare job directive. It fires when the job key is first seen, and again
+  whenever the job's **compiled definition** changes — explicitly *not* on
+  every reload or restart, which would storm every such job on a restart and
+  on every `--watch` save. The server persists a hash of the definition it
+  last fired for, per job key (new `job_register_fires` table, migration 028
+  on both backends), and compares.
+
+  "Changed" means any behavioural field: schedule, timezone, runner placement
+  or shell command, timeout, retry, dead-letter, metadata, execution mode,
+  catch-up, the queue and concurrency knobs. Prose and labels are excluded by
+  design — rewording a `description` or editing `tags` fires nothing, because
+  a surprise credential rotation from a doc edit is how a directive like this
+  loses an operator's trust. So are reformatting, moved `import`s and
+  re-ordered directives: the hash is over the compiled job, not the source.
+
+  The adoption fire takes the same path a manual `POST /v1/trigger` does — an
+  execution row, then a work item — so `singleton` / `max_concurrent`,
+  `runner { require … }`, `timeout`, retry and dead-letter all apply exactly
+  as for a scheduled fire, and it appears in run history like any other
+  execution. It does **not** consume the trigger's `next_fire_at`: a deploy
+  must not delay the next real run.
+
+  A `calendar`, `window` or `not_before` **defers** the fire to the first
+  instant that gate permits rather than suppressing it, matching what
+  [#391](https://github.com/nuetzliches/croniq/issues/391) established for
+  scheduled fires. `not_after` is the exception — past it there is no later
+  instant, so the fire is skipped with a warning. A job paused by an
+  unresolved calendar reference
+  ([#361](https://github.com/nuetzliches/croniq/issues/361)) does not fire
+  until the reload that fixes the fault, and a global maintenance freeze
+  *holds* the fire instead of advancing past it (there is no schedule to fall
+  behind, and dropping it would lose the reconcile).
+
+  Adoption is at-least-once: the record is written only after the fire is
+  dispatched, so a crash in between leaves the job un-reconciled and the next
+  boot fires again. For a job whose purpose is to reconcile external state,
+  that is the safe direction to fail in. Removing the directive makes croniq
+  forget the record, so adding it back later counts as a fresh adoption;
+  dropping the job from the Croniqfile does not (this pass cannot tell
+  "deleted" from "commented out for a week", the same judgement
+  `restore_trigger_states` makes about orphan `job_states`).
+
+  Upgrading needs no action: an existing deployment has no records, so every
+  job that gains the directive fires once on the first boot after it is added.
+
 ### Changed
 
 - **.NET: trigger `metadata` values widen from `string` to `object?`

@@ -1137,6 +1137,83 @@ The effective instant is readable per job as `next_fire_at` in
 `GET /v1/jobs` / `GET /v1/jobs/{job_key}`, and exported as
 `croniq_job_next_fire_timestamp`.
 
+#### Reconciling at deploy time (`run_on_register`, issue #555)
+
+Keeping the pending fire is right for a job whose schedule is the whole
+contract. It is wrong for one that reconciles state which changes *at deploy
+time* — pushing a rotated credential to an external component, warming a cache
+from new config. There, the deploy is the event, and waiting for the next
+scheduled fire is a blind window: a 10:00 deploy of a job that runs
+`every day at 04:20` leaves 18 hours of the receiving component holding the
+old value. `catch_up` does not cover it — it replays *missed* fires, and a
+newly registered job has none.
+
+The `run_on_register` job directive closes that window:
+
+```
+job integration:credential-sync {
+  every day at 04:20
+  run_on_register
+  singleton
+  runner { require credentials }
+}
+```
+
+It fires once when the job key is first seen, and again whenever the job's
+compiled definition changes. It does **not** fire on every reload or restart:
+croniq records a hash of the definition it last fired for, per job key, so a
+restart storm and a `--watch` save that changes nothing both fire nothing.
+
+Any behavioural change counts — schedule, timezone, runner placement or shell
+command, timeout, retry, dead-letter, metadata, execution mode, catch-up, the
+queue and concurrency knobs. Reformatting, moved `import`s, re-ordered
+directives, a reworded `description` and edited `tags` do not: the hash is over
+the *compiled* job and skips its prose and labels, so a doc edit never
+re-runs a rotation.
+
+The fire takes the same path a manual `POST /v1/trigger` does — an execution
+row, then a work item — so `singleton` / `max_concurrent`,
+`runner { require … }`, `timeout`, retry and dead-letter all apply exactly as
+for a scheduled fire, and it appears in run history like any other execution.
+It does not consume the trigger's pending fire: a deploy never delays the next
+scheduled run.
+
+What it does when something is in the way:
+
+| Situation | Behaviour |
+| --- | --- |
+| `calendar` / `window` closed, or `not_before` in the future | Deferred to the first permitted instant (the #391 rule), logged at `INFO` |
+| Past `not_after` | Skipped, logged at `WARN` — there is no later instant to defer to |
+| Job paused by an unresolved `calendar` reference (#361) | Not fired; nothing is recorded, so the reload that fixes the fault fires it |
+| Global maintenance active | *Held*, not advanced past — it fires when the freeze clears |
+| Job's queue at its `max_queue_depth` | Held, retried each tick until the queue drains |
+
+Every dispatch is logged, with which of the two events caused it:
+
+```
+INFO run_on_register: adoption fires armed count=1
+     job_keys=integration:credential-sync
+INFO run_on_register: adoption fire dispatched
+     job_key=integration:credential-sync execution_id=… reason=config_changed
+     config_hash=…
+```
+
+Adoption is **at-least-once**: the record is written only after the fire is
+dispatched, so a crash in between leaves the job un-reconciled and the next
+boot fires again. For a job whose purpose is to reconcile external state that
+is the safe direction to fail in — but the job must be idempotent, which a
+reconciler is by nature.
+
+Removing the directive makes croniq forget the record, so adding it back later
+counts as a fresh adoption and fires. Commenting the *job* out does not: that
+pass cannot tell "deleted" from "temporarily absent", and a job restored
+unchanged a week later has not changed. To force a re-fire by hand, delete the
+job's row from `job_register_fires` (or just trigger the job —
+`croniq trigger <job_key>`, which is what the directive automates).
+
+Nothing to do when upgrading: an existing deployment has no records, so a job
+fires once on the first boot after the directive is added to it.
+
 ## Configuration diagnostics
 
 croniq surfaces recommended-but-missing configuration in three places, all

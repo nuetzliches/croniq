@@ -129,6 +129,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("025_token_generation", PG_MIGRATION_025),
     ("026_api_client_managed_by", PG_MIGRATION_026),
     ("027_dead_letter_execution_index", PG_MIGRATION_027),
+    ("028_job_register_fires", PG_MIGRATION_028),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -271,6 +272,17 @@ ALTER TABLE api_clients ADD COLUMN IF NOT EXISTS managed_by TEXT NOT NULL DEFAUL
 // `migrations/027_dead_letter_execution_index.sql`.
 const PG_MIGRATION_027: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_dead_letters_execution_id ON dead_letters(execution_id);
+"#;
+
+// Last definition each `run_on_register` job was fired for, so the directive
+// can fire on a changed definition without firing on every restart. See
+// `migrations/028_job_register_fires.sql` for the full rationale.
+const PG_MIGRATION_028: &str = r#"
+CREATE TABLE IF NOT EXISTS job_register_fires (
+    job_key     TEXT PRIMARY KEY,
+    config_hash TEXT NOT NULL,
+    fired_at    TIMESTAMPTZ NOT NULL
+);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -651,6 +663,51 @@ impl JobStore for PgStore {
                 updated_at: row.get(5),
             })
             .collect())
+    }
+
+    fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let rows = client
+            .query(
+                "SELECT job_key, config_hash, fired_at FROM job_register_fires ORDER BY job_key",
+                &[],
+            )
+            .map_err(map_err)?;
+
+        Ok(rows
+            .iter()
+            .map(|row| JobRegisterFire {
+                job_key: row.get(0),
+                config_hash: row.get(1),
+                fired_at: row.get(2),
+            })
+            .collect())
+    }
+
+    fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        client
+            .execute(
+                "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT(job_key) DO UPDATE SET
+                   config_hash = EXCLUDED.config_hash,
+                   fired_at = EXCLUDED.fired_at",
+                &[&record.job_key, &record.config_hash, &record.fired_at],
+            )
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        client
+            .execute(
+                "DELETE FROM job_register_fires WHERE job_key = $1",
+                &[&job_key],
+            )
+            .map_err(map_err)?;
+        Ok(())
     }
 
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError> {

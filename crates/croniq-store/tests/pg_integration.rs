@@ -61,6 +61,7 @@ fn pg_backend_exercises_all_traits() {
     execution_retention(&store, &s);
     execution_completion_cas(&store, &s);
     dsl_adoptions(&store, &s);
+    register_fires(&store, &s);
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
 }
@@ -1012,6 +1013,42 @@ fn dsl_adoptions(store: &PgStore, s: &str) {
     assert!(!store.is_adopted("calendar", &key).unwrap());
     // Deleting a missing adoption returns false.
     assert!(!store.delete_adoption("calendar", &key).unwrap());
+}
+
+fn register_fires(store: &PgStore, s: &str) {
+    // Issue #555. The upsert is where this backend can diverge: SQLite spells
+    // the conflict target `excluded.`, Postgres `EXCLUDED.`, and `fired_at` is
+    // TEXT there but TIMESTAMPTZ here.
+    let job_key = format!("integration:credential-sync-{s}");
+    store
+        .upsert_register_fire(&JobRegisterFire {
+            job_key: job_key.clone(),
+            config_hash: "hash-a".into(),
+            fired_at: ts(),
+        })
+        .unwrap();
+
+    let found = |list: Vec<JobRegisterFire>| list.into_iter().find(|r| r.job_key == job_key);
+    let row = found(store.list_register_fires().unwrap()).expect("row exists");
+    assert_eq!(row.config_hash, "hash-a");
+    assert_eq!(row.fired_at, ts());
+
+    // Second fire replaces the recorded definition rather than adding a row.
+    store
+        .upsert_register_fire(&JobRegisterFire {
+            job_key: job_key.clone(),
+            config_hash: "hash-b".into(),
+            fired_at: ts(),
+        })
+        .unwrap();
+    let row = found(store.list_register_fires().unwrap()).expect("row exists");
+    assert_eq!(row.config_hash, "hash-b");
+
+    store.delete_register_fire(&job_key).unwrap();
+    assert!(found(store.list_register_fires().unwrap()).is_none());
+    // Deleting a missing row is a no-op, not an error — the prune pass deletes
+    // unconditionally.
+    store.delete_register_fire(&job_key).unwrap();
 }
 
 fn alert_deliveries(store: &PgStore, s: &str) {

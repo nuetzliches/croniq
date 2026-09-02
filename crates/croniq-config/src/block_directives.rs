@@ -116,6 +116,7 @@ const JOB: &[&str] = &[
     "singleton",
     "max_concurrent",
     "tags",
+    "run_on_register",
 ];
 
 /// Sub-blocks a `job { }` accepts. Bodies are checked only where the key set is
@@ -508,6 +509,13 @@ mod tests {
     fn job_level_timezone_is_accepted() {
         // The spelling issue #426 made real: bare `timezone` in a job body.
         let msgs = errors("job a:b { every day at 02:00\n timezone Europe/Vienna }");
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    #[test]
+    fn run_on_register_is_accepted_as_a_bare_job_directive() {
+        // Issue #555. Bare like `singleton` — presence is the whole signal.
+        let msgs = errors("job a:b { every day at 04:20\n run_on_register }");
         assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
     }
 

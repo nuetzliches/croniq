@@ -118,6 +118,55 @@ impl JobStore for SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
+    fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT job_key, config_hash, fired_at FROM job_register_fires ORDER BY job_key",
+            )
+            .map_err(map_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(JobRegisterFire {
+                    job_key: row.get(0)?,
+                    config_hash: row.get(1)?,
+                    fired_at: sql_to_dt(&row.get::<_, String>(2)?),
+                })
+            })
+            .map_err(map_err)?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(job_key) DO UPDATE SET
+               config_hash = excluded.config_hash,
+               fired_at = excluded.fired_at",
+            params![
+                record.job_key,
+                record.config_hash,
+                dt_to_sql(&record.fired_at)
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM job_register_fires WHERE job_key = ?1",
+            params![job_key],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

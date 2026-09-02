@@ -52,5 +52,5 @@ pub mod dispatch;
 pub mod policy;
 
 // Convenient re-exports
-pub use dispatch::{job_to_execution_policy, job_to_work_item};
+pub use dispatch::{job_execution_metadata, job_to_execution_policy, job_to_work_item};
 pub use policy::{dead_letter_to_policy, retry_config_to_policy, timeout_to_policy};
