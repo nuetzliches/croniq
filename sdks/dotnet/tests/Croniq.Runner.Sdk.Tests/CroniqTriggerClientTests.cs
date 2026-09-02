@@ -26,7 +26,7 @@ public class CroniqTriggerClientTests
 
         var result = await client.TriggerAsync(
             "billing:invoice-generate",
-            metadata: new Dictionary<string, string> { ["invoice_id"] = "inv_42" },
+            metadata: new Dictionary<string, object?> { ["invoice_id"] = "inv_42" },
             require: ["billing"],
             prefer: ["eu-central"],
             timeout: "10m",
@@ -46,6 +46,33 @@ public class CroniqTriggerClientTests
 
         result.ExecutionId.ShouldBe("exec-1");
         result.Queued.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ForwardsNestedAndTypedMetadataVerbatim()
+    {
+        // Issue #554: metadata values are `object?`, not `string`, because the
+        // server forwards them to the handler verbatim and does not stringify
+        // or flatten them. This is the contract conformance case
+        // 03-trigger-metadata pins, which .NET could not express while the
+        // value type was `string`.
+        var stub = new StubHandler(HttpStatusCode.OK, """{"execution_id":"exec-3","queued":1}""");
+        var client = CreateClient(stub);
+
+        await client.TriggerAsync(
+            "email:send",
+            metadata: new Dictionary<string, object?>
+            {
+                ["user_id"] = "u-42",
+                ["attempt"] = 2,
+                ["flags"] = new Dictionary<string, object?> { ["urgent"] = true },
+            });
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        var metadata = body.RootElement.GetProperty("metadata");
+        metadata.GetProperty("user_id").GetString().ShouldBe("u-42");
+        metadata.GetProperty("attempt").GetInt32().ShouldBe(2);
+        metadata.GetProperty("flags").GetProperty("urgent").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]
@@ -79,7 +106,7 @@ public class CroniqTriggerClientTests
 
         await client.TriggerAsync(
             "etl:data-sync",
-            metadata: new Dictionary<string, string>(),
+            metadata: new Dictionary<string, object?>(),
             require: Array.Empty<string>(),
             prefer: Array.Empty<string>(),
             timeout: "   ",

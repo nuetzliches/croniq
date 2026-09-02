@@ -87,8 +87,20 @@ internal static class CaseLoader
         _ => node,
     };
 
-    private static object CoerceScalar(string s)
+    private static object? CoerceScalar(string s)
     {
+        // Booleans first. YamlDotNet's untyped deserialisation hands every
+        // scalar back as a string, so `deduplicated: true` in a case's response
+        // body arrived here as "true" and was re-serialised as the JSON string
+        // "true" — which the SDK then refused with "Cannot get the value of a
+        // token type 'String' as a boolean". The runner corpus never noticed
+        // because none of its scripted response bodies carries a boolean; the
+        // trigger corpus does (`deduplicated`), so wiring it in (#554) was what
+        // surfaced this.
+        if (bool.TryParse(s, out var b))
+        {
+            return b;
+        }
         if (long.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l))
         {
             return l;

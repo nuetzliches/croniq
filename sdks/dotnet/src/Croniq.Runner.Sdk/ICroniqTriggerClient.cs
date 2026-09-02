@@ -17,7 +17,10 @@ public interface ICroniqTriggerClient
     /// <param name="jobKey">Job key, e.g. <c>billing:invoice-generate</c>.</param>
     /// <param name="metadata">
     /// Metadata passed to the handler. Merged over the job's DSL metadata;
-    /// keys starting with <c>__</c> are reserved for internal use.
+    /// keys starting with <c>__</c> are reserved for internal use. Values are
+    /// <c>object?</c> so nested objects and non-string scalars reach the
+    /// handler intact — the server forwards this verbatim and does not
+    /// stringify it. An empty dictionary is treated as unset.
     /// </param>
     /// <param name="require">
     /// Capabilities a runner must have to be assigned this execution.
@@ -42,7 +45,7 @@ public interface ICroniqTriggerClient
     /// <returns>The created (or deduplicated) execution and queue depth.</returns>
     Task<TriggerResult> TriggerAsync(
         string jobKey,
-        IReadOnlyDictionary<string, string>? metadata = null,
+        IReadOnlyDictionary<string, object?>? metadata = null,
         IReadOnlyList<string>? require = null,
         IReadOnlyList<string>? prefer = null,
         string? timeout = null,

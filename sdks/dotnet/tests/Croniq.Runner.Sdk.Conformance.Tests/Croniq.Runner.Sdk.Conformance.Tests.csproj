@@ -31,5 +31,15 @@
       <Link>cases\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!--
+      Trigger (producer) corpus, wired in #554. Kept a separate glob rather
+      than folded into the one above: the two corpora have distinct schemas
+      (trigger-case-schema.json vs case-schema.json) and distinct loaders, and
+      TriggerConformanceTests discovers them by directory.
+    -->
+    <None Include="..\..\..\conformance\cases-trigger\*.yaml">
+      <Link>cases-trigger\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

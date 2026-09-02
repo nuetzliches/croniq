@@ -6,7 +6,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **.NET: trigger `metadata` values widen from `string` to `object?`
+  ([#554](https://github.com/nuetzliches/croniq/issues/554)).** The server
+  forwards trigger metadata to the handler verbatim and explicitly does not
+  flatten or stringify it, and every other SDK types the value openly — Go
+  `map[string]any`, Python `dict[str, Any]`, TypeScript
+  `Record<string, unknown>`, Java `Map<String, Object>`. .NET was the outlier
+  and could not send the nested or non-string values the wire contract allows.
+
+  **Source-breaking** for callers passing a `Dictionary<string, string>`: change
+  it to `Dictionary<string, object?>`. Values already being strings continue to
+  serialise identically, so no wire behaviour changes for existing payloads.
+
 ### Fixed
+
+- **The .NET SDK now runs the shared trigger conformance corpus
+  ([#554](https://github.com/nuetzliches/croniq/issues/554)).** It was the only
+  SDK that ran none of it: the project copied and enumerated
+  `conformance/cases/` — the runner corpus — and had no trigger case type, no
+  trigger runner, and no `body_absent` support anywhere.
+
+  `body_absent` is the assertion that pins "a producer must not fabricate
+  defaults on the wire" — the contract
+  [#551](https://github.com/nuetzliches/croniq/issues/551) depended on and
+  [#553](https://github.com/nuetzliches/croniq/issues/553) extended to
+  explicitly empty values. On .NET it rested on a single unit test instead. Not
+  a hypothetical gap: the conformance README records that every binding once
+  *parsed* `body_absent` without asserting it (fixed in #460, with Go
+  live-affected), and a binding that does not run the corpus at all is the same
+  hole one step further back.
+
+  Wiring it in immediately surfaced a latent bug in the **shared** case loader:
+  `CoerceScalar` coerced numeric strings but left `"true"` a string, so a
+  scripted `deduplicated: true` was re-serialised as the JSON *string* `"true"`
+  and the SDK refused it with *"Cannot get the value of a token type 'String'
+  as a boolean"*. The runner corpus carries no booleans in its scripted response
+  bodies, so nothing had ever exercised that path — two trigger cases failed on
+  it before the fix.
+
+  The new loader is strict (no `IgnoreUnmatchedProperties`) like its runner
+  counterpart, so a schema-legal key this binding has not implemented fails at
+  load rather than going silently unasserted, and the
+  unset-vs-explicitly-empty distinction is pinned in both directions so #553's
+  case cannot decay into asserting omission of something never supplied. The
+  theory also guards its own discovery — an empty case list would make it
+  vacuously green, which is precisely the shape of the gap being closed.
 
 - **Every SDK now omits an explicitly *empty* trigger optional instead of
   sending it, and a blank `timeout` no longer reaches the runner unparseable
