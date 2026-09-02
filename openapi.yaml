@@ -2097,7 +2097,7 @@ paths:
                 metadata:
                   type: object
                   description: >
-                    Free-form metadata. Keys prefixed with `__` are reserved for the scheduler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are ignored when supplied by a caller — use `require` / `prefer` to influence routing.
+                    Free-form metadata. Keys prefixed with `__` are reserved for the scheduler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`, `__concurrency_group`) and are ignored when supplied by a caller — use `require` / `prefer` to influence routing.
                 timeout:
                   type: string
                   description: >

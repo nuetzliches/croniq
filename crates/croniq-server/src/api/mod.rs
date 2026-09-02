@@ -1065,14 +1065,27 @@ async fn try_dequeue_for(
     // Executions assigned in THIS batch per job_key — a capacity-2 poll must
     // not hand out two executions of the same singleton job in one response.
     let mut batch_claims: HashMap<String, u64> = HashMap::new();
+    // The same two structures for shared concurrency groups (issue #546),
+    // keyed by group name instead of job_key. Separate maps rather than one
+    // keyed by an enum: the two guards compose (a job may cap itself *and*
+    // draw on a group) and neither may consume the other's slot.
+    let mut group_inflight_cache: HashMap<String, u64> = HashMap::new();
+    let mut group_batch_claims: HashMap<String, u64> = HashMap::new();
 
     let mut items: Vec<WorkItem> = Vec::new();
     while items.len() < capacity {
         let next = q.dequeue_for_where(capabilities, |item| {
+            // Per-job limit first: it is the cheaper check and the more
+            // common one, and a job already at its own limit must not
+            // consume a group slot in the caches below.
             has_free_concurrency_slot(state, item, &batch_claims, &mut inflight_cache)
+                && has_free_group_slot(state, item, &group_batch_claims, &mut group_inflight_cache)
         });
         let Some(item) = next else { break };
         *batch_claims.entry(item.job_key.clone()).or_insert(0) += 1;
+        if let Some((group, _)) = concurrency_group(&item) {
+            *group_batch_claims.entry(group.to_string()).or_insert(0) += 1;
+        }
         items.push(item);
     }
 
@@ -1114,17 +1127,41 @@ async fn try_dequeue_for(
                     );
                     false
                 }
-                // Fail-open on infrastructure errors, matching the
+                // Fail-open on infrastructure errors, matching the per-job
                 // concurrency guard above: blocking all dispatch on a
                 // transient store error is worse than a rare extra run.
-                Err(e) => {
-                    tracing::warn!(
-                        execution_id = %item.execution_id,
-                        error = %e,
-                        "claim persist failed — dispatching anyway (fail-open)"
-                    );
-                    true
-                }
+                //
+                // Except for an item in a shared concurrency group (issue
+                // #546), which fails closed here for the same reason its
+                // guard does. Closing only the guard's count would leave
+                // this hole open: an item whose count succeeded but whose
+                // claim did not is handed out *without* a `claimed` row, so
+                // the next poll's count does not see it and releases a
+                // second item of the same group. Dropping the item instead
+                // costs one poll interval; dispatching it costs the shared
+                // budget the group exists to protect.
+                Err(e) => match concurrency_group(item) {
+                    Some((group, _)) => {
+                        tracing::warn!(
+                            execution_id = %item.execution_id,
+                            job_key = %item.job_key,
+                            concurrency_group = %group,
+                            error = %e,
+                            "claim persist failed — dropping item to keep the concurrency \
+                             group's budget (fail-closed); the row stays queued and the \
+                             watchdog's reconcile sweep re-enqueues it"
+                        );
+                        false
+                    }
+                    None => {
+                        tracing::warn!(
+                            execution_id = %item.execution_id,
+                            error = %e,
+                            "claim persist failed — dispatching anyway (fail-open)"
+                        );
+                        true
+                    }
+                },
             }
         });
     }
@@ -1240,6 +1277,102 @@ fn has_free_concurrency_slot(
                 return true;
             }
         },
+    };
+    inflight + batch < limit
+}
+
+/// Read the shared concurrency group and its limit from a work item's
+/// metadata (issue #546). `None` = ungrouped item.
+///
+/// Both halves have to be present and usable: a name without a limit, or a
+/// zero/malformed limit, reads as ungrouped. The compiler stamps the pair
+/// together and `validate.rs` rejects a group without a positive
+/// `max_concurrent`, so a well-formed deploy never produces a half-stamped
+/// item — the leniency here mirrors [`concurrency_limit`].
+fn concurrency_group(item: &WorkItem) -> Option<(&str, u64)> {
+    let group = item
+        .metadata
+        .get(croniq_config::compile::CONCURRENCY_GROUP_METADATA_KEY)?
+        .as_str()?;
+    if group.is_empty() {
+        return None;
+    }
+    let limit = item
+        .metadata
+        .get(croniq_config::compile::CONCURRENCY_GROUP_MAX_METADATA_KEY)?
+        .as_str()?
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0)?;
+    Some((group, limit))
+}
+
+/// Decide whether `item` may be dispatched given its *group's* budget — the
+/// cross-job counterpart to [`has_free_concurrency_slot`] (issue #546).
+/// Counts `Claimed` executions carrying the same group stamp (memoised per
+/// poll in `group_inflight_cache`) plus what this batch already assigned.
+///
+/// **Fail-closed on a store error, unlike the per-job guard.** The asymmetry
+/// is deliberate, and it is one match arm rather than a second semantics:
+///
+/// - For a single job a rare extra concurrent run is the lesser evil — that
+///   is why [`has_free_concurrency_slot`] dispatches on `Err`.
+/// - A group exists to protect a budget that is *not* local: a third-party
+///   quota, an upstream rate limit. Dispatching one item too many there does
+///   not overlap a job with itself, it buys a `429` with an escalating
+///   `Retry-After` that can abort an entire run. Blocking instead costs one
+///   poll interval.
+///
+/// The mechanism a group supersedes — a dedicated runner pool with an
+/// inflight capacity of one (`docs/operations.md`) — is structurally
+/// fail-closed: there is one worker slot and no lookup that could fail open.
+/// A group that dispatched on a store error would be a regression against it.
+///
+/// The no-store arm stays fail-open, matching the per-job guard: `main.rs`
+/// opens a store unconditionally, so a `None` store means a bare test/dev
+/// server with nowhere to count and nothing in flight to protect.
+fn has_free_group_slot(
+    state: &ServerState,
+    item: &WorkItem,
+    group_batch_claims: &HashMap<String, u64>,
+    group_inflight_cache: &mut HashMap<String, u64>,
+) -> bool {
+    let Some((group, limit)) = concurrency_group(item) else {
+        return true;
+    };
+    let batch = group_batch_claims.get(group).copied().unwrap_or(0);
+    if batch >= limit {
+        return false;
+    }
+    let Some(ref store) = state.store else {
+        tracing::debug!(
+            job_key = %item.job_key,
+            concurrency_group = %group,
+            "concurrency group: no store configured — cannot count in-flight executions, dispatching"
+        );
+        return true;
+    };
+    let inflight = match group_inflight_cache.get(group) {
+        Some(n) => *n,
+        None => {
+            match store.count_executions_in_group_in_states(group, &[ExecutionState::Claimed]) {
+                Ok(n) => {
+                    group_inflight_cache.insert(group.to_string(), n);
+                    n
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        job_key = %item.job_key,
+                        concurrency_group = %group,
+                        error = %e,
+                        "concurrency group: store count failed — blocking dispatch \
+                         (fail-closed); the item keeps its queue position and a later poll \
+                         retries it"
+                    );
+                    return false;
+                }
+            }
+        }
     };
     inflight + batch < limit
 }
@@ -3450,6 +3583,377 @@ mod tests {
         assert!(state.runner.queue.read().await.is_empty());
     }
 
+    // --- Group-scoped concurrency guard (issue #546) -------------------------
+
+    /// A guard state whose store is wrapped in the fault-injecting double, so
+    /// a test can make one store call fail without a real database error.
+    fn make_faulty_guard_state() -> (
+        Arc<ServerState>,
+        Arc<crate::fault_store::FaultStore>,
+        DynStore,
+        mpsc::UnboundedReceiver<CompletionEvent>,
+    ) {
+        use croniq_store::sqlite::SqliteStore;
+
+        let inner: DynStore = crate::store::sqlite_store(SqliteStore::in_memory().unwrap());
+        let faulty = crate::fault_store::FaultStore::wrap(inner);
+        let store: DynStore = faulty.clone();
+        let runner = AppState::new();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::with_auth(
+            runner,
+            tx,
+            Some(crate::api::test_auth::jwt()),
+            Some(Arc::clone(&store)),
+        );
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.long_poll_timeout = Duration::from_millis(50);
+        }
+        (state, faulty, store, rx)
+    }
+
+    /// Persist a queued execution and enqueue the matching work item, stamped
+    /// with a shared concurrency group instead of a per-job limit. The store
+    /// derives `executions.concurrency_group` from the same metadata, so the
+    /// row counts toward exactly the group the item is blocked by.
+    async fn seed_grouped_execution(
+        state: &Arc<ServerState>,
+        store: &DynStore,
+        job_key: &str,
+        group: &str,
+        limit: u32,
+        require: &[&str],
+    ) -> uuid::Uuid {
+        use croniq_config::compile::{
+            CONCURRENCY_GROUP_MAX_METADATA_KEY, CONCURRENCY_GROUP_METADATA_KEY,
+        };
+
+        let id = uuid::Uuid::new_v4();
+        let now = Utc::now();
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            CONCURRENCY_GROUP_METADATA_KEY.to_string(),
+            group.to_string(),
+        );
+        metadata.insert(
+            CONCURRENCY_GROUP_MAX_METADATA_KEY.to_string(),
+            limit.to_string(),
+        );
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata,
+                created_at: now,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: id.to_string(),
+            job_key: job_key.into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: require.iter().map(|c| c.to_string()).collect(),
+            prefer: vec![],
+            metadata: serde_json::json!({
+                CONCURRENCY_GROUP_METADATA_KEY: group,
+                CONCURRENCY_GROUP_MAX_METADATA_KEY: limit.to_string(),
+            }),
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+        id
+    }
+
+    /// The property the whole issue turns on: the cap holds across *different*
+    /// jobs, which per-job `singleton` cannot express regardless of how many
+    /// jobs carry it.
+    #[tokio::test]
+    async fn concurrency_group_caps_two_different_jobs() {
+        let (state, store, _rx) = make_guard_state();
+
+        let sync = seed_grouped_execution(&state, &store, "sync:tickets", "api-x", 1, &[]).await;
+        let push = seed_grouped_execution(&state, &store, "push:status", "api-x", 1, &[]).await;
+
+        // Capacity 2, two different job keys: the per-job guard would let both
+        // through. The group must yield exactly one.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(
+            work.len(),
+            1,
+            "a group with max_concurrent 1 must yield one assignment across both jobs: {resp}"
+        );
+        assert_eq!(
+            work[0]["execution_id"].as_str().unwrap(),
+            sync.to_string(),
+            "the earliest-queued item of the group goes first"
+        );
+        assert_eq!(
+            state.runner.queue.read().await.len(),
+            1,
+            "the blocked item keeps its queue position"
+        );
+        assert_eq!(
+            store.get_execution(push).unwrap().unwrap().state,
+            ExecutionState::Queued,
+        );
+
+        // Still blocked while the first is in flight, even for another runner
+        // with the same (empty) capability set.
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r2", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "a second runner must not double the group's budget"
+        );
+
+        // Completing the first frees the shared slot.
+        store
+            .complete_execution(
+                sync,
+                None,
+                ExecutionState::Completed,
+                Some(10),
+                None,
+                None,
+                Utc::now(),
+            )
+            .unwrap();
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 2, "inflight": []
+            }),
+        )
+        .await;
+        let work = resp["work"].as_array().unwrap();
+        assert_eq!(work.len(), 1, "freed slot must release the blocked job");
+        assert_eq!(work[0]["execution_id"].as_str().unwrap(), push.to_string());
+    }
+
+    /// FIFO **within a group**, pinned as a contract rather than left as a
+    /// consequence of `WorkQueue` being a `VecDeque` (issue #546).
+    ///
+    /// The invariant is conditional, and the conditions are the point: every
+    /// member is claimable by the polling runner (same `require`), no member is
+    /// blocked by another guard, and nothing requeued in between. Break any of
+    /// those and order is not preserved -- a runner lacking a capability skips
+    /// the head item and claims the one behind it, a per-job `singleton` does
+    /// the same, and a watchdog requeue or a server restart re-enqueues at the
+    /// back (`loader::restore_queued_executions` rebuilds the queue from a
+    /// `HashMap`, so cross-job order is not restored at all). Under those
+    /// conditions, though, the earliest-queued item of a saturated group is the
+    /// one that goes next -- which is what lets a status-push job be ordered
+    /// after the sync job whose row it would otherwise overwrite.
+    #[tokio::test]
+    async fn concurrency_group_releases_in_enqueue_order() {
+        let (state, store, _rx) = make_guard_state();
+
+        // Three jobs in one group, enqueued A -> B -> C, all equally eligible.
+        let a = seed_grouped_execution(&state, &store, "sync:a", "api-x", 1, &[]).await;
+        let b = seed_grouped_execution(&state, &store, "sync:b", "api-x", 1, &[]).await;
+        let c = seed_grouped_execution(&state, &store, "sync:c", "api-x", 1, &[]).await;
+
+        for expected in [a, b, c] {
+            let app = server_router(Arc::clone(&state));
+            let resp = post_json(
+                app,
+                "/v1/poll",
+                serde_json::json!({
+                    "runner_id": "r1", "capabilities": [], "max_inflight": 3, "inflight": []
+                }),
+            )
+            .await;
+            let work = resp["work"].as_array().unwrap();
+            assert_eq!(
+                work.len(),
+                1,
+                "a group at max_concurrent 1 releases one item per poll: {resp}"
+            );
+            assert_eq!(
+                work[0]["execution_id"].as_str().unwrap(),
+                expected.to_string(),
+                "group must release its members in enqueue order"
+            );
+            // Free the slot for the next round.
+            store
+                .complete_execution(
+                    expected,
+                    None,
+                    ExecutionState::Completed,
+                    Some(1),
+                    None,
+                    None,
+                    Utc::now(),
+                )
+                .unwrap();
+        }
+    }
+
+    /// The group guard fails **closed** on a store error, unlike the per-job
+    /// guard (issue #546). A group protects a budget that is not local -- an
+    /// upstream quota -- where one extra concurrent run buys a `429` with an
+    /// escalating `Retry-After` rather than a harmless self-overlap. Blocking
+    /// costs one poll interval, and the item keeps its queue position.
+    #[tokio::test]
+    async fn concurrency_group_guard_fails_closed_on_store_error() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+
+        seed_grouped_execution(&state, &store, "sync:tickets", "api-x", 1, &[]).await;
+        faulty.arm_group_count();
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "a group whose count cannot be read must not dispatch: {resp}"
+        );
+        assert_eq!(
+            state.runner.queue.read().await.len(),
+            1,
+            "the blocked item stays queued for a later poll, it is not dropped"
+        );
+    }
+
+    /// The counterpart, pinning the asymmetry rather than leaving it to a
+    /// comment: the *per-job* guard still fails open. For one job a rare extra
+    /// concurrent run is the lesser evil, and #278's behaviour is unchanged by
+    /// #546 -- only the group branch is new.
+    #[tokio::test]
+    async fn per_job_guard_still_fails_open_on_store_error() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+
+        seed_guarded_execution(&state, &store, "etl:sync", 1).await;
+        faulty.arm_job_count();
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            1,
+            "per-job guard dispatches on a store error (fail-open): {resp}"
+        );
+    }
+
+    /// Closing the guard's count alone would leave a second hole open: an item
+    /// whose count succeeded but whose claim failed is handed out *without* a
+    /// `claimed` row, so the next poll's count does not see it and releases a
+    /// second item of the same group. A grouped item therefore fails closed
+    /// here too -- it is dropped from this batch, and the still-`queued` row is
+    /// re-enqueued by the watchdog's reconcile sweep.
+    #[tokio::test]
+    async fn grouped_item_is_not_dispatched_when_claim_persist_fails() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+
+        let grouped = seed_grouped_execution(&state, &store, "sync:tickets", "api-x", 1, &[]).await;
+        faulty.arm_claim();
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            0,
+            "a grouped item whose claim did not persist must not be dispatched: {resp}"
+        );
+        assert_eq!(
+            store.get_execution(grouped).unwrap().unwrap().state,
+            ExecutionState::Queued,
+            "the row stays queued, so the reconcile sweep can re-enqueue it"
+        );
+    }
+
+    /// And the same failure on an *ungrouped* item still dispatches: the
+    /// fail-open trade for a plain job is deliberately untouched.
+    #[tokio::test]
+    async fn ungrouped_item_still_dispatches_when_claim_persist_fails() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+
+        seed_guarded_execution(&state, &store, "etl:sync", 1).await;
+        faulty.arm_claim();
+
+        let app = server_router(Arc::clone(&state));
+        let resp = post_json(
+            app,
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            resp["work"].as_array().unwrap().len(),
+            1,
+            "ungrouped item keeps the fail-open claim behaviour: {resp}"
+        );
+    }
+
+    /// `croniq-store` cannot depend on `croniq-config`, so the metadata key
+    /// the store denormalises into `executions.concurrency_group` is spelled
+    /// twice. Pin the two spellings together here, where both crates are in
+    /// scope: a silent divergence would mean rows that are blocked by a group
+    /// without counting toward it.
+    #[test]
+    fn concurrency_group_metadata_key_matches_the_store_constant() {
+        assert_eq!(
+            croniq_config::compile::CONCURRENCY_GROUP_METADATA_KEY,
+            croniq_store::models::CONCURRENCY_GROUP_METADATA_KEY,
+        );
+    }
+
     #[tokio::test]
     async fn max_concurrent_two_allows_two_in_flight_blocks_third() {
         let (state, store, _rx) = make_guard_state();
@@ -3617,6 +4121,96 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("1"),
             "__max_concurrent must be present in the triggered WorkItem metadata"
+        );
+    }
+
+    /// The group reaches a manually triggered execution the same way
+    /// `__max_concurrent` does -- through the DSL job's compiled metadata
+    /// (issue #546). That is what makes the guard hold on every fire path
+    /// without per-call-site code: `runner { require ... }` needed an explicit
+    /// `job.runner` fallback on this path precisely because the compiler does
+    /// *not* stamp capabilities into metadata (#549 / #550).
+    #[tokio::test]
+    async fn trigger_inherits_dsl_concurrency_group_metadata() {
+        use crate::loader::load_str;
+        use croniq_config::compile::{
+            CONCURRENCY_GROUP_MAX_METADATA_KEY, CONCURRENCY_GROUP_METADATA_KEY,
+        };
+
+        let dsl = r#"
+            concurrency_group api-x {
+                max_concurrent 1
+            }
+
+            job sync:tickets {
+                every 1 hour
+                concurrency_group api-x
+            }
+        "#;
+        let loaded = load_str(dsl).unwrap();
+        let jobs = loaded.runtime.jobs;
+        assert_eq!(
+            jobs[0].concurrency_group.as_deref(),
+            Some("api-x"),
+            "compile should resolve the group reference"
+        );
+        assert_eq!(
+            jobs[0]
+                .metadata
+                .get(CONCURRENCY_GROUP_METADATA_KEY)
+                .map(String::as_str),
+            Some("api-x"),
+            "compile should stamp __concurrency_group: {:?}",
+            jobs[0].metadata
+        );
+        assert_eq!(
+            jobs[0]
+                .metadata
+                .get(CONCURRENCY_GROUP_MAX_METADATA_KEY)
+                .map(String::as_str),
+            Some("1"),
+            "and the group's limit alongside it: {:?}",
+            jobs[0].metadata
+        );
+
+        let (mut state, _store, _rx) = make_guard_state();
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.dsl_jobs = Some(Arc::new(tokio::sync::RwLock::new(jobs)));
+        }
+        let app = server_router(Arc::clone(&state));
+
+        let resp = post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "sync:tickets",
+                "metadata": {},
+                "require": [],
+                "prefer": []
+            }),
+        )
+        .await;
+        assert!(resp["execution_id"].is_string(), "trigger failed: {resp}");
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0]
+                .metadata
+                .get(CONCURRENCY_GROUP_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("api-x"),
+            "the group must be present in the triggered WorkItem metadata"
+        );
+        assert_eq!(
+            items[0]
+                .metadata
+                .get(CONCURRENCY_GROUP_MAX_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("1"),
+            "and so must its limit -- the guard reads both from the item alone"
         );
     }
 

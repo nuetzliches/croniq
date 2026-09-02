@@ -256,6 +256,9 @@ impl Parser {
                 "vars" => Ok(Item::Vars(self.parse_vars()?)),
                 "defaults" => Ok(Item::Defaults(self.parse_defaults()?)),
                 "calendar" => Ok(Item::Calendar(self.parse_calendar()?)),
+                "concurrency_group" => {
+                    Ok(Item::ConcurrencyGroup(self.parse_concurrency_group()?))
+                }
                 "job" => Ok(Item::Job(self.parse_job()?)),
                 other => Err(ParseError::General {
                     message: format!("unknown top-level block: '{other}'"),
@@ -264,7 +267,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, smtp, pull_api, observability, mcp, oidc, auth, policy, alerts, vars, defaults, calendar, or job"
+                    "import, server, smtp, pull_api, observability, mcp, oidc, auth, policy, alerts, vars, defaults, calendar, concurrency_group, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -505,6 +508,26 @@ impl Parser {
         Ok(CalendarBlock {
             name,
             rules,
+            span: start.merge(end),
+        })
+    }
+
+    // ─── Concurrency group ───
+
+    /// `concurrency_group api-x { max_concurrent 1 }` (issue #546).
+    ///
+    /// Named like a `calendar` block and referenced the same way, but the body
+    /// is a flat directive list, so it uses the generic directive parser. The
+    /// key set is checked in `block_directives`, the semantics in `validate`.
+    fn parse_concurrency_group(&mut self) -> Result<ConcurrencyGroupBlock, ParseError> {
+        let start = self.expect_ident("concurrency_group")?;
+        let name = self.read_string_value()?;
+        self.expect_lbrace()?;
+        let directives = self.parse_directives_until_rbrace()?;
+        let end = self.expect_rbrace()?;
+        Ok(ConcurrencyGroupBlock {
+            name,
+            directives,
             span: start.merge(end),
         })
     }
@@ -1812,5 +1835,41 @@ job etl:sync {
             .filter(|i| !matches!(i, Item::Comment(_)))
             .collect();
         assert_eq!(significant.len(), 7); // import, server, vars, defaults, calendar, 2 jobs
+    }
+
+    #[test]
+    fn parse_concurrency_group_block() {
+        let ast = Parser::parse("concurrency_group api-x { max_concurrent 1 }").unwrap();
+        let Item::ConcurrencyGroup(ref g) = ast.items[0] else {
+            panic!("expected a concurrency_group item, got {:?}", ast.items[0]);
+        };
+        assert_eq!(g.name.value, "api-x");
+        assert_eq!(g.directives.len(), 1);
+        assert_eq!(g.directives[0].key.value, "max_concurrent");
+        assert_eq!(g.directives[0].args[0].value, "1");
+    }
+
+    #[test]
+    fn parse_concurrency_group_accepts_a_quoted_name() {
+        let ast = Parser::parse(r#"concurrency_group "billing api" { max_concurrent 2 }"#).unwrap();
+        let Item::ConcurrencyGroup(ref g) = ast.items[0] else {
+            panic!("expected a concurrency_group item");
+        };
+        assert_eq!(g.name.value, "billing api");
+    }
+
+    #[test]
+    fn parse_job_with_concurrency_group_directive() {
+        let ast =
+            Parser::parse("job sync:tickets { every day at 03:00\n concurrency_group api-x }")
+                .unwrap();
+        let Item::Job(ref job) = ast.items[0] else {
+            panic!("expected a job");
+        };
+        let has_group = job.directives.iter().any(|dob| {
+            matches!(dob, DirectiveOrBlock::Directive(d)
+                if d.key.value == "concurrency_group" && d.args[0].value == "api-x")
+        });
+        assert!(has_group, "job must carry the concurrency_group directive");
     }
 }

@@ -8,6 +8,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The DSL generator's config tab covers every top-level block and directive
+  the DSL has.** Same drift as the job form (#555 follow-up), one level up: the
+  config tab is a hand-maintained mirror of `croniq-config`'s
+  known-directive tables and nothing connected the two. Now offered:
+
+  - `server { execution_retention }`, `pull_api { runner_identity_binding }`,
+    `policy { strict_calendars }`
+  - `defaults { dead_letter { enabled } }` — the on/off switch, next to the
+    retention knobs that were already there
+  - **`auth { password { enabled } / totp { required } }`** — the block was
+    absent from the picker entirely
+  - **`concurrency_group <name> { max_concurrent N }`**
+    ([#546](https://github.com/nuetzliches/croniq/issues/546)) — the first
+    *named* top-level block the generator can emit. `formatTopLevelBlock` grew
+    an optional block name for it, and refuses a named block without its name
+    (which would parse as something else) as well as a name on a block that
+    takes none.
+  - **the `linear` retry strategy and its `step`**, in both the config tab and
+    the job form. `croniq-execution` has implemented linear backoff
+    (base/step/cap) all along, but no form offered the strategy, so `step` was
+    unreachable — and the wasm bridge's `RetryPayload` had no `step` field at
+    all. `step` is emitted only for `linear`, where it is the one strategy that
+    reads it; on an exponential schedule it would be an inert key that reads as
+    if it did something.
+
+- **The DSL generator can produce every job directive the bridge supports
+  ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
+  public Croniqfile generator's job form had fallen behind the DSL. It now
+  offers:
+
+  - `run_on_register` — a checkbox, the directive added in #555
+  - `keep_last N` — the per-job run-history cap from
+    [#344](https://github.com/nuetzliches/croniq/issues/344), also added to the
+    `defaults { }` block alongside its `queue_ttl` / `max_queue_depth` siblings
+  - job-level `timezone` from
+    [#426](https://github.com/nuetzliches/croniq/issues/426) — previously only
+    the *schedule-option* spelling was reachable, which the parser rejects on
+    `once` / `disabled`, so a one-shot job's wall-clock time could not be given
+    a zone at all and silently meant UTC
+  - per-job `dead_letter { enabled / retention / replay_max_age /
+    operator_hint }` — the wasm bridge has emitted this since the block was
+    added and it was covered by tests, but no form ever set it, so it was
+    unreachable for anyone using the generator. `enabled` is deliberately
+    tri-state: *inherit* omits the key so `defaults { dead_letter … }` keeps
+    applying, which is not the same as writing `enabled true`.
+  - `concurrency_group` from
+    [#546](https://github.com/nuetzliches/croniq/issues/546) — reached the
+    bridge but not the form, and was caught by the new parity guard below
+    rather than by anyone noticing
+
 - **`run_on_register`: fire a job once when croniq adopts its definition
   ([#555](https://github.com/nuetzliches/croniq/issues/555)).** A job that
   reconciles state which changes *at deploy time* — pushing a rotated
@@ -76,6 +126,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Upgrading needs no action: an existing deployment has no records, so every
   job that gains the directive fires once on the first boot after it is added.
 
+- **`concurrency_group`: a concurrency budget shared by a set of jobs
+  ([#546](https://github.com/nuetzliches/croniq/issues/546)).** `singleton` /
+  `max_concurrent` are per job and do not compose, so they cannot express
+  "these N jobs share one budget" — the shape you get whenever several jobs
+  call the same third-party API under one account-wide rate limit, where any
+  two of them running at once blows the quota regardless of which two.
+
+  ```hcl
+  concurrency_group api-x { max_concurrent 1 }
+
+  job sync:tickets { every day at 03:00; concurrency_group api-x }
+  job push:status  { every 15 minutes;   concurrency_group api-x }
+  ```
+
+  The cap applies to the set, is enforced at claim time on the same path as the
+  per-job guard, and therefore covers scheduled fires, `POST /v1/trigger` and
+  retries alike — the group travels in the job's compiled metadata the way
+  `__max_concurrent` already does, so no fire path needed its own handling.
+  Both guards compose: a job may cap itself *and* draw on a shared budget.
+
+  This replaces the runner-topology workaround documented in
+  [#547](https://github.com/nuetzliches/croniq/issues/547) (pin the set to a
+  capability that exactly one runner with `max_inflight 1` advertises), which
+  stays valid — and remains the only option for `ephemeral` jobs — but expresses
+  an upstream limit in the deployment, where a second replica silently doubles
+  it. `docs/operations.md` now carries both.
+
+  Two behaviours worth knowing, both documented and tested:
+
+  - **The group guard fails closed.** If the store cannot be read at claim
+    time, a grouped item is not dispatched; it keeps its queue position and a
+    later poll retries it. The per-job guard's fail-*open* behaviour is
+    unchanged — for one job a rare self-overlap is the lesser evil, while a
+    group protects an external quota where one run too many buys a `429` with
+    an escalating `Retry-After`. The claim-persist path fails closed for
+    grouped items too, since an item handed out without a `claimed` row would
+    not be counted by the next poll.
+  - **Ordering is FIFO among equally eligible members**, not a general
+    guarantee: members with different `require` sets, a member held by its own
+    `singleton`, a watchdog requeue or a server restart can all release a group
+    out of enqueue order. `docs/operations.md` spells out the conditions.
+
+  Enforcement is entirely server-side; no SDK changes. Storage adds a nullable
+  `executions.concurrency_group` column (migration 028), derived inside the
+  store's insert helpers from the execution's own metadata, so the row that is
+  blocked by a group is always the row that counts toward it.
+
 ### Changed
 
 - **.NET: trigger `metadata` values widen from `string` to `object?`
@@ -91,6 +188,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   serialise identically, so no wire behaviour changes for existing payloads.
 
 ### Fixed
+
+- **The DSL generator's config tab can no longer drift from the directive
+  tables.** Two `cargo test` guards now read the shipped `site/generator.js`
+  and `site/generator.html` and check, in both directions, that every block in
+  `CONFIG_SCHEMA` matches the `croniq-config` table it mirrors — a key the form
+  offers that no table has (the generator would emit config the server rejects
+  as an unknown directive), and a table key the form never offers (a knob
+  nobody can reach). A third asserts the block picker offers exactly the
+  configured blocks, since a `CONFIG_SCHEMA` entry with no `<option>` is
+  unreachable however complete its field list is.
+
+  They live next to the tables they compare against, the way the job-form
+  guards live next to the payload structs, and both directions were verified to
+  fire on injected drift. Together the two crates' guards close the loop on all
+  five gaps that had accumulated in the generator.
+
+  The job-form guards also grew to cover the *nested* payloads (`retry`,
+  `dead_letter`, `runner exec`), not just the top-level job options — which is
+  what surfaced the missing `step` above — and now read a local's object-literal
+  initialiser as well as its property assignments, since to the struct on the
+  other side of the boundary those are the same thing.
+
+- **A job option the DSL generator misspells is no longer silently dropped
+  ([#555](https://github.com/nuetzliches/croniq/issues/555) follow-up).** The
+  generator builds the wasm payloads as plain JS object literals that cross the
+  boundary as an untyped `JsValue`. Serde ignores unknown fields, so a
+  misspelled key — or one the form sets that the bridge never grew — produced a
+  job block quietly missing that directive: no error in the generator, no
+  failure in CI. There are no TypeScript types for those shapes (`JobOptions`
+  is not in the generated `.d.ts`), the site has no test harness, and nothing
+  in CI read that file.
+
+  Two `cargo test` guards now read the shipped `site/generator.js` and check
+  both directions against the payload structs — a key the form sets that the
+  bridge does not have, and a directive the bridge accepts that the form never
+  sets. The valid key set is derived from the structs themselves, so it cannot
+  fall behind them. It caught the last of the gaps above on its first run
+  against `main` — `concurrency_group`, added hours earlier — and would have
+  caught every one of them at the commit that introduced it; it follows the
+  existing
+  `example_croniqfile_has_no_unknown_directives` pattern of validating a
+  shipped non-Rust file from a Rust test.
+
+  The generator's cache-busting version is bumped in the same change, so no
+  visitor gets a cached JS half of the pair against a freshly built wasm.
 
 - **The .NET SDK now runs the shared trigger conformance corpus
   ([#554](https://github.com/nuetzliches/croniq/issues/554)).** It was the only

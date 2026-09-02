@@ -130,6 +130,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("026_api_client_managed_by", PG_MIGRATION_026),
     ("027_dead_letter_execution_index", PG_MIGRATION_027),
     ("028_job_register_fires", PG_MIGRATION_028),
+    ("029_concurrency_group", PG_MIGRATION_029),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -283,6 +284,16 @@ CREATE TABLE IF NOT EXISTS job_register_fires (
     config_hash TEXT NOT NULL,
     fired_at    TIMESTAMPTZ NOT NULL
 );
+"#;
+
+// Shared concurrency budget per execution (issue #546). Mirrors
+// migrations/029_concurrency_group.sql — see there for why the group is
+// denormalised onto the row instead of joined at dispatch time.
+const PG_MIGRATION_029: &str = r#"
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS concurrency_group TEXT;
+CREATE INDEX IF NOT EXISTS idx_executions_concurrency_group_state
+    ON executions(concurrency_group, state)
+    WHERE concurrency_group IS NOT NULL;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1012,6 +1023,29 @@ impl ExecutionStore for PgStore {
             .query_one(
                 "SELECT COUNT(*) FROM executions WHERE job_key = $1 AND state = ANY($2)",
                 &[&job_key, &state_strs],
+            )
+            .map_err(map_err)?;
+        let count: i64 = row.get(0);
+        Ok(count as u64)
+    }
+
+    fn count_executions_in_group_in_states(
+        &self,
+        group: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError> {
+        if states.is_empty() {
+            return Ok(0);
+        }
+        let mut client = self.client.lock().unwrap();
+        let state_strs: Vec<String> = states
+            .iter()
+            .map(|s| state_to_str(*s).to_string())
+            .collect();
+        let row = client
+            .query_one(
+                "SELECT COUNT(*) FROM executions WHERE concurrency_group = $1 AND state = ANY($2)",
+                &[&group, &state_strs],
             )
             .map_err(map_err)?;
         let count: i64 = row.get(0);
@@ -3271,8 +3305,13 @@ fn parse_runner_status(s: &str) -> RunnerStatus {
 // use generically without bringing in `GenericClient`, so we duplicate the
 // statement bodies into thin wrappers over each. The SQL is identical.
 
+/// One of the two Postgres insert paths for executions (the other being
+/// [`pg_insert_execution_tx`]). Like the SQLite helper, `concurrency_group`
+/// is derived here from the execution's metadata, never passed in — see
+/// `sqlite::insert_execution_with` for why (issue #546).
 fn pg_insert_execution(client: &mut postgres::Client, exec: &Execution) -> Result<(), StoreError> {
     let metadata = metadata_to_json(&exec.metadata);
+    let concurrency_group = crate::models::concurrency_group_of(exec);
     client
         .execute(
             PG_INSERT_EXECUTION_SQL,
@@ -3293,6 +3332,7 @@ fn pg_insert_execution(client: &mut postgres::Client, exec: &Execution) -> Resul
                 &exec.created_at,
                 &exec.idempotency_key,
                 &exec.scheduled_for,
+                &concurrency_group,
             ],
         )
         .map_err(map_err)?;
@@ -3304,6 +3344,7 @@ fn pg_insert_execution_tx(
     exec: &Execution,
 ) -> Result<(), StoreError> {
     let metadata = metadata_to_json(&exec.metadata);
+    let concurrency_group = crate::models::concurrency_group_of(exec);
     tx.execute(
         PG_INSERT_EXECUTION_SQL,
         &[
@@ -3323,6 +3364,7 @@ fn pg_insert_execution_tx(
             &exec.created_at,
             &exec.idempotency_key,
             &exec.scheduled_for,
+            &concurrency_group,
         ],
     )
     .map_err(map_err)?;
@@ -3349,8 +3391,8 @@ fn pg_upsert_job_state_tx(
     Ok(())
 }
 
-const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
+const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for, concurrency_group)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)";
 
 const PG_INSERT_DEAD_LETTER_SQL: &str = "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";

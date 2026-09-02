@@ -99,6 +99,18 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             }
             out.push_str("}\n");
         }
+        Item::ConcurrencyGroup(g) => {
+            out.push_str(&format!(
+                "concurrency_group {} {{
+",
+                format_string_value(&g.name)
+            ));
+            format_directives(out, &g.directives, indent + 1);
+            out.push_str(
+                "}
+",
+            );
+        }
         Item::Job(j) => {
             format_job(out, j, indent);
         }
@@ -885,5 +897,21 @@ job etl:sync {
             formatted.contains("once at 2026-04-01T03:00:00Z"),
             "got:\n{formatted}"
         );
+    }
+
+    /// Issue #546: without a formatter arm `croniq fmt` would silently eat the
+    /// whole block — the failure mode the DSL's round-trip tests exist for.
+    #[test]
+    fn format_preserves_a_concurrency_group_block() {
+        let src = "concurrency_group api-x { max_concurrent 1 }\n\
+                   job sync:tickets { every day at 03:00\n concurrency_group api-x }\n";
+        let out = format(&crate::parser::Parser::parse(src).unwrap());
+        assert!(out.contains("concurrency_group api-x {"), "{out}");
+        assert!(out.contains("max_concurrent 1"), "{out}");
+        assert!(out.contains("concurrency_group api-x\n"), "{out}");
+
+        // Idempotent: formatting the formatted output changes nothing.
+        let again = format(&crate::parser::Parser::parse(&out).unwrap());
+        assert_eq!(out, again);
     }
 }

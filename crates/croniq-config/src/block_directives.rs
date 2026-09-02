@@ -115,9 +115,15 @@ const JOB: &[&str] = &[
     "keep_last",
     "singleton",
     "max_concurrent",
+    "concurrency_group",
     "tags",
     "run_on_register",
 ];
+
+/// `concurrency_group <name> { }` (issue #546). One directive, and it is not
+/// optional — a group without a limit has no budget to share, so `validate`
+/// rejects the empty body rather than defaulting it.
+const CONCURRENCY_GROUP: &[&str] = &["max_concurrent"];
 
 /// Sub-blocks a `job { }` accepts. Bodies are checked only where the key set is
 /// fixed: `retry` / `dead_letter` share their tables with `defaults { }`,
@@ -203,6 +209,10 @@ pub(crate) fn validate_blocks(ast: &Croniqfile, diags: &mut Vec<Diagnostic>) {
                 for nb in &b.sub_blocks {
                     check_named_block("auth", AUTH_BLOCKS, nb, diags);
                 }
+            }
+            Item::ConcurrencyGroup(b) => {
+                let label = format!("concurrency_group {}", b.name.value);
+                check_directives(&label, CONCURRENCY_GROUP, &b.directives, diags);
             }
             Item::Job(job) => check_job_body(job, diags),
             // `vars { }` entries are operator-chosen names; `alerts { }`,
@@ -534,7 +544,7 @@ mod tests {
         let msgs = errors("job a:b { every 5 minutes\n frobnicate yes }");
         assert_eq!(msgs.len(), 1, "got: {msgs:?}");
         assert!(
-            msgs[0].contains("(known: catch_up, description,"),
+            msgs[0].contains("(known: catch_up, concurrency_group, description,"),
             "got: {}",
             msgs[0]
         );
@@ -618,6 +628,197 @@ mod tests {
         let src = include_str!("../../../Croniqfile.example");
         let msgs = errors(src);
         assert!(msgs.is_empty(), "Croniqfile.example rejected: {msgs:?}");
+    }
+
+    // ── site/generator.js's config tab ⇄ these tables ───────────────────────
+
+    /// Every block the DSL generator's config tab offers, paired with the
+    /// table above that defines what that block accepts.
+    ///
+    /// `alerts` and `vars` are deliberately absent: the generator has bespoke
+    /// editors for them and neither has a fixed key set here (see this
+    /// module's header).
+    /// A block's own directives, plus the `(name, keys)` table of its
+    /// sub-blocks — the two halves [`check_directives`] and
+    /// [`check_named_block`] consult.
+    type GeneratorBlock = (
+        &'static str,
+        &'static [&'static str],
+        &'static [(&'static str, &'static [&'static str])],
+    );
+
+    const GENERATOR_BLOCKS: &[GeneratorBlock] = &[
+        ("server", SERVER, &[]),
+        ("pull_api", PULL_API, &[]),
+        ("mcp", MCP, &[]),
+        ("policy", POLICY, &[]),
+        ("oidc", OIDC, &[]),
+        ("smtp", SMTP, &[]),
+        ("auth", &[], AUTH_BLOCKS),
+        ("observability", &[], OBSERVABILITY_BLOCKS),
+        ("defaults", DEFAULTS, DEFAULTS_BLOCKS),
+        ("concurrency_group", CONCURRENCY_GROUP, &[]),
+    ];
+
+    /// The `CONFIG_SCHEMA` region of `site/generator.js`, one entry per block.
+    ///
+    /// Line-based on purpose: the file is machine-formatted with two-space
+    /// indentation, and a hand-rolled scan that fails loudly when that changes
+    /// beats pulling a JS parser into this crate. Line endings are normalised
+    /// because git hands the file out with CRLF on a Windows checkout.
+    fn generator_config_schema(js: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+        let js = js.replace("\r\n", "\n");
+        let start = js
+            .find("const CONFIG_SCHEMA = {")
+            .expect("site/generator.js must still define CONFIG_SCHEMA");
+        let region = &js[start..];
+        let end = region
+            .find("\n}\n")
+            .expect("CONFIG_SCHEMA must be closed at column 0");
+        let region = &region[..end];
+
+        let mut blocks: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        let mut current: Option<String> = None;
+        for line in region.lines().skip(1) {
+            // A block starts at exactly two spaces of indentation:
+            //   `  server: [`  /  `  concurrency_group: {`
+            if let Some(rest) = line.strip_prefix("  ")
+                && !rest.starts_with(' ')
+                && let Some((name, tail)) = rest.split_once(':')
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !name.is_empty()
+            {
+                let tail = tail.trim();
+                current = if tail.starts_with('[') || tail.starts_with('{') {
+                    blocks.entry(name.to_string()).or_default();
+                    Some(name.to_string())
+                } else {
+                    // `alerts: 'alerts'` / `vars: 'freeform'` — bespoke
+                    // editors, no key list to check.
+                    None
+                };
+                continue;
+            }
+            // Leaf/sub-block keys, wherever they nest: `{ key: 'listen', … }`.
+            if let Some(block) = current.as_deref() {
+                for (idx, _) in line.match_indices("key: '") {
+                    let after = &line[idx + "key: '".len()..];
+                    if let Some(key) = after.split('\'').next() {
+                        blocks
+                            .entry(block.to_string())
+                            .or_default()
+                            .push(key.to_string());
+                    }
+                }
+            }
+        }
+        blocks
+    }
+
+    /// The public DSL generator's config tab is a hand-maintained mirror of
+    /// the tables in this module, and nothing connected the two: a directive
+    /// added here simply never appeared in the form, and a key the form
+    /// misspells produced a block that the server would later reject as an
+    /// unknown directive — found, if at all, by whoever pasted the output.
+    ///
+    /// Five job directives had accumulated that way before issue #555's
+    /// follow-up (`crates/croniq-config-wasm` carries the matching guard for
+    /// the *job* form, next to the payload structs it compares against). This
+    /// is the same check for the config blocks, and it lives here because
+    /// these tables are what it compares against.
+    ///
+    /// Both directions are checked. A key the form offers that no table has
+    /// is a typo or a removed directive; a table key the form never offers is
+    /// a knob nobody can reach from the generator.
+    #[test]
+    fn generator_config_tab_matches_the_known_directive_tables() {
+        let schema = generator_config_schema(include_str!("../../../site/generator.js"));
+
+        assert_eq!(
+            schema.len(),
+            GENERATOR_BLOCKS.len(),
+            "generator blocks {:?} vs. expected {:?} — add the new block to \
+             GENERATOR_BLOCKS (with the table it mirrors), or drop it there",
+            schema.keys().collect::<Vec<_>>(),
+            GENERATOR_BLOCKS
+                .iter()
+                .map(|(n, _, _)| n)
+                .collect::<Vec<_>>(),
+        );
+
+        for (block, scalars, sub_blocks) in GENERATOR_BLOCKS {
+            let offered = schema
+                .get(*block)
+                .unwrap_or_else(|| panic!("site/generator.js has no `{block}` block"));
+
+            // Everything the block accepts: its own directives plus the keys
+            // of every sub-block it takes. The generator flattens both into
+            // `key: '…'` entries, so the comparison is over the union.
+            let mut known: Vec<&str> = scalars.to_vec();
+            for (_, keys) in sub_blocks.iter() {
+                known.extend_from_slice(keys);
+            }
+
+            let unknown: Vec<&String> = offered
+                .iter()
+                .filter(|k| !known.contains(&k.as_str()))
+                .collect();
+            assert!(
+                unknown.is_empty(),
+                "site/generator.js offers {unknown:?} in `{block} {{ }}`, which is not a known \
+                 directive — the generator would emit config the server rejects. Known: {known:?}"
+            );
+
+            let missing: Vec<&&str> = known
+                .iter()
+                .filter(|k| !offered.iter().any(|o| o == *k))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "`{block} {{ }}` accepts {missing:?} but site/generator.js never offers them, so \
+                 they are unreachable from the generator"
+            );
+        }
+    }
+
+    /// A block in `CONFIG_SCHEMA` with no `<option>` in the picker is
+    /// unreachable however complete its field list is, and an `<option>` with
+    /// no schema entry renders an empty form. Neither fails loudly in a
+    /// browser, so it is checked here alongside the schema itself.
+    #[test]
+    fn generator_block_picker_offers_exactly_the_configured_blocks() {
+        let html = include_str!("../../../site/generator.html").replace("\r\n", "\n");
+        let select = html
+            .split_once("<select id=\"cfg-block\">")
+            .expect("generator.html must still have the cfg-block picker")
+            .1
+            .split_once("</select>")
+            .expect("cfg-block picker must be closed")
+            .0;
+
+        let mut offered: Vec<&str> = Vec::new();
+        for (idx, _) in select.match_indices("<option value=\"") {
+            let rest = &select[idx + "<option value=\"".len()..];
+            offered.push(rest.split('"').next().unwrap_or(""));
+        }
+
+        let schema = generator_config_schema(include_str!("../../../site/generator.js"));
+        for block in schema.keys() {
+            assert!(
+                offered.contains(&block.as_str()),
+                "`{block}` is in CONFIG_SCHEMA but not in the block picker, so no one can select it"
+            );
+        }
+        // The picker also carries `alerts` and `vars`, which have bespoke
+        // editors rather than a schema entry.
+        let bespoke = ["alerts", "vars"];
+        for block in &offered {
+            assert!(
+                schema.contains_key(*block) || bespoke.contains(block),
+                "the block picker offers `{block}`, which has neither a CONFIG_SCHEMA entry nor a \
+                 bespoke editor — selecting it renders an empty form"
+            );
+        }
     }
 
     #[test]

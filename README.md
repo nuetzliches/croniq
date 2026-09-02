@@ -383,6 +383,24 @@ job integration:credential-sync {
 
   singleton
   runner { require credentials }
+
+# A budget shared by a *set* of jobs, for a limit that belongs to something
+# external — a third-party API's rate limit, a connection pool — rather than
+# to any one job. At most `max_concurrent` executions across every job naming
+# the group run at a time, regardless of which. Composes with the per-job
+# guard above; see docs/operations.md for the ordering and failure semantics.
+concurrency_group crm-api {
+  max_concurrent 1
+}
+
+job crm:sync {
+  every day at 03:00
+  concurrency_group crm-api
+}
+
+job crm:push {
+  every 15 minutes
+  concurrency_group crm-api
 }
 
 # High-frequency monitoring job — fire-and-forget, no DB overhead

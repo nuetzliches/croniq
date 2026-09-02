@@ -933,6 +933,12 @@ function OverviewTab({
   // Stamped by the DSL compiler for `singleton` / `max_concurrent N` jobs
   // (#278); DSL job definitions pass their compiled metadata through.
   const maxConcurrent = job.metadata?.['__max_concurrent']
+  // Stamped by the compiler for a job with `concurrency_group <name>` (#546),
+  // together with the group's own limit. Shown separately from the per-job
+  // cap above because it is a budget shared with other jobs — the number here
+  // says nothing about how many of *this* job may run.
+  const concurrencyGroup = job.metadata?.['__concurrency_group']
+  const concurrencyGroupMax = job.metadata?.['__concurrency_group_max']
   const { data: me } = useCurrentUser()
   const ownerName = me?.display_name || me?.username || 'system'
   const ownerEmail = me?.email ?? ''
@@ -1070,6 +1076,20 @@ function OverviewTab({
                 )
               }
             />
+            {concurrencyGroup ? (
+              <DetailRow
+                label="Concurrency group"
+                value={
+                  <span
+                    className="mono"
+                    title={`Shared budget: at most ${concurrencyGroupMax ?? '?'} execution(s) across every job in group '${concurrencyGroup}' — enforced server-side at claim time`}
+                  >
+                    {concurrencyGroup}
+                    {concurrencyGroupMax ? ` (max ${concurrencyGroupMax})` : ''}
+                  </span>
+                }
+              />
+            ) : null}
             <DetailRow
               label="Dead letter"
               value={

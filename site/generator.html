@@ -433,6 +433,14 @@
       cursor: pointer;
     }
     .job-opts .opt-check input { width: auto; cursor: pointer; }
+    /* One-line explanation under an option whose label can't carry it. */
+    .job-opts .opt-hint {
+      margin: 0.3rem 0 0 1.4rem;
+      font-size: 0.75rem;
+      line-height: 1.45;
+      color: var(--fg-muted);
+    }
+    .job-opts .opt-hint code { font-size: 0.95em; }
   </style>
 </head>
 <body>
@@ -556,6 +564,7 @@
                     <label for="sch-opt-retry-strategy">Strategy</label>
                     <select id="sch-opt-retry-strategy">
                       <option value="exponential">exponential</option>
+                      <option value="linear">linear</option>
                       <option value="fixed">fixed</option>
                     </select>
                   </div>
@@ -566,12 +575,34 @@
                 </div>
                 <div class="field-row" id="sch-opt-retry-exp">
                   <div class="field"><label for="sch-opt-retry-base">Base</label><input id="sch-opt-retry-base" type="text" value="5s" spellcheck="false"></div>
+                  <div class="field" id="sch-opt-retry-step-field" hidden><label for="sch-opt-retry-step">Step</label><input id="sch-opt-retry-step" type="text" value="10s" spellcheck="false"></div>
                   <div class="field"><label for="sch-opt-retry-cap">Cap</label><input id="sch-opt-retry-cap" type="text" value="2m" spellcheck="false"></div>
                   <div class="field"><label for="sch-opt-retry-jitter">Jitter</label><input id="sch-opt-retry-jitter" type="number" step="0.05" min="0" max="1" value="0.3"></div>
                 </div>
                 <div class="field-row" id="sch-opt-retry-fixed" hidden>
                   <div class="field"><label for="sch-opt-retry-delay">Delay</label><input id="sch-opt-retry-delay" type="text" value="10s" spellcheck="false"></div>
                 </div>
+              </div>
+
+              <!-- Per-job `dead_letter { … }`. `enabled` is a tri-state on
+                   purpose: "inherit" omits the key so a `defaults { }` block
+                   (or the built-in default) decides, which is not the same as
+                   writing `enabled true`. -->
+              <div class="field">
+                <label for="sch-opt-dl-enabled">Dead letter</label>
+                <select id="sch-opt-dl-enabled">
+                  <option value="inherit">inherit (default)</option>
+                  <option value="true">enabled</option>
+                  <option value="false">disabled</option>
+                </select>
+              </div>
+              <div class="field-row" id="sch-opt-dl-fields">
+                <div class="field"><label for="sch-opt-dl-retention">Retention</label><input id="sch-opt-dl-retention" type="text" placeholder="e.g. 30d" spellcheck="false"></div>
+                <div class="field"><label for="sch-opt-dl-replay-max-age">Replay max age</label><input id="sch-opt-dl-replay-max-age" type="text" placeholder="e.g. 7d" spellcheck="false"></div>
+              </div>
+              <div class="field" id="sch-opt-dl-hint-field">
+                <label for="sch-opt-dl-operator-hint">Operator hint</label>
+                <input id="sch-opt-dl-operator-hint" type="text" placeholder="Shown next to this job's dead letters">
               </div>
 
               <div class="field">
@@ -616,6 +647,16 @@
                 <input id="sch-opt-tags" type="text" placeholder="key=value, e.g. env=prod team=billing" spellcheck="false">
               </div>
 
+              <!-- Job-level `timezone`, as opposed to the schedule option of
+                   the same name in the recurring-only section below. This one
+                   applies in every schedule mode, so it is the only spelling a
+                   `once` job has (the parser rejects a schedule-options block
+                   there). -->
+              <div class="field">
+                <label for="sch-opt-job-timezone">Timezone (job-level)</label>
+                <input id="sch-opt-job-timezone" type="text" placeholder="IANA, e.g. Europe/Vienna" spellcheck="false">
+              </div>
+
               <div class="field-row">
                 <div class="field">
                   <label for="sch-opt-concurrency">Concurrency</label>
@@ -629,6 +670,20 @@
                   <label for="sch-opt-maxc">Max concurrent</label>
                   <input id="sch-opt-maxc" type="number" min="1" value="3">
                 </div>
+              </div>
+
+              <!-- A budget shared across a *set* of jobs (#546). Composes
+                   with the per-job guard above rather than replacing it. The
+                   generator does not emit the block itself, and referencing
+                   an undefined group is a config error — hence the hint. -->
+              <div class="field">
+                <label for="sch-opt-concurrency-group">Concurrency group</label>
+                <input id="sch-opt-concurrency-group" type="text" placeholder="e.g. crm-api" spellcheck="false">
+                <p class="opt-hint">
+                  Shares one budget with every other job naming the same group.
+                  Needs a matching <code>concurrency_group &lt;name&gt; { max_concurrent N }</code>
+                  block in your Croniqfile — an undefined name is a config error.
+                </p>
               </div>
 
               <!-- Recurring-only scheduling constraints. These attach to
@@ -674,6 +729,19 @@
               <div class="field-row">
                 <div class="field"><label for="sch-opt-queue-ttl">Queue TTL</label><input id="sch-opt-queue-ttl" type="text" placeholder="e.g. 10m · none" spellcheck="false"></div>
                 <div class="field"><label for="sch-opt-max-queue">Max queue depth</label><input id="sch-opt-max-queue" type="number" min="1" placeholder="unbounded"></div>
+              </div>
+              <div class="field-row">
+                <div class="field"><label for="sch-opt-keep-last">Keep last N runs</label><input id="sch-opt-keep-last" type="number" min="1" placeholder="unlimited"></div>
+              </div>
+
+              <div class="field">
+                <label class="opt-check"><input type="checkbox" id="sch-opt-run-on-register"> Fire once on registration</label>
+                <p class="opt-hint">
+                  <code>run_on_register</code> — also fires the job when croniq
+                  first sees it and whenever its definition changes, for work
+                  that has to happen at deploy time and not only on schedule.
+                  Not on every restart or reload.
+                </p>
               </div>
             </details>
           </div>
@@ -742,10 +810,12 @@
                 <option value="smtp">smtp — outbound email</option>
                 <option value="pull_api">pull_api — runner pull endpoint</option>
                 <option value="mcp">mcp — Model Context Protocol server</option>
-                <option value="policy">policy — DSL adoption policy</option>
+                <option value="policy">policy — DSL adoption &amp; calendar policy</option>
                 <option value="oidc">oidc — single sign-on</option>
+                <option value="auth">auth — password login &amp; enforced 2FA</option>
                 <option value="observability">observability — logging &amp; metrics</option>
                 <option value="defaults">defaults — job-wide defaults</option>
+                <option value="concurrency_group">concurrency_group — budget shared by a set of jobs</option>
                 <option value="alerts">alerts — channels &amp; rules</option>
                 <option value="vars">vars — reusable variables</option>
               </select>
@@ -782,6 +852,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-07-15f"></script>
+  <script type="module" src="./generator.js?v=2026-09-02b"></script>
 </body>
 </html>

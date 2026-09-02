@@ -37,6 +37,10 @@ pub mod diagnostics;
 pub mod duration;
 pub mod email;
 pub mod env_secret;
+/// Fault-injecting store double shared by the test modules of several
+/// subsystems (test builds only).
+#[cfg(test)]
+pub(crate) mod fault_store;
 pub mod live_console;
 pub mod loader;
 pub mod mcp;

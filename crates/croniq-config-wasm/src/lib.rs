@@ -278,10 +278,11 @@ fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String,
 
 // ── Job options (the job block beyond the schedule line) ───────────
 
-/// Retry strategy from the form. `strategy` is `exponential` (uses
-/// base/cap/jitter) or `fixed` (uses delay); `max_attempts` applies to
-/// both. Empty/None fields are simply omitted from the emitted block.
-#[derive(Debug, Clone, Deserialize, Default)]
+/// Retry strategy from the form. `strategy` is `exponential` (base/cap/
+/// jitter), `linear` (base/step/cap) or `fixed` (delay); `max_attempts`
+/// applies to all three. Empty/None fields are simply omitted from the
+/// emitted block.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RetryPayload {
     #[serde(default)]
     pub strategy: String,
@@ -295,13 +296,18 @@ pub struct RetryPayload {
     pub jitter: Option<f64>,
     #[serde(default)]
     pub delay: Option<String>,
+    /// Per-attempt increment for the `linear` strategy — the one field that
+    /// only that strategy reads. `croniq-execution` has implemented linear
+    /// backoff all along; it was simply unreachable from a form.
+    #[serde(default)]
+    pub step: Option<String>,
 }
 
 /// Dead-letter config from the form. All fields optional — omitted ones
 /// are left out of the emitted block, so the compiler's inherited defaults
 /// (or a `defaults {}` block) fill them in. `enabled: Some(false)` turns
 /// dead-lettering off (issue #348).
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeadLetterPayload {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -315,7 +321,7 @@ pub struct DeadLetterPayload {
 
 /// Structured job-level options mirroring the form. Every field is
 /// optional — a default `JobOptions` yields a schedule-only job block.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct JobOptions {
     #[serde(default)]
     pub description: Option<String>,
@@ -335,6 +341,30 @@ pub struct JobOptions {
     /// or `None`/empty for the default (unbounded) concurrency.
     #[serde(default)]
     pub concurrency: Option<String>,
+    /// Name of a `concurrency_group <name> { }` block this job draws on
+    /// (issue #546) — a budget shared with the other jobs naming it, on top
+    /// of any per-job [`Self::concurrency`]. The editor does not create the
+    /// block; an undefined name is a validation error, not a silent no-op.
+    #[serde(default)]
+    pub concurrency_group: Option<String>,
+    /// Job-level `timezone` directive (issue #426) — the zone this job's own
+    /// wall-clock times are read in.
+    ///
+    /// Distinct from [`Self::schedule_timezone`], which is the same value
+    /// spelled as a schedule option. Both are real DSL; this one is the only
+    /// spelling available to a `once` / `disabled` job, because the parser
+    /// rejects a schedule-options block there.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Per-job cap on retained terminal executions (`keep_last N`,
+    /// issue #344).
+    #[serde(default)]
+    pub keep_last: Option<u32>,
+    /// Fire once when the job is adopted — first registration and any later
+    /// change to its compiled definition (`run_on_register`, issue #555).
+    /// A bare directive: `false` emits nothing.
+    #[serde(default)]
+    pub run_on_register: bool,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -380,7 +410,7 @@ pub struct JobOptions {
 }
 
 /// A single `KEY value` environment entry inside a runner exec block.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct EnvPair {
     pub key: String,
     #[serde(default)]
@@ -390,7 +420,7 @@ pub struct EnvPair {
 /// The runner execution command. `mode` is `shell` (a single `command`
 /// string) or `exec` (an `args` argv list); both may set `workdir`,
 /// `user`, and `env` entries.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RunnerExecPayload {
     #[serde(default)]
     pub mode: String,
@@ -441,6 +471,13 @@ fn format_job_block_inner(
         lines.push(format!("  description \"{}\"", escape_dquote(d)));
     }
     lines.push(format!("  {}", schedule_line_with_options(p, o)));
+    // Job-level `timezone`, not the schedule option of the same name (which
+    // `schedule_line_with_options` emitted above). Setting both is legal —
+    // the schedule option is the more specific spelling and wins — so this
+    // does not consult `schedule_timezone`.
+    if let Some(tz) = opt_str(&o.timezone) {
+        lines.push(format!("  timezone {}", quote_if_needed(tz)));
+    }
     if let Some(t) = opt_str(&o.timeout) {
         lines.push(format!("  timeout {t}"));
     }
@@ -460,6 +497,9 @@ fn format_job_block_inner(
     }
     if let Some(d) = o.max_queue_depth {
         lines.push(format!("  max_queue_depth {d}"));
+    }
+    if let Some(n) = o.keep_last {
+        lines.push(format!("  keep_last {n}"));
     }
     if let Some(line) = retry_loose_line(o.retry.as_ref()) {
         lines.push(format!("  {line}"));
@@ -488,6 +528,12 @@ fn format_job_block_inner(
         } else {
             lines.push(format!("  max_concurrent {c}"));
         }
+    }
+    if let Some(g) = opt_str(&o.concurrency_group) {
+        lines.push(format!("  concurrency_group {}", quote_if_needed(g)));
+    }
+    if o.run_on_register {
+        lines.push("  run_on_register".into());
     }
 
     let src = format!("job {key} {{\n{}\n}}\n", lines.join("\n"));
@@ -589,6 +635,14 @@ fn retry_loose_line(r: Option<&RetryPayload>) -> Option<String> {
     } else {
         if let Some(b) = opt_str(&r.base) {
             inner.push(format!("base {b}"));
+        }
+        // `step` is linear-only: on an exponential schedule it is inert, and
+        // emitting an inert key invites the reader to believe it does
+        // something.
+        if strat == "linear"
+            && let Some(st) = opt_str(&r.step)
+        {
+            inner.push(format!("step {st}"));
         }
         if let Some(c) = opt_str(&r.cap) {
             inner.push(format!("cap {c}"));
@@ -1059,17 +1113,37 @@ const TOP_LEVEL_BLOCKS: &[&str] = &[
     "observability",
     "defaults",
     "alerts",
+    // `auth { password { … } totp { … } }` — sub-blocks only, same shape as
+    // `observability`.
+    "auth",
+    // `concurrency_group <name> { max_concurrent N }` (issue #546). The only
+    // block here that is *named*, which is what `qualifier` on
+    // `formatTopLevelBlock` exists for.
+    "concurrency_group",
 ];
 
 /// Render a top-level block (`server { … }`, `observability { … }`, …)
 /// from a directive tree. Empty directives/args/sub-blocks are skipped;
 /// unknown block names and parse failures are surfaced as thrown values.
+///
+/// `qualifier` names the block for the kinds that take a name —
+/// `concurrency_group crm-api { … }`. Pass `null`/`undefined` for every other
+/// block; a name on a block that does not take one would not parse, so it is
+/// rejected rather than quietly dropped.
 #[wasm_bindgen(js_name = formatTopLevelBlock)]
-pub fn format_top_level_block(name: &str, directives: JsValue) -> Result<String, JsValue> {
+pub fn format_top_level_block(
+    name: &str,
+    directives: JsValue,
+    qualifier: Option<String>,
+) -> Result<String, JsValue> {
     let dirs: Vec<DirectivePayload> = serde_wasm_bindgen::from_value(directives)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    format_top_level_block_inner(name, &dirs).map_err(|e| JsValue::from_str(&e))
+    format_top_level_block_inner(name, qualifier.as_deref(), &dirs)
+        .map_err(|e| JsValue::from_str(&e))
 }
+
+/// Top-level blocks that take a name (`concurrency_group crm-api { … }`).
+const NAMED_TOP_LEVEL_BLOCKS: &[&str] = &["concurrency_group"];
 
 /// Render one directive (leaf or nested sub-block) at the given indent.
 /// Returns `None` when the directive is effectively empty (blank field /
@@ -1124,16 +1198,40 @@ fn emit_directive(d: &DirectivePayload, indent: usize) -> Option<String> {
     Some(format!("{pad}{key} {}", args.join(" ")))
 }
 
-fn format_top_level_block_inner(name: &str, dirs: &[DirectivePayload]) -> Result<String, String> {
+fn format_top_level_block_inner(
+    name: &str,
+    qualifier: Option<&str>,
+    dirs: &[DirectivePayload],
+) -> Result<String, String> {
     let name = name.trim();
     if !TOP_LEVEL_BLOCKS.contains(&name) {
         return Err(format!("unsupported top-level block: '{name}'"));
     }
+    let qualifier = qualifier.map(str::trim).filter(|q| !q.is_empty());
+    let named = NAMED_TOP_LEVEL_BLOCKS.contains(&name);
+    match (named, qualifier) {
+        // A named block without its name would parse as something else
+        // entirely, so say what is missing instead of emitting it.
+        (true, None) => {
+            return Err(format!(
+                "`{name}` needs a name, e.g. `{name} crm-api {{ … }}`"
+            ));
+        }
+        (false, Some(q)) => {
+            return Err(format!("`{name}` does not take a name, got '{q}'"));
+        }
+        _ => {}
+    }
+
     let lines: Vec<String> = dirs.iter().filter_map(|d| emit_directive(d, 1)).collect();
     if lines.is_empty() {
         return Err("no settings — fill at least one field".into());
     }
-    let src = format!("{name} {{\n{}\n}}\n", lines.join("\n"));
+    let head = match qualifier {
+        Some(q) => format!("{name} {}", quote_if_needed(q)),
+        None => name.to_string(),
+    };
+    let src = format!("{head} {{\n{}\n}}\n", lines.join("\n"));
     let ast = Parser::parse(&src).map_err(|e| e.to_string())?;
     Ok(croniq_config::format::format(&ast))
 }
@@ -1416,6 +1514,7 @@ mod tests {
                 cap: Some("2m".into()),
                 jitter: Some(0.3),
                 delay: None,
+                step: None,
             }),
             ..Default::default()
         };
@@ -1617,6 +1716,280 @@ mod tests {
     }
 
     #[test]
+    fn job_block_keep_last() {
+        let o = JobOptions {
+            keep_last: Some(500),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(out.contains("keep_last 500"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_run_on_register_is_bare() {
+        let o = JobOptions {
+            run_on_register: true,
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "integration:credential-sync", &o).unwrap();
+        // Bare directive: presence is the whole signal, so no `true` argument
+        // — `run_on_register true` would be an unknown-directive error.
+        assert!(out.contains("\n  run_on_register\n"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_run_on_register_off_emits_nothing() {
+        let out = format_job_block_inner(&interval5(), "a:b", &JobOptions::default()).unwrap();
+        assert!(!out.contains("run_on_register"), "{out}");
+    }
+
+    #[test]
+    fn job_block_job_level_timezone() {
+        let o = JobOptions {
+            timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_job_level_timezone_survives_once() {
+        // The reason the job-level spelling has to exist in the builder at
+        // all: a `once` job cannot carry a schedule-options block, so
+        // `schedule_timezone` is dropped there and its wall-clock time would
+        // silently mean UTC.
+        let once = SchedulePayload::Once {
+            at: "2026-12-31T23:00:00Z".into(),
+        };
+        let o = JobOptions {
+            timezone: Some("Europe/Vienna".into()),
+            schedule_timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&once, "migration:v2", &o).unwrap();
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_both_timezone_spellings_are_legal_together() {
+        // Setting both is not a conflict to resolve here: the schedule option
+        // is the more specific spelling and the compiler lets it win.
+        let o = JobOptions {
+            timezone: Some("UTC".into()),
+            schedule_timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(out.contains("timezone UTC"), "{out}");
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_reconcile_on_deploy_shape_round_trips() {
+        // The whole shape the README documents for issue #555, through the
+        // bridge the builder drives.
+        let o = JobOptions {
+            run_on_register: true,
+            concurrency: Some("singleton".into()),
+            timezone: Some("Europe/Vienna".into()),
+            keep_last: Some(50),
+            runner_require: vec!["credentials".into()],
+            ..Default::default()
+        };
+        let out = format_job_block_inner(
+            &SchedulePayload::Daily {
+                hour: 4,
+                minute: 20,
+            },
+            "integration:credential-sync",
+            &o,
+        )
+        .unwrap();
+        assert!(out.contains("every day at 04:20"), "{out}");
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        assert!(out.contains("keep_last 50"), "{out}");
+        assert!(out.contains("runner { require credentials }"), "{out}");
+        assert!(out.contains("\n  singleton\n"), "{out}");
+        assert!(out.contains("\n  run_on_register\n"), "{out}");
+
+        // The emitted block must compile to a job that actually carries the
+        // directive — parsing alone would accept a silently-ignored key.
+        let ast = Parser::parse(&out).unwrap();
+        let cfg = croniq_config::compile::compile(&ast);
+        assert!(cfg.jobs[0].run_on_register, "{out}");
+        assert_eq!(cfg.jobs[0].keep_last, Some(50));
+        assert_eq!(cfg.jobs[0].max_concurrent, Some(1));
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    // ── site/generator.js ⇄ payload parity (issue #555 follow-up) ────────────
+
+    /// Field names of a payload struct, taken from the type itself so the
+    /// guard below cannot fall behind the struct.
+    fn payload_keys<T: serde::Serialize + Default>() -> std::collections::BTreeSet<String> {
+        match serde_json::to_value(T::default()) {
+            Ok(serde_json::Value::Object(map)) => map.keys().cloned().collect(),
+            other => panic!("payload must serialise to an object, got {other:?}"),
+        }
+    }
+
+    /// Body of `site/generator.js`'s `buildJobOptions()`, which is the one
+    /// function that assembles the wasm payloads.
+    ///
+    /// Scoping the scan to it keeps the short locals it uses (`r`, `dl`, `re`)
+    /// from colliding with same-named locals elsewhere in the file — the
+    /// alerts editor also has an `r`, for a rule.
+    ///
+    /// Line endings are normalised first: git hands this file out with CRLF on
+    /// a Windows checkout, and a guard that silently stops finding anything
+    /// there — while passing on the Linux runner — is worse than no guard.
+    fn build_job_options_body(js: &str) -> String {
+        let js = js.replace("\r\n", "\n");
+        let start = js
+            .find("function buildJobOptions() {")
+            .expect("site/generator.js must still define buildJobOptions()");
+        let rest = &js[start..];
+        // Top-level functions in this file close with `}` in column 0.
+        let end = rest
+            .find("\n}\n")
+            .expect("buildJobOptions() must be closed at column 0");
+        rest[..end].to_string()
+    }
+
+    /// Keys a JS local carries in `site/generator.js`: both the properties
+    /// assigned onto it (`opts.foo = …`) and the ones its declaration seeds it
+    /// with (`const r = { strategy: … }`).
+    ///
+    /// Both forms count, because to the payload struct on the other side of
+    /// the boundary they are the same thing — and a guard that saw only one of
+    /// them would report a field as unreachable while the form fills it.
+    fn js_payload_keys(js: &str, local: &str) -> std::collections::BTreeSet<String> {
+        let mut keys = js_assigned_keys(js, local);
+        // Single-line declarations, which is how all four locals are written.
+        let decl = format!("const {local} = {{");
+        for line in js.lines() {
+            let Some(idx) = line.find(&decl) else {
+                continue;
+            };
+            let body = &line[idx + decl.len()..];
+            let body = body.split('}').next().unwrap_or("");
+            for part in body.split(',') {
+                if let Some((key, _)) = part.split_once(':') {
+                    let key = key.trim();
+                    if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        keys.insert(key.to_string());
+                    }
+                }
+            }
+        }
+        keys
+    }
+
+    /// Keys assigned onto a JS local in `site/generator.js`, e.g. every
+    /// `opts.foo = …` for `local = "opts"`.
+    fn js_assigned_keys(js: &str, local: &str) -> std::collections::BTreeSet<String> {
+        let needle = format!("{local}.");
+        let mut keys = std::collections::BTreeSet::new();
+        for (idx, _) in js.match_indices(&needle) {
+            // Only a real property assignment counts — skip `opts.foo()` calls
+            // and reads like `if (opts.foo)`.
+            let before = js[..idx].chars().next_back().unwrap_or(' ');
+            if before.is_alphanumeric() || before == '_' || before == '.' {
+                continue; // part of a longer identifier (`myopts.`)
+            }
+            let rest = &js[idx + needle.len()..];
+            let key: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if key.is_empty() {
+                continue;
+            }
+            let after = rest[key.len()..].trim_start();
+            if after.starts_with('=') && !after.starts_with("==") {
+                keys.insert(key);
+            }
+        }
+        keys
+    }
+
+    /// The public DSL generator builds the wasm payloads as plain JS object
+    /// literals, and they cross the boundary as an untyped `JsValue`. Serde
+    /// ignores unknown fields, so a key the JS misspells — or one it sets that
+    /// this bridge never grew — is *silently dropped*: the generator emits a
+    /// job block quietly missing that directive, with no error anywhere. There
+    /// are no TypeScript types for these shapes (`JobOptions` is not part of
+    /// the generated `.d.ts`), the site has no test harness, and nothing else
+    /// in CI reads that file.
+    ///
+    /// That is exactly how `run_on_register` and `keep_last` went unnoticed in
+    /// the form for a release. This guard closes the loop the cheap way: it
+    /// reads the shipped `generator.js` and fails if it assigns a key no
+    /// payload struct has.
+    #[test]
+    fn generator_js_payload_keys_all_exist_on_the_bridge() {
+        let js = build_job_options_body(include_str!("../../../site/generator.js"));
+        let js = js.as_str();
+
+        // (JS local, valid keys for it). The locals mirror `buildJobOptions`.
+        let cases: Vec<(&str, std::collections::BTreeSet<String>)> = vec![
+            ("opts", payload_keys::<JobOptions>()),
+            ("r", payload_keys::<RetryPayload>()),
+            ("dl", payload_keys::<DeadLetterPayload>()),
+            ("re", payload_keys::<RunnerExecPayload>()),
+        ];
+
+        for (local, valid) in cases {
+            let assigned = js_payload_keys(js, local);
+            assert!(
+                !assigned.is_empty(),
+                "found no `{local}.<key> =` assignments in site/generator.js — the guard has \
+                 lost track of the payload it is supposed to check (renamed local?)"
+            );
+            let unknown: Vec<&String> = assigned.iter().filter(|k| !valid.contains(*k)).collect();
+            assert!(
+                unknown.is_empty(),
+                "site/generator.js sets {unknown:?} on `{local}`, which the bridge payload does \
+                 not have — serde would drop it silently. Known keys: {valid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generator_js_sets_every_job_option_the_bridge_offers() {
+        // The other direction: a directive this bridge can emit but the form
+        // never sets is unreachable for anyone using the generator — which is
+        // how per-job `dead_letter` sat unusable while fully implemented here,
+        // and how `RetryPayload::step` (linear backoff) sat unusable one level
+        // down.
+        let js = build_job_options_body(include_str!("../../../site/generator.js"));
+
+        // (JS local, the payload it fills). Same locals as the forward guard.
+        let cases: Vec<(&str, std::collections::BTreeSet<String>)> = vec![
+            ("opts", payload_keys::<JobOptions>()),
+            ("r", payload_keys::<RetryPayload>()),
+            ("dl", payload_keys::<DeadLetterPayload>()),
+            ("re", payload_keys::<RunnerExecPayload>()),
+        ];
+
+        for (local, offered) in cases {
+            let set = js_payload_keys(&js, local);
+            let unreachable: Vec<&String> = offered.iter().filter(|k| !set.contains(*k)).collect();
+            assert!(
+                unreachable.is_empty(),
+                "the bridge accepts {unreachable:?} on `{local}` but site/generator.js never \
+                 sets them, so the generator cannot produce those directives"
+            );
+        }
+    }
+
+    #[test]
     fn job_block_queue_ttl_none() {
         let o = JobOptions {
             queue_ttl: Some("none".into()),
@@ -1682,7 +2055,7 @@ mod tests {
                 ],
             ),
         ];
-        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        let out = format_top_level_block_inner("alerts", None, &dirs).unwrap();
         assert!(out.contains("channel \"oncall\" {"), "{out}");
         assert!(out.contains("rule \"prod-failures\" {"), "{out}");
         assert!(out.contains("when job_failed"), "{out}");
@@ -1708,7 +2081,7 @@ mod tests {
                 vec![dir("email", &["a@example.com", "b@example.com"])],
             ),
         ];
-        let out = format_top_level_block_inner("alerts", &dirs).unwrap();
+        let out = format_top_level_block_inner("alerts", None, &dirs).unwrap();
         assert!(out.contains("channel \"hook\" {"), "{out}");
         assert!(out.contains("webhook https://hooks.example.com/x"), "{out}");
         assert!(out.contains("channel \"team\" {"), "{out}");
@@ -1723,7 +2096,7 @@ mod tests {
             dir("data_dir", &["/var/lib/croniq"]),
             dir("db", &["sqlite"]),
         ];
-        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        let out = format_top_level_block_inner("server", None, &dirs).unwrap();
         assert_eq!(
             out,
             "server {\n  listen :4000\n  data_dir /var/lib/croniq\n  db sqlite\n}\n"
@@ -1740,7 +2113,7 @@ mod tests {
             dir("security", &["starttls"]),
             dir("from", &["Croniq <noreply@example.com>"]),
         ];
-        let out = format_top_level_block_inner("smtp", &dirs).unwrap();
+        let out = format_top_level_block_inner("smtp", None, &dirs).unwrap();
         assert!(
             out.contains("from \"Croniq <noreply@example.com>\""),
             "{out}"
@@ -1754,7 +2127,7 @@ mod tests {
             dir("enabled", &["true"]),
             dir("allowed_hosts", &["localhost:8443", "[::1]:8443"]),
         ];
-        let out = format_top_level_block_inner("mcp", &dirs).unwrap();
+        let out = format_top_level_block_inner("mcp", None, &dirs).unwrap();
         // `[::1]:8443` contains `[` `]` → quoted; the plain host stays bare.
         assert!(
             out.contains("allowed_hosts localhost:8443 \"[::1]:8443\""),
@@ -1769,7 +2142,7 @@ mod tests {
             dir("default_tz", &["Europe/Vienna"]),
             dir("region", &["eu"]),
         ];
-        let out = format_top_level_block_inner("vars", &dirs).unwrap();
+        let out = format_top_level_block_inner("vars", None, &dirs).unwrap();
         assert!(out.contains("default_tz Europe/Vienna"), "{out}");
         assert!(out.contains("region eu"), "{out}");
         Parser::parse(&out).unwrap();
@@ -1783,15 +2156,133 @@ mod tests {
             dir("", &["ignored"]),
             dir("db", &[""]),
         ];
-        let out = format_top_level_block_inner("server", &dirs).unwrap();
+        let out = format_top_level_block_inner("server", None, &dirs).unwrap();
         assert_eq!(out, "server {\n  listen :4000\n}\n");
         // Nothing set at all → error (the UI shows a hint instead).
-        assert!(format_top_level_block_inner("server", &[]).is_err());
+        assert!(format_top_level_block_inner("server", None, &[]).is_err());
+    }
+
+    // ── auth / concurrency_group top-level blocks ────────────────────────────
+
+    #[test]
+    fn top_level_auth_sub_blocks() {
+        let dirs = vec![
+            block("password", None, vec![dir("enabled", &["false"])]),
+            block("totp", None, vec![dir("required", &["true"])]),
+        ];
+        let out = format_top_level_block_inner("auth", None, &dirs).unwrap();
+        assert!(out.contains("password { enabled false }"), "{out}");
+        assert!(out.contains("totp { required true }"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_concurrency_group_is_named() {
+        let dirs = vec![dir("max_concurrent", &["1"])];
+        let out =
+            format_top_level_block_inner("concurrency_group", Some("crm-api"), &dirs).unwrap();
+        assert!(out.contains("concurrency_group crm-api {"), "{out}");
+        assert!(out.contains("max_concurrent 1"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn top_level_concurrency_group_without_a_name_errors() {
+        // Emitting `concurrency_group { … }` would parse as something else
+        // entirely, so the missing name is named rather than dropped.
+        let dirs = vec![dir("max_concurrent", &["1"])];
+        let err = format_top_level_block_inner("concurrency_group", None, &dirs).unwrap_err();
+        assert!(err.contains("needs a name"), "{err}");
+    }
+
+    #[test]
+    fn top_level_unnamed_block_rejects_a_name() {
+        let dirs = vec![dir("listen", &[":4000"])];
+        let err = format_top_level_block_inner("server", Some("oops"), &dirs).unwrap_err();
+        assert!(err.contains("does not take a name"), "{err}");
+    }
+
+    #[test]
+    fn top_level_concurrency_group_name_is_quoted_when_it_has_to_be() {
+        let dirs = vec![dir("max_concurrent", &["2"])];
+        let out =
+            format_top_level_block_inner("concurrency_group", Some("crm api"), &dirs).unwrap();
+        assert!(out.contains("concurrency_group \"crm api\""), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    // ── retry: the linear strategy and its `step` ───────────────────────────
+
+    #[test]
+    fn job_block_retry_linear_emits_step() {
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "linear".into(),
+                max_attempts: Some(4),
+                base: Some("10s".into()),
+                step: Some("10s".into()),
+                cap: Some("2m".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(out.contains("retry linear {"), "{out}");
+        assert!(out.contains("step 10s"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_retry_step_is_dropped_on_a_non_linear_strategy() {
+        // `step` is only read by linear backoff. Emitting it on an exponential
+        // schedule would be an inert key that reads as if it did something.
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "exponential".into(),
+                base: Some("2s".into()),
+                step: Some("10s".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(!out.contains("step"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn defaults_retry_linear_round_trips_through_compile() {
+        // The whole point of reaching `step`: it has to survive into the
+        // compiled retry config, not just parse.
+        let dirs = vec![block(
+            "retry",
+            Some("linear"),
+            vec![
+                dir("max_attempts", &["4"]),
+                dir("base", &["10s"]),
+                dir("step", &["10s"]),
+                dir("cap", &["2m"]),
+            ],
+        )];
+        let out = format_top_level_block_inner("defaults", None, &dirs).unwrap();
+        // `defaults { }` is folded into each job at compile time, so the
+        // assertion has to go through a job to see it at all.
+        let src = format!(
+            "{out}
+job ops:check {{ every 5 minutes }}
+"
+        );
+        let ast = Parser::parse(&src).unwrap();
+        let cfg = croniq_config::compile::compile(&ast);
+        let retry = &cfg.jobs[0].retry;
+        assert_eq!(retry.strategy, "linear", "{src}");
+        assert_eq!(retry.step.as_deref(), Some("10s"), "{src}");
+        assert_eq!(retry.max_attempts, 4, "{src}");
     }
 
     #[test]
     fn top_level_rejects_unknown_block() {
-        assert!(format_top_level_block_inner("not_a_block", &[dir("x", &["y"])]).is_err());
+        assert!(format_top_level_block_inner("not_a_block", None, &[dir("x", &["y"])]).is_err());
     }
 
     // ── Nested config blocks (Phase 3b) ────────────────────────────
@@ -1814,7 +2305,7 @@ mod tests {
                 vec![dir("listen", &[":9900"]), dir("path", &["/metrics"])],
             ),
         ];
-        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        let out = format_top_level_block_inner("observability", None, &dirs).unwrap();
         assert!(
             out.contains("log { level info; format json; output stderr }"),
             "{out}"
@@ -1833,7 +2324,7 @@ mod tests {
             block("log", None, vec![dir("level", &["info"])]),
             block("metrics", None, vec![dir("listen", &[""])]),
         ];
-        let out = format_top_level_block_inner("observability", &dirs).unwrap();
+        let out = format_top_level_block_inner("observability", None, &dirs).unwrap();
         assert!(out.contains("log {"), "{out}");
         assert!(
             !out.contains("metrics"),
@@ -1854,7 +2345,7 @@ mod tests {
             ),
             block("dead_letter", None, vec![dir("retention", &["30d"])]),
         ];
-        let out = format_top_level_block_inner("defaults", &dirs).unwrap();
+        let out = format_top_level_block_inner("defaults", None, &dirs).unwrap();
         assert!(out.contains("timezone Europe/Vienna"), "{out}");
         assert!(
             out.contains("retry exponential { max_attempts 3; base 2s }"),
@@ -1871,7 +2362,7 @@ mod tests {
             dir("client_id", &["croniq"]),
             dir("default_role", &["viewer"]),
         ];
-        let out = format_top_level_block_inner("oidc", &dirs).unwrap();
+        let out = format_top_level_block_inner("oidc", None, &dirs).unwrap();
         assert!(out.contains("issuer https://id.example.com"), "{out}");
         assert!(out.contains("client_id croniq"), "{out}");
         Parser::parse(&out).unwrap();
@@ -1892,7 +2383,7 @@ mod tests {
         );
         // A pull_api directive with a placeholder arg round-trips as a placeholder.
         let dirs = vec![dir("listen", &["{env.CRONIQ_PULL_LISTEN}"])];
-        let out = format_top_level_block_inner("pull_api", &dirs).unwrap();
+        let out = format_top_level_block_inner("pull_api", None, &dirs).unwrap();
         assert!(out.contains("listen {env.CRONIQ_PULL_LISTEN}"), "{out}");
         assert!(
             !out.contains("\"{env"),

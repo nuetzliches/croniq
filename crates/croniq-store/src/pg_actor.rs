@@ -309,6 +309,16 @@ impl ExecutionStore for PgStoreHandle {
         self.call(move |s| s.count_executions_in_states(&job_key, &states))
     }
 
+    fn count_executions_in_group_in_states(
+        &self,
+        group: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError> {
+        let group = group.to_owned();
+        let states = states.to_vec();
+        self.call(move |s| s.count_executions_in_group_in_states(&group, &states))
+    }
+
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
         self.call(|s| s.job_execution_metrics())
     }

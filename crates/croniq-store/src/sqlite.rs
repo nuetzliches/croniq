@@ -510,6 +510,36 @@ impl ExecutionStore for SqliteStore {
         Ok(count as u64)
     }
 
+    fn count_executions_in_group_in_states(
+        &self,
+        group: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError> {
+        if states.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders: Vec<String> = (0..states.len()).map(|i| format!("?{}", i + 2)).collect();
+        let sql = format!(
+            "SELECT COUNT(*) FROM executions WHERE concurrency_group = ?1 AND state IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(group.to_string())];
+        for state in states {
+            param_values.push(Box::new(state_to_str(*state).to_string()));
+        }
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let count: i64 = stmt
+            .query_row(params_ref.as_slice(), |row| row.get(0))
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
+
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
         let conn = self.conn.lock().unwrap();
 
@@ -2694,11 +2724,21 @@ fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusq
 // plain pooled connection (single-statement methods) or a transaction (the
 // atomic scheduler-tick method, where `&Transaction` derefs to `&Connection`).
 
+/// The single SQLite insert path for executions, behind both
+/// `create_execution` and `create_execution_and_advance_job_state`.
+///
+/// `concurrency_group` is derived here from the execution's own metadata
+/// rather than passed in by callers (issue #546). That is what makes the
+/// group hold on every fire path — scheduler fire, manual trigger, retry
+/// chain, MCP tools, API — without a single call site knowing about it, and
+/// it guarantees the row that *blocks* on a group is the row that *counts*
+/// toward it.
 fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Result<(), StoreError> {
     let metadata = serde_json::to_string(&exec.metadata).unwrap_or_default();
+    let concurrency_group = crate::models::concurrency_group_of(exec);
     conn.execute(
-        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for, concurrency_group)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             exec.id.to_string(),
             exec.job_key,
@@ -2716,6 +2756,7 @@ fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Resul
             dt_to_sql(&exec.created_at),
             exec.idempotency_key,
             dt_to_sql(&exec.scheduled_for),
+            concurrency_group,
         ],
     )
     .map_err(map_err)?;
