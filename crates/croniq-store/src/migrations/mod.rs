@@ -86,6 +86,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "028_job_register_fires",
         include_str!("028_job_register_fires.sql"),
     ),
+    (
+        "029_concurrency_group",
+        include_str!("029_concurrency_group.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -119,6 +123,12 @@ mod tests {
     /// Apply every migration up to and including `target`, then return the
     /// connection so the caller can seed data and run the remaining
     /// migrations manually.
+    /// A deterministic UUID-shaped id, so a seeded row is addressable
+    /// without pulling `uuid` into the migration tests.
+    fn uuid_str(n: u8) -> String {
+        format!("00000000-0000-0000-0000-0000000000{n:02}")
+    }
+
     fn apply_through(conn: &Connection, target: &str) -> Result<(), rusqlite::Error> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS _migrations (
@@ -310,6 +320,82 @@ mod tests {
             )
             .unwrap();
         assert!(expires.is_none());
+    }
+
+    #[test]
+    fn migration_029_adds_the_concurrency_group_column_and_its_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "028_job_register_fires").unwrap();
+
+        // Pre-condition: rows written by an older binary have no group column
+        // at all, so the migration has to add it as nullable.
+        let existing = uuid_str(1);
+        conn.execute(
+            "INSERT INTO executions
+             (id, job_key, fire_at, attempt, state, metadata, created_at)
+             VALUES (?1, 'legacy:job', '2026-09-01T00:00:00Z', 1, 'queued', '{}',
+                     '2026-09-01T00:00:00Z')",
+            [&existing],
+        )
+        .unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "029_concurrency_group")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // The pre-existing row survives with a NULL group, and NULL can never
+        // satisfy the guard's `concurrency_group = ?` predicate — so a legacy
+        // row is neither counted into a budget nor blocked by one.
+        let legacy: Option<String> = conn
+            .query_row(
+                "SELECT concurrency_group FROM executions WHERE id = ?1",
+                [&existing],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(legacy.is_none(), "backfilled rows must stay ungrouped");
+
+        // A new row can carry a group, and the guard's count sees it.
+        conn.execute(
+            "INSERT INTO executions
+             (id, job_key, fire_at, attempt, state, metadata, created_at, concurrency_group)
+             VALUES (?1, 'sync:tickets', '2026-09-02T00:00:00Z', 1, 'claimed', '{}',
+                     '2026-09-02T00:00:00Z', 'api-x')",
+            [&uuid_str(2)],
+        )
+        .unwrap();
+        let counted: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM executions
+                 WHERE concurrency_group = 'api-x' AND state = 'claimed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(counted, 1);
+
+        // Post-condition on the plan, not just the index's existence: the
+        // guard runs this exact query on every poll that carries a grouped
+        // item, and an index it cannot use would pass a name check while
+        // changing nothing about the scan.
+        let plan: Vec<String> = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT COUNT(*) FROM executions
+                 WHERE concurrency_group = 'api-x' AND state = 'claimed'",
+            )
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|row| row.contains("idx_executions_concurrency_group_state")),
+            "the group count must use its index, got plan: {plan:?}"
+        );
     }
 
     #[test]

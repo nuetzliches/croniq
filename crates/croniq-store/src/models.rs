@@ -96,6 +96,27 @@ pub struct Execution {
     pub created_at: DateTime<Utc>,
 }
 
+/// Metadata key naming the shared concurrency budget an execution draws on
+/// (issue #546). Stamped by the DSL compiler — `croniq_config::compile::
+/// CONCURRENCY_GROUP_METADATA_KEY` is the same string, and
+/// `concurrency_group_metadata_key_matches_the_compiler` in `croniq-server`
+/// pins the two together, since neither crate depends on the other.
+///
+/// The store reads it in its insert helpers to denormalise the value into
+/// `executions.concurrency_group`, which is what the claim-path guard counts.
+pub const CONCURRENCY_GROUP_METADATA_KEY: &str = "__concurrency_group";
+
+/// The group an execution counts toward, read from its own metadata.
+///
+/// `None` for an ungrouped execution, and also for an empty value — a blank
+/// group name would otherwise become a budget every blank-named row shares.
+pub fn concurrency_group_of(exec: &Execution) -> Option<&str> {
+    exec.metadata
+        .get(CONCURRENCY_GROUP_METADATA_KEY)
+        .map(String::as_str)
+        .filter(|g| !g.is_empty())
+}
+
 fn serialize_public_metadata<S: serde::Serializer>(
     metadata: &HashMap<String, String>,
     serializer: S,

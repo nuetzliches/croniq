@@ -92,6 +92,10 @@ pub struct RuntimeConfig {
     pub alerts: AlertsConfig,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
+    /// Shared concurrency budgets (`concurrency_group <name> { … }`, issue
+    /// #546). Collected before the job pass, so a group may be declared
+    /// anywhere in the file relative to the jobs that reference it.
+    pub concurrency_groups: Vec<ConcurrencyGroupConfig>,
 }
 
 /// OIDC settings parsed from the Croniqfile `oidc {}` block. All
@@ -479,6 +483,18 @@ pub struct JobConfig {
     /// execution / work item to the claim path.
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    /// Name of the shared concurrency budget this job draws from
+    /// (`concurrency_group <name>`, issue #546). `None` means the job has no
+    /// group. Like [`Self::max_concurrent`] the effective values are also
+    /// stamped into the job's metadata ([`CONCURRENCY_GROUP_METADATA_KEY`]
+    /// and [`CONCURRENCY_GROUP_MAX_METADATA_KEY`]) so they travel with every
+    /// execution / work item; the claim path never reaches back into config.
+    /// Set only for a group the file actually declares — a dangling
+    /// reference compiles to `None` and `validate.rs` reports it — and forced
+    /// to `None` for `ephemeral` jobs, whose executions are not persisted and
+    /// therefore cannot be counted.
+    #[serde(default)]
+    pub concurrency_group: Option<String>,
     /// Free-form tags for filtering/grouping. NOT routing-relevant —
     /// runner capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
@@ -543,6 +559,24 @@ pub const RUNNER_EXEC_METADATA_KEY: &str = "__runner_exec";
 /// (`__require`, `__prefer`, `__runner_exec`) and is consumed by the server's
 /// claim path to cap in-flight executions per job.
 pub const MAX_CONCURRENT_METADATA_KEY: &str = "__max_concurrent";
+
+/// Metadata key carrying the name of the job's shared concurrency budget
+/// (issue #546). Stamped by the compiler from `concurrency_group <name>`, it
+/// rides along with every execution row and work item exactly like
+/// [`MAX_CONCURRENT_METADATA_KEY`] — which is what makes the guard hold on
+/// every fire path, including `POST /v1/trigger`, without per-call-site code.
+///
+/// The store denormalises this key into the `executions.concurrency_group`
+/// column inside its insert helper, so the row that *blocks* on a group and
+/// the row that *counts* toward it always come from the same stamp.
+pub const CONCURRENCY_GROUP_METADATA_KEY: &str = "__concurrency_group";
+
+/// Metadata key carrying the resolved `max_concurrent` of the job's
+/// concurrency group (issue #546). Stamped alongside
+/// [`CONCURRENCY_GROUP_METADATA_KEY`] so the claim path can decide from the
+/// work item alone: the group block lives in the Croniqfile, and the guard
+/// runs where only compiled items are visible.
+pub const CONCURRENCY_GROUP_MAX_METADATA_KEY: &str = "__concurrency_group_max";
 
 /// Prefix marking the metadata namespace reserved for keys the scheduler and
 /// the DSL compiler stamp themselves ([`RUNNER_EXEC_METADATA_KEY`],
@@ -662,6 +696,17 @@ pub struct CalendarRuleConfig {
     pub args: Vec<String>,
 }
 
+/// A shared concurrency budget (`concurrency_group <name> { max_concurrent N }`,
+/// issue #546): the cap applies to the *set* of jobs naming it, not to any one
+/// of them. Groups with a missing or non-positive `max_concurrent` are dropped
+/// here and reported by `validate.rs`, so a compiled group always carries a
+/// usable limit.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConcurrencyGroupConfig {
+    pub name: String,
+    pub max_concurrent: u32,
+}
+
 /// Compile a Croniqfile AST into a RuntimeConfig.
 pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut server = ServerConfig {
@@ -694,6 +739,17 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     // Collect every `vars { … }` entry from the file up-front so placeholder
     // resolution does not depend on block ordering.
     let vars = collect_vars(ast);
+
+    // Concurrency groups are collected up-front for the same reason (issue
+    // #546), and deliberately unlike `defaults { }`: a job needs its group's
+    // *limit* at compile time to stamp it into metadata, so an in-pass read
+    // would make a group silently unresolved for every job declared above it.
+    // `calendar` gets away with in-pass because a job only stores the name.
+    let concurrency_groups = collect_concurrency_groups(ast, &vars);
+    let group_limits: HashMap<String, u32> = concurrency_groups
+        .iter()
+        .map(|g| (g.name.clone(), g.max_concurrent))
+        .collect();
 
     for item in &ast.items {
         match item {
@@ -825,6 +881,10 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 // below: a `defaults { }` block must precede what it applies to.
                 calendars.push(compile_calendar(cal, &vars, default_timezone.as_deref()));
             }
+            // Handled by `collect_concurrency_groups` before this loop — the
+            // job arm below needs every group's limit regardless of where the
+            // block sits in the file.
+            Item::ConcurrencyGroup(_) => {}
             Item::Job(job) => {
                 jobs.push(compile_job(
                     job,
@@ -840,6 +900,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         keep_last: default_keep_last,
                     },
                     &vars,
+                    &group_limits,
                 ));
             }
             Item::Observability(obs) => {
@@ -1034,7 +1095,48 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         alerts,
         jobs,
         calendars,
+        concurrency_groups,
     }
+}
+
+/// Collect `concurrency_group <name> { max_concurrent N }` blocks (issue #546),
+/// order-independently and before any job is compiled.
+///
+/// A group with a missing, non-numeric or zero limit is dropped: it carries no
+/// budget, and stamping one would either block every member forever (0) or
+/// advertise a guard the claim path cannot read. `validate.rs` turns each of
+/// those into an error, and a job referencing a dropped group compiles as
+/// ungrouped — the same lenient-compile / strict-validate split the rest of
+/// the DSL uses. On a duplicate name the first block wins (also an error in
+/// `validate.rs`), so compilation stays deterministic.
+fn collect_concurrency_groups(
+    ast: &Croniqfile,
+    vars: &HashMap<String, String>,
+) -> Vec<ConcurrencyGroupConfig> {
+    let mut groups: Vec<ConcurrencyGroupConfig> = Vec::new();
+    for item in &ast.items {
+        let Item::ConcurrencyGroup(block) = item else {
+            continue;
+        };
+        let name = resolve_str(&block.name, vars);
+        if name.is_empty() || groups.iter().any(|g| g.name == name) {
+            continue;
+        }
+        let limit = block
+            .directives
+            .iter()
+            .find(|d| d.key.value == "max_concurrent")
+            .and_then(|d| first_arg(d, vars))
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|n| *n > 0);
+        if let Some(max_concurrent) = limit {
+            groups.push(ConcurrencyGroupConfig {
+                name,
+                max_concurrent,
+            });
+        }
+    }
+    groups
 }
 
 /// Parse a DSL boolean argument. Accepts the same liberal set as `policy {}`:
@@ -1316,6 +1418,7 @@ fn compile_job(
     job: &JobBlock,
     defaults: &JobDefaults,
     vars: &HashMap<String, String>,
+    group_limits: &HashMap<String, u32>,
 ) -> JobConfig {
     let schedule = job
         .schedule
@@ -1353,6 +1456,7 @@ fn compile_job(
     let mut max_queue_depth = defaults.max_queue_depth;
     let mut keep_last = defaults.keep_last;
     let mut max_concurrent: Option<u32> = None;
+    let mut concurrency_group: Option<String> = None;
     let mut tags: Vec<String> = Vec::new();
     let mut run_on_register = false;
 
@@ -1397,6 +1501,15 @@ fn compile_job(
                 // values (zero / non-numeric) compile to `None`; validate.rs
                 // surfaces them as errors, matching how other directives
                 // split lenient compilation from diagnostics.
+                // Shared concurrency budget (issue #546). Only a group the
+                // file declares with a usable limit is kept; a dangling or
+                // malformed reference compiles to `None` and is reported by
+                // validate.rs, matching how `max_concurrent` splits lenient
+                // compilation from diagnostics.
+                "concurrency_group" => {
+                    concurrency_group =
+                        first_arg(d, vars).filter(|name| group_limits.contains_key(name));
+                }
                 "singleton" => max_concurrent = Some(1),
                 // Bare directive (issue #555): no value, presence is the
                 // whole signal. The adoption fire itself lives in the
@@ -1482,6 +1595,13 @@ fn compile_job(
         // `validate.rs` rejects the combination so a well-formed deploy never
         // reaches this fallback.
         max_concurrent = None;
+        // A concurrency group counts persisted rows, so it is inert on an
+        // ephemeral job for exactly the reason #302 gave for the per-job
+        // guard — and worse: the group would *block* on the job (its item
+        // carries the stamp) while the job never *counts* toward it, so the
+        // shared budget would read as free when it is not. Drop it here;
+        // `validate.rs` rejects the combination outright.
+        concurrency_group = None;
     }
 
     // Stamp the concurrency limit into the job metadata so it rides along
@@ -1489,6 +1609,16 @@ fn compile_job(
     // The server's claim path reads this key to enforce the limit.
     if let Some(n) = max_concurrent {
         metadata.insert(MAX_CONCURRENT_METADATA_KEY.into(), n.to_string());
+    }
+
+    // Same for the shared group (issue #546): name *and* resolved limit, so
+    // the claim path can decide from the work item alone. The name is only
+    // ever `Some` for a group `group_limits` knows, so the lookup holds.
+    if let Some(ref group) = concurrency_group
+        && let Some(limit) = group_limits.get(group)
+    {
+        metadata.insert(CONCURRENCY_GROUP_METADATA_KEY.into(), group.clone());
+        metadata.insert(CONCURRENCY_GROUP_MAX_METADATA_KEY.into(), limit.to_string());
     }
 
     JobConfig {
@@ -1515,6 +1645,7 @@ fn compile_job(
         max_queue_depth,
         keep_last,
         max_concurrent,
+        concurrency_group,
         tags,
         run_on_register,
     }
@@ -3332,5 +3463,143 @@ mod tests {
         "#,
         );
         assert_eq!(cal.timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    // ─── Shared concurrency groups (issue #546) ──────────────────────────────
+
+    fn compiled(src: &str) -> RuntimeConfig {
+        compile(&crate::parser::Parser::parse(src).unwrap())
+    }
+
+    #[test]
+    fn compile_collects_concurrency_groups() {
+        let cfg = compiled(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             concurrency_group api-y { max_concurrent 4 }\n",
+        );
+        assert_eq!(cfg.concurrency_groups.len(), 2);
+        assert_eq!(cfg.concurrency_groups[0].name, "api-x");
+        assert_eq!(cfg.concurrency_groups[0].max_concurrent, 1);
+        assert_eq!(cfg.concurrency_groups[1].max_concurrent, 4);
+    }
+
+    #[test]
+    fn compile_job_stamps_group_name_and_limit_into_metadata() {
+        let cfg = compiled(
+            "concurrency_group api-x { max_concurrent 3 }\n\
+             job sync:tickets { every day at 03:00\n concurrency_group api-x }\n",
+        );
+        let job = &cfg.jobs[0];
+        assert_eq!(job.concurrency_group.as_deref(), Some("api-x"));
+        assert_eq!(
+            job.metadata
+                .get(CONCURRENCY_GROUP_METADATA_KEY)
+                .map(String::as_str),
+            Some("api-x")
+        );
+        assert_eq!(
+            job.metadata
+                .get(CONCURRENCY_GROUP_MAX_METADATA_KEY)
+                .map(String::as_str),
+            Some("3"),
+            "the limit must travel with the item, not stay in config"
+        );
+    }
+
+    /// Groups are collected before the job pass, so — unlike `defaults { }` —
+    /// a job may reference a group declared *after* it. Without the up-front
+    /// pass the reference would silently compile to `None` for every job above
+    /// the block.
+    #[test]
+    fn compile_resolves_a_group_declared_after_the_job() {
+        let cfg = compiled(
+            "job sync:tickets { every day at 03:00\n concurrency_group api-x }\n\
+             concurrency_group api-x { max_concurrent 1 }\n",
+        );
+        assert_eq!(cfg.jobs[0].concurrency_group.as_deref(), Some("api-x"));
+    }
+
+    #[test]
+    fn compile_drops_a_dangling_group_reference() {
+        let cfg = compiled("job sync:tickets { every day at 03:00\n concurrency_group nope }\n");
+        assert_eq!(cfg.jobs[0].concurrency_group, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(CONCURRENCY_GROUP_METADATA_KEY),
+            "an unresolved group must not be stamped — the guard would block on a budget \
+             nothing counts toward"
+        );
+    }
+
+    #[test]
+    fn compile_drops_a_group_without_a_usable_limit() {
+        let cfg = compiled(
+            "concurrency_group api-x { }\n\
+             concurrency_group api-z { max_concurrent 0 }\n\
+             job a:b { every day at 03:00\n concurrency_group api-x }\n",
+        );
+        assert!(cfg.concurrency_groups.is_empty());
+        assert_eq!(cfg.jobs[0].concurrency_group, None);
+    }
+
+    #[test]
+    fn compile_keeps_the_first_of_two_groups_with_the_same_name() {
+        let cfg = compiled(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             concurrency_group api-x { max_concurrent 9 }\n",
+        );
+        assert_eq!(cfg.concurrency_groups.len(), 1);
+        assert_eq!(cfg.concurrency_groups[0].max_concurrent, 1);
+    }
+
+    /// A group counts persisted rows, so an ephemeral job would be blocked by
+    /// the budget without ever counting toward it — worse than the inert
+    /// per-job guard of #302. `validate` rejects the combination; compile
+    /// drops it so a bypassed validation cannot ship the footgun.
+    #[test]
+    fn compile_drops_a_group_on_an_ephemeral_job() {
+        let cfg = compiled(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             job a:b { ephemeral every 5 minutes\n concurrency_group api-x }\n",
+        );
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(cfg.jobs[0].concurrency_group, None);
+        assert!(
+            !cfg.jobs[0]
+                .metadata
+                .contains_key(CONCURRENCY_GROUP_METADATA_KEY)
+        );
+    }
+
+    /// The per-job guard and the shared group compose: a job may cap itself
+    /// *and* draw on a budget shared with others.
+    #[test]
+    fn compile_job_can_carry_both_a_per_job_limit_and_a_group() {
+        let cfg = compiled(
+            "concurrency_group api-x { max_concurrent 4 }\n\
+             job a:b { every day at 03:00\n max_concurrent 2\n concurrency_group api-x }\n",
+        );
+        let job = &cfg.jobs[0];
+        assert_eq!(job.max_concurrent, Some(2));
+        assert_eq!(job.concurrency_group.as_deref(), Some("api-x"));
+        assert_eq!(
+            job.metadata
+                .get(MAX_CONCURRENT_METADATA_KEY)
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            job.metadata
+                .get(CONCURRENCY_GROUP_MAX_METADATA_KEY)
+                .map(String::as_str),
+            Some("4")
+        );
+    }
+
+    #[test]
+    fn concurrency_group_metadata_keys_are_reserved() {
+        assert!(is_reserved_metadata_key(CONCURRENCY_GROUP_METADATA_KEY));
+        assert!(is_reserved_metadata_key(CONCURRENCY_GROUP_MAX_METADATA_KEY));
     }
 }

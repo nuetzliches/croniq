@@ -24,6 +24,7 @@ pub enum Item {
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
     Calendar(CalendarBlock),
+    ConcurrencyGroup(ConcurrencyGroupBlock),
     Job(JobBlock),
     Comment(CommentNode),
 }
@@ -194,6 +195,21 @@ pub struct CalendarRule {
 pub enum CalendarRuleKind {
     Include,
     Exclude,
+}
+
+// ─── Concurrency group ───
+
+/// `concurrency_group api-x { max_concurrent 1 }` (issue #546).
+///
+/// A named budget several jobs share, referenced by a `concurrency_group <name>`
+/// directive in a `job { }` body. Shaped like [`CalendarBlock`] — a named
+/// top-level block referred to by name — but its body is a plain directive
+/// list, so it reuses the generic directive parser rather than a rule parser.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConcurrencyGroupBlock {
+    pub name: StringValue,
+    pub directives: Vec<Directive>,
+    pub span: Span,
 }
 
 // ─── Job ───

@@ -76,6 +76,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Upgrading needs no action: an existing deployment has no records, so every
   job that gains the directive fires once on the first boot after it is added.
 
+- **`concurrency_group`: a concurrency budget shared by a set of jobs
+  ([#546](https://github.com/nuetzliches/croniq/issues/546)).** `singleton` /
+  `max_concurrent` are per job and do not compose, so they cannot express
+  "these N jobs share one budget" — the shape you get whenever several jobs
+  call the same third-party API under one account-wide rate limit, where any
+  two of them running at once blows the quota regardless of which two.
+
+  ```hcl
+  concurrency_group api-x { max_concurrent 1 }
+
+  job sync:tickets { every day at 03:00; concurrency_group api-x }
+  job push:status  { every 15 minutes;   concurrency_group api-x }
+  ```
+
+  The cap applies to the set, is enforced at claim time on the same path as the
+  per-job guard, and therefore covers scheduled fires, `POST /v1/trigger` and
+  retries alike — the group travels in the job's compiled metadata the way
+  `__max_concurrent` already does, so no fire path needed its own handling.
+  Both guards compose: a job may cap itself *and* draw on a shared budget.
+
+  This replaces the runner-topology workaround documented in
+  [#547](https://github.com/nuetzliches/croniq/issues/547) (pin the set to a
+  capability that exactly one runner with `max_inflight 1` advertises), which
+  stays valid — and remains the only option for `ephemeral` jobs — but expresses
+  an upstream limit in the deployment, where a second replica silently doubles
+  it. `docs/operations.md` now carries both.
+
+  Two behaviours worth knowing, both documented and tested:
+
+  - **The group guard fails closed.** If the store cannot be read at claim
+    time, a grouped item is not dispatched; it keeps its queue position and a
+    later poll retries it. The per-job guard's fail-*open* behaviour is
+    unchanged — for one job a rare self-overlap is the lesser evil, while a
+    group protects an external quota where one run too many buys a `429` with
+    an escalating `Retry-After`. The claim-persist path fails closed for
+    grouped items too, since an item handed out without a `claimed` row would
+    not be counted by the next poll.
+  - **Ordering is FIFO among equally eligible members**, not a general
+    guarantee: members with different `require` sets, a member held by its own
+    `singleton`, a watchdog requeue or a server restart can all release a group
+    out of enqueue order. `docs/operations.md` spells out the conditions.
+
+  Enforcement is entirely server-side; no SDK changes. Storage adds a nullable
+  `executions.concurrency_group` column (migration 028), derived inside the
+  store's insert helpers from the execution's own metadata, so the row that is
+  blocked by a group is always the row that counts toward it.
+
 ### Changed
 
 - **.NET: trigger `metadata` values widen from `string` to `object?`

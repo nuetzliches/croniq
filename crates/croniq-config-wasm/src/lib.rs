@@ -335,6 +335,12 @@ pub struct JobOptions {
     /// or `None`/empty for the default (unbounded) concurrency.
     #[serde(default)]
     pub concurrency: Option<String>,
+    /// Name of a `concurrency_group <name> { }` block this job draws on
+    /// (issue #546) — a budget shared with the other jobs naming it, on top
+    /// of any per-job [`Self::concurrency`]. The editor does not create the
+    /// block; an undefined name is a validation error, not a silent no-op.
+    #[serde(default)]
+    pub concurrency_group: Option<String>,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -488,6 +494,9 @@ fn format_job_block_inner(
         } else {
             lines.push(format!("  max_concurrent {c}"));
         }
+    }
+    if let Some(g) = opt_str(&o.concurrency_group) {
+        lines.push(format!("  concurrency_group {}", quote_if_needed(g)));
     }
 
     let src = format!("job {key} {{\n{}\n}}\n", lines.join("\n"));

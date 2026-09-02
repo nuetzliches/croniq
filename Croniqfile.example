@@ -230,10 +230,32 @@ job ops:db-dump {
   # for `max_concurrent 1`; use `max_concurrent N` to allow up to N
   # overlapping executions instead (the two are mutually exclusive).
   # The guard is per job and does not compose across jobs: to make a set
-  # of jobs share one budget (a common upstream rate limit, say), see
-  # "Serializing jobs against a shared upstream limit" in
-  # docs/operations.md.
+  # of jobs share one budget (a common upstream rate limit, say), use a
+  # `concurrency_group` — see below and docs/operations.md.
   singleton
+}
+
+# A budget shared by a *set* of jobs (issue #546). Use it when the limit is a
+# property of something external — a third-party API's rate limit, a database
+# connection pool — rather than of any one job. At most `max_concurrent`
+# executions across every job naming the group may be in flight at a time,
+# regardless of which. Referencing an undefined group is a config error, and
+# the guard requires `queued` mode (the default): it counts persisted
+# executions, so `ephemeral` jobs cannot participate.
+concurrency_group crm-api {
+  max_concurrent 1
+}
+
+job crm:sync-contacts {
+  every day at 03:00
+  concurrency_group crm-api
+  runner shell { command "/usr/local/bin/crm-sync contacts" }
+}
+
+job crm:push-status {
+  every 15 minutes
+  concurrency_group crm-api
+  runner shell { command "/usr/local/bin/crm-push status" }
 }
 
 job ops:logrotate {
