@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "croniq-runner"
-version = "0.4.0"
+version = "0.5.0"
 description = "Async Python runner SDK for Croniq — distributed job scheduling that just works."
 readme = "README.md"
 requires-python = ">=3.11"

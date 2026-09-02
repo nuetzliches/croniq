@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.0 - 2026-09-02
+
+### Fixed
+
+- **Empty trigger optionals are omitted from the request body instead of being
+  sent ([#553](https://github.com/nuetzliches/croniq/issues/553)).** `triggerJob` now checks emptiness, not just `undefined`.
+  An explicitly empty `metadata` / `require` / `prefer`, or a blank `timeout`
+  or `idempotency_key`, is now treated as absent rather than serialised.
+
+  This matters because of what the server does with an absent value: since
+  [#549](https://github.com/nuetzliches/croniq/issues/549) and
+  [#551](https://github.com/nuetzliches/croniq/issues/551), omitting `require`
+  or `timeout` means *inherit the job's configured value*, so an empty one on
+  the wire was only a second spelling of a message that already had one — and
+  `"timeout": ""` is not a parseable duration, so sending it handed the runner
+  a broken value where omitting it inherits the job's own.
+
+  As of [#559](https://github.com/nuetzliches/croniq/issues/559) the server
+  rejects a non-blank unparseable `timeout` with `400`; a blank one still
+  counts as absent, which is exactly what this release now sends.
+
 ## 0.4.0 - 2026-08-21
 
 ### Added

@@ -4,6 +4,40 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [0.7.0] - 2026-09-02
+
+### Changed
+
+- **`TriggerJobRequest.Metadata` widens from `Dictionary<string, string>`
+  to `Dictionary<string, object?>`.** **Source-breaking** for callers that
+  declare a `Dictionary<string, string>`: change the declared type. Values
+  that are already strings serialise identically, so no wire behaviour
+  changes for existing payloads.
+
+### Fixed
+
+- **Empty trigger optionals are omitted from the request body instead of being
+  sent ([#553](https://github.com/nuetzliches/croniq/issues/553)).** `TriggerJobAsync` now checks emptiness, not just `null`.
+  An explicitly empty `metadata` / `require` / `prefer`, or a blank `timeout`
+  or `idempotency_key`, is now treated as absent rather than serialised.
+
+  This matters because of what the server does with an absent value: since
+  [#549](https://github.com/nuetzliches/croniq/issues/549) and
+  [#551](https://github.com/nuetzliches/croniq/issues/551), omitting `require`
+  or `timeout` means *inherit the job's configured value*, so an empty one on
+  the wire was only a second spelling of a message that already had one — and
+  `"timeout": ""` is not a parseable duration, so sending it handed the runner
+  a broken value where omitting it inherits the job's own.
+
+  As of [#559](https://github.com/nuetzliches/croniq/issues/559) the server
+  rejects a non-blank unparseable `timeout` with `400`; a blank one still
+  counts as absent, which is exactly what this release now sends.
+
+- **The .NET SDK now runs the shared trigger conformance corpus
+  ([#554](https://github.com/nuetzliches/croniq/issues/554)),** so its
+  trigger serialisation is checked against the same fixtures as the other
+  four SDKs rather than against hand-written expectations alone.
+
 ## [0.6.0] - 2026-08-21
 
 ### Added
