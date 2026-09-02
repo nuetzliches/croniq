@@ -119,9 +119,10 @@ enum Commands {
         #[arg(long)]
         prefer: Vec<String>,
 
-        /// Timeout hint for the runner (e.g. `15m`, `2h`)
-        #[arg(long, default_value = "5m")]
-        timeout: String,
+        /// Timeout hint for the runner (e.g. `15m`, `2h`).
+        /// Defaults to the job's configured timeout.
+        #[arg(long)]
+        timeout: Option<String>,
     },
 
     // ── Credential commands ───────────────────────────────────────────────────
@@ -344,7 +345,7 @@ fn main() -> Result<()> {
             require,
             prefer,
             timeout,
-        } => commands::server::trigger(&remote, &job_key, require, prefer, &timeout),
+        } => commands::server::trigger(&remote, &job_key, require, prefer, timeout),
 
         // Credentials
         Commands::ApiClients { action } => match action {

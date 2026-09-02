@@ -273,7 +273,11 @@ impl TriggerRequestBuilder<'_> {
     }
 
     /// Execution timeout as a server duration string (e.g. `"30s"`, `"5m"`).
-    /// The server default applies when unset.
+    ///
+    /// Leave it unset to inherit the job's configured `timeout`, so a manual
+    /// fire is bounded like a scheduled one (issue #551); the server falls
+    /// back to `5m` only when the job declares none either. Setting it — to
+    /// `"5m"` included — is an explicit override.
     pub fn timeout(mut self, timeout: impl Into<String>) -> Self {
         self.body.timeout = Some(timeout.into());
         self

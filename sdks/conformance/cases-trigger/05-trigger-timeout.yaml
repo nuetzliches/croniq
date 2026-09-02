@@ -2,8 +2,13 @@ name: "Trigger timeout — explicit value sent verbatim"
 description: |
   When the caller supplies a timeout it is sent verbatim as a duration string
   under the `timeout` key. The complementary half — a client must OMIT timeout
-  (not fabricate the server default "5m") when the caller gives none — is
-  pinned by 01-trigger-minimal via body_absent.
+  when the caller gives none, never fabricate a default — is pinned by
+  01-trigger-minimal via body_absent.
+
+  Omission is load-bearing, not cosmetic: the server reads an absent `timeout`
+  as "inherit the job's configured one" and only falls back to 5m when the job
+  declares none either (issue #551). A client that fabricated "5m" would cap
+  every manual fire of a `timeout 2h` job at five minutes.
 
 trigger_config:
   api_key: "croniq_trigger_key"

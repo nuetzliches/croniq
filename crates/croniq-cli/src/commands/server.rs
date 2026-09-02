@@ -72,14 +72,17 @@ pub fn trigger(
     job_key: &str,
     require: Vec<String>,
     prefer: Vec<String>,
-    timeout: &str,
+    timeout: Option<String>,
 ) -> Result<()> {
     let req = TriggerRequest {
         job_key: job_key.to_string(),
         require,
         prefer,
         metadata: serde_json::Value::Null,
-        timeout: timeout.to_string(),
+        // Left unset unless `--timeout` was passed, so the server applies the
+        // job's own configured timeout (issue #551). Sending a default here
+        // would read as an explicit override and cap every manual fire at it.
+        timeout,
         idempotency_key: None,
     };
 

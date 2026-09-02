@@ -8,6 +8,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A manually fired execution now inherits its job's configured `timeout`
+  instead of always getting 5 minutes
+  ([#551](https://github.com/nuetzliches/croniq/issues/551)).** `timeout` on
+  `TriggerRequest` carried a serde default of `"5m"`, so by the time the
+  handler saw it an omitted field and a caller who deliberately sent `5m` were
+  the same value — there was no "unset" to fall back from. A job declaring
+  `timeout 2h` ran for two hours when the scheduler fired it and was killed
+  after five minutes when someone triggered it by hand: exactly the on-demand
+  backfill or replay of a long job where it hurts, and it reads as a runner
+  problem rather than a routing default.
+
+  This is the half deliberately left out of
+  [#549](https://github.com/nuetzliches/croniq/issues/549), because unlike
+  `require` it could not lean on "empty means unset" — an empty capability list
+  has no caller intent, `"5m"` does. `TriggerRequest::timeout` and the two MCP
+  fire-tool params are now `Option<String>`, resolved as
+  request → job config → `5m`, the precedence the dead-letter replay path
+  already used.
+
+  **Wire-compatible**: an absent field deserialises to `None`, a present one to
+  `Some`, and a caller who genuinely wants 5 m for a 2 h job can still say so.
+  A **Rust API break** for anyone constructing `TriggerRequest` literally. All
+  five language SDKs already omit `timeout` when the caller gives none — the
+  conformance suite has pinned that from the start
+  (`cases-trigger/01-trigger-minimal.yaml`, and `05-trigger-timeout.yaml` spells
+  out that a client "must OMIT timeout … not fabricate the server default") — so
+  the wire contract already assumed the server would honour the omission. It
+  just could not.
+
+  `croniq trigger --timeout` loses its `"5m"` default for the same reason: the
+  CLI was the one first-party client that fabricated one, which would have
+  defeated the fix for every command-line fire. Omitting the flag now inherits
+  the job's timeout.
+
 - **`POST /v1/trigger` now inherits a job's `runner { require … }` — a manually
   triggered job could be claimed by any runner
   ([#549](https://github.com/nuetzliches/croniq/issues/549)).** `handle_trigger`

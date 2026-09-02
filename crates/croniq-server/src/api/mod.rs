@@ -73,6 +73,10 @@ const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 /// `pull_api { trigger_dedup_window … }` directive.
 pub const DEFAULT_TRIGGER_DEDUP_WINDOW_SECS: u64 = 600;
 
+/// Last-resort execution timeout for a manual fire: used only when neither the
+/// caller nor the job declares one (issue #551).
+pub const DEFAULT_TRIGGER_TIMEOUT: &str = "5m";
+
 /// Maximum accepted length (in characters) of a trigger `idempotency_key`.
 /// Longer keys are rejected with `400 Bad Request`.
 const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
@@ -1562,6 +1566,18 @@ async fn handle_trigger(
         );
     }
 
+    // Timeout: the caller's value, else the job's configured `timeout`, else
+    // `5m` (issue #551). Same precedence the dead-letter replay path uses. The
+    // request field is an `Option` for exactly this reason — with the serde
+    // default it once carried, an omitted field was indistinguishable from a
+    // caller asking for `5m`, so a `timeout 2h` job that ran for two hours on
+    // a scheduled fire was killed after five minutes when triggered by hand.
+    let timeout = req
+        .timeout
+        .clone()
+        .or_else(|| dsl_job.as_ref().and_then(|j| j.timeout.clone()))
+        .unwrap_or_else(|| DEFAULT_TRIGGER_TIMEOUT.to_string());
+
     // Persist the execution record to the store so that the CompletionProcessor
     // can find it when the runner reports success/failure.
     if let Some(ref store) = state.store {
@@ -1604,7 +1620,7 @@ async fn handle_trigger(
         require,
         prefer,
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
-        timeout: req.timeout,
+        timeout,
         is_ephemeral: false,
     };
 
@@ -2330,6 +2346,121 @@ mod tests {
             q.dequeue_for(&["shell-runner".to_string()]).is_some(),
             "a runner with shell-runner must claim it"
         );
+    }
+
+    #[tokio::test]
+    async fn trigger_inherits_dsl_job_timeout() {
+        // Regression for issue #551: a trigger that omits `timeout` must
+        // inherit the job's configured one. `timeout` used to carry a serde
+        // default of "5m", so an omitted field was indistinguishable from a
+        // caller asking for 5m — and a job declaring `timeout 2h` was killed
+        // after five minutes whenever it was fired by hand.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:long-backfill {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+        assert_eq!(jobs[0].timeout.as_deref(), Some("2h"), "compile stamps it");
+
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            // `timeout` omitted entirely — the wire state of a caller that
+            // only knows the job key.
+            serde_json::json!({ "job_key": "test:long-backfill" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1, "one item should be queued");
+        assert_eq!(
+            items[0].timeout, "2h",
+            "work item must inherit the job's timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_timeout_overrides_dsl_job_timeout() {
+        // The inheritance is a fallback, not a lock — including for the value
+        // that used to be the silent default, which a caller can now state
+        // explicitly and have honoured.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:long-backfill {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "test:long-backfill", "timeout": "5m" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(
+            q.peek_n(1)[0].timeout,
+            "5m",
+            "an explicit request timeout must override the job config"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_without_job_timeout_falls_back_to_default() {
+        // Neither the caller nor the job declares one: the historical 5m
+        // default still applies, so nothing changes for jobs without a
+        // `timeout` directive.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:no-timeout {
+                every 1 hour
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+        assert!(jobs[0].timeout.is_none(), "job declares no timeout");
+
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "test:no-timeout" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.peek_n(1)[0].timeout, DEFAULT_TRIGGER_TIMEOUT);
     }
 
     #[tokio::test]

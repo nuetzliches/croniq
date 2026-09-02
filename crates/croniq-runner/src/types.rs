@@ -297,9 +297,18 @@ pub struct TriggerRequest {
     #[serde(default)]
     pub metadata: serde_json::Value,
 
-    /// Timeout hint for the runner (e.g. `"15m"`). Default: `"5m"`.
-    #[serde(default = "default_trigger_timeout")]
-    pub timeout: String,
+    /// Timeout hint for the runner (e.g. `"15m"`).
+    ///
+    /// Absent inherits the job's configured `timeout` (issue #551), so a
+    /// manual fire is bounded like a scheduled one; `Some` overrides it. Only
+    /// when neither exists does the server fall back to `"5m"`.
+    ///
+    /// This is why the field is an `Option` rather than a defaulted `String`:
+    /// with a serde default the server could not tell an omitted field from a
+    /// caller who deliberately asked for the default, and every manual fire
+    /// silently capped a `timeout 2h` job at five minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
 
     /// Optional caller-supplied dedup key, scoped per `job_key` (issue
     /// #279). A repeat trigger with the same `(job_key, idempotency_key)`
@@ -309,10 +318,6 @@ pub struct TriggerRequest {
     /// characters; an empty string is treated as absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
-}
-
-fn default_trigger_timeout() -> String {
-    "5m".into()
 }
 
 /// `POST /v1/trigger` response.
