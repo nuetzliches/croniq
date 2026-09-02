@@ -136,8 +136,8 @@ pub struct EnqueueJobParams {
     /// Optional metadata forwarded to the runner, overlaid on the job's own
     /// compiled metadata. Keys prefixed with `__` are reserved for the
     /// scheduler (`__runner_exec`, `__require`, `__prefer`,
-    /// `__max_concurrent`) and are dropped from caller input — use `require` /
-    /// `prefer` to influence routing.
+    /// `__max_concurrent`, `__concurrency_group`) and are dropped from caller
+    /// input — use `require` / `prefer` to influence routing.
     #[serde(default)]
     pub metadata: serde_json::Value,
 
@@ -173,8 +173,8 @@ pub struct JobTriggerParams {
     /// Optional metadata forwarded to the runner, overlaid on the job's own
     /// compiled metadata. Keys prefixed with `__` are reserved for the
     /// scheduler (`__runner_exec`, `__require`, `__prefer`,
-    /// `__max_concurrent`) and are dropped from caller input — use `require` /
-    /// `prefer` to influence routing.
+    /// `__max_concurrent`, `__concurrency_group`) and are dropped from caller
+    /// input — use `require` / `prefer` to influence routing.
     #[serde(default)]
     pub metadata: serde_json::Value,
 
@@ -469,11 +469,12 @@ pub struct DeadLetterIdParams {
 // ─── Reserved metadata namespace ──────────────────────────────────────────────
 //
 // The `__`-prefixed metadata namespace belongs to the scheduler and the DSL
-// compiler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`, …)
+// compiler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`,
+// `__concurrency_group`, …)
 // and runners act on those keys directly — the shell runner deserialises
 // `__runner_exec` into a command it spawns. Caller-supplied metadata must not
-// reach into it: overriding `__require` / `__max_concurrent` would subvert
-// routing and the concurrency guard, and an injected `__runner_exec` would be
+// reach into it: overriding `__require` / `__max_concurrent` /
+// `__concurrency_group` would subvert routing and the concurrency guards, and an injected `__runner_exec` would be
 // executed verbatim. Drop such keys, exactly as `POST /v1/trigger` does, so
 // both ingress paths behave the same. The supported way to influence routing
 // is the tools' own `require` / `prefer` parameters.

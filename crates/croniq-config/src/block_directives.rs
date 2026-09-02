@@ -115,9 +115,15 @@ const JOB: &[&str] = &[
     "keep_last",
     "singleton",
     "max_concurrent",
+    "concurrency_group",
     "tags",
     "run_on_register",
 ];
+
+/// `concurrency_group <name> { }` (issue #546). One directive, and it is not
+/// optional — a group without a limit has no budget to share, so `validate`
+/// rejects the empty body rather than defaulting it.
+const CONCURRENCY_GROUP: &[&str] = &["max_concurrent"];
 
 /// Sub-blocks a `job { }` accepts. Bodies are checked only where the key set is
 /// fixed: `retry` / `dead_letter` share their tables with `defaults { }`,
@@ -203,6 +209,10 @@ pub(crate) fn validate_blocks(ast: &Croniqfile, diags: &mut Vec<Diagnostic>) {
                 for nb in &b.sub_blocks {
                     check_named_block("auth", AUTH_BLOCKS, nb, diags);
                 }
+            }
+            Item::ConcurrencyGroup(b) => {
+                let label = format!("concurrency_group {}", b.name.value);
+                check_directives(&label, CONCURRENCY_GROUP, &b.directives, diags);
             }
             Item::Job(job) => check_job_body(job, diags),
             // `vars { }` entries are operator-chosen names; `alerts { }`,
@@ -534,7 +544,7 @@ mod tests {
         let msgs = errors("job a:b { every 5 minutes\n frobnicate yes }");
         assert_eq!(msgs.len(), 1, "got: {msgs:?}");
         assert!(
-            msgs[0].contains("(known: catch_up, description,"),
+            msgs[0].contains("(known: catch_up, concurrency_group, description,"),
             "got: {}",
             msgs[0]
         );

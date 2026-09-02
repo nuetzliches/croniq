@@ -56,6 +56,7 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut job_keys = HashSet::new();
     let mut calendar_names = HashSet::new();
+    let mut group_names = HashSet::new();
 
     // First pass: collect calendar names
     for item in &ast.items {
@@ -66,6 +67,25 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 severity: Severity::Error,
                 message: format!("duplicate calendar name '{}'", cal.name.value),
                 span: cal.name.span.into(),
+            });
+        }
+    }
+
+    // Same pass for concurrency-group names (issue #546), and for the same
+    // reason as calendars: `compile` keeps the first block on a duplicate, so
+    // without this the second declaration is silently dropped — and a group is
+    // exactly the kind of invariant nobody re-reads once it looks green. The
+    // name set also backs the reference check on each job below. Collected
+    // regardless of `check_calendars`: a group is resolved entirely inside the
+    // Croniqfile, so unlike a calendar it can never come from the store.
+    for item in &ast.items {
+        if let Item::ConcurrencyGroup(group) = item
+            && !group_names.insert(group.name.value.clone())
+        {
+            diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!("duplicate concurrency_group name '{}'", group.name.value),
+                span: group.name.span.into(),
             });
         }
     }
@@ -156,13 +176,17 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 // Validate runner constraints
                 validate_runner_constraints(job, &mut diags);
 
-                // Validate singleton / max_concurrent (issue #278, #302)
-                validate_concurrency(job, default_ephemeral, &mut diags);
+                // Validate singleton / max_concurrent (issue #278, #302) and
+                // the shared-budget reference (issue #546)
+                validate_concurrency(job, default_ephemeral, &group_names, &mut diags);
             }
             // Falls through to the catch-all when the caller owns calendar
             // failures itself — see `Options::check_calendars`.
             Item::Calendar(cal) if opts.check_calendars => {
                 validate_calendar(cal, default_timezone, &mut diags);
+            }
+            Item::ConcurrencyGroup(group) => {
+                validate_concurrency_group(group, &mut diags);
             }
             _ => {}
         }
@@ -567,12 +591,18 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
 /// running `defaults { execution_mode … }` baseline; the effective mode is
 /// resolved exactly as `compile_job` does (default → schedule prefix →
 /// `execution_mode` directive).
-fn validate_concurrency(job: &JobBlock, default_ephemeral: bool, diags: &mut Vec<Diagnostic>) {
+fn validate_concurrency(
+    job: &JobBlock,
+    default_ephemeral: bool,
+    group_names: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut singleton_seen = false;
     let mut max_concurrent_seen = false;
     // Keyword + span of the first concurrency directive seen, reused for the
     // ephemeral-combo diagnostic so it points at the offending directive.
     let mut guard: Option<(&str, SourceSpan)> = None;
+    let mut group_ref: Option<SourceSpan> = None;
 
     for dob in &job.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
@@ -646,8 +676,64 @@ fn validate_concurrency(job: &JobBlock, default_ephemeral: bool, diags: &mut Vec
                     },
                 }
             }
+            // Issue #546: a job's reference to a shared budget. The
+            // per-job guard above and this one compose — a job may cap
+            // itself *and* draw on a group — so this arm adds its own
+            // diagnostics rather than joining the mutually-exclusive pair.
+            "concurrency_group" => {
+                group_ref.get_or_insert(d.key.span.into());
+                match d.args.first() {
+                    None => {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "`concurrency_group` in job '{}' requires the name of a                                  `concurrency_group {{ }}` block",
+                                job.key.raw
+                            ),
+                            span: d.key.span.into(),
+                        });
+                    }
+                    // Placeholders resolve at compile time, like elsewhere.
+                    Some(arg) if arg.is_placeholder => {}
+                    Some(arg) if !group_names.contains(&arg.value) => {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "concurrency_group '{}' referenced in job '{}' is not \
+                                 defined — declare `concurrency_group {} {{ max_concurrent N }}` \
+                                 at the top level. Left undefined the job would run unguarded, \
+                                 which is the failure mode a shared budget exists to prevent.",
+                                arg.value, job.key.raw, arg.value
+                            ),
+                            span: arg.span.into(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
             _ => {}
         }
+    }
+
+    // Issue #546: a group counts persisted rows, so on an ephemeral job it is
+    // not merely inert (the #302 case below) but actively misleading: the
+    // job's items carry the stamp and are *blocked* by the group, while its
+    // executions are never persisted and so never *count* toward it. The
+    // shared budget would read as free while the job is running.
+    if let Some(span) = group_ref
+        && job_is_ephemeral(job, default_ephemeral)
+    {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "`concurrency_group` has no effect on the `ephemeral` job '{}': ephemeral \
+                 executions are not persisted, so they are blocked by the group's budget without \
+                 ever counting toward it. Use `queued` (the default) for a job that shares a \
+                 budget, or drop `concurrency_group`.",
+                job.key.raw
+            ),
+            span,
+        });
     }
 
     // Issue #302: the guard is inert on ephemeral jobs — reject the combination
@@ -665,6 +751,68 @@ fn validate_concurrency(job: &JobBlock, default_ephemeral: bool, diags: &mut Vec
             ),
             span,
         });
+    }
+}
+
+/// Validate a `concurrency_group <name> { max_concurrent N }` block (issue
+/// #546).
+///
+/// The limit is required, not defaulted: a group is a budget, and a block
+/// without one would either have to invent a number or compile to a group
+/// that guards nothing. Both are worse than a config error, because the
+/// operator who wrote the block believes the set is capped.
+fn validate_concurrency_group(group: &ConcurrencyGroupBlock, diags: &mut Vec<Diagnostic>) {
+    let limit = group
+        .directives
+        .iter()
+        .find(|d| d.key.value == "max_concurrent");
+
+    let Some(d) = limit else {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "`concurrency_group {}` has no `max_concurrent` — a group without a limit caps \
+                 nothing. Write `concurrency_group {} {{ max_concurrent 1 }}` to serialize the \
+                 set.",
+                group.name.value, group.name.value
+            ),
+            span: group.name.span.into(),
+        });
+        return;
+    };
+
+    match d.args.first() {
+        None => diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "`max_concurrent` in `concurrency_group {}` requires a positive integer argument",
+                group.name.value
+            ),
+            span: d.key.span.into(),
+        }),
+        // Placeholder values ({vars.X}, {env.X}) resolve at compile time.
+        Some(arg) if arg.is_placeholder => {}
+        Some(arg) => match arg.value.parse::<u32>() {
+            Ok(0) => diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!(
+                    "`max_concurrent` in `concurrency_group {}` must be greater than zero — \
+                     zero would block every member of the group forever",
+                    group.name.value
+                ),
+                span: arg.span.into(),
+            }),
+            Ok(_) => {}
+            Err(_) => diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!(
+                    "`max_concurrent` in `concurrency_group {}` requires a positive \
+                     integer, got '{}'",
+                    group.name.value, arg.value
+                ),
+                span: arg.span.into(),
+            }),
+        },
     }
 }
 
@@ -1639,6 +1787,131 @@ mod tests {
         assert!(
             !has_ephemeral_guard_error(&diags),
             "a later defaults block must not retroactively reject an earlier job, got: {diags:?}"
+        );
+    }
+
+    // ─── Shared concurrency groups (issue #546) ──────────────────────────────
+
+    fn group_errors(src: &str) -> Vec<String> {
+        let ast = crate::parser::Parser::parse(src).unwrap();
+        validate(&ast)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn valid_concurrency_group_and_reference_pass() {
+        let msgs = group_errors(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             job sync:tickets { every day at 03:00\n concurrency_group api-x }\n",
+        );
+        assert!(msgs.is_empty(), "{msgs:?}");
+    }
+
+    #[test]
+    fn duplicate_concurrency_group_name_is_an_error() {
+        let msgs = group_errors(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             concurrency_group api-x { max_concurrent 2 }\n",
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("duplicate concurrency_group name 'api-x'")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn unresolved_group_reference_is_an_error() {
+        let msgs =
+            group_errors("job sync:tickets { every day at 03:00\n concurrency_group api-x }\n");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("concurrency_group 'api-x' referenced in job")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn group_without_max_concurrent_is_an_error() {
+        let msgs = group_errors("concurrency_group api-x { }\n");
+        assert!(
+            msgs.iter().any(|m| m.contains("has no `max_concurrent`")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn group_with_zero_max_concurrent_is_an_error() {
+        let msgs = group_errors("concurrency_group api-x { max_concurrent 0 }\n");
+        assert!(
+            msgs.iter().any(|m| m.contains("must be greater than zero")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn group_with_non_numeric_max_concurrent_is_an_error() {
+        let msgs = group_errors("concurrency_group api-x { max_concurrent lots }\n");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("requires a positive integer, got 'lots'")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn concurrency_group_without_a_name_argument_is_an_error() {
+        let msgs = group_errors(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             job sync:tickets { every day at 03:00\n concurrency_group }\n",
+        );
+        assert!(
+            msgs.iter().any(|m| m.contains("requires the name of a")),
+            "{msgs:?}"
+        );
+    }
+
+    /// The #302 rejection extended to groups, with the sharper reason: an
+    /// ephemeral member is blocked by the budget without counting toward it,
+    /// so the shared limit reads as free while the job runs.
+    #[test]
+    fn concurrency_group_on_an_ephemeral_job_is_an_error() {
+        let msgs = group_errors(
+            "concurrency_group api-x { max_concurrent 1 }\n\
+             job a:b { ephemeral every 5 minutes\n concurrency_group api-x }\n",
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("has no effect on the `ephemeral` job 'a:b'")
+                    && m.contains("without ever counting toward it")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn concurrency_group_on_a_defaults_ephemeral_job_is_an_error() {
+        let msgs = group_errors(
+            "defaults { execution_mode ephemeral }\n\
+             concurrency_group api-x { max_concurrent 1 }\n\
+             job a:b { every 5 minutes\n concurrency_group api-x }\n",
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("`concurrency_group` has no effect")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_directive_in_a_concurrency_group_block_is_an_error() {
+        let msgs = group_errors("concurrency_group api-x { max_concurent 1 }\n");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("unknown directive 'max_concurent'")),
+            "{msgs:?}"
         );
     }
 }

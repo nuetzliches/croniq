@@ -848,6 +848,157 @@ fn count_executions_in_states_counts_per_job_and_state() {
     );
 }
 
+/// A grouped execution: the group travels in metadata, and the store
+/// denormalises it into `executions.concurrency_group` inside its insert
+/// helper (issue #546). Nothing here sets the column directly — that is the
+/// property under test.
+fn make_grouped_execution(job_key: &str, group: &str, fire_at: chrono::DateTime<Utc>) -> Execution {
+    let mut exec = make_execution(job_key, fire_at);
+    exec.metadata.insert(
+        CONCURRENCY_GROUP_METADATA_KEY.to_string(),
+        group.to_string(),
+    );
+    exec
+}
+
+#[test]
+fn count_executions_in_group_in_states_counts_across_jobs() {
+    let store = create_memory_store().unwrap();
+
+    // Two *different* jobs share group `api-x`, one claimed each — the count
+    // per-job concurrency cannot express.
+    for job_key in ["sync:tickets", "push:status"] {
+        let exec = make_grouped_execution(job_key, "api-x", utc(2026, 3, 29, 12, 0));
+        store.create_execution(&exec).unwrap();
+        store.claim_execution(exec.id, "r1", now()).unwrap();
+    }
+    // A third member still queued.
+    let queued = make_grouped_execution("sync:contacts", "api-x", utc(2026, 3, 29, 12, 5));
+    store.create_execution(&queued).unwrap();
+
+    // Another group must not leak in…
+    let other = make_grouped_execution("billing:sync", "api-y", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&other).unwrap();
+    store.claim_execution(other.id, "r2", now()).unwrap();
+    // …and neither must an ungrouped execution.
+    let ungrouped = make_execution("plain:job", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&ungrouped).unwrap();
+    store.claim_execution(ungrouped.id, "r3", now()).unwrap();
+
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Claimed])
+            .unwrap(),
+        2,
+        "the group's in-flight count spans different job keys"
+    );
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Queued])
+            .unwrap(),
+        1
+    );
+    // Multiple states accumulate.
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states(
+                "api-x",
+                &[ExecutionState::Claimed, ExecutionState::Queued]
+            )
+            .unwrap(),
+        3
+    );
+    // Cross-group isolation.
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-y", &[ExecutionState::Claimed])
+            .unwrap(),
+        1
+    );
+    // Unknown group / empty states.
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("nonexistent", &[ExecutionState::Claimed])
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[])
+            .unwrap(),
+        0
+    );
+}
+
+/// Completing an execution frees the group's slot, and the row keeps its
+/// group stamp — a group is a cap on *in-flight* work, not a quota over
+/// history.
+#[test]
+fn completing_an_execution_frees_its_group_slot() {
+    let store = create_memory_store().unwrap();
+
+    let exec = make_grouped_execution("sync:tickets", "api-x", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&exec).unwrap();
+    store.claim_execution(exec.id, "r1", now()).unwrap();
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Claimed])
+            .unwrap(),
+        1
+    );
+
+    store
+        .complete_execution(
+            exec.id,
+            None,
+            ExecutionState::Completed,
+            Some(10),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Claimed])
+            .unwrap(),
+        0,
+        "a finished run must not hold the shared budget"
+    );
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Completed])
+            .unwrap(),
+        1,
+        "the stamp survives on the terminal row"
+    );
+}
+
+/// A retry carries the metadata forward (`completion.rs` clones it), so the
+/// retry attempt lands in the same group as the attempt it replaces —
+/// without the retry path knowing groups exist.
+#[test]
+fn a_retry_attempt_inherits_the_group_from_its_metadata() {
+    let store = create_memory_store().unwrap();
+
+    let first = make_grouped_execution("sync:tickets", "api-x", utc(2026, 3, 29, 12, 0));
+    store.create_execution(&first).unwrap();
+
+    let mut retry = first.clone();
+    retry.id = Uuid::new_v4();
+    retry.attempt = 2;
+    store.create_execution(&retry).unwrap();
+    store.claim_execution(retry.id, "r1", now()).unwrap();
+
+    assert_eq!(
+        store
+            .count_executions_in_group_in_states("api-x", &[ExecutionState::Claimed])
+            .unwrap(),
+        1
+    );
+}
+
 #[test]
 fn job_execution_metrics_aggregates_per_job() {
     let store = create_memory_store().unwrap();

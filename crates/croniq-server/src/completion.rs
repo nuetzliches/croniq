@@ -632,6 +632,7 @@ mod tests {
             max_queue_depth: None,
             keep_last: None,
             max_concurrent: None,
+            concurrency_group: None,
             tags: vec![],
             run_on_register: false,
         }
@@ -772,243 +773,11 @@ mod tests {
         assert!(matches!(outcome, ProcessedOutcome::Dropped { .. }));
     }
 
-    /// Store test double: delegates every call to an inner store but fails
-    /// `create_execution` once armed. Lets tests drive the
-    /// retry-persist-failure path without a real database error.
-    mod failing_store {
-        use std::collections::HashMap;
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        use chrono::{DateTime, Utc};
-        use croniq_store::models::*;
-        use croniq_store::traits::*;
-        use uuid::Uuid;
-
-        use crate::store::DynStore;
-
-        pub struct FailingCreateStore {
-            pub inner: DynStore,
-            pub fail_create: AtomicBool,
-        }
-
-        impl FailingCreateStore {
-            pub fn arm(&self) {
-                self.fail_create.store(true, Ordering::SeqCst);
-            }
-        }
-
-        macro_rules! delegate {
-            ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)+) => {
-                $(fn $name(&self, $($arg: $ty),*) -> Result<$ret, StoreError> {
-                    self.inner.$name($($arg),*)
-                })+
-            };
-        }
-
-        impl JobStore for FailingCreateStore {
-            delegate! {
-                get_job_state(job_key: &str) -> Option<JobState>;
-                upsert_job_state(state: &JobState) -> ();
-                list_job_states() -> Vec<JobState>;
-                delete_job_state(job_key: &str) -> ();
-                list_register_fires() -> Vec<croniq_store::models::JobRegisterFire>;
-                upsert_register_fire(record: &croniq_store::models::JobRegisterFire) -> ();
-                delete_register_fire(job_key: &str) -> ();
-            }
-        }
-
-        #[allow(clippy::too_many_arguments)] // delegated complete_execution
-        impl ExecutionStore for FailingCreateStore {
-            fn create_execution(&self, execution: &Execution) -> Result<(), StoreError> {
-                if self.fail_create.load(Ordering::SeqCst) {
-                    return Err(StoreError::Database(
-                        "injected create_execution failure".into(),
-                    ));
-                }
-                self.inner.create_execution(execution)
-            }
-            delegate! {
-                create_execution_and_advance_job_state(execution: &Execution, job_state: &JobState) -> ();
-                get_execution(id: Uuid) -> Option<Execution>;
-                claim_execution(id: Uuid, runner_id: &str, now: DateTime<Utc>) -> Execution;
-                complete_execution(id: Uuid, runner_id: Option<&str>, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> bool;
-                find_queued_executions(capabilities: &[String], limit: u32) -> Vec<Execution>;
-                list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
-                list_claimed_older_than(cutoff: DateTime<Utc>, limit: u32) -> Vec<Execution>;
-                find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
-                requeue_abandoned(runner_id: &str, now: DateTime<Utc>) -> Vec<Uuid>;
-                requeue_if_claimed(id: Uuid, now: DateTime<Utc>) -> bool;
-                cancel_execution(id: Uuid, now: DateTime<Utc>) -> ();
-                count_by_state() -> HashMap<ExecutionState, u64>;
-                count_executions_in_states(job_key: &str, states: &[ExecutionState]) -> u64;
-                job_execution_metrics() -> Vec<JobExecutionMetrics>;
-                prune_executions_older_than(cutoff: DateTime<Utc>, limit: u32) -> u64;
-                prune_executions_keep_last(job_key: &str, keep_last: u32, limit: u32) -> u64;
-            }
-        }
-
-        impl RunnerStore for FailingCreateStore {
-            delegate! {
-                upsert_runner(runner: &Runner) -> ();
-                get_runner(runner_id: &str) -> Option<Runner>;
-                list_runners() -> Vec<Runner>;
-                remove_runner(runner_id: &str) -> ();
-                update_poll(runner_id: &str, inflight: &[Uuid], now: DateTime<Utc>) -> ();
-                runner_identity_bind(runner_id: &str, owner_id: &str, now: DateTime<Utc>) -> String;
-                runner_identity_owner(runner_id: &str) -> Option<String>;
-                runner_identity_release(runner_id: &str) -> ();
-            }
-        }
-
-        impl DeadLetterStore for FailingCreateStore {
-            delegate! {
-                add_dead_letter(dl: &DeadLetter) -> ();
-                complete_as_dead(execution_id: Uuid, runner_id: Option<&str>, duration_ms: Option<i64>, error: Option<&str>, dead_letter: &DeadLetter, now: DateTime<Utc>) -> bool;
-                replay_dead_letter(dead_letter_id: Uuid, execution: &Execution) -> ();
-                get_dead_letter(id: Uuid) -> Option<DeadLetter>;
-                list_dead_letters(filter: &DeadLetterFilter) -> Vec<DeadLetter>;
-                remove_dead_letter(id: Uuid) -> ();
-                remove_dead_letters(ids: &[Uuid]) -> u64;
-                clear_dead_letters(job_key: Option<&str>) -> u64;
-                purge_expired(now: DateTime<Utc>) -> u64;
-            }
-        }
-
-        impl AuthStore for FailingCreateStore {
-            delegate! {
-                create_client(client: &ApiClient) -> ();
-                get_client(client_id: &str) -> Option<ApiClient>;
-                list_clients() -> Vec<ApiClient>;
-                delete_client(client_id: &str) -> ();
-                create_api_key(key: &ApiKey) -> ();
-                find_api_key_by_hash(key_hash: &str) -> Option<ApiKey>;
-                revoke_api_key(key_id: &str, now: DateTime<Utc>) -> ();
-                restore_api_key(key_id: &str) -> ();
-                list_api_keys(client_id: &str) -> Vec<ApiKey>;
-                set_api_key_expiry(key_id: &str, expires_at: Option<DateTime<Utc>>) -> ();
-                get_credentials(username: &str) -> Option<PasswordCredential>;
-                upsert_credentials(cred: &PasswordCredential) -> ();
-                create_refresh_token(token: &RefreshToken) -> ();
-                validate_refresh_token(token_hash: &str) -> Option<RefreshToken>;
-                revoke_refresh_token(token_hash: &str, now: DateTime<Utc>) -> ();
-                users_create(user: &User) -> ();
-                users_get_by_id(user_id: &str) -> Option<User>;
-                users_get_by_username(username: &str) -> Option<User>;
-                users_list() -> Vec<User>;
-                users_update(user: &User) -> ();
-                users_delete(user_id: &str) -> ();
-                users_set_last_login(user_id: &str, at: DateTime<Utc>) -> ();
-                users_count_active_admins() -> u64;
-                users_token_generation(user_id: &str) -> Option<i64>;
-                users_bump_token_generation(user_id: &str) -> ();
-                invitations_create(invite: &Invitation) -> ();
-                invitations_get(invitation_id: &str) -> Option<Invitation>;
-                invitations_get_by_token_hash(token_hash: &str) -> Option<Invitation>;
-                invitations_list() -> Vec<Invitation>;
-                invitations_mark_accepted(invitation_id: &str, at: DateTime<Utc>) -> ();
-                invitations_revoke(invitation_id: &str, at: DateTime<Utc>) -> ();
-                password_resets_create(reset: &PasswordReset) -> ();
-                password_resets_get_by_token_hash(token_hash: &str) -> Option<PasswordReset>;
-                password_resets_mark_used(reset_id: &str, at: DateTime<Utc>) -> ();
-                totp_upsert(secret: &TotpSecret) -> ();
-                totp_get(user_id: &str) -> Option<TotpSecret>;
-                totp_set_enabled(user_id: &str, enabled: bool, confirmed_at: Option<DateTime<Utc>>) -> ();
-                totp_delete(user_id: &str) -> ();
-                recovery_codes_replace_all(user_id: &str, codes: &[RecoveryCode]) -> ();
-                recovery_codes_find_unused(user_id: &str, code_hash: &str) -> Option<RecoveryCode>;
-                recovery_codes_mark_used(code_id: &str, at: DateTime<Utc>) -> ();
-                recovery_codes_count_unused(user_id: &str) -> u64;
-                pat_create(pat: &PersonalAccessToken) -> ();
-                pat_find_by_hash(token_hash: &str) -> Option<PersonalAccessToken>;
-                pat_list(user_id: &str) -> Vec<PersonalAccessToken>;
-                pat_revoke(token_id: &str, at: DateTime<Utc>) -> ();
-                pat_touch_last_used(token_id: &str, at: DateTime<Utc>) -> ();
-                oidc_link(identity: &OidcIdentity) -> ();
-                oidc_get_by_subject(provider: &str, subject: &str) -> Option<OidcIdentity>;
-                oidc_touch_last_login(provider: &str, subject: &str, at: DateTime<Utc>) -> ();
-                oidc_pending_create(pending: &OidcPendingLogin) -> ();
-                oidc_pending_take(state: &str) -> Option<OidcPendingLogin>;
-                oidc_pending_purge_expired(now: DateTime<Utc>) -> u64;
-                audit_log(event: &AuditEvent) -> ();
-                audit_list(filter: &AuditFilter) -> Vec<AuditEvent>;
-            }
-        }
-
-        impl JobDefinitionStore for FailingCreateStore {
-            delegate! {
-                create_job_definition(job: &JobDefinition) -> ();
-                get_job_definition(job_key: &str) -> Option<JobDefinition>;
-                list_job_definitions() -> Vec<JobDefinition>;
-                delete_job_definition(job_key: &str) -> ();
-            }
-        }
-
-        impl TriggerDefinitionStore for FailingCreateStore {
-            delegate! {
-                create_trigger(trigger: &TriggerDefinition) -> ();
-                get_trigger(trigger_id: &str) -> Option<TriggerDefinition>;
-                list_triggers(job_key: Option<&str>) -> Vec<TriggerDefinition>;
-                delete_trigger(trigger_id: &str) -> ();
-                update_trigger(trigger: &TriggerDefinition) -> bool;
-            }
-        }
-
-        impl CalendarDefinitionStore for FailingCreateStore {
-            delegate! {
-                create_calendar(cal: &CalendarDefinition) -> ();
-                get_calendar(calendar_id: &str) -> Option<CalendarDefinition>;
-                list_calendars() -> Vec<CalendarDefinition>;
-                delete_calendar(calendar_id: &str) -> ();
-            }
-        }
-
-        impl DslAdoptionStore for FailingCreateStore {
-            delegate! {
-                insert_adoption(adoption: &DslAdoption) -> ();
-                delete_adoption(resource_type: &str, resource_key: &str) -> bool;
-                is_adopted(resource_type: &str, resource_key: &str) -> bool;
-                list_adoptions(resource_type: &str) -> Vec<DslAdoption>;
-            }
-        }
-
-        impl ExecutionLogStore for FailingCreateStore {
-            delegate! {
-                append_log(entry: &ExecutionLogEntry) -> ();
-                append_logs_batch(entries: &[ExecutionLogEntry]) -> ();
-                read_logs(execution_id: Uuid, limit: u32) -> Vec<ExecutionLogEntry>;
-            }
-        }
-
-        impl AlertStore for FailingCreateStore {
-            delegate! {
-                record_alert_delivery(delivery: &AlertDelivery) -> ();
-                list_alert_deliveries(filter: &AlertDeliveryFilter) -> Vec<AlertDelivery>;
-                get_alert_delivery(delivery_id: &str) -> Option<AlertDelivery>;
-                last_alert_fire_at(rule_name: &str, job_key: &str) -> Option<DateTime<Utc>>;
-                upsert_alert_rule_override(ov: &AlertRuleOverride) -> ();
-                get_alert_rule_override(rule_name: &str) -> Option<AlertRuleOverride>;
-                list_alert_rule_overrides() -> Vec<AlertRuleOverride>;
-                delete_alert_rule_override(rule_name: &str) -> bool;
-                delete_expired_alert_rule_overrides(now: DateTime<Utc>) -> Vec<String>;
-                prune_alert_rule_overrides(valid_rule_names: &[String]) -> Vec<String>;
-            }
-        }
-
-        impl MaintenanceStore for FailingCreateStore {
-            delegate! {
-                get_maintenance() -> MaintenanceState;
-                set_maintenance(state: &MaintenanceState) -> ();
-            }
-        }
-
-        impl croniq_store::traits::Store for FailingCreateStore {}
-    }
-
-    fn make_failing_store() -> (Arc<failing_store::FailingCreateStore>, DynStore) {
-        let failing = Arc::new(failing_store::FailingCreateStore {
-            inner: make_store(),
-            fail_create: std::sync::atomic::AtomicBool::new(false),
-        });
+    /// The shared fault-injecting double ([`crate::fault_store`]), armed by
+    /// the caller. Returns both handles: the concrete one to arm faults on,
+    /// and the type-erased one to hand to production code.
+    fn make_failing_store() -> (Arc<crate::fault_store::FaultStore>, DynStore) {
+        let failing = crate::fault_store::FaultStore::wrap(make_store());
         let store: DynStore = failing.clone();
         (failing, store)
     }
@@ -1020,7 +789,7 @@ mod tests {
         let (failing, store) = make_failing_store();
         let runner = make_runner();
         let exec_id = seed_execution(&store, "test:job");
-        failing.arm();
+        failing.arm_create();
 
         let processor = CompletionProcessor::new(
             vec![make_job("test:job", 3)],
@@ -1061,7 +830,7 @@ mod tests {
         let (failing, store) = make_failing_store();
         let runner = make_runner();
         let exec_id = seed_execution(&store, "test:job");
-        failing.arm();
+        failing.arm_create();
 
         let mut job = make_job("test:job", 3);
         job.dead_letter.enabled = false;

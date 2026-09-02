@@ -981,6 +981,10 @@ pub fn job_config_from_definition(
         // API-registered jobs carry a concurrency limit (if any) through
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,
+        // Same for a shared concurrency group (issue #546): the group and its
+        // limit travel in metadata, and a `concurrency_group` block lives in
+        // the Croniqfile — an API-registered job has none to reference.
+        concurrency_group: None,
         tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).
@@ -1048,6 +1052,10 @@ pub fn job_config_from_job_def(
         // API-registered jobs carry a concurrency limit (if any) through
         // their metadata (`__max_concurrent`) rather than this DSL field.
         max_concurrent: None,
+        // Same for a shared concurrency group (issue #546): the group and its
+        // limit travel in metadata, and a `concurrency_group` block lives in
+        // the Croniqfile — an API-registered job has none to reference.
+        concurrency_group: None,
         tags: job_def.tags.clone(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).

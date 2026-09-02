@@ -1414,8 +1414,84 @@ here rather than left to be discovered:
   Queued rows are re-enqueued by the watchdog's reconcile sweep, so the set
   resumes, but the pre-restart enqueue order is not preserved.
 
-For a declarative alternative that does not depend on runner topology, see
-issue #546 (`concurrency_group`).
+The declarative alternative below does not depend on runner topology, and it
+is what to reach for in new configuration; this recipe stays documented because
+it is the only option for `ephemeral` jobs and for pinning work to specific
+hardware.
+
+## Shared concurrency budgets (`concurrency_group`)
+
+A `concurrency_group` names a budget several jobs draw on, so the constraint
+lives in the Croniqfile instead of in the deployment:
+
+```hcl
+concurrency_group api-x {
+  max_concurrent 1
+}
+
+job sync:tickets  { every day at 03:00; concurrency_group api-x }
+job sync:contacts { every day at 03:15; concurrency_group api-x }
+job push:status   { every 15 minutes;   concurrency_group api-x }
+```
+
+The cap applies to the **set**: at most one execution across all three may be
+claimed at a time, regardless of which. `max_concurrent N` on a group allows N.
+The two guards compose — a job may cap itself with `singleton` and still draw
+on a shared budget — and the group is checked at claim time, on the same code
+path as the per-job guard, so it applies to scheduled fires, manual
+`POST /v1/trigger` calls and retries alike.
+
+Compared with the runner-pool recipe above:
+
+- **The invariant is in the file, and it is enforced.** An undefined group name
+  is a config error, not a silent no-op, and adding a second runner cannot
+  double the budget — no runner topology can.
+- **Any runner may execute the work.** The pool recipe's single point of
+  failure is gone: capacity and the upstream limit are separate knobs again.
+- **It requires `queued` mode.** The guard counts persisted `claimed` rows, so
+  `concurrency_group` on an `ephemeral` job is rejected at validation time
+  (following issue #302). For an ephemeral job the runner-pool recipe remains
+  the only option.
+
+### Failure behaviour: fail-closed
+
+If the store cannot be read at claim time, a grouped item is **not**
+dispatched: it keeps its queue position and the next poll retries it. This is
+deliberately different from the per-job guard, which dispatches on a store
+error because a rare self-overlap is the lesser evil. A group protects a budget
+that is not local — a third-party quota — where one execution too many buys a
+`429` with an escalating `Retry-After` that can abort an entire run. The same
+applies if the claim itself fails to persist: the item is dropped from that
+batch rather than handed out without a `claimed` row (which the next poll's
+count would not see), and the watchdog's reconcile sweep re-enqueues the still
+`queued` row.
+
+The practical cost is one poll interval of delay while the store is unavailable
+— during which nothing else is running either.
+
+### Ordering: a rate limiter, with FIFO under conditions
+
+A group at `max_concurrent 1` releases its members in **enqueue order**, so a
+status-push job queued after a sync job runs after it. That property is pinned
+by a test (`concurrency_group_releases_in_enqueue_order`), but it is
+*conditional*, and the conditions matter more than the guarantee:
+
+- **Every member must be claimable by the polling runner.** Items whose
+  `require` a runner does not satisfy are skipped in place, so a group whose
+  members carry different capabilities can be released out of order — the
+  runner that cannot execute the head item claims the one behind it.
+- **No member may be blocked by another guard.** A member held back by its own
+  `singleton` is skipped the same way, and the next member goes first.
+- **Nothing may have been requeued in between.** A watchdog requeue or a runner
+  takeover moves an execution to the *back* of the queue, and a server restart
+  rebuilds the queue from the store without preserving cross-job order at all
+  (same caveat as the recipe above).
+
+Treat a group as a **rate limiter that happens to be FIFO** among equally
+eligible members. Where ordering is a hard requirement, keep the members'
+`require` sets identical and do not add per-job guards on top — or use the
+runner-pool recipe, whose single one-slot runner enforces order structurally
+rather than by convention.
 
 ## Orphaned claims (issue #374)
 

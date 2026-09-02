@@ -177,6 +177,21 @@ pub trait ExecutionStore {
         states: &[ExecutionState],
     ) -> Result<u64, StoreError>;
 
+    /// Count executions of the shared concurrency group `group` currently in
+    /// any of `states`.
+    ///
+    /// Backs the group-scoped concurrency guard (issue #546), the cross-job
+    /// counterpart to [`Self::count_executions_in_states`]: the claim path
+    /// counts `Claimed` rows carrying the group stamp to decide whether a
+    /// `concurrency_group` has a free slot. The stamp is denormalised onto the
+    /// row by the insert helpers, so the rows counted here are exactly the
+    /// ones the guard blocks on. An empty `states` slice returns 0.
+    fn count_executions_in_group_in_states(
+        &self,
+        group: &str,
+        states: &[ExecutionState],
+    ) -> Result<u64, StoreError>;
+
     /// Per-job execution aggregates for the `/metrics` endpoint, computed on
     /// demand with one grouped scan (no separate counters are persisted).
     /// Returns one entry per `job_key` that has at least one execution.
