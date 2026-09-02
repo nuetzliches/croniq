@@ -1528,6 +1528,23 @@ async fn handle_trigger(
         return error_response(StatusCode::BAD_REQUEST);
     }
 
+    // A non-blank but unparseable `timeout` is a caller bug, and substituting
+    // something else for it is misleading rather than forgiving (issue #559):
+    // since an absent timeout inherits the job's, "5min" on a `timeout 2h` job
+    // yielded 2h - a 24x longer run than the author asked for, reported by
+    // nothing. Blank still counts as absent (issue #553).
+    //
+    // Rejected here, alongside the `idempotency_key` guard above and before the
+    // dedup lookup, so a refused trigger leaves no execution row behind.
+    let requested_timeout =
+        match croniq_execution::retry::validate_optional_duration(req.timeout.as_deref()) {
+            Ok(t) => t,
+            Err(msg) => {
+                tracing::warn!(job_key = %req.job_key, "trigger rejected: {msg}");
+                return error_response(StatusCode::BAD_REQUEST);
+            }
+        };
+
     let now = Utc::now();
 
     // Dedup lookup. Requires the store: without one (possible in tests and
@@ -1705,19 +1722,11 @@ async fn handle_trigger(
     // default it once carried, an omitted field was indistinguishable from a
     // caller asking for `5m`, so a `timeout 2h` job that ran for two hours on
     // a scheduled fire was killed after five minutes when triggered by hand.
-    // A blank value counts as absent (issue #553), the same rule
-    // `idempotency_key` applies above. Empty is not a duration
-    // (`parse_duration_checked` rejects it), so honouring it as an "explicit
-    // override" would hand the runner an unparseable timeout where inheriting
-    // the job's is plainly what the caller meant. Clients are expected to omit
-    // an empty value rather than send it; this keeps a hand-rolled request or a
-    // non-conforming client from producing a broken work item.
-    let timeout = req
-        .timeout
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
+    // `requested_timeout` was validated and trimmed above: blank became `None`
+    // so it inherits (issue #553), and a malformed value never reaches here at
+    // all (issue #559). So this chain only picks a source - it can no longer
+    // hand the runner a timeout it cannot parse.
+    let timeout = requested_timeout
         .or_else(|| dsl_job.as_ref().and_then(|j| j.timeout.clone()))
         .unwrap_or_else(|| DEFAULT_TRIGGER_TIMEOUT.to_string());
 
@@ -2664,6 +2673,46 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("2h")
         );
+    }
+
+    #[tokio::test]
+    async fn trigger_with_malformed_timeout_returns_400() {
+        // Issue #559. Before this, "5min" was accepted and then dropped at the
+        // resolution step, so the fire silently inherited the job's `2h` -
+        // running 24x longer than whoever typed it asked for, with nothing
+        // logged. A present-but-unparseable value is a caller bug, so it is
+        // refused outright.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:long-backfill {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+
+        for bad in ["5min", "abc", "10 minutes"] {
+            let (state, _rx) = make_state_with_dsl_jobs(jobs.clone());
+            let app = server_router(Arc::clone(&state));
+
+            let (status, _) = post_json_status(
+                app,
+                "/v1/trigger",
+                serde_json::json!({ "job_key": "test:long-backfill", "timeout": bad }),
+            )
+            .await;
+            assert_eq!(status, 400, "{bad:?} must be rejected");
+
+            // Rejected before the enqueue, so a bad request leaves no trace.
+            let q = state.runner.queue.read().await;
+            assert_eq!(q.len(), 0, "rejected trigger must not enqueue ({bad:?})");
+        }
     }
 
     #[tokio::test]

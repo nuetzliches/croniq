@@ -34,7 +34,16 @@ use crate::scheduler::SchedulerCommand;
 /// existing helpers like [`require_scope`].
 pub enum JobError {
     Status(StatusCode),
-    DslManaged { job_key: String },
+    DslManaged {
+        job_key: String,
+    },
+    /// A caller-supplied duration field did not parse (issue #559). Carries
+    /// `parse_duration_checked`'s message, which already names the offending
+    /// value and the accepted grammar.
+    InvalidDuration {
+        field: String,
+        message: String,
+    },
 }
 
 impl From<StatusCode> for JobError {
@@ -57,8 +66,32 @@ impl IntoResponse for JobError {
                 })),
             )
                 .into_response(),
+            Self::InvalidDuration { field, message } => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_duration",
+                    "field": field,
+                    "message": message,
+                })),
+            )
+                .into_response(),
         }
     }
+}
+
+/// Validate a caller-supplied `timeout` on a job write path.
+///
+/// DSL-defined jobs get this at compile time; jobs created or updated through
+/// the API had nothing checking them, so a typo was persisted and silently
+/// mis-bounded every future fire of that job (issue #559). Blank still counts
+/// as absent (issue #553).
+fn validated_timeout(value: Option<&str>) -> Result<Option<String>, JobError> {
+    croniq_execution::retry::validate_optional_duration(value).map_err(|message| {
+        JobError::InvalidDuration {
+            field: "timeout".into(),
+            message,
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -347,6 +380,11 @@ pub async fn handle_create(
         );
     }
 
+    // Reject a malformed `timeout` instead of persisting it (issue #559): a bad
+    // value stored on a job silently mis-bounds every future fire of that job,
+    // which is strictly worse than a bad value on a single trigger.
+    let timeout = validated_timeout(req.timeout.as_deref())?;
+
     let job = JobDefinition {
         job_key: req.job_key,
         description: req.description,
@@ -355,7 +393,7 @@ pub async fn handle_create(
         metadata,
         created_at: now,
         updated_at: now,
-        timeout: req.timeout,
+        timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
         dead_letter_retention: req.dead_letter_retention,
@@ -408,7 +446,9 @@ pub async fn handle_update(
         job.description = v.as_str().map(|s| s.to_string());
     }
     if let Some(v) = obj.get("timeout") {
-        job.timeout = v.as_str().map(|s| s.to_string());
+        // An explicit `null` still clears the field (patch semantics above); a
+        // present string has to parse (issue #559).
+        job.timeout = validated_timeout(v.as_str())?;
     }
     if let Some(v) = obj.get("max_retries") {
         job.max_retries = v.as_u64().map(|n| n as u32);
@@ -1273,6 +1313,199 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (status, json)
+    }
+
+    async fn send_json(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    // --- malformed durations on the job write paths (issue #559) ---
+
+    #[tokio::test]
+    async fn create_job_with_malformed_timeout_returns_400() {
+        // A bad timeout stored on a JOB is worse than one on a single trigger:
+        // it silently mis-bounds every future fire of that job. DSL jobs are
+        // checked at compile time; this closes the same gap for API-managed
+        // ones.
+        for bad in ["5min", "abc", "10 minutes"] {
+            let store = make_store();
+            let state = make_state(vec![], Arc::clone(&store));
+            let (status, body) = send_json(
+                server_router(state),
+                "POST",
+                "/v1/jobs",
+                serde_json::json!({ "job_key": "api:job", "timeout": bad }),
+            )
+            .await;
+
+            assert_eq!(status, 400, "{bad:?} must be rejected");
+            assert_eq!(body["error"], "invalid_duration");
+            assert_eq!(body["field"], "timeout");
+            assert!(
+                body["message"].as_str().unwrap_or_default().contains(bad),
+                "message should name the offending value, got {:?}",
+                body["message"]
+            );
+            assert!(
+                store.get_job_definition("api:job").unwrap().is_none(),
+                "a rejected create must not persist the job ({bad:?})"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn create_job_with_blank_timeout_stores_none() {
+        // Issue #553 survives the new validation: blank is absent, not a 400.
+        let store = make_store();
+        let state = make_state(vec![], Arc::clone(&store));
+        let (status, _) = send_json(
+            server_router(state),
+            "POST",
+            "/v1/jobs",
+            serde_json::json!({ "job_key": "api:job", "timeout": "  " }),
+        )
+        .await;
+
+        assert_eq!(status, 201);
+        assert_eq!(
+            store
+                .get_job_definition("api:job")
+                .unwrap()
+                .unwrap()
+                .timeout,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn create_job_trims_a_valid_timeout() {
+        let store = make_store();
+        let state = make_state(vec![], Arc::clone(&store));
+        let (status, _) = send_json(
+            server_router(state),
+            "POST",
+            "/v1/jobs",
+            serde_json::json!({ "job_key": "api:job", "timeout": "  2h  " }),
+        )
+        .await;
+
+        assert_eq!(status, 201);
+        assert_eq!(
+            store
+                .get_job_definition("api:job")
+                .unwrap()
+                .unwrap()
+                .timeout,
+            Some("2h".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn update_job_with_malformed_timeout_returns_400_and_keeps_the_old_value() {
+        let store = make_store();
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: "api:job".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("2h".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+
+        let state = make_state(vec![], Arc::clone(&store));
+        let (status, body) = send_json(
+            server_router(state),
+            "PUT",
+            "/v1/jobs/api:job",
+            serde_json::json!({ "timeout": "5min" }),
+        )
+        .await;
+
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "invalid_duration");
+        assert_eq!(
+            store
+                .get_job_definition("api:job")
+                .unwrap()
+                .unwrap()
+                .timeout,
+            Some("2h".to_string()),
+            "a rejected update must leave the stored timeout alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_job_with_null_timeout_still_clears_it() {
+        // Patch semantics predate #559 and must survive it: an explicit
+        // `null` clears the field, it is not a malformed duration.
+        let store = make_store();
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: "api:job".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("2h".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+
+        let state = make_state(vec![], Arc::clone(&store));
+        let (status, _) = send_json(
+            server_router(state),
+            "PUT",
+            "/v1/jobs/api:job",
+            serde_json::json!({ "timeout": serde_json::Value::Null }),
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            store
+                .get_job_definition("api:job")
+                .unwrap()
+                .unwrap()
+                .timeout,
+            None
+        );
     }
 
     #[tokio::test]

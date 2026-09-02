@@ -198,6 +198,16 @@ components:
         trigger: { $ref: "#/components/schemas/TriggerDefinition" }
         dsl_key: { type: string }
 
+    InvalidDurationError:
+      type: object
+      description: >
+        A duration field was present but did not parse. A blank value counts as
+        absent and is accepted; only a non-blank malformed one is refused.
+      properties:
+        error: { type: string, enum: [invalid_duration] }
+        field: { type: string, description: "The request field that failed to parse." }
+        message: { type: string, description: "Names the offending value and the accepted grammar." }
+
     DslManagedError:
       type: object
       properties:
@@ -832,6 +842,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
+        "400":
+          description: A duration field (`timeout`) did not parse; the job is not created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvalidDurationError" }
 
   /v1/jobs/{job_key}:
     get:
@@ -880,6 +895,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
+        "400":
+          description: A duration field (`timeout`) did not parse; the stored value is left unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvalidDurationError" }
         "404": { description: Unknown job }
         "409":
           description: DSL-managed job.
@@ -2105,7 +2125,9 @@ paths:
                     the job's configured `timeout`; only when neither the
                     request nor the job declares one does the server fall back
                     to `5m`. Sending a value — `5m` included — is an explicit
-                    override.
+                    override. A blank value counts as absent and inherits; a
+                    non-blank value that does not parse is rejected with 400
+                    rather than silently replaced.
                 idempotency_key:
                   type: string
                   maxLength: 200
@@ -2136,7 +2158,11 @@ paths:
                     description: >
                       true when the trigger coalesced to an existing
                       execution via idempotency_key.
-        "400": { description: Invalid request (e.g. idempotency_key longer than 200 characters) }
+        "400":
+          description: >
+            Invalid request — an `idempotency_key` longer than 200 characters,
+            or a non-blank `timeout` that does not parse. Rejected before the
+            enqueue, so nothing is queued.
         "429":
           description: >
             Per-job queue-overflow cap hit (#299/#312). The number of queued

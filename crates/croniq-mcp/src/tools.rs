@@ -72,6 +72,11 @@ pub type DynStore = Arc<dyn Store + Send + Sync>;
 
 // ─── Server struct ────────────────────────────────────────────────────────────
 
+/// What [`CroniqMcp::inherit_job_dispatch`] resolves for a fire: the row
+/// metadata to stamp, the effective `require` and `prefer` capabilities, and
+/// the effective timeout.
+type InheritedDispatch = (HashMap<String, String>, Vec<String>, Vec<String>, String);
+
 /// Last-resort execution timeout for a manually fired job: used only when
 /// neither the caller nor the job config declares one (issue #551).
 const DEFAULT_FIRE_TIMEOUT: &str = "5m";
@@ -622,7 +627,7 @@ impl CroniqMcp {
         caller_require: Vec<String>,
         caller_prefer: Vec<String>,
         caller_timeout: Option<String>,
-    ) -> (HashMap<String, String>, Vec<String>, Vec<String>, String) {
+    ) -> Result<InheritedDispatch, McpError> {
         let job = self.jobs.get(job_key);
 
         let mut metadata: HashMap<String, String> =
@@ -664,14 +669,15 @@ impl CroniqMcp {
 
         // A blank value counts as absent (issue #553): empty is not a
         // duration, so inheriting the job's beats handing the runner one it
-        // cannot parse.
-        let timeout = caller_timeout
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(str::to_string)
-            .or_else(|| job.and_then(|j| j.timeout.clone()))
-            .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.to_string());
+        // cannot parse. A non-blank value that does not parse is a caller bug
+        // and is refused rather than quietly replaced (issue #559) - otherwise
+        // "5min" on a `timeout 2h` job inherits 2h, running 24x longer than
+        // whoever typed it intended.
+        let timeout =
+            croniq_execution::retry::validate_optional_duration(caller_timeout.as_deref())
+                .map_err(|msg| McpError::invalid_params(msg, None))?
+                .or_else(|| job.and_then(|j| j.timeout.clone()))
+                .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.to_string());
 
         // Stamped like the capabilities above so the server's stale-claim
         // reaper judges the execution by the timeout it is running under rather
@@ -682,7 +688,7 @@ impl CroniqMcp {
             timeout.clone(),
         );
 
-        (metadata, require, prefer, timeout)
+        Ok((metadata, require, prefer, timeout))
     }
 
     /// Returns `Ok(())` if mutations are enabled, otherwise an MCP error.
@@ -950,7 +956,7 @@ impl CroniqMcp {
             p.require,
             p.prefer,
             p.timeout,
-        );
+        )?;
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -1062,7 +1068,7 @@ impl CroniqMcp {
             p.require,
             p.prefer,
             p.timeout,
-        );
+        )?;
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -1148,7 +1154,11 @@ impl CroniqMcp {
             job.description = Some(d);
         }
         if let Some(t) = p.timeout {
-            job.timeout = Some(t);
+            // Stored unchecked until #559: a typo here silently mis-bounds
+            // every future fire of the job. The DSL validates at compile time;
+            // this closes the same gap for MCP-managed jobs.
+            job.timeout = croniq_execution::retry::validate_optional_duration(Some(&t))
+                .map_err(|msg| McpError::invalid_params(msg, None))?;
         }
         if let Some(mr) = p.max_retries {
             job.max_retries = Some(mr);
@@ -1598,6 +1608,10 @@ impl CroniqMcp {
             ));
         }
 
+        // Refuse a malformed `timeout` rather than persisting it (issue #559).
+        let timeout = croniq_execution::retry::validate_optional_duration(p.timeout.as_deref())
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+
         let now = Utc::now();
         let mut metadata = p.metadata;
         let dropped = croniq_config::compile::strip_reserved_metadata_map(&mut metadata);
@@ -1611,7 +1625,7 @@ impl CroniqMcp {
             metadata,
             created_at: now,
             updated_at: now,
-            timeout: p.timeout,
+            timeout,
             max_retries: p.max_retries,
             dead_letter_enabled: p.dead_letter_enabled,
             dead_letter_retention: p.dead_letter_retention,
@@ -2639,6 +2653,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_trigger_rejects_a_malformed_timeout() {
+        // Issue #559 on the MCP surface. "5min" used to be dropped at the
+        // resolution step, so the fire silently inherited the job's 2h -
+        // 24x longer than the caller asked for, reported by nothing.
+        let server = make_server_with_jobs(
+            r#"
+            job billing:invoice {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+
+        for bad in ["5min", "abc", "10 minutes"] {
+            let err = server
+                .job_trigger(Parameters(JobTriggerParams {
+                    job_key: "billing:invoice".into(),
+                    require: vec![],
+                    prefer: vec![],
+                    metadata: serde_json::Value::Null,
+                    timeout: Some(bad.into()),
+                }))
+                .await
+                .expect_err("malformed timeout must be refused, not substituted");
+
+            assert!(
+                err.message.contains(bad),
+                "error should name the offending value, got {:?}",
+                err.message
+            );
+        }
+
+        assert!(
+            server.state.queue.read().await.peek_n(1).is_empty(),
+            "a refused trigger must not enqueue"
+        );
+    }
+
+    #[tokio::test]
     async fn job_trigger_blank_timeout_is_treated_as_absent() {
         // Issue #553, MCP side: a blank timeout inherits rather than
         // overriding — empty is not a duration.
@@ -2777,6 +2831,98 @@ mod tests {
             .unwrap();
 
         assert_reserved_keys_stripped(&sole_queued_metadata(&server).await);
+    }
+
+    #[tokio::test]
+    async fn create_job_rejects_a_malformed_timeout() {
+        // Issue #559: a bad timeout persisted on a job silently mis-bounds
+        // every future fire of it, so the write is refused rather than
+        // stored. The DSL already validates at compile time; this closes
+        // the same gap for MCP-managed jobs.
+        let server = make_server_with_mutations();
+
+        let err = server
+            .create_job(Parameters(CreateJobParams {
+                job_key: "api:created".into(),
+                description: None,
+                assigned_runner_id: None,
+                metadata: HashMap::new(),
+                timeout: Some("5min".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: None,
+            }))
+            .await
+            .expect_err("malformed timeout must be refused");
+
+        assert!(
+            err.message.contains("5min"),
+            "error should name the offending value, got {:?}",
+            err.message
+        );
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .get_job_definition("api:created")
+                .unwrap()
+                .is_none(),
+            "a refused create must not persist the job"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_job_rejects_a_malformed_timeout() {
+        let server = make_server_with_mutations();
+
+        server
+            .create_job(Parameters(CreateJobParams {
+                job_key: "api:created".into(),
+                description: None,
+                assigned_runner_id: None,
+                metadata: HashMap::new(),
+                timeout: Some("2h".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: None,
+            }))
+            .await
+            .unwrap();
+
+        let err = server
+            .update_job(Parameters(UpdateJobParams {
+                job_key: "api:created".into(),
+                description: None,
+                timeout: Some("5min".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+            }))
+            .await
+            .expect_err("malformed timeout must be refused");
+
+        assert!(err.message.contains("5min"), "got {:?}", err.message);
+        assert_eq!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .get_job_definition("api:created")
+                .unwrap()
+                .unwrap()
+                .timeout,
+            Some("2h".to_string()),
+            "a refused update must leave the stored timeout alone"
+        );
     }
 
     #[tokio::test]

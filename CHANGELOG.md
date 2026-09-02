@@ -8,6 +8,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A malformed `timeout` on a write path is now rejected with a `400`
+  instead of being silently substituted
+  ([#559](https://github.com/nuetzliches/croniq/issues/559)).** A non-blank
+  but unparseable value (`"5min"`, `"abc"`, `"10 minutes"`) was accepted and
+  then degraded to a default at each consumer. Since
+  [#551](https://github.com/nuetzliches/croniq/issues/551) made an *absent*
+  `timeout` mean "inherit the job's", that substitution became actively
+  misleading: `"5min"` on a job declaring `timeout 2h` no longer yielded five
+  minutes, it yielded **two hours** — a typo making the execution run 24x
+  longer than intended, reported by nothing. The reverse was just as bad, a
+  bad value on a job with no `timeout` yielding `5m` where the caller asked
+  for hours.
+
+  Validation now runs at ingress on every path that accepts a duration:
+  `POST /v1/trigger`, the MCP `job_trigger` and `enqueue_job` fire tools, and
+  `POST /v1/jobs` / `PUT /v1/jobs/{job_key}` plus the MCP `create_job` /
+  `update_job` equivalents. The stored-job paths matter most — a bad timeout
+  persisted on a job silently mis-bounds *every future fire* of it, and the
+  DSL has always validated at compile time, so this closes the gap between
+  DSL-managed and API-managed jobs.
+
+  A blank value still counts as absent and inherits
+  ([#553](https://github.com/nuetzliches/croniq/issues/553)); only a
+  present-but-malformed one is refused. Rejection happens before any side
+  effect, so a refused trigger enqueues nothing and a refused update leaves
+  the stored value untouched. The job endpoints return the parser's own
+  message in the body (`{"error", "field", "message"}`);
+  the trigger endpoint keeps its established status-only error shape and logs
+  the reason. Both rules live in one shared
+  `croniq_execution::retry::validate_optional_duration`, so the server and
+  the MCP surface cannot drift apart.
+
 - **The stale-claim reaper no longer reaps live work when a fire carried its own
   `timeout` ([#558](https://github.com/nuetzliches/croniq/issues/558)).** The
   reaper computed its threshold from the *job config's* timeout, but
