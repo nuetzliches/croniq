@@ -2,9 +2,17 @@ using System.Text.Json.Serialization;
 
 namespace Croniq.Runner.Sdk.Protocol;
 
+/// <remarks>
+/// <c>Metadata</c> values are <c>object?</c>, not <c>string</c>: the server
+/// forwards trigger metadata to the handler verbatim and explicitly does not
+/// flatten or stringify it, so nested objects and non-string scalars have to
+/// survive serialisation (issue #554). Every other SDK types this open too —
+/// Go <c>map[string]any</c>, Python <c>dict[str, Any]</c>, TypeScript
+/// <c>Record&lt;string, unknown&gt;</c>, Java <c>Map&lt;String, Object&gt;</c>.
+/// </remarks>
 internal sealed record TriggerRequest(
     [property: JsonPropertyName("job_key")] string JobKey,
-    [property: JsonPropertyName("metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Metadata,
+    [property: JsonPropertyName("metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, object?>? Metadata,
     [property: JsonPropertyName("require"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Require,
     [property: JsonPropertyName("prefer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Prefer,
     [property: JsonPropertyName("timeout"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Timeout,
@@ -26,7 +34,7 @@ internal sealed record TriggerRequest(
     /// </remarks>
     internal static TriggerRequest Normalized(
         string jobKey,
-        IReadOnlyDictionary<string, string>? metadata,
+        IReadOnlyDictionary<string, object?>? metadata,
         IReadOnlyList<string>? require,
         IReadOnlyList<string>? prefer,
         string? timeout,

@@ -21,7 +21,7 @@ internal sealed class CroniqTriggerClient(
 {
     public async Task<TriggerResult> TriggerAsync(
         string jobKey,
-        IReadOnlyDictionary<string, string>? metadata = null,
+        IReadOnlyDictionary<string, object?>? metadata = null,
         IReadOnlyList<string>? require = null,
         IReadOnlyList<string>? prefer = null,
         string? timeout = null,
