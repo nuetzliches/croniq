@@ -2098,7 +2098,14 @@ paths:
                   type: object
                   description: >
                     Free-form metadata. Keys prefixed with `__` are reserved for the scheduler (`__runner_exec`, `__require`, `__prefer`, `__max_concurrent`) and are ignored when supplied by a caller — use `require` / `prefer` to influence routing.
-                timeout: { type: string, default: "5m" }
+                timeout:
+                  type: string
+                  description: >
+                    Execution timeout hint (e.g. `15m`, `2h`). Omit to inherit
+                    the job's configured `timeout`; only when neither the
+                    request nor the job declares one does the server fall back
+                    to `5m`. Sending a value — `5m` included — is an explicit
+                    override.
                 idempotency_key:
                   type: string
                   maxLength: 200

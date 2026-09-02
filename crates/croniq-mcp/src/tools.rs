@@ -72,6 +72,10 @@ pub type DynStore = Arc<dyn Store + Send + Sync>;
 
 // ─── Server struct ────────────────────────────────────────────────────────────
 
+/// Last-resort execution timeout for a manually fired job: used only when
+/// neither the caller nor the job config declares one (issue #551).
+const DEFAULT_FIRE_TIMEOUT: &str = "5m";
+
 #[derive(Clone)]
 pub struct CroniqMcp {
     pub state: Arc<AppState>,
@@ -137,13 +141,11 @@ pub struct EnqueueJobParams {
     #[serde(default)]
     pub metadata: serde_json::Value,
 
-    /// Timeout hint for the runner (e.g. `"15m"`, `"2h"`). Default: `"5m"`.
-    #[serde(default = "default_timeout")]
-    pub timeout: String,
-}
-
-fn default_timeout() -> String {
-    "5m".into()
+    /// Timeout hint for the runner (e.g. `"15m"`, `"2h"`). Omit to inherit the
+    /// job's configured `timeout`; only when neither exists does it fall back
+    /// to `"5m"`.
+    #[serde(default)]
+    pub timeout: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -176,9 +178,11 @@ pub struct JobTriggerParams {
     #[serde(default)]
     pub metadata: serde_json::Value,
 
-    /// Timeout hint for the runner (e.g. `"15m"`, `"2h"`). Default: `"5m"`.
-    #[serde(default = "default_timeout")]
-    pub timeout: String,
+    /// Timeout hint for the runner (e.g. `"15m"`, `"2h"`). Omit to inherit the
+    /// job's configured `timeout`; only when neither exists does it fall back
+    /// to `"5m"`.
+    #[serde(default)]
+    pub timeout: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -589,23 +593,26 @@ impl CroniqMcp {
 
     /// Resolve what a manually fired execution inherits from its job config:
     /// the DSL-compiled metadata (so `__runner_exec` reaches the shell runner,
-    /// issue #89) and the runner capabilities (issue #549).
+    /// issue #89), the runner capabilities (issue #549) and the execution
+    /// timeout (issue #551).
     ///
     /// `dlq_retry` has always taken `require` / `prefer` / `timeout` off
     /// `self.jobs`; `job_trigger` and `enqueue_job` did not, so an MCP-fired
     /// job reached the queue with an empty `require` — and an empty `require`
     /// matches *every* runner in `Queue::dequeue_for_where`, so a job pinned to
     /// a capability ran on a runner that lacked it. It also arrived without the
-    /// job's own metadata, i.e. without the command a shell job needs.
+    /// job's own metadata, i.e. without the command a shell job needs, and
+    /// capped at five minutes however long its `timeout` declared.
     ///
     /// Caller metadata is overlaid on the job's, with the reserved `__`
     /// namespace stripped from it first, and the effective capabilities are
     /// stamped back in the way the scheduler does — so the persisted execution
     /// row, the in-memory work item and the store-side claim filter all agree.
     ///
-    /// An explicit `require` / `prefer` from the caller overrides the job
-    /// config; an unknown `job_key` (or a server built without `self.jobs`)
-    /// leaves both empty, exactly as before.
+    /// An explicit `require` / `prefer` / `timeout` from the caller overrides
+    /// the job config; an unknown `job_key` (or a server built without
+    /// `self.jobs`) leaves the capabilities empty and the timeout at
+    /// [`DEFAULT_FIRE_TIMEOUT`], exactly as before.
     fn inherit_job_dispatch(
         &self,
         tool: &str,
@@ -613,7 +620,8 @@ impl CroniqMcp {
         caller_metadata: serde_json::Value,
         caller_require: Vec<String>,
         caller_prefer: Vec<String>,
-    ) -> (HashMap<String, String>, Vec<String>, Vec<String>) {
+        caller_timeout: Option<String>,
+    ) -> (HashMap<String, String>, Vec<String>, Vec<String>, String) {
         let job = self.jobs.get(job_key);
 
         let mut metadata: HashMap<String, String> =
@@ -653,7 +661,11 @@ impl CroniqMcp {
             );
         }
 
-        (metadata, require, prefer)
+        let timeout = caller_timeout
+            .or_else(|| job.and_then(|j| j.timeout.clone()))
+            .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.to_string());
+
+        (metadata, require, prefer, timeout)
     }
 
     /// Returns `Ok(())` if mutations are enabled, otherwise an MCP error.
@@ -914,8 +926,14 @@ impl CroniqMcp {
 
         let now = Utc::now();
 
-        let (metadata, require, prefer) =
-            self.inherit_job_dispatch("enqueue_job", &p.job_key, p.metadata, p.require, p.prefer);
+        let (metadata, require, prefer, timeout) = self.inherit_job_dispatch(
+            "enqueue_job",
+            &p.job_key,
+            p.metadata,
+            p.require,
+            p.prefer,
+            p.timeout,
+        );
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -954,7 +972,7 @@ impl CroniqMcp {
             require,
             prefer,
             metadata: serde_json::to_value(&metadata).unwrap_or_default(),
-            timeout: p.timeout,
+            timeout,
             is_ephemeral: false,
         };
 
@@ -1020,8 +1038,14 @@ impl CroniqMcp {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let (metadata, require, prefer) =
-            self.inherit_job_dispatch("job_trigger", &p.job_key, p.metadata, p.require, p.prefer);
+        let (metadata, require, prefer, timeout) = self.inherit_job_dispatch(
+            "job_trigger",
+            &p.job_key,
+            p.metadata,
+            p.require,
+            p.prefer,
+            p.timeout,
+        );
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -1057,7 +1081,7 @@ impl CroniqMcp {
             require,
             prefer,
             metadata: serde_json::to_value(&metadata).unwrap_or_default(),
-            timeout: p.timeout,
+            timeout,
             is_ephemeral: false,
         };
 
@@ -1243,7 +1267,7 @@ impl CroniqMcp {
             ),
             timeout: job
                 .and_then(|j| j.timeout.clone())
-                .unwrap_or_else(|| "5m".into()),
+                .unwrap_or_else(|| DEFAULT_FIRE_TIMEOUT.into()),
             is_ephemeral: false,
         };
 
@@ -2071,7 +2095,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await;
         assert!(err.is_err());
@@ -2089,7 +2113,7 @@ mod tests {
                 require: vec!["billing".into()],
                 prefer: vec![],
                 metadata: serde_json::json!({"month": "2026-03"}),
-                timeout: "15m".into(),
+                timeout: Some("15m".into()),
             }))
             .await
             .unwrap();
@@ -2109,7 +2133,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2140,7 +2164,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2163,7 +2187,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2203,7 +2227,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await;
         assert!(err.is_err());
@@ -2220,7 +2244,7 @@ mod tests {
                 require: vec!["billing".into()],
                 prefer: vec![],
                 metadata: serde_json::json!({"month": "2026-03"}),
-                timeout: "15m".into(),
+                timeout: Some("15m".into()),
             }))
             .await
             .unwrap();
@@ -2245,7 +2269,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2417,7 +2441,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: injected_metadata(),
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2460,7 +2484,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2507,13 +2531,90 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
 
         let item = sole_queued_item(&server).await;
         assert_eq!(item.require, vec!["shell-runner".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn job_trigger_inherits_job_timeout() {
+        // Issue #551 on the MCP surface: `timeout` used to carry a "5m" serde
+        // default, so an MCP-fired job ignored its own configured timeout.
+        let server = make_server_with_jobs(
+            r#"
+            job billing:invoice {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(sole_queued_item(&server).await.timeout, "2h");
+    }
+
+    #[tokio::test]
+    async fn job_trigger_timeout_overrides_job_config() {
+        let server = make_server_with_jobs(
+            r#"
+            job billing:invoice {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: Some("30s".into()),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(sole_queued_item(&server).await.timeout, "30s");
+    }
+
+    #[tokio::test]
+    async fn enqueue_job_without_job_timeout_falls_back_to_default() {
+        // Neither caller nor job declares one — the historical default stands.
+        let server = make_server_with_mutations();
+
+        server
+            .enqueue_job(Parameters(EnqueueJobParams {
+                execution_id: Uuid::new_v4().to_string(),
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sole_queued_item(&server).await.timeout,
+            DEFAULT_FIRE_TIMEOUT
+        );
     }
 
     #[tokio::test]
@@ -2527,7 +2628,7 @@ mod tests {
                 require: vec!["gpu".into()],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2548,7 +2649,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2572,7 +2673,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: injected_metadata(),
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
@@ -2633,7 +2734,7 @@ mod tests {
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::Value::Null,
-                timeout: "5m".into(),
+                timeout: None,
             }))
             .await
             .unwrap();
