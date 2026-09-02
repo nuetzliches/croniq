@@ -281,7 +281,7 @@ fn format_schedule_block_inner(p: &SchedulePayload, key: &str) -> Result<String,
 /// Retry strategy from the form. `strategy` is `exponential` (uses
 /// base/cap/jitter) or `fixed` (uses delay); `max_attempts` applies to
 /// both. Empty/None fields are simply omitted from the emitted block.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RetryPayload {
     #[serde(default)]
     pub strategy: String,
@@ -301,7 +301,7 @@ pub struct RetryPayload {
 /// are left out of the emitted block, so the compiler's inherited defaults
 /// (or a `defaults {}` block) fill them in. `enabled: Some(false)` turns
 /// dead-lettering off (issue #348).
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeadLetterPayload {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -315,7 +315,7 @@ pub struct DeadLetterPayload {
 
 /// Structured job-level options mirroring the form. Every field is
 /// optional — a default `JobOptions` yields a schedule-only job block.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct JobOptions {
     #[serde(default)]
     pub description: Option<String>,
@@ -341,6 +341,24 @@ pub struct JobOptions {
     /// block; an undefined name is a validation error, not a silent no-op.
     #[serde(default)]
     pub concurrency_group: Option<String>,
+    /// Job-level `timezone` directive (issue #426) — the zone this job's own
+    /// wall-clock times are read in.
+    ///
+    /// Distinct from [`Self::schedule_timezone`], which is the same value
+    /// spelled as a schedule option. Both are real DSL; this one is the only
+    /// spelling available to a `once` / `disabled` job, because the parser
+    /// rejects a schedule-options block there.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Per-job cap on retained terminal executions (`keep_last N`,
+    /// issue #344).
+    #[serde(default)]
+    pub keep_last: Option<u32>,
+    /// Fire once when the job is adopted — first registration and any later
+    /// change to its compiled definition (`run_on_register`, issue #555).
+    /// A bare directive: `false` emits nothing.
+    #[serde(default)]
+    pub run_on_register: bool,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -386,7 +404,7 @@ pub struct JobOptions {
 }
 
 /// A single `KEY value` environment entry inside a runner exec block.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct EnvPair {
     pub key: String,
     #[serde(default)]
@@ -396,7 +414,7 @@ pub struct EnvPair {
 /// The runner execution command. `mode` is `shell` (a single `command`
 /// string) or `exec` (an `args` argv list); both may set `workdir`,
 /// `user`, and `env` entries.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RunnerExecPayload {
     #[serde(default)]
     pub mode: String,
@@ -447,6 +465,13 @@ fn format_job_block_inner(
         lines.push(format!("  description \"{}\"", escape_dquote(d)));
     }
     lines.push(format!("  {}", schedule_line_with_options(p, o)));
+    // Job-level `timezone`, not the schedule option of the same name (which
+    // `schedule_line_with_options` emitted above). Setting both is legal —
+    // the schedule option is the more specific spelling and wins — so this
+    // does not consult `schedule_timezone`.
+    if let Some(tz) = opt_str(&o.timezone) {
+        lines.push(format!("  timezone {}", quote_if_needed(tz)));
+    }
     if let Some(t) = opt_str(&o.timeout) {
         lines.push(format!("  timeout {t}"));
     }
@@ -466,6 +491,9 @@ fn format_job_block_inner(
     }
     if let Some(d) = o.max_queue_depth {
         lines.push(format!("  max_queue_depth {d}"));
+    }
+    if let Some(n) = o.keep_last {
+        lines.push(format!("  keep_last {n}"));
     }
     if let Some(line) = retry_loose_line(o.retry.as_ref()) {
         lines.push(format!("  {line}"));
@@ -497,6 +525,9 @@ fn format_job_block_inner(
     }
     if let Some(g) = opt_str(&o.concurrency_group) {
         lines.push(format!("  concurrency_group {}", quote_if_needed(g)));
+    }
+    if o.run_on_register {
+        lines.push("  run_on_register".into());
     }
 
     let src = format!("job {key} {{\n{}\n}}\n", lines.join("\n"));
@@ -1623,6 +1654,240 @@ mod tests {
         assert!(out.contains("catch_up latest"), "{out}");
         assert!(out.contains("max_queue_depth 100"), "{out}");
         Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_keep_last() {
+        let o = JobOptions {
+            keep_last: Some(500),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(out.contains("keep_last 500"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_run_on_register_is_bare() {
+        let o = JobOptions {
+            run_on_register: true,
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "integration:credential-sync", &o).unwrap();
+        // Bare directive: presence is the whole signal, so no `true` argument
+        // — `run_on_register true` would be an unknown-directive error.
+        assert!(out.contains("\n  run_on_register\n"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_run_on_register_off_emits_nothing() {
+        let out = format_job_block_inner(&interval5(), "a:b", &JobOptions::default()).unwrap();
+        assert!(!out.contains("run_on_register"), "{out}");
+    }
+
+    #[test]
+    fn job_block_job_level_timezone() {
+        let o = JobOptions {
+            timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "billing:invoice", &o).unwrap();
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_job_level_timezone_survives_once() {
+        // The reason the job-level spelling has to exist in the builder at
+        // all: a `once` job cannot carry a schedule-options block, so
+        // `schedule_timezone` is dropped there and its wall-clock time would
+        // silently mean UTC.
+        let once = SchedulePayload::Once {
+            at: "2026-12-31T23:00:00Z".into(),
+        };
+        let o = JobOptions {
+            timezone: Some("Europe/Vienna".into()),
+            schedule_timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&once, "migration:v2", &o).unwrap();
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_both_timezone_spellings_are_legal_together() {
+        // Setting both is not a conflict to resolve here: the schedule option
+        // is the more specific spelling and the compiler lets it win.
+        let o = JobOptions {
+            timezone: Some("UTC".into()),
+            schedule_timezone: Some("Europe/Vienna".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(out.contains("timezone UTC"), "{out}");
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_reconcile_on_deploy_shape_round_trips() {
+        // The whole shape the README documents for issue #555, through the
+        // bridge the builder drives.
+        let o = JobOptions {
+            run_on_register: true,
+            concurrency: Some("singleton".into()),
+            timezone: Some("Europe/Vienna".into()),
+            keep_last: Some(50),
+            runner_require: vec!["credentials".into()],
+            ..Default::default()
+        };
+        let out = format_job_block_inner(
+            &SchedulePayload::Daily {
+                hour: 4,
+                minute: 20,
+            },
+            "integration:credential-sync",
+            &o,
+        )
+        .unwrap();
+        assert!(out.contains("every day at 04:20"), "{out}");
+        assert!(out.contains("timezone Europe/Vienna"), "{out}");
+        assert!(out.contains("keep_last 50"), "{out}");
+        assert!(out.contains("runner { require credentials }"), "{out}");
+        assert!(out.contains("\n  singleton\n"), "{out}");
+        assert!(out.contains("\n  run_on_register\n"), "{out}");
+
+        // The emitted block must compile to a job that actually carries the
+        // directive — parsing alone would accept a silently-ignored key.
+        let ast = Parser::parse(&out).unwrap();
+        let cfg = croniq_config::compile::compile(&ast);
+        assert!(cfg.jobs[0].run_on_register, "{out}");
+        assert_eq!(cfg.jobs[0].keep_last, Some(50));
+        assert_eq!(cfg.jobs[0].max_concurrent, Some(1));
+        assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    // ── site/generator.js ⇄ payload parity (issue #555 follow-up) ────────────
+
+    /// Field names of a payload struct, taken from the type itself so the
+    /// guard below cannot fall behind the struct.
+    fn payload_keys<T: serde::Serialize + Default>() -> std::collections::BTreeSet<String> {
+        match serde_json::to_value(T::default()) {
+            Ok(serde_json::Value::Object(map)) => map.keys().cloned().collect(),
+            other => panic!("payload must serialise to an object, got {other:?}"),
+        }
+    }
+
+    /// Body of `site/generator.js`'s `buildJobOptions()`, which is the one
+    /// function that assembles the wasm payloads.
+    ///
+    /// Scoping the scan to it keeps the short locals it uses (`r`, `dl`, `re`)
+    /// from colliding with same-named locals elsewhere in the file — the
+    /// alerts editor also has an `r`, for a rule.
+    ///
+    /// Line endings are normalised first: git hands this file out with CRLF on
+    /// a Windows checkout, and a guard that silently stops finding anything
+    /// there — while passing on the Linux runner — is worse than no guard.
+    fn build_job_options_body(js: &str) -> String {
+        let js = js.replace("\r\n", "\n");
+        let start = js
+            .find("function buildJobOptions() {")
+            .expect("site/generator.js must still define buildJobOptions()");
+        let rest = &js[start..];
+        // Top-level functions in this file close with `}` in column 0.
+        let end = rest
+            .find("\n}\n")
+            .expect("buildJobOptions() must be closed at column 0");
+        rest[..end].to_string()
+    }
+
+    /// Keys assigned onto a JS local in `site/generator.js`, e.g. every
+    /// `opts.foo = …` for `local = "opts"`.
+    fn js_assigned_keys(js: &str, local: &str) -> std::collections::BTreeSet<String> {
+        let needle = format!("{local}.");
+        let mut keys = std::collections::BTreeSet::new();
+        for (idx, _) in js.match_indices(&needle) {
+            // Only a real property assignment counts — skip `opts.foo()` calls
+            // and reads like `if (opts.foo)`.
+            let before = js[..idx].chars().next_back().unwrap_or(' ');
+            if before.is_alphanumeric() || before == '_' || before == '.' {
+                continue; // part of a longer identifier (`myopts.`)
+            }
+            let rest = &js[idx + needle.len()..];
+            let key: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if key.is_empty() {
+                continue;
+            }
+            let after = rest[key.len()..].trim_start();
+            if after.starts_with('=') && !after.starts_with("==") {
+                keys.insert(key);
+            }
+        }
+        keys
+    }
+
+    /// The public DSL generator builds the wasm payloads as plain JS object
+    /// literals, and they cross the boundary as an untyped `JsValue`. Serde
+    /// ignores unknown fields, so a key the JS misspells — or one it sets that
+    /// this bridge never grew — is *silently dropped*: the generator emits a
+    /// job block quietly missing that directive, with no error anywhere. There
+    /// are no TypeScript types for these shapes (`JobOptions` is not part of
+    /// the generated `.d.ts`), the site has no test harness, and nothing else
+    /// in CI reads that file.
+    ///
+    /// That is exactly how `run_on_register` and `keep_last` went unnoticed in
+    /// the form for a release. This guard closes the loop the cheap way: it
+    /// reads the shipped `generator.js` and fails if it assigns a key no
+    /// payload struct has.
+    #[test]
+    fn generator_js_payload_keys_all_exist_on_the_bridge() {
+        let js = build_job_options_body(include_str!("../../../site/generator.js"));
+        let js = js.as_str();
+
+        // (JS local, valid keys for it). The locals mirror `buildJobOptions`.
+        let cases: Vec<(&str, std::collections::BTreeSet<String>)> = vec![
+            ("opts", payload_keys::<JobOptions>()),
+            ("r", payload_keys::<RetryPayload>()),
+            ("dl", payload_keys::<DeadLetterPayload>()),
+            ("re", payload_keys::<RunnerExecPayload>()),
+        ];
+
+        for (local, valid) in cases {
+            let assigned = js_assigned_keys(js, local);
+            assert!(
+                !assigned.is_empty(),
+                "found no `{local}.<key> =` assignments in site/generator.js — the guard has \
+                 lost track of the payload it is supposed to check (renamed local?)"
+            );
+            let unknown: Vec<&String> = assigned.iter().filter(|k| !valid.contains(*k)).collect();
+            assert!(
+                unknown.is_empty(),
+                "site/generator.js sets {unknown:?} on `{local}`, which the bridge payload does \
+                 not have — serde would drop it silently. Known keys: {valid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generator_js_sets_every_job_option_the_bridge_offers() {
+        // The other direction: a directive this bridge can emit but the form
+        // never sets is unreachable for anyone using the generator — which is
+        // how per-job `dead_letter` sat unusable while fully implemented here.
+        let js = build_job_options_body(include_str!("../../../site/generator.js"));
+        let offered = payload_keys::<JobOptions>();
+        let set = js_assigned_keys(&js, "opts");
+
+        let unreachable: Vec<&String> = offered.iter().filter(|k| !set.contains(*k)).collect();
+        assert!(
+            unreachable.is_empty(),
+            "the bridge accepts {unreachable:?} but site/generator.js never sets them, so the \
+             generator cannot produce those directives"
+        );
     }
 
     #[test]
