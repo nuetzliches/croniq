@@ -1,0 +1,61 @@
+name: "Trigger empty optionals — explicitly empty values are omitted, not sent"
+description: |
+  A caller who passes an EMPTY collection or a BLANK string must produce the
+  same wire body as one who passed nothing at all. Empty is normalized to
+  absent: `require: []`, `prefer: []`, `metadata: {}` and `timeout: ""` are all
+  dropped from the outbound JSON.
+
+  This is a contract, not an implementation detail. The server gives empty and
+  absent the same meaning for the capability lists — it reads an empty
+  `require` as "inherit the job's `runner { require … }`" (issue #549) — so
+  `"require": []` is only a second wire spelling of a message that already has
+  one. Emitting it invites a future reader to ascribe it a distinct meaning the
+  server has never had.
+
+  `timeout: ""` is the case with teeth. Since issue #551 an absent `timeout`
+  means "inherit the job's configured one", so a PRESENT timeout is an explicit
+  override — and `""` is not a parseable duration. A client that sends it hands
+  the runner a garbage timeout where an omitting client would have inherited
+  `timeout 2h`. Distinct from 01-trigger-minimal, which pins omission of
+  optionals the caller never supplied; this case pins omission of ones the
+  caller supplied as empty.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "billing:invoice"
+      require: []
+      prefer: []
+      metadata: {}
+      timeout: ""
+    expect:
+      response:
+        execution_id: "exec-120"
+        queued: 1
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-120"
+        queued: 1
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      headers:
+        authorization: "ApiKey croniq_trigger_key"
+      body_match:
+        job_key: "billing:invoice"
+      body_absent:
+        - metadata
+        - require
+        - prefer
+        - timeout
+        - idempotency_key

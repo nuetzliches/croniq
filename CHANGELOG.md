@@ -8,6 +8,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every SDK now omits an explicitly *empty* trigger optional instead of
+  sending it, and a blank `timeout` no longer reaches the runner unparseable
+  ([#553](https://github.com/nuetzliches/croniq/issues/553)).** The five SDKs
+  agreed on how to send an *unset* optional — all omit it, pinned by
+  `cases-trigger/01-trigger-minimal.yaml`. They disagreed on an *empty* one: Go
+  dropped `require: []` and `timeout: ""` via `omitempty`, while Rust, Python,
+  TypeScript, Java and .NET sent them verbatim.
+
+  For the capability lists this was redundant rather than wrong — the server has
+  read an empty `require` as "inherit the job's `runner { require … }`" since
+  [#549](https://github.com/nuetzliches/croniq/issues/549), so `"require": []`
+  was only a second wire spelling of a message that already had one. `timeout`
+  was the case with teeth: since
+  [#551](https://github.com/nuetzliches/croniq/issues/551) an absent `timeout`
+  means "inherit the job's", so a present one is an explicit override — and
+  `""` is not a parseable duration. Five of six clients could hand the runner a
+  broken timeout where Go's would have inherited `timeout 2h`.
+
+  Resolved as **empty means absent**, normalized off the wire, which makes Go's
+  behaviour the reference rather than the outlier. The alternative — optional
+  collection types so Go *could* send `[]` — buys a distinction the server has
+  no meaning for, breaks Go's public API, and leaves the `timeout: ""` hazard
+  standing. No SDK's public signatures change; the normalization is internal
+  (Rust in the builder setters, Java in the record's compact constructor so
+  direct construction is covered too, .NET in a `TriggerRequest.Normalized`
+  factory, Python and TypeScript at the body-build step).
+
+  The server hardens to match: `POST /v1/trigger` and the two MCP fire tools
+  treat a blank `timeout` — whitespace included — as absent, so a hand-rolled
+  request or a non-conforming client inherits the job's timeout rather than
+  producing a work item nothing can parse. This is the rule `idempotency_key`
+  already applied ("an empty string is treated as absent"), now consistent
+  across its neighbours.
+
+  Pinned by a new `cases-trigger/12-trigger-empty-optionals.yaml`, which failed
+  on five of six bindings before this change. It needed no schema change — the
+  existing `body_absent` assertion already expressed it.
+
 - **A manually fired execution now inherits its job's configured `timeout`
   instead of always getting 5 minutes
   ([#551](https://github.com/nuetzliches/croniq/issues/551)).** `timeout` on

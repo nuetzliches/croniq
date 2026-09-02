@@ -19,11 +19,19 @@ public interface ICroniqTriggerClient
     /// Metadata passed to the handler. Merged over the job's DSL metadata;
     /// keys starting with <c>__</c> are reserved for internal use.
     /// </param>
-    /// <param name="require">Capabilities a runner must have to be assigned this execution.</param>
-    /// <param name="prefer">Capabilities used to prefer runners when several are eligible.</param>
+    /// <param name="require">
+    /// Capabilities a runner must have to be assigned this execution.
+    /// <c>null</c> — or empty — inherits the job's <c>runner { require … }</c>.
+    /// </param>
+    /// <param name="prefer">
+    /// Capabilities used to prefer runners when several are eligible.
+    /// <c>null</c> or empty inherits the job's <c>runner { prefer … }</c>.
+    /// </param>
     /// <param name="timeout">
     /// Execution timeout as a server duration string (e.g. <c>"30s"</c>,
-    /// <c>"5m"</c>). Server default applies when <c>null</c>.
+    /// <c>"5m"</c>). <c>null</c> or blank inherits the job's configured
+    /// <c>timeout</c>; the server falls back to 5m only when the job declares
+    /// none either.
     /// </param>
     /// <param name="idempotencyKey">
     /// Optional dedup key. Servers with trigger-idempotency support coalesce

@@ -80,6 +80,39 @@ describe('CroniqTriggerClient.trigger', () => {
     }
   });
 
+  it('omits explicitly empty optional fields from the wire body', async () => {
+    // Issue #553: empty normalizes to absent. The server already reads an
+    // empty `require` as "inherit the job's", so sending `[]` is a second wire
+    // spelling of a message that has one -- and `timeout: ''` is not a
+    // parseable duration, so honouring it would hand the runner a broken value
+    // where omitting it inherits the job's own timeout.
+    const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":1}'));
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
+
+    await client.trigger('etl:data-sync', {
+      metadata: {},
+      require: [],
+      prefer: [],
+      timeout: '   ',
+      idempotencyKey: '',
+    });
+
+    const body = bodyOf(calls[0]!);
+    expect(body).toEqual({ job_key: 'etl:data-sync' });
+  });
+
+  it('keeps non-empty optional fields', async () => {
+    // The empty-normalization must not swallow real values.
+    const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-1","queued":1}'));
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
+
+    await client.trigger('etl:data-sync', { require: ['gpu'], timeout: ' 15m ' });
+
+    const body = bodyOf(calls[0]!);
+    expect(body.require).toEqual(['gpu']);
+    expect(body.timeout).toBe('15m');
+  });
+
   it('forwards nested/typed metadata verbatim as a JSON object', async () => {
     const { fetchImpl, calls } = stubFetch(() => OK('{"execution_id":"exec-3","queued":1}'));
     const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });

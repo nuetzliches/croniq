@@ -63,19 +63,27 @@ export interface CroniqTriggerClientOptions {
 export interface TriggerParams {
   /**
    * Arbitrary JSON metadata forwarded to the handler as-is (merged over the
-   * job's DSL metadata server-side). Keys starting with `__` are reserved.
+   * job's DSL metadata server-side). Keys starting with `__` are reserved. An
+   * empty object is treated as unset.
    */
   metadata?: Record<string, unknown>;
 
-  /** Capabilities a runner MUST have to be assigned this execution. */
+  /**
+   * Capabilities a runner MUST have to be assigned this execution. Omitted --
+   * or empty -- inherits the job's `runner { require ... }`.
+   */
   require?: string[];
 
-  /** Capabilities used to prefer runners when several are eligible. */
+  /**
+   * Capabilities used to prefer runners when several are eligible. Omitted or
+   * empty inherits the job's `runner { prefer ... }`.
+   */
   prefer?: string[];
 
   /**
    * Execution timeout as a server duration string (e.g. `"30s"`, `"5m"`).
-   * The server default applies when omitted.
+   * Omitted or blank inherits the job's configured `timeout`; the server falls
+   * back to 5m only when the job declares none either.
    */
   timeout?: string;
 
@@ -187,12 +195,29 @@ export class CroniqTriggerClient {
 
     // Only assign supplied optionals: JSON.stringify drops `undefined`, so an
     // unset field never reaches the wire.
+    //
+    // An explicitly EMPTY collection or BLANK string is normalized to absent
+    // too (issue #553). The server already reads an empty `require` as
+    // "inherit the job's", so `"require": []` is only a second wire spelling
+    // of a message that has one -- and `"timeout": ""` is not a parseable
+    // duration, so honouring it as an override would hand the runner a broken
+    // value where omitting it inherits the job's own timeout.
     const requestBody: TriggerRequest = { job_key: jobKey };
-    if (params.metadata !== undefined) requestBody.metadata = params.metadata;
-    if (params.require !== undefined) requestBody.require = params.require;
-    if (params.prefer !== undefined) requestBody.prefer = params.prefer;
-    if (params.timeout !== undefined) requestBody.timeout = params.timeout;
-    if (params.idempotencyKey !== undefined) requestBody.idempotency_key = params.idempotencyKey;
+    if (params.metadata !== undefined && Object.keys(params.metadata).length > 0) {
+      requestBody.metadata = params.metadata;
+    }
+    if (params.require !== undefined && params.require.length > 0) {
+      requestBody.require = params.require;
+    }
+    if (params.prefer !== undefined && params.prefer.length > 0) {
+      requestBody.prefer = params.prefer;
+    }
+    if (params.timeout !== undefined && params.timeout.trim() !== '') {
+      requestBody.timeout = params.timeout.trim();
+    }
+    if (params.idempotencyKey !== undefined && params.idempotencyKey.trim() !== '') {
+      requestBody.idempotency_key = params.idempotencyKey.trim();
+    }
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',

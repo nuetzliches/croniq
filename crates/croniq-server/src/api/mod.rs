@@ -1572,9 +1572,19 @@ async fn handle_trigger(
     // default it once carried, an omitted field was indistinguishable from a
     // caller asking for `5m`, so a `timeout 2h` job that ran for two hours on
     // a scheduled fire was killed after five minutes when triggered by hand.
+    // A blank value counts as absent (issue #553), the same rule
+    // `idempotency_key` applies above. Empty is not a duration
+    // (`parse_duration_checked` rejects it), so honouring it as an "explicit
+    // override" would hand the runner an unparseable timeout where inheriting
+    // the job's is plainly what the caller meant. Clients are expected to omit
+    // an empty value rather than send it; this keeps a hand-rolled request or a
+    // non-conforming client from producing a broken work item.
     let timeout = req
         .timeout
-        .clone()
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
         .or_else(|| dsl_job.as_ref().and_then(|j| j.timeout.clone()))
         .unwrap_or_else(|| DEFAULT_TRIGGER_TIMEOUT.to_string());
 
@@ -2427,6 +2437,48 @@ mod tests {
             "5m",
             "an explicit request timeout must override the job config"
         );
+    }
+
+    #[tokio::test]
+    async fn trigger_blank_timeout_is_treated_as_absent() {
+        // Issue #553: a blank `timeout` counts as unset, so it inherits the
+        // job's rather than being honoured as an explicit override. `""` is not
+        // a parseable duration — `parse_duration_checked` rejects it — so
+        // taking it literally would hand the runner a broken timeout. Clients
+        // are expected to omit an empty value; this covers the ones that don't.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:long-backfill {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+
+        for blank in ["", "   "] {
+            let (state, _rx) = make_state_with_dsl_jobs(jobs.clone());
+            let app = server_router(Arc::clone(&state));
+
+            post_json(
+                app,
+                "/v1/trigger",
+                serde_json::json!({ "job_key": "test:long-backfill", "timeout": blank }),
+            )
+            .await;
+
+            let q = state.runner.queue.read().await;
+            assert_eq!(
+                q.peek_n(1)[0].timeout,
+                "2h",
+                "a blank timeout ({blank:?}) must inherit, not override"
+            );
+        }
     }
 
     #[tokio::test]

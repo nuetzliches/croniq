@@ -76,6 +76,43 @@ async def test_omits_unset_optional_fields() -> None:
     assert rec.request_json == {"job_key": "etl:data-sync"}
 
 
+async def test_omits_explicitly_empty_optional_fields() -> None:
+    """Issue #553: empty normalizes to absent.
+
+    The server already reads an empty ``require`` as "inherit the job's", so
+    sending ``[]`` is a second wire spelling of a message that has one. And
+    ``timeout: ""`` is not a parseable duration -- honouring it as an explicit
+    override would hand the runner a broken value where omitting it inherits
+    the job's own timeout.
+    """
+    rec = _Recorder(body={"execution_id": "exec-1", "queued": 1})
+    client = _client(rec, api_key="k")
+
+    await client.trigger(
+        "etl:data-sync",
+        metadata={},
+        require=[],
+        prefer=[],
+        timeout="   ",
+        idempotency_key="",
+    )
+
+    assert rec.request_json == {"job_key": "etl:data-sync"}
+
+
+async def test_keeps_non_empty_optional_fields() -> None:
+    """The empty-normalization must not swallow real values."""
+    rec = _Recorder(body={"execution_id": "exec-1", "queued": 1})
+    client = _client(rec, api_key="k")
+
+    await client.trigger("etl:data-sync", require=["gpu"], timeout=" 15m ")
+
+    body = rec.request_json
+    assert isinstance(body, dict)
+    assert body["require"] == ["gpu"]
+    assert body["timeout"] == "15m"
+
+
 async def test_metadata_nested_and_typed_values_preserved() -> None:
     rec = _Recorder(body={"execution_id": "e", "queued": 1})
     client = _client(rec, api_key="k")

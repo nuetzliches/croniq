@@ -67,6 +67,50 @@ public class CroniqTriggerClientTests
     }
 
     [Fact]
+    public async Task OmitsExplicitlyEmptyOptionalFields()
+    {
+        // Issue #553: empty normalizes to absent. The server already reads an
+        // empty `require` as "inherit the job's", so sending `[]` is a second
+        // wire spelling of a message that has one — and `timeout: ""` is not a
+        // parseable duration, so honouring it would hand the runner a broken
+        // value where omitting it inherits the job's own timeout.
+        var stub = new StubHandler(HttpStatusCode.OK, """{"execution_id":"exec-1","queued":1}""");
+        var client = CreateClient(stub);
+
+        await client.TriggerAsync(
+            "etl:data-sync",
+            metadata: new Dictionary<string, string>(),
+            require: Array.Empty<string>(),
+            prefer: Array.Empty<string>(),
+            timeout: "   ",
+            idempotencyKey: "");
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        var root = body.RootElement;
+        root.GetProperty("job_key").GetString().ShouldBe("etl:data-sync");
+        root.TryGetProperty("metadata", out _).ShouldBeFalse();
+        root.TryGetProperty("require", out _).ShouldBeFalse();
+        root.TryGetProperty("prefer", out _).ShouldBeFalse();
+        root.TryGetProperty("timeout", out _).ShouldBeFalse();
+        root.TryGetProperty("idempotency_key", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task KeepsNonEmptyOptionalFields()
+    {
+        // The empty-normalization must not swallow real values.
+        var stub = new StubHandler(HttpStatusCode.OK, """{"execution_id":"exec-1","queued":1}""");
+        var client = CreateClient(stub);
+
+        await client.TriggerAsync("etl:data-sync", require: ["gpu"], timeout: " 15m ");
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        var root = body.RootElement;
+        root.GetProperty("require")[0].GetString().ShouldBe("gpu");
+        root.GetProperty("timeout").GetString().ShouldBe("15m");
+    }
+
+    [Fact]
     public async Task MissingDeduplicatedFlagDefaultsToFalse()
     {
         // Older servers don't send `deduplicated` at all.

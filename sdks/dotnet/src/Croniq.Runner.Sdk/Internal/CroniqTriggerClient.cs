@@ -33,7 +33,10 @@ internal sealed class CroniqTriggerClient(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         linked.CancelAfter(options.CurrentValue.RequestTimeout);
 
-        var request = new TriggerRequest(jobKey, metadata, require, prefer, timeout, idempotencyKey);
+        // Normalized(): an explicitly empty collection or blank string is
+        // omitted from the body rather than sent as []/"" (issue #553).
+        var request = TriggerRequest.Normalized(
+            jobKey, metadata, require, prefer, timeout, idempotencyKey);
         using var requestMsg = new HttpRequestMessage(HttpMethod.Post, "/v1/trigger")
         {
             Content = JsonContent.Create(request, CroniqJsonContext.Default.TriggerRequest),

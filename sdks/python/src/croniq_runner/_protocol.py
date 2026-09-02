@@ -110,6 +110,10 @@ class TriggerRequest(_Model):
     treats an omitted optional and a ``null`` differently — see #283).
     ``metadata`` is arbitrary caller JSON forwarded to the handler verbatim,
     so its values are ``Any``, not strings.
+
+    The client normalizes an explicitly *empty* collection or *blank* string to
+    ``None`` before dumping (issue #553), so a caller passing ``[]`` or ``""``
+    produces the same body as one who passed nothing.
     """
 
     job_key: str
