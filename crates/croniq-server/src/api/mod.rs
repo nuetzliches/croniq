@@ -1721,6 +1721,17 @@ async fn handle_trigger(
         .or_else(|| dsl_job.as_ref().and_then(|j| j.timeout.clone()))
         .unwrap_or_else(|| DEFAULT_TRIGGER_TIMEOUT.to_string());
 
+    // Stamp it so the reaper judges this execution by the timeout it is
+    // actually running under (issue #558). This is the path where it matters
+    // most: a manual fire is the only one that can carry an override the job
+    // config knows nothing about, and without the stamp the reaper fell back to
+    // that config — reaping a 4h trigger on a `timeout 30s` job after 30s while
+    // its runner was still working.
+    metadata.insert(
+        croniq_config::compile::TIMEOUT_METADATA_KEY.into(),
+        timeout.clone(),
+    );
+
     // Persist the execution record to the store so that the CompletionProcessor
     // can find it when the runner reports success/failure.
     if let Some(ref store) = state.store {
@@ -2569,6 +2580,89 @@ mod tests {
             q.peek_n(1)[0].timeout,
             "5m",
             "an explicit request timeout must override the job config"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_stamps_the_effective_timeout_on_the_work_item() {
+        // Issue #558: the resolved timeout must travel in metadata, because the
+        // stale-claim reaper reads it off the row to tell a wedged claim from a
+        // legitimately long one. Without it the reaper falls back to the job
+        // config and reaps an overriding fire mid-flight.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:pinned {
+                every 1 hour
+                timeout 30s
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "test:pinned", "timeout": "4h" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].timeout, "4h", "the item runs under the override");
+        assert_eq!(
+            items[0]
+                .metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("4h"),
+            "the override must be stamped so the reaper can see it; got: {:?}",
+            items[0].metadata
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_stamps_the_inherited_timeout_too() {
+        // Not just overrides: a fire that inherits the job's timeout stamps it
+        // as well, so the reaper is unaffected by a later reload changing it.
+        use crate::loader::load_str;
+
+        let jobs = load_str(
+            r#"
+            job test:long {
+                every 1 hour
+                timeout 2h
+                runner shell { command "echo hi" }
+            }
+        "#,
+        )
+        .unwrap()
+        .runtime
+        .jobs;
+        let (state, _rx) = make_state_with_dsl_jobs(jobs);
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "test:long" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(
+            q.peek_n(1)[0]
+                .metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some("2h")
         );
     }
 

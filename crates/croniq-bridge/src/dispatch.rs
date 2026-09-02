@@ -84,6 +84,16 @@ pub fn job_execution_metadata(job: &JobConfig) -> std::collections::HashMap<Stri
             serde_json::to_string(&job.runner.prefer).unwrap_or_default(),
         );
     }
+    // The timeout in force for this fire (issue #558). The stale-claim reaper
+    // reads it off the row instead of re-reading the job config, which by then
+    // may have been reloaded to a different value — and which, for a fire that
+    // carried an explicit override, was never the right number at all.
+    if let Some(ref timeout) = job.timeout {
+        metadata.insert(
+            croniq_config::compile::TIMEOUT_METADATA_KEY.into(),
+            timeout.clone(),
+        );
+    }
     metadata
 }
 

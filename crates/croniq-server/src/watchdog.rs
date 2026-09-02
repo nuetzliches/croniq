@@ -285,7 +285,9 @@ where
         require: job.runner.require.clone(),
         prefer: job.runner.prefer.clone(),
         metadata: serde_json::json!(execution.metadata),
-        timeout: job.timeout.unwrap_or_else(|| "5m".into()),
+        // Same precedence the reaper just used, so the requeued item runs under
+        // the timeout it was judged by (issue #558).
+        timeout: crate::duration::effective_timeout(&execution.metadata, job.timeout.as_deref()),
         is_ephemeral: false,
     };
 
@@ -904,13 +906,24 @@ impl WatchdogLoop {
                 .claimed_at
                 .or(execution.started_at)
                 .unwrap_or(execution.created_at);
-            // Default 5m — also on unresolvable config or unparsable
-            // timeout, matching the WorkItem-build default.
-            let timeout_secs = self
+            // The timeout actually in force for THIS execution (issue #558):
+            // the `__timeout` stamped on the row, else the job config, else 5m.
+            //
+            // Reading the job config alone was wrong for any fire carrying an
+            // explicit override. A trigger asking for 4h on a `timeout 30s` job
+            // was reaped 30s + grace after being claimed — while its runner was
+            // legitimately still working — then re-dispatched to a second
+            // runner, with the first one's completion discarded as late
+            // (issue #374). That is duplicate execution of live work, not
+            // recovery of a wedged claim. A reload that changed `timeout` under
+            // an in-flight execution had the same effect.
+            let job_timeout = self
                 .resolve_job_config(&execution.job_key)
-                .and_then(|j| j.timeout)
-                .and_then(|t| croniq_execution::retry::parse_duration(&t))
-                .map_or(300, |d| d.as_secs());
+                .and_then(|j| j.timeout);
+            let timeout_secs = crate::duration::effective_timeout_secs(
+                &execution.metadata,
+                job_timeout.as_deref(),
+            );
             let threshold_secs = timeout_secs + grace_secs;
             let age = now.signed_duration_since(age_basis).num_seconds();
             if age <= threshold_secs as i64 {
@@ -1796,6 +1809,138 @@ mod tests {
         assert_eq!(exec.state, ExecutionState::Queued);
     }
 
+    // ─── per-execution timeout (issue #558) ────────────────────────
+
+    fn timeout_stamp(value: &str) -> HashMap<String, String> {
+        HashMap::from([(
+            croniq_config::compile::TIMEOUT_METADATA_KEY.to_string(),
+            value.to_string(),
+        )])
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_does_not_reap_live_work_under_a_longer_stamp() {
+        // The bug in #558. A trigger asked for 4h on a job configured
+        // `timeout 30s`. The reaper read the JOB's 30s, so 30s + grace after
+        // the claim it declared the claim stale — while the runner was
+        // legitimately still working — requeued it, and a second runner picked
+        // the same execution up. The first runner's completion was then
+        // discarded as late by the #374 guard: the work ran twice and the
+        // original result was thrown away.
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_claimed_with_metadata(
+            &*store,
+            "test:job",
+            "busy-runner",
+            Utc::now() - ChronoDuration::minutes(10),
+            timeout_stamp("4h"),
+        );
+
+        let mut job = make_job("test:job");
+        job.timeout = Some("30s".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(
+            result.stale_claims.is_empty(),
+            "a 10-minute-old claim under a 4h stamp is not stale; reaping it duplicates live work"
+        );
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(
+            exec.state,
+            ExecutionState::Claimed,
+            "the claim must stay with its runner"
+        );
+        assert_eq!(
+            runner.queue.read().await.len(),
+            0,
+            "nothing may be re-enqueued"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_reaps_once_a_shorter_stamp_has_elapsed() {
+        // The other direction: the job allows 2h but this fire asked for 30s,
+        // so a 10-minute-old claim IS wedged. Reading the job config alone
+        // would have waited 2h + grace to recover it.
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_claimed_with_metadata(
+            &*store,
+            "test:job",
+            "vanished-runner",
+            Utc::now() - ChronoDuration::minutes(10),
+            timeout_stamp("30s"),
+        );
+
+        let mut job = make_job("test:job");
+        job.timeout = Some("2h".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert_eq!(result.stale_claims, vec![exec_id]);
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+    }
+
+    #[tokio::test]
+    async fn stale_claim_reaper_falls_back_to_job_config_without_a_stamp() {
+        // Rows written before the stamp existed keep their old behaviour: the
+        // job's 2h still shields a 10-minute-old claim from the reaper.
+        let store = make_store();
+        let runner = make_runner();
+
+        let exec_id = seed_claimed_at(
+            &*store,
+            "test:job",
+            "busy-runner",
+            Utc::now() - ChronoDuration::minutes(10),
+        );
+
+        let mut job = make_job("test:job");
+        job.timeout = Some("2h".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert!(result.stale_claims.is_empty());
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+    }
+
+    #[tokio::test]
+    async fn requeued_item_carries_the_stamped_timeout() {
+        // The requeued work item must run under the timeout the reaper judged
+        // it by, or the next sweep disagrees with the dispatch that preceded it.
+        let store = make_store();
+        let runner = make_runner();
+
+        seed_claimed_with_metadata(
+            &*store,
+            "test:job",
+            "vanished-runner",
+            Utc::now() - ChronoDuration::minutes(10),
+            timeout_stamp("90s"),
+        );
+
+        let mut job = make_job("test:job");
+        job.timeout = Some("2h".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+        watchdog.sweep(Utc::now()).await;
+
+        let q = runner.queue.read().await;
+        assert_eq!(q.len(), 1, "the wedged claim should be requeued");
+        assert_eq!(
+            q.peek().unwrap().timeout,
+            "90s",
+            "requeued item must inherit the stamp, not the job config"
+        );
+    }
+
     // ─── stranded-queued reconcile ─────────────────────────────────
 
     /// Seed an execution left in `Queued` state with nothing in the
@@ -2011,6 +2156,18 @@ mod tests {
         runner_id: &str,
         claimed_at: DateTime<Utc>,
     ) -> Uuid {
+        seed_claimed_with_metadata(store, job_key, runner_id, claimed_at, HashMap::new())
+    }
+
+    /// Like [`seed_claimed_at`], but with metadata on the row — needed to seed
+    /// the `__timeout` stamp the reaper reads (issue #558).
+    fn seed_claimed_with_metadata(
+        store: &dyn ExecutionStore,
+        job_key: &str,
+        runner_id: &str,
+        claimed_at: DateTime<Utc>,
+        metadata: HashMap<String, String>,
+    ) -> Uuid {
         let id = Uuid::new_v4();
         store
             .create_execution(&Execution {
@@ -2028,7 +2185,7 @@ mod tests {
                 error: None,
                 dead_reason: None,
                 idempotency_key: None,
-                metadata: HashMap::new(),
+                metadata,
                 created_at: claimed_at,
             })
             .unwrap();
