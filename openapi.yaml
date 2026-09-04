@@ -208,6 +208,18 @@ components:
         field: { type: string, description: "The request field that failed to parse." }
         message: { type: string, description: "Names the offending value and the accepted grammar." }
 
+    InvalidTypeError:
+      type: object
+      description: >
+        A patch field carried a value of the wrong JSON type. `null` is the
+        documented "clear this field" signal and stays accepted; a wrong type
+        is a caller error and is refused rather than treated as a clear.
+      properties:
+        error: { type: string, enum: [invalid_type] }
+        field: { type: string, description: "The request field with the wrong type." }
+        expected: { type: string, description: "The accepted JSON type, e.g. `a string`." }
+        message: { type: string }
+
     DslManagedError:
       type: object
       properties:
@@ -867,9 +879,12 @@ paths:
       description: |
         Patch semantics on the policy fields: a missing key leaves the stored
         value untouched, an explicit `null` clears it back to the system
-        default. Identity (`job_key`) and lifecycle (`is_active`) stay on
-        their dedicated endpoints; schedules are owned by `/v1/schedules`.
-        DSL-managed jobs return 409 (`error: dsl_managed`).
+        default. A value of the wrong JSON type is refused with 400
+        (`error: invalid_type`) rather than treated as a clear — including a
+        non-string item inside `tags`. Identity (`job_key`) and lifecycle
+        (`is_active`) stay on their dedicated endpoints; schedules are owned
+        by `/v1/schedules`. DSL-managed jobs return 409
+        (`error: dsl_managed`).
       parameters:
         - name: job_key
           in: path
@@ -888,7 +903,7 @@ paths:
                 dead_letter_retention: { type: string, nullable: true, description: "Dead-letter retention (\"14d\"). Null clears to the system default (30d)." }
                 dead_letter_operator_hint: { type: string, nullable: true, description: "Triage hint surfaced with this job's dead letters." }
                 dead_letter_replay_max_age: { type: string, nullable: true, description: "Opt-in stale-replay guard (\"7d\"). Null disables the guard." }
-                tags: { type: array, items: { type: string } }
+                tags: { type: array, items: { type: string }, nullable: true, description: "Replaces the whole list. Null clears it." }
       responses:
         "200":
           description: The updated job definition
@@ -896,10 +911,15 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
         "400":
-          description: A duration field (`timeout`) did not parse; the stored value is left unchanged.
+          description: >
+            A duration field (`timeout`) did not parse, or a field carried a
+            value of the wrong JSON type. The stored value is left unchanged.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/InvalidDurationError" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/InvalidDurationError"
+                  - $ref: "#/components/schemas/InvalidTypeError"
         "404": { description: Unknown job }
         "409":
           description: DSL-managed job.

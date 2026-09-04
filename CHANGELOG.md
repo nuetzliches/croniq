@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`PUT /v1/jobs/{job_key}` no longer treats a wrong-typed value as `null`
+  ([#569](https://github.com/nuetzliches/croniq/issues/569)).** The endpoint
+  uses patch semantics -- a missing key leaves the field alone, an explicit
+  `null` clears it -- and it read the raw JSON to tell those apart. But it
+  decided "clear it" from the *accessor* returning `None`, and a value of the
+  wrong **type** returns `None` just as `null` does. So `{"timeout": 42}` was
+  indistinguishable from `{"timeout": null}` and silently cleared the stored
+  timeout. Every field in the block had the shape: `{"max_retries": "3"}`,
+  `{"dead_letter_enabled": "true"}`, `{"tags": "ops"}` -- the last wiping
+  *all* tags. `{"tags": ["ops", 42, "billing"]}` was a second variant: the
+  non-string item was dropped, storing two tags where the caller sent three.
+
+  Silently clearing is the worst available outcome, because absence is not
+  neutral: since [#551](https://github.com/nuetzliches/croniq/issues/551) a
+  cleared `timeout` means "inherit" and a cleared `dead_letter_replay_max_age`
+  means "replays are always allowed", so a type error quietly *widened*
+  behaviour. The realistic trigger is a weakly-typed client -- a shell or
+  templating layer emitting `{"max_retries": "3"}` because everything is a
+  string to it.
+
+  The patch block now matches on `Value::Null` explicitly rather than on an
+  accessor's `Option`, so `null` keeps clearing and everything else is a `400`
+  with `{"error": "invalid_type", "field", "expected", "message"}`. A
+  non-string *item* inside `tags` is rejected too, for the same reason. An
+  out-of-range `max_retries` (above `u32::MAX`) is refused rather than wrapped
+  through an `as` cast. Well-typed input is still normalised as before: tags
+  are trimmed, blanks dropped, duplicates collapsed. Sibling of
+  [#559](https://github.com/nuetzliches/croniq/issues/559), which closed the
+  same class of defect -- caller error absorbed instead of reported -- for a
+  `timeout` that is a string but does not parse. HTTP-only: the MCP
+  `update_job` tool is typed, so serde rejected these before the handler saw
+  them.
+
 ## [0.37.0] - 2026-09-02
 
 ### Added
