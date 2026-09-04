@@ -92,7 +92,8 @@ public class LogWriterTests
         RecordingClient client,
         FakeTimeProvider time,
         TimeSpan? batchTimeThreshold = null,
-        int batchSizeThreshold = 32)
+        int batchSizeThreshold = 32,
+        FlusherParkWatcher? parks = null)
     {
         var options = new LogWriterOptions
         {
@@ -105,29 +106,82 @@ public class LogWriterTests
             enrichment: new LogEnrichment("test:job", "runner-1", []),
             options: options,
             logger: NullLogger.Instance,
-            timeProvider: time);
+            timeProvider: time,
+            onFlusherParked: parks is null ? null : parks.Record);
     }
 
     /// <summary>
-    /// Give the background flusher a moment to drain a freshly-written
-    /// event and park itself back in <see cref="Task.WhenAny(System.Threading.Tasks.Task[])"/>
-    /// so the next <see cref="FakeTimeProvider.Advance"/> is observed by
-    /// the in-flight <see cref="PeriodicTimer"/>. 50 ms is well above the
-    /// microsecond-scale work the loop actually does; FakeTime is not
-    /// advanced during this sleep so the timer-threshold path stays
-    /// inactive.
+    /// Records the flusher loop's park signals so a test can await the
+    /// precondition <see cref="FakeTimeProvider.Advance"/> needs: the loop has
+    /// drained into its batch buffer and is parked on a
+    /// <see cref="PeriodicTimer"/> wait registered against the fake clock.
     /// </summary>
-    private static Task SettleAsync() => Task.Delay(50);
+    /// <remarks>
+    /// This replaces a <c>Task.Delay(50)</c>, which was a bet that the
+    /// background loop had got that far within 50 ms of real time. On a loaded
+    /// CI runner the bet loses, and losing it is unrecoverable rather than
+    /// slow: the timer is created inside the loop, so an <c>Advance</c> that
+    /// lands first schedules the next tick past a clock nothing will move
+    /// again, and the test then waits two real seconds for a POST that can no
+    /// longer happen (issue #570).
+    ///
+    /// Parks are buffered in a channel and the recorder is wired through the
+    /// writer's constructor, so no signal can be missed — including the loop's
+    /// very first park, which in a test that writes nothing is the only one
+    /// that will ever arrive unprompted.
+    /// </remarks>
+    private sealed class FlusherParkWatcher
+    {
+        private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
+
+        private readonly Channel<int> _parks =
+            Channel.CreateUnbounded<int>(new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = true,
+            });
+
+        public void Record(int buffered) => _parks.Writer.TryWrite(buffered);
+
+        /// <summary>Await the next park, whatever the buffer holds.</summary>
+        public Task<int> NextParkAsync(TimeSpan? timeout = null) =>
+            _parks.Reader.ReadAsync().AsTask().WaitAsync(timeout ?? DefaultTimeout);
+
+        /// <summary>
+        /// Await parks until one reports at least <paramref name="buffered"/>
+        /// events. Earlier parks — the loop's first, empty-buffered one — are
+        /// skipped rather than mistaken for it.
+        /// </summary>
+        public async Task ParkedWithBufferedAsync(int buffered, TimeSpan? timeout = null)
+        {
+            var deadline = timeout ?? DefaultTimeout;
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                var remaining = deadline - elapsed.Elapsed;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    throw new TimeoutException(
+                        $"Flusher never parked with {buffered} event(s) buffered within {deadline}.");
+                }
+                if (await NextParkAsync(remaining).ConfigureAwait(false) >= buffered)
+                {
+                    return;
+                }
+            }
+        }
+    }
 
     [Fact]
     public async Task PartialBatchFlushesWhenTimeThresholdExpires()
     {
         var time = new FakeTimeProvider();
         var client = new RecordingClient();
-        await using var writer = NewWriter(client, time);
+        var parks = new FlusherParkWatcher();
+        await using var writer = NewWriter(client, time, parks: parks);
 
         await writer.WriteAsync(new WorkEvent { Level = "info", Message = "single event" });
-        await SettleAsync();
+        await parks.ParkedWithBufferedAsync(1);
 
         // Exactly one tick crosses the partial-batch threshold and
         // produces one POST. Without TimeProvider injection this could
@@ -148,7 +202,8 @@ public class LogWriterTests
         // involvement.
         var time = new FakeTimeProvider();
         var client = new RecordingClient();
-        await using var writer = NewWriter(client, time, batchSizeThreshold: 4);
+        var parks = new FlusherParkWatcher();
+        await using var writer = NewWriter(client, time, batchSizeThreshold: 4, parks: parks);
 
         for (var i = 0; i < 4; i++)
         {
@@ -160,7 +215,9 @@ public class LogWriterTests
         client.PostCount.ShouldBe(1);
         client.Posts[0].Count.ShouldBe(4);
         // Time was never advanced; no spurious second POST should appear.
-        await Task.Delay(100);
+        // Waiting for the loop to park again is what the fixed sleep was
+        // approximating, and it also proves the loop got back there.
+        await parks.NextParkAsync();
         client.PostCount.ShouldBe(1);
     }
 
@@ -172,15 +229,16 @@ public class LogWriterTests
         // execution — but with FakeTimeProvider it's now reliable.
         var time = new FakeTimeProvider();
         var client = new RecordingClient();
-        await using var writer = NewWriter(client, time);
+        var parks = new FlusherParkWatcher();
+        await using var writer = NewWriter(client, time, parks: parks);
 
         await writer.WriteAsync(new WorkEvent { Level = "info", Message = "first" });
-        await SettleAsync();
+        await parks.ParkedWithBufferedAsync(1);
         time.Advance(TimeSpan.FromMilliseconds(200));
         await client.WaitForPostsAsync(expected: 1, timeout: TimeSpan.FromSeconds(2));
 
         await writer.WriteAsync(new WorkEvent { Level = "info", Message = "second" });
-        await SettleAsync();
+        await parks.ParkedWithBufferedAsync(1);
         time.Advance(TimeSpan.FromMilliseconds(200));
         await client.WaitForPostsAsync(expected: 2, timeout: TimeSpan.FromSeconds(2));
 
@@ -196,11 +254,21 @@ public class LogWriterTests
         // An idle timer must never produce empty network calls.
         var time = new FakeTimeProvider();
         var client = new RecordingClient();
-        await using var writer = NewWriter(client, time);
+        var parks = new FlusherParkWatcher();
+        await using var writer = NewWriter(client, time, parks: parks);
+
+        // The timer is created inside the loop, so advancing before the first
+        // park would move the clock past a timer that does not exist yet and
+        // the test would pass without ever exercising a tick.
+        await parks.NextParkAsync();
 
         // Advance multiple ticks worth of time with nothing written.
         time.Advance(TimeSpan.FromSeconds(2));
-        await Task.Delay(100);
+
+        // The loop parking again is the tick having been observed and the
+        // wait re-armed — a stronger statement than a real-time sleep, which
+        // could not tell "no POST" from "no tick".
+        await parks.NextParkAsync();
 
         client.PostCount.ShouldBe(0);
     }
