@@ -44,6 +44,15 @@ pub enum JobError {
         field: String,
         message: String,
     },
+    /// A patch field carried a value of the wrong JSON type (issue #569).
+    /// Distinct from `null`, which is the documented "clear this field"
+    /// signal — a wrong type is a caller error and must not be absorbed as
+    /// one, because absence widens behaviour (a cleared `timeout` inherits,
+    /// a cleared `dead_letter_replay_max_age` always allows replays).
+    InvalidType {
+        field: String,
+        expected: &'static str,
+    },
 }
 
 impl From<StatusCode> for JobError {
@@ -75,6 +84,18 @@ impl IntoResponse for JobError {
                 })),
             )
                 .into_response(),
+            Self::InvalidType { field, expected } => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_type",
+                    "field": field,
+                    "expected": expected,
+                    "message": format!(
+                        "Field '{field}' must be {expected}, or null to clear it."
+                    ),
+                })),
+            )
+                .into_response(),
         }
     }
 }
@@ -92,6 +113,97 @@ fn validated_timeout(value: Option<&str>) -> Result<Option<String>, JobError> {
             message,
         }
     })
+}
+
+/// Read a patch field that holds a string.
+///
+/// The whole point of the raw-JSON patch block is to tell "key absent" from
+/// "explicit null". The accessor-based reads it used to do could not tell
+/// "explicit null" from "wrong type" — both yield `None` — so `{"timeout": 42}`
+/// silently cleared the stored timeout (issue #569). Matching on
+/// [`serde_json::Value`] keeps `null` as the clear signal and turns everything
+/// else into a `400`.
+fn patch_string(value: &serde_json::Value, field: &str) -> Result<Option<String>, JobError> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(s) => Ok(Some(s.clone())),
+        _ => Err(JobError::InvalidType {
+            field: field.into(),
+            expected: "a string",
+        }),
+    }
+}
+
+/// Read a patch field that holds a non-negative integer (issue #569).
+///
+/// `as_u64()` rejected `"5"`, `-1`, `1.5` and `true` alike by returning `None`,
+/// which the old code read as "clear it". Values above `u32::MAX` are refused
+/// too rather than wrapping through an `as` cast.
+fn patch_u32(value: &serde_json::Value, field: &str) -> Result<Option<u32>, JobError> {
+    const EXPECTED: &str = "an integer between 0 and 4294967295";
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .map(Some)
+            .ok_or_else(|| JobError::InvalidType {
+                field: field.into(),
+                expected: EXPECTED,
+            }),
+        _ => Err(JobError::InvalidType {
+            field: field.into(),
+            expected: EXPECTED,
+        }),
+    }
+}
+
+/// Read a patch field that holds a boolean (issue #569). `"true"` and `1` are
+/// caller errors, not a request to clear the flag.
+fn patch_bool(value: &serde_json::Value, field: &str) -> Result<Option<bool>, JobError> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Bool(b) => Ok(Some(*b)),
+        _ => Err(JobError::InvalidType {
+            field: field.into(),
+            expected: "a boolean",
+        }),
+    }
+}
+
+/// Read the `tags` patch field (issue #569).
+///
+/// `null` clears the list — that is the patch semantics every other field
+/// follows. A non-array used to clear it as well; it is now a `400`. So is a
+/// non-string *item*: dropping those one by one stored fewer tags than the
+/// caller sent without ever saying so.
+///
+/// Blank items are still dropped and duplicates still collapse — that is
+/// normalisation of well-typed input, not absorption of a type error.
+fn patch_tags(value: &serde_json::Value, field: &str) -> Result<Vec<String>, JobError> {
+    let items = match value {
+        serde_json::Value::Null => return Ok(Vec::new()),
+        serde_json::Value::Array(items) => items,
+        _ => {
+            return Err(JobError::InvalidType {
+                field: field.into(),
+                expected: "an array of strings",
+            });
+        }
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        let s = item.as_str().ok_or_else(|| JobError::InvalidType {
+            field: field.into(),
+            expected: "an array of strings",
+        })?;
+        let trimmed = s.trim();
+        if !trimmed.is_empty() && !out.iter().any(|x| x == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Deserialize)]
@@ -413,8 +525,9 @@ pub async fn handle_create(
 /// `/v1/schedules`.
 ///
 /// Each field is optional; omitting one leaves the stored value untouched.
-/// To clear a field, send `null` explicitly (serde maps that to `None` and
-/// the column is overwritten with NULL).
+/// To clear a field, send `null` explicitly (the column is overwritten with
+/// NULL). A value of the wrong JSON type is a `400`, not a clear — see
+/// [`patch_string`] and issue #569.
 pub async fn handle_update(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
@@ -442,45 +555,36 @@ pub async fn handle_update(
     let obj = req
         .as_object()
         .ok_or(JobError::from(StatusCode::BAD_REQUEST))?;
+    // A wrong-typed value is a `400`, never a silent clear (issue #569): the
+    // helpers match on `Value::Null` rather than on an accessor's `Option`.
     if let Some(v) = obj.get("description") {
-        job.description = v.as_str().map(|s| s.to_string());
+        job.description = patch_string(v, "description")?;
     }
     if let Some(v) = obj.get("timeout") {
         // An explicit `null` still clears the field (patch semantics above); a
         // present string has to parse (issue #559).
-        job.timeout = validated_timeout(v.as_str())?;
+        job.timeout = validated_timeout(patch_string(v, "timeout")?.as_deref())?;
     }
     if let Some(v) = obj.get("max_retries") {
-        job.max_retries = v.as_u64().map(|n| n as u32);
+        job.max_retries = patch_u32(v, "max_retries")?;
     }
     if let Some(v) = obj.get("dead_letter_enabled") {
-        job.dead_letter_enabled = v.as_bool();
+        job.dead_letter_enabled = patch_bool(v, "dead_letter_enabled")?;
     }
     if let Some(v) = obj.get("dead_letter_retention") {
-        job.dead_letter_retention = v.as_str().map(|s| s.to_string());
+        job.dead_letter_retention = patch_string(v, "dead_letter_retention")?;
     }
     if let Some(v) = obj.get("dead_letter_operator_hint") {
-        job.dead_letter_operator_hint = v.as_str().map(|s| s.to_string());
+        job.dead_letter_operator_hint = patch_string(v, "dead_letter_operator_hint")?;
     }
     if let Some(v) = obj.get("dead_letter_replay_max_age") {
-        job.dead_letter_replay_max_age = v.as_str().map(|s| s.to_string());
+        job.dead_letter_replay_max_age = patch_string(v, "dead_letter_replay_max_age")?;
     }
     // Note: `metadata` is deliberately not patchable here — the reserved `__`
     // namespace is scheduler-owned (see `handle_create`). If metadata patching
     // is ever added, it must run `strip_reserved_metadata_map` first.
     if let Some(v) = obj.get("tags") {
-        let mut out: Vec<String> = Vec::new();
-        if let Some(arr) = v.as_array() {
-            for item in arr {
-                if let Some(s) = item.as_str() {
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() && !out.iter().any(|x| x == trimmed) {
-                        out.push(trimmed.to_string());
-                    }
-                }
-            }
-        }
-        job.tags = out;
+        job.tags = patch_tags(v, "tags")?;
     }
     job.updated_at = Utc::now();
 
@@ -1505,6 +1609,159 @@ mod tests {
                 .unwrap()
                 .timeout,
             None
+        );
+    }
+
+    // --- wrong-typed patch values on PUT /v1/jobs/{job_key} (issue #569) ---
+
+    /// Seed a job with every patchable field populated, so a test can assert
+    /// that a rejected patch left *all* of them alone.
+    fn seed_full_job(store: &DynStore, job_key: &str) {
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: job_key.into(),
+                description: Some("nightly rollup".into()),
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("2h".into()),
+                max_retries: Some(3),
+                dead_letter_enabled: Some(true),
+                dead_letter_retention: Some("14d".into()),
+                dead_letter_operator_hint: Some("page billing".into()),
+                dead_letter_replay_max_age: Some("7d".into()),
+                tags: vec!["ops".into(), "billing".into()],
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_job_with_wrong_typed_value_returns_400_and_keeps_the_stored_value() {
+        // A wrong type used to read as `null` — the accessor returns `None`
+        // either way — so `{"timeout": 42}` silently cleared the timeout. And
+        // absence is not neutral: a cleared timeout inherits, a cleared
+        // dead_letter_replay_max_age always allows replays. Reject instead.
+        let cases: &[(&str, serde_json::Value)] = &[
+            ("description", serde_json::json!(42)),
+            ("timeout", serde_json::json!(42)),
+            ("timeout", serde_json::json!(true)),
+            ("max_retries", serde_json::json!("5")),
+            ("max_retries", serde_json::json!(-1)),
+            ("max_retries", serde_json::json!(1.5)),
+            ("max_retries", serde_json::json!(true)),
+            // u32::MAX + 1: refused rather than wrapped through an `as` cast.
+            ("max_retries", serde_json::json!(4_294_967_296u64)),
+            ("dead_letter_enabled", serde_json::json!("true")),
+            ("dead_letter_enabled", serde_json::json!(1)),
+            ("dead_letter_retention", serde_json::json!(14)),
+            ("dead_letter_operator_hint", serde_json::json!([])),
+            ("dead_letter_replay_max_age", serde_json::json!(7)),
+            ("tags", serde_json::json!("ops")),
+            ("tags", serde_json::json!({})),
+            // An array with a non-string item: silently storing two of the
+            // three tags the caller sent is the same defect in miniature.
+            ("tags", serde_json::json!(["ops", 42, "billing"])),
+        ];
+
+        for (field, bad) in cases {
+            let store = make_store();
+            seed_full_job(&store, "api:job");
+            let state = make_state(vec![], Arc::clone(&store));
+
+            let mut patch = serde_json::Map::new();
+            patch.insert((*field).to_string(), bad.clone());
+
+            let (status, body) = send_json(
+                server_router(state),
+                "PUT",
+                "/v1/jobs/api:job",
+                serde_json::Value::Object(patch),
+            )
+            .await;
+
+            assert_eq!(status, 400, "{field} = {bad} must be rejected");
+            assert_eq!(body["error"], "invalid_type", "{field} = {bad}");
+            assert_eq!(body["field"], *field, "{field} = {bad}");
+            assert!(
+                body["message"].as_str().unwrap_or_default().contains(field),
+                "message should name the field, got {:?}",
+                body["message"]
+            );
+
+            let stored = store.get_job_definition("api:job").unwrap().unwrap();
+            assert_eq!(stored.description.as_deref(), Some("nightly rollup"));
+            assert_eq!(stored.timeout.as_deref(), Some("2h"));
+            assert_eq!(stored.max_retries, Some(3));
+            assert_eq!(stored.dead_letter_enabled, Some(true));
+            assert_eq!(stored.dead_letter_retention.as_deref(), Some("14d"));
+            assert_eq!(
+                stored.dead_letter_operator_hint.as_deref(),
+                Some("page billing")
+            );
+            assert_eq!(stored.dead_letter_replay_max_age.as_deref(), Some("7d"));
+            assert_eq!(stored.tags, vec!["ops".to_string(), "billing".to_string()]);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_job_with_explicit_null_clears_every_patch_field() {
+        // The counterpart of the test above: `null` is still the documented
+        // clear signal on every field, including `tags`.
+        let store = make_store();
+        seed_full_job(&store, "api:job");
+        let state = make_state(vec![], Arc::clone(&store));
+
+        let (status, _) = send_json(
+            server_router(state),
+            "PUT",
+            "/v1/jobs/api:job",
+            serde_json::json!({
+                "description": null,
+                "timeout": null,
+                "max_retries": null,
+                "dead_letter_enabled": null,
+                "dead_letter_retention": null,
+                "dead_letter_operator_hint": null,
+                "dead_letter_replay_max_age": null,
+                "tags": null,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        let stored = store.get_job_definition("api:job").unwrap().unwrap();
+        assert_eq!(stored.description, None);
+        assert_eq!(stored.timeout, None);
+        assert_eq!(stored.max_retries, None);
+        assert_eq!(stored.dead_letter_enabled, None);
+        assert_eq!(stored.dead_letter_retention, None);
+        assert_eq!(stored.dead_letter_operator_hint, None);
+        assert_eq!(stored.dead_letter_replay_max_age, None);
+        assert!(stored.tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_job_still_normalises_well_typed_tags() {
+        // Trimming, dropping blanks and collapsing duplicates is normalisation
+        // of well-typed input — unchanged by the type check.
+        let store = make_store();
+        seed_full_job(&store, "api:job");
+        let state = make_state(vec![], Arc::clone(&store));
+
+        let (status, _) = send_json(
+            server_router(state),
+            "PUT",
+            "/v1/jobs/api:job",
+            serde_json::json!({ "tags": ["  ops  ", "", "ops", "billing"] }),
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            store.get_job_definition("api:job").unwrap().unwrap().tags,
+            vec!["ops".to_string(), "billing".to_string()]
         );
     }
 
