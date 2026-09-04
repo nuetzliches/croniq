@@ -28,15 +28,44 @@ internal sealed class LogWriter : ILogWriter
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Task _flusherTask;
 
+    private readonly Action<int>? _onFlusherParked;
+
     private int _disposed;
 
+    /// <param name="onFlusherParked">
+    /// Test-only hook, invoked immediately before the flusher parks on
+    /// <see cref="Task.WhenAny(Task[])"/> — the moment at which every command
+    /// written so far has been drained into the batch buffer <em>and</em> the
+    /// <see cref="PeriodicTimer"/>'s wait is registered against
+    /// <paramref name="timeProvider"/>. The argument is the number of events
+    /// currently buffered.
+    /// <para>
+    /// A test driving a <c>FakeTimeProvider</c> has to establish exactly that
+    /// state before it calls <c>Advance</c>, and it cannot be observed from
+    /// outside (issue #570). The timer is constructed inside the loop, so an
+    /// <c>Advance</c> that lands first schedules the next tick past a clock
+    /// nothing will move again; one that lands before the event is drained
+    /// ticks an empty buffer, which the tick branch correctly skips. Either
+    /// way no POST is ever produced and no amount of waiting afterwards
+    /// recovers it — fake time only moves when the test moves it. A
+    /// real-time sleep is a bet on runner scheduling; this is not.
+    /// </para>
+    /// <para>
+    /// Passed through the constructor rather than exposed as an event so it is
+    /// wired before the loop starts: the loop can park before a subscriber
+    /// attached, and in a test where nothing else wakes it that first park is
+    /// the only one. Null in production — the cost is a null-check per loop
+    /// iteration.
+    /// </para>
+    /// </param>
     public LogWriter(
         ICroniqClient client,
         string executionId,
         LogEnrichment enrichment,
         LogWriterOptions options,
         ILogger logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Action<int>? onFlusherParked = null)
     {
         _client = client;
         _executionId = executionId;
@@ -50,6 +79,7 @@ internal sealed class LogWriter : ILogWriter
         // conformance scenario's `Task.WhenAny` read-bias is impossible
         // to verify without controllable time).
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _onFlusherParked = onFlusherParked;
 
         _channel = Channel.CreateBounded<Command>(new BoundedChannelOptions(options.ChannelCapacity)
         {
@@ -149,6 +179,15 @@ internal sealed class LogWriter : ILogWriter
             {
                 tickTask ??= timer.WaitForNextTickAsync(shutdownCt).AsTask();
                 var readTask = _channel.Reader.WaitToReadAsync(shutdownCt).AsTask();
+
+                // Both waits are registered and the buffer holds everything
+                // read so far — the state a fake-clock test needs before it
+                // advances time. Raised before the await rather than after it
+                // so a subscriber cannot observe a half-armed loop; the tick
+                // completes `tickTask` whether or not anyone is awaiting it
+                // yet, so there is no window to lose.
+                _onFlusherParked?.Invoke(buffer.Count);
+
                 var winner = await Task.WhenAny(readTask, tickTask).ConfigureAwait(false);
 
                 if (winner == readTask)
