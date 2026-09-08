@@ -532,6 +532,31 @@ shell-runner:
     - /backups:/backups
 ```
 
+**Dropping the runner into your own tool image.** The compose service above
+runs the runner inside Croniq's own image, which only works when the commands
+it runs live there too. The more common shape is the reverse: the tooling is in
+*your* image, so the runner binary has to go there. Since v0.38.0 the release
+publishes statically linked musl archives for exactly that (issue #577) — the
+receiving image needs no runtime libraries for the runner at all:
+
+```dockerfile
+FROM alpine:3.21
+RUN apk add --no-cache postgresql17-client
+
+# x86_64-unknown-linux-musl / aarch64-unknown-linux-musl are both published.
+ADD https://github.com/nuetzliches/croniq/releases/download/v0.38.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
+RUN tar xzf /tmp/croniq.tar.gz -C /usr/local/bin croniq-shell-runner  && rm /tmp/croniq.tar.gz
+
+ENTRYPOINT ["croniq-shell-runner"]
+```
+
+The glibc archives — and the binaries inside `ghcr.io/nuetzliches/croniq` — are
+dynamically linked, so they do **not** run on Alpine, and `gcompat` does not
+close the gap: it gets the shared libraries resolved and then fails on
+`gnu_get_libc_version` / `__res_init`, which it does not implement. Use the
+`*-unknown-linux-musl` archive on any musl host; `install.sh` detects the
+host's libc and picks it for you.
+
 **Trust model.** Anyone with write access to the Croniqfile can run arbitrary
 commands as the shell-runner process. `__runner_exec` is stamped by the DSL
 compiler alone: every API and MCP path that accepts caller metadata strips the

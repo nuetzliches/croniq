@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Statically linked musl release artefacts
+  ([#577](https://github.com/nuetzliches/croniq/issues/577)).** The release
+  matrix gains `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`, so
+  `croniq-*-unknown-linux-musl.tar.gz` now ships alongside the glibc archives.
+
+  This exists for `croniq-shell-runner`. That binary is the one that has to be
+  deployed *into someone else's* image — it runs the operator's tooling, and the
+  tooling is in the operator's image — and a large share of tool images are
+  Alpine-based. Every published Linux binary was dynamically linked against
+  glibc, and `gcompat` does not close the gap: with `gcompat` alone the loader
+  cannot find `libgcc_s.so.1` and eleven `_Unwind_*` relocations fail; adding
+  `libgcc` gets past that and the binary still refuses to start on
+  `gnu_get_libc_version` and `__res_init`, which are glibc's own version and
+  resolver entry points and are not implemented there. So the shim route was a
+  dead end, and the alternatives were rebasing the tool image on a glibc distro,
+  building the runner from source downstream, or keeping the bespoke runner the
+  shell runner exists to retire.
+
+  The musl legs build on a native runner per architecture rather than
+  cross-compiling: the closure has C in it (`ring`, plus the bundled SQLite
+  behind `croniq-server`), `musl-tools` provides a native `musl-gcc` on both
+  arches, and there is no apt-installable aarch64-musl cross toolchain. Only
+  `CC_<target>` is pointed at `musl-gcc` — overriding the *linker* as well
+  produces a binary carrying `/lib/ld-musl-*.so.1` as its ELF interpreter,
+  which would need musl installed in the receiving image and defeat the point.
+  Left alone, rustc links its own self-contained musl and emits a `static-pie`
+  binary that needs nothing at all. A release-blocking check asserts the absence
+  of a `PT_INTERP` segment for all five binaries, because `ldd` reports
+  "statically linked" for both shapes and cannot tell them apart.
+
+  `install.sh` now detects the host's libc and downloads the matching archive,
+  rather than assuming glibc on every Linux — on Alpine it previously installed
+  a binary that could not start. `CRONIQ_TARGET` overrides the detection, and a
+  failed download says what happened instead of leaving `curl`'s exit code to
+  speak for itself.
+
 ### Fixed
 
 - **A cancelled or timed-out shell job no longer leaves its command running

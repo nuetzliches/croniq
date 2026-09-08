@@ -25,6 +25,16 @@
 //!                               in the UI. Not routing-relevant. Convention:
 //!                               `key=value` strings (`env=prod`, `team=ops`).
 //!
+//! Deployment (issue #577): this binary usually has to run *inside* the image
+//! that carries the tooling it invokes, not inside Croniq's own image. The
+//! release publishes statically linked `*-unknown-linux-musl` archives for
+//! that: they need no runtime libraries, so they drop into an Alpine-based
+//! tool image as-is. The glibc archives and the binaries inside
+//! `ghcr.io/nuetzliches/croniq` are dynamically linked and will not start on
+//! musl — `gcompat` resolves the libraries and then fails on
+//! `gnu_get_libc_version` / `__res_init`. See the "Generic shell runner"
+//! section of the README for a Dockerfile.
+//!
 //! Cancel and timeout semantics (issue #576): the runner terminates the
 //! command's process group rather than orphaning it. Cancelling an execution
 //! in the UI sends the group SIGTERM and, if it is still there 5 s later,

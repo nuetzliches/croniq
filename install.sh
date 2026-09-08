@@ -6,6 +6,9 @@
 #   CRONIQ_VERSION   — specific version to install (default: latest)
 #   INSTALL_DIR      — where to place binaries (default: /usr/local/bin)
 #   CRONIQ_BINARIES  — space-separated list (default: "croniq-server croniq croniq-mcp")
+#   CRONIQ_TARGET    — override the auto-detected target triple, e.g.
+#                      x86_64-unknown-linux-musl. Only needed when the
+#                      detection below picks the wrong libc for your host.
 #
 # Flags (pass after `sh -s --` when piping from curl):
 #   --insecure-skip-verify — proceed without SHA256 verification. Only for
@@ -36,7 +39,24 @@ OS=$(uname -s)
 ARCH=$(uname -m)
 
 case "$OS" in
-  Linux)  os_part="unknown-linux-gnu" ;;
+  Linux)
+    # glibc vs musl is not a preference on Linux, it is a hard requirement:
+    # the glibc build does not start on a musl system at all (it needs
+    # `gnu_get_libc_version` and `__res_init`, which gcompat does not
+    # implement), and the musl build is static so it runs on either. Detect
+    # the host's libc rather than guessing (issue #577).
+    os_part="unknown-linux-gnu"
+    for _musl_ld in /lib/ld-musl-*.so.1; do
+      if [ -e "$_musl_ld" ]; then
+        os_part="unknown-linux-musl"
+      fi
+      break
+    done
+    unset _musl_ld
+    if [ "$os_part" = "unknown-linux-gnu" ] && ldd --version 2>&1 | grep -qi musl; then
+      os_part="unknown-linux-musl"
+    fi
+    ;;
   Darwin) os_part="apple-darwin" ;;
   *)
     echo "Unsupported operating system: $OS" >&2
@@ -53,7 +73,7 @@ case "$ARCH" in
     ;;
 esac
 
-TARGET="${arch_part}-${os_part}"
+TARGET="${CRONIQ_TARGET:-${arch_part}-${os_part}}"
 
 # ── Resolve version ──────────────────────────────────────────────────────────
 
@@ -95,7 +115,24 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading Croniq v${CRONIQ_VERSION} for ${TARGET}..."
-curl -fsSL --progress-bar "${BASE_URL}/${ARCHIVE}" -o "$TMP/$ARCHIVE"
+if ! curl -fsSL --progress-bar "${BASE_URL}/${ARCHIVE}" -o "$TMP/$ARCHIVE"; then
+  echo "Error: ${BASE_URL}/${ARCHIVE} could not be downloaded." >&2
+  case "$TARGET" in
+    *-unknown-linux-musl)
+      # musl artefacts were added in #577; older tags only carry glibc ones.
+      # The glibc build will not run here, so say what the options are rather
+      # than silently installing something that cannot start.
+      echo "musl archives are published from v0.38.0 onwards. This host uses musl," >&2
+      echo "so an earlier version has to be built from source — or, if you know the" >&2
+      echo "host can run glibc binaries, override the detection:" >&2
+      echo "  CRONIQ_TARGET=${arch_part}-unknown-linux-gnu ... | sh" >&2
+      ;;
+    *)
+      echo "Check that v${CRONIQ_VERSION} exists and publishes an archive for ${TARGET}." >&2
+      ;;
+  esac
+  exit 1
+fi
 
 # Verify the SHA256 checksum. Verification is fail-closed: a missing
 # SHA256SUMS file or a missing sha256 tool aborts the install instead of
