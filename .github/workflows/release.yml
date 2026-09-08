@@ -44,6 +44,23 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+          # Statically linked musl builds, so the runner binaries can be
+          # dropped into someone else's image without that image having to be
+          # glibc-based (issue #577). `croniq-shell-runner` exists precisely to
+          # be deployed *into* a tool image, and a large share of those are
+          # Alpine; gcompat does not close the gap (the binaries need
+          # `gnu_get_libc_version` and `__res_init`, which it does not
+          # implement), so a musl artefact is the only route.
+          #
+          # Built on a native runner per arch rather than cross-compiled: the
+          # closure contains C code (`ring`, plus the bundled SQLite for the
+          # server), `musl-tools` ships a native `musl-gcc` on both arches, and
+          # there is no apt-installable aarch64-musl cross toolchain. The arm64
+          # runner is already in use by this workflow's docker job.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
@@ -63,6 +80,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-unknown-linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          # The runner's stock `cc` is glibc's, and the closure has C in it
+          # (`ring`, and the bundled SQLite behind `croniq-server`), so the C
+          # compiler has to be the musl one or a nominally-musl build ends up
+          # carrying glibc headers.
+          #
+          # Deliberately *not* setting the linker: overriding it with musl-gcc
+          # yields a binary with an ELF interpreter (`/lib/ld-musl-*.so.1`),
+          # which needs musl installed in the receiving image. Left alone,
+          # rustc links against its own self-contained musl and produces a
+          # static-pie binary that needs nothing at all — which is the entire
+          # point of publishing this target. The check below enforces that.
+          target_lower=$(echo "${{ matrix.target }}" | tr '-' '_')
+          echo "CC_${target_lower}=musl-gcc" >> $GITHUB_ENV
 
       # Pin the workspace version to the pushed tag so every built binary
       # reports the right version via `--version` (CARGO_PKG_VERSION).
@@ -104,6 +140,29 @@ jobs:
             --bin croniq-mcp \
             --bin croniq-demo-runner \
             --bin croniq-shell-runner
+
+      # The whole value of the musl artefact is that it needs nothing from the
+      # image it lands in. Anything that reintroduces a runtime dependency —
+      # a new crate linking a shared library, or a linker override — would ship
+      # an artefact that looks right and fails to start, so fail the release
+      # here instead.
+      #
+      # The presence of a PT_INTERP segment is the test, not `ldd`: `ldd`
+      # reports "statically linked" even for a musl binary that carries
+      # `/lib/ld-musl-*.so.1` as its interpreter, so it cannot tell the two
+      # apart.
+      - name: Verify the musl binaries are statically linked
+        if: endsWith(matrix.target, '-unknown-linux-musl')
+        run: |
+          for bin in croniq-server croniq croniq-mcp croniq-demo-runner croniq-shell-runner; do
+            path="target/${{ matrix.target }}/release/$bin"
+            file "$path"
+            if readelf -l "$path" | grep -q INTERP; then
+              echo "::error::$bin needs a dynamic loader — the musl artefact must be static-pie"
+              readelf -l "$path" | grep -A1 INTERP
+              exit 1
+            fi
+          done
 
       - name: Package (unix)
         if: runner.os != 'Windows'
