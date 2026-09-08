@@ -24,7 +24,16 @@
 //!   `RUNNER_TAGS`             — comma-separated free-form tags for filtering
 //!                               in the UI. Not routing-relevant. Convention:
 //!                               `key=value` strings (`env=prod`, `team=ops`).
+//!
+//! Cancel and timeout semantics (issue #576): the runner terminates the
+//! command's process group rather than orphaning it. Cancelling an execution
+//! in the UI sends the group SIGTERM and, if it is still there 5 s later,
+//! SIGKILL; the job's own `timeout` is enforced here the same way. So a
+//! command gets a window to clean up but does not outlive its execution. On
+//! Windows only the spawned process itself is terminated — a process it
+//! spawned in turn survives.
 
+use croniq_execution::retry::parse_duration;
 use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id};
 use croniq_shell_runner::exec;
 use tracing::info;
@@ -124,7 +133,31 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
     // execution is marked complete (#115 / #117 / #118).
     let writer = ctx.log_writer();
 
-    let outcome = exec::run(&exec, &writer)
+    // Enforce the execution's own `timeout` (issue #576). The server sends it
+    // as a duration string and, until #576, nobody acted on it: the runner
+    // ignored it, and the server-side stale-claim reaper documents itself as a
+    // safety net for a *lost* runner rather than as the primary mechanism — so
+    // a hung command was reaped and requeued while its first copy kept running.
+    //
+    // A value that does not parse is not worth failing the job over (the reaper
+    // is still behind it) but is worth saying out loud, because it silently
+    // removes the only in-process limit on the command.
+    let timeout = match parse_duration(&ctx.timeout) {
+        // Zero means "no limit", not "kill it immediately".
+        Some(d) if d.is_zero() => None,
+        Some(d) => Some(d),
+        None => {
+            tracing::warn!(
+                job_key = %ctx.job_key,
+                execution_id = %ctx.execution_id,
+                timeout = %ctx.timeout,
+                "could not parse the execution timeout — running the command unbounded; the                  server-side stale-claim reaper is the only remaining backstop"
+            );
+            None
+        }
+    };
+
+    let outcome = exec::run(&exec, &writer, timeout)
         .await
         .map_err(|e| HandlerError::msg(format!("exec failed: {e}")))?;
 

@@ -17,14 +17,37 @@
 //! need more set [`ENV_PASSTHROUGH_VAR`]. In the same change, a `user`
 //! directive the runner cannot honour fails the job instead of silently
 //! running it with the runner's own (possibly root) privileges.
+//!
+//! As of #576 the subprocess is no longer detached from the execution that owns
+//! it, so "cancel" and `timeout` mean what the UI says they mean:
+//!
+//! - The command is spawned with `kill_on_drop(true)` and, on unix, into its
+//!   own process group. A server-issued cancel aborts the handler future, which
+//!   drops [`run`]'s locals -- that now terminates the command rather than
+//!   orphaning it. The process group is what makes this hold for
+//!   `runner shell { ... }`, where the direct child is `sh -c` and the
+//!   operator's command is a grandchild that a kill aimed at the direct child
+//!   never reaches.
+//! - [`run`] enforces the execution's `timeout` itself: SIGTERM to the group,
+//!   [`TERM_GRACE_SECS`] seconds to clean up, then SIGKILL. The server-side
+//!   stale-claim reaper describes itself as a safety net for a *lost* runner and
+//!   assumed the runner did this; until #576 nobody did, so a hung command was
+//!   reaped and requeued while its first copy kept running.
+//! - The pipe readers are aborted with the handler instead of being left to
+//!   drain a surviving child's pipes into an already-acked execution.
+//!
+//! Windows caveat: no process-group equivalent is wired up, so termination
+//! reaches the spawned process only -- a process it spawned in turn survives.
 
 use std::collections::VecDeque;
 use std::process::Stdio;
+use std::time::Duration;
 
 use croniq_config::compile::RunnerExec;
 use croniq_runner_sdk::{HandlerError, LogWriter};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 
 /// How many lines of stdout AND stderr to retain in the rolling tail
 /// buffer for failure-snippet assembly. The previous snippet was 400
@@ -37,6 +60,26 @@ const TAIL_BUFFER_LINES: usize = 50;
 /// so dead-letter UI snippets look identical to v0.11.0.
 const FAILURE_SNIPPET_CHARS: usize = 400;
 
+/// How long a terminated command gets between SIGTERM and SIGKILL.
+///
+/// A command that cleans up after itself -- releasing a lock, removing a
+/// partial artefact -- should get the chance to, which is why termination is
+/// not a straight kill (issue #576). Kept short because this grace is spent
+/// *after* the operator's own `timeout` has already elapsed: the job is late by
+/// definition at this point, and the server's stale-claim grace is ticking.
+const TERM_GRACE_SECS: u64 = 5;
+
+/// How long to keep draining the pipes after the command has exited.
+///
+/// Normally this is instantaneous: the child's exit closes its end of the
+/// pipes and both readers hit EOF. It is not instantaneous when the job
+/// backgrounded something that inherited the pipes, which keeps them open with
+/// nobody left to write -- an unbounded wait there would wedge the handler (and
+/// with it the ack and the inflight slot) forever. Generous, because the other
+/// reason a reader is still busy is legitimate: a slow server applying
+/// backpressure through the `LogWriter`'s bounded channel.
+const READER_DRAIN_GRACE_SECS: u64 = 30;
+
 #[derive(Debug)]
 pub struct Outcome {
     pub status: std::process::ExitStatus,
@@ -46,6 +89,11 @@ pub struct Outcome {
     pub stdout_tail: VecDeque<String>,
     /// Last [`TAIL_BUFFER_LINES`] lines of stderr, same semantics.
     pub stderr_tail: VecDeque<String>,
+    /// True when [`run`] terminated the command because the execution's
+    /// `timeout` elapsed (issue #576). `status` cannot carry this on its own:
+    /// "killed by a signal" is also what an operator killing the command by
+    /// hand looks like, and the dead-letter view has to tell the two apart.
+    pub timed_out: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +114,13 @@ pub enum RunError {
 
     #[error("failed while waiting for subprocess: {0}")]
     Wait(#[source] std::io::Error),
+
+    #[error(
+        "the command was still running {grace_secs}s after SIGKILL (pid {pid:?}): the process is \
+         blocked in an uninterruptible syscall -- a hung network filesystem is the usual cause -- \
+         and cannot be terminated from here"
+    )]
+    Unkillable { pid: Option<u32>, grace_secs: u64 },
 
     #[error("`runner exec` requires a non-empty `args` list")]
     EmptyArgv,
@@ -288,7 +343,282 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
         }
     }
 
+    // Tie the subprocess's lifetime to the execution that owns it (issue #576).
+    //
+    // `kill_on_drop` is the cancel path: a server cancel aborts the handler
+    // future, which drops the `Child`. Tokio's default is to detach it into the
+    // orphan queue instead, so the command used to outlive the execution that
+    // had just been marked cancelled.
+    cmd.kill_on_drop(true);
+
+    // ... and give the job its own process group, so termination can reach the
+    // whole tree. For `runner shell { ... }` the direct child is `sh -c` and the
+    // operator's command is *its* child; a kill aimed at the direct child kills
+    // the shell and leaves the command running. Signalling the group does not.
+    // Detaching from the runner's own group is a bonus: a Ctrl-C in an
+    // interactive runner no longer forwards SIGINT into every running job.
+    #[cfg(unix)]
+    cmd.process_group(0);
+
     Ok(cmd)
+}
+
+/// Owns the spawned child for the lifetime of one [`run`] call and terminates
+/// its process group if that call is cancelled out from under it (issue #576).
+///
+/// The child lives in here rather than in a local because `Drop` needs to
+/// *move* it into the task that finishes the SIGTERM -> grace -> SIGKILL
+/// sequence: holding an unreaped `Child` keeps its pid -- and therefore the
+/// process group id, which is that same number -- allocated, so the delayed
+/// SIGKILL cannot land on an unrelated process that recycled the pid meanwhile.
+struct Job {
+    /// `Some` until `Drop` takes it. Only `Drop` ever takes it, so every other
+    /// access can unwrap.
+    child: Option<Child>,
+    /// The group to signal, `Some` only while the child is known alive.
+    /// Cleared by [`Job::reaped`] once `wait()` has returned, both because
+    /// there is then nothing left to terminate and because a reaped pid may be
+    /// recycled -- signalling it later would hit a stranger.
+    #[cfg(unix)]
+    pgid: Option<i32>,
+}
+
+impl Job {
+    fn new(child: Child) -> Self {
+        // `process_group(0)` makes the child a group leader, so its pid is the
+        // pgid. `id()` is `None` only once the child has been reaped, which
+        // cannot have happened yet here.
+        #[cfg(unix)]
+        let pgid = child.id().map(|pid| pid as i32);
+        Self {
+            child: Some(child),
+            #[cfg(unix)]
+            pgid,
+        }
+    }
+
+    fn child(&mut self) -> &mut Child {
+        self.child
+            .as_mut()
+            .expect("child is taken only in Drop, which ends this Job")
+    }
+
+    /// Record that `wait()` has reaped the child: disarms the drop guard.
+    fn reaped(&mut self) {
+        #[cfg(unix)]
+        {
+            self.pgid = None;
+        }
+    }
+
+    /// Ask the command to stop, giving it the chance to clean up first.
+    fn request_stop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            signal_group(pgid, libc::SIGTERM);
+            return;
+        }
+        // Windows, or a child already reaped: the best available reach is the
+        // spawned process itself.
+        let _ = self.child().start_kill();
+    }
+
+    /// Stop the command whether it likes it or not.
+    fn kill_now(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            signal_group(pgid, libc::SIGKILL);
+        }
+        let _ = self.child().start_kill();
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        let Some(child) = self.child.take() else {
+            return;
+        };
+        #[cfg(unix)]
+        {
+            let Some(pgid) = self.pgid.take() else {
+                // Already reaped by `run` -- the normal-completion path, and
+                // there is nothing to signal.
+                return;
+            };
+            // A cancelled command deserves the same courtesy as a timed-out
+            // one, so this is SIGTERM and not a kill. `Drop` cannot await the
+            // grace period, so the escalation and the reap are handed to a
+            // detached task -- which also keeps `child` alive, and with it the
+            // pid, until the SIGKILL has been sent.
+            signal_group(pgid, libc::SIGTERM);
+            tracing::info!(
+                pgid,
+                grace_secs = TERM_GRACE_SECS,
+                "execution cancelled -- terminating the command's process group"
+            );
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    let mut child = child;
+                    handle.spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(TERM_GRACE_SECS)).await;
+                        signal_group(pgid, libc::SIGKILL);
+                        let _ = child.wait().await;
+                    });
+                }
+                Err(_) => {
+                    // No runtime left to schedule the grace period on (the
+                    // process is shutting down). Kill now: skipping SIGTERM's
+                    // courtesy window is better than leaking the group.
+                    signal_group(pgid, libc::SIGKILL);
+                    // `kill_on_drop(true)` reaps the direct child as `child`
+                    // goes out of scope here.
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // No group to signal; `kill_on_drop(true)` terminates the spawned
+            // process as `child` goes out of scope here.
+            drop(child);
+        }
+    }
+}
+
+/// Send `sig` to the process group led by `pgid`.
+///
+/// `ESRCH` is the expected, uninteresting outcome once the group is empty --
+/// every caller races a command that may have just exited on its own -- so
+/// only anything else is worth a log line.
+#[cfg(unix)]
+fn signal_group(pgid: i32, sig: i32) {
+    // SAFETY: `killpg` is a thin syscall wrapper with no memory contract. The
+    // pgid comes from a child this process spawned into its own group and is
+    // cleared as soon as that child is reaped, so the call either reaches that
+    // group or fails with ESRCH.
+    if unsafe { libc::killpg(pgid, sig) } != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::ESRCH) {
+            tracing::warn!(pgid, sig, error = %err, "failed to signal the job's process group");
+        }
+    }
+}
+
+/// The two pipe-reader tasks, tied to the lifetime of the [`run`] call.
+///
+/// Dropping a `JoinHandle` detaches its task, so before #576 a cancelled
+/// handler left both readers draining the surviving child's pipes and pushing
+/// log events into an execution the dispatch loop had already acked and
+/// drained. The handles stay owned here -- including while [`Readers::join`]
+/// awaits them -- so a cancel at any point aborts them.
+struct Readers {
+    stdout: JoinHandle<std::io::Result<VecDeque<String>>>,
+    stderr: JoinHandle<std::io::Result<VecDeque<String>>>,
+}
+
+impl Readers {
+    async fn join(&mut self) -> (VecDeque<String>, VecDeque<String>) {
+        let out = tail_or_empty((&mut self.stdout).await, Stream::Stdout);
+        let err = tail_or_empty((&mut self.stderr).await, Stream::Stderr);
+        (out, err)
+    }
+}
+
+impl Drop for Readers {
+    fn drop(&mut self) {
+        // A no-op for a task that already finished, which is the normal case.
+        self.stdout.abort();
+        self.stderr.abort();
+    }
+}
+
+/// Unwrap a reader task's result down to its tail buffer.
+///
+/// A reader that errored or panicked costs the failure snippet, not the
+/// execution: the exit status is what decides success, and it is already in
+/// hand by the time this runs.
+fn tail_or_empty(
+    joined: Result<std::io::Result<VecDeque<String>>, tokio::task::JoinError>,
+    stream: Stream,
+) -> VecDeque<String> {
+    match joined {
+        Ok(Ok(tail)) => tail,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                stream = stream.tracing_target(),
+                error = %e,
+                "pipe reader errored -- tail buffer may be incomplete"
+            );
+            VecDeque::new()
+        }
+        Err(e) => {
+            tracing::warn!(
+                stream = stream.tracing_target(),
+                error = %e,
+                "pipe reader task panicked"
+            );
+            VecDeque::new()
+        }
+    }
+}
+
+/// Wait for the command to exit, enforcing `timeout` if one is set (#576).
+///
+/// On expiry the command's process group gets SIGTERM, [`TERM_GRACE_SECS`]
+/// seconds to exit on its own, then SIGKILL. Either way the child is reaped
+/// before returning, so the caller's [`Job`] drop guard disarms and the pid
+/// is never signalled again.
+///
+/// A zero or absent `timeout` means unbounded -- the pre-#576 behaviour, and
+/// still the right reading of "no limit was configured".
+async fn wait_or_terminate(
+    job: &mut Job,
+    timeout: Option<Duration>,
+) -> Result<(std::process::ExitStatus, bool), RunError> {
+    let Some(limit) = timeout.filter(|d| !d.is_zero()) else {
+        let status = job.child().wait().await.map_err(RunError::Wait)?;
+        job.reaped();
+        return Ok((status, false));
+    };
+
+    if let Ok(status) = tokio::time::timeout(limit, job.child().wait()).await {
+        let status = status.map_err(RunError::Wait)?;
+        job.reaped();
+        return Ok((status, false));
+    }
+
+    tracing::warn!(
+        timeout_secs = limit.as_secs_f64(),
+        grace_secs = TERM_GRACE_SECS,
+        "execution timeout elapsed -- terminating the command"
+    );
+    let grace = Duration::from_secs(TERM_GRACE_SECS);
+    job.request_stop();
+    let status = match tokio::time::timeout(grace, job.child().wait()).await {
+        Ok(status) => status.map_err(RunError::Wait)?,
+        Err(_) => {
+            tracing::warn!(
+                grace_secs = TERM_GRACE_SECS,
+                "command ignored SIGTERM -- killing it"
+            );
+            let pid = job.child().id();
+            job.kill_now();
+            match tokio::time::timeout(grace, job.child().wait()).await {
+                Ok(status) => status.map_err(RunError::Wait)?,
+                // Deliberately leaves the drop guard armed: the caller will
+                // report a failure and free the slot, and `Job::drop` keeps
+                // trying in the background rather than wedging the handler on
+                // a process the kernel will not let go of.
+                Err(_) => {
+                    return Err(RunError::Unkillable {
+                        pid,
+                        grace_secs: TERM_GRACE_SECS,
+                    });
+                }
+            }
+        }
+    };
+    job.reaped();
+    Ok((status, true))
 }
 
 /// Spawn the subprocess and stream stdout / stderr line-by-line through
@@ -310,7 +640,11 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
 /// bounded channel back through the reader → OS pipe → child process
 /// `write()`, which is the safe degraded mode (vs. v0.11.0's pattern-B
 /// per-line `ctx.log().await` deadlock potential, per issue #115).
-pub async fn run(exec: &RunnerExec, writer: &LogWriter) -> Result<Outcome, RunError> {
+pub async fn run(
+    exec: &RunnerExec,
+    writer: &LogWriter,
+    timeout: Option<Duration>,
+) -> Result<Outcome, RunError> {
     let mut cmd = build_command(exec)?;
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -324,33 +658,32 @@ pub async fn run(exec: &RunnerExec, writer: &LogWriter) -> Result<Outcome, RunEr
         .take()
         .expect("stderr pipe must be present after Stdio::piped()");
 
-    let stdout_task = tokio::spawn(stream_lines(stdout, writer.clone(), Stream::Stdout));
-    let stderr_task = tokio::spawn(stream_lines(stderr, writer.clone(), Stream::Stderr));
-
-    // Wait for the child to exit. Once it does the kernel closes its
-    // end of the pipes; the reader tasks see EOF and finish naturally.
-    let status = child.wait().await.map_err(RunError::Wait)?;
-
-    let stdout_tail = match stdout_task.await {
-        Ok(Ok(tail)) => tail,
-        Ok(Err(e)) => {
-            tracing::warn!(error = %e, "stdout reader errored — tail buffer may be incomplete");
-            VecDeque::new()
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "stdout reader task panicked");
-            VecDeque::new()
-        }
+    // Both owners abort/terminate on drop, so a cancelled handler takes the
+    // command and its readers with it (issue #576). `job` is declared last so
+    // it drops first: the child is signalled while the readers are still
+    // draining, which is what gets the command's dying words into the log.
+    let mut readers = Readers {
+        stdout: tokio::spawn(stream_lines(stdout, writer.clone(), Stream::Stdout)),
+        stderr: tokio::spawn(stream_lines(stderr, writer.clone(), Stream::Stderr)),
     };
-    let stderr_tail = match stderr_task.await {
-        Ok(Ok(tail)) => tail,
-        Ok(Err(e)) => {
-            tracing::warn!(error = %e, "stderr reader errored — tail buffer may be incomplete");
-            VecDeque::new()
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "stderr reader task panicked");
-            VecDeque::new()
+    let mut job = Job::new(child);
+
+    // Wait for the child to exit — or terminate it once the execution's
+    // timeout elapses. Either way the kernel then closes its end of the pipes,
+    // so the reader tasks see EOF and finish naturally.
+    let (status, timed_out) = wait_or_terminate(&mut job, timeout).await?;
+
+    let drain_grace = Duration::from_secs(READER_DRAIN_GRACE_SECS);
+    let (stdout_tail, stderr_tail) = match tokio::time::timeout(drain_grace, readers.join()).await {
+        Ok(tails) => tails,
+        Err(_) => {
+            tracing::warn!(
+                grace_secs = READER_DRAIN_GRACE_SECS,
+                "pipes were still open {READER_DRAIN_GRACE_SECS}s after the command exited — \
+                 something it spawned inherited them, or the server is applying backpressure. \
+                 Abandoning the tail buffers so the execution can be acked."
+            );
+            (VecDeque::new(), VecDeque::new())
         }
     };
 
@@ -358,6 +691,7 @@ pub async fn run(exec: &RunnerExec, writer: &LogWriter) -> Result<Outcome, RunEr
         status,
         stdout_tail,
         stderr_tail,
+        timed_out,
     })
 }
 
@@ -422,6 +756,17 @@ where
 /// in the Logs panel; the runner's own `tracing::info!` per-line in
 /// [`stream_lines`] handles container-log visibility.
 pub fn outcome_to_handler_result(outcome: Outcome, _job_key: &str) -> Result<(), HandlerError> {
+    if outcome.timed_out {
+        // Say "timed out" rather than reporting the signal it died from: the
+        // status is SIGTERM/SIGKILL either way, which tells an operator reading
+        // the dead-letter view nothing about why (issue #576).
+        let snippet = build_failure_snippet(&outcome.stderr_tail);
+        return Err(HandlerError::msg(if snippet.is_empty() {
+            "timed out — the command was terminated".to_string()
+        } else {
+            format!("timed out — the command was terminated: {snippet}")
+        }));
+    }
     if outcome.status.success() {
         Ok(())
     } else {
@@ -481,7 +826,9 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(
             outcome.status.success(),
             "exit status: {:?}",
@@ -506,7 +853,9 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(!outcome.status.success());
         assert_eq!(outcome.status.code(), Some(7));
     }
@@ -532,7 +881,9 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(outcome.status.success());
         assert!(
             outcome.stdout_tail.iter().any(|l| l.contains("hello exec")),
@@ -552,7 +903,9 @@ mod tests {
             user: None,
             env,
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(outcome.status.success());
         // `printf %s` produces a single line with no trailing newline.
         assert_eq!(
@@ -775,7 +1128,9 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(outcome.status.success());
         assert_eq!(
             outcome.stdout_tail.len(),
@@ -833,7 +1188,9 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         let err = outcome_to_handler_result(outcome, "test:job").unwrap_err();
         let msg = err.to_string();
         assert!(msg.starts_with("exit 2"), "msg: {msg}");
@@ -849,7 +1206,221 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null(), None)
+            .await
+            .expect("spawn ok");
         assert!(outcome_to_handler_result(outcome, "test:job").is_ok());
+    }
+
+    // ─── Subprocess lifetime: cancel + timeout (issue #576) ─────────────────
+
+    /// Is `pid` still alive? `kill(pid, 0)` performs the existence and
+    /// permission checks and delivers nothing, which is exactly the probe
+    /// these tests need.
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        // SAFETY: signal 0 is the documented existence probe; no memory is
+        // touched and no signal is delivered.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    /// Wait up to `secs` for `pid` to disappear. Termination is asynchronous —
+    /// the kernel delivers the signal, the process unwinds — so a bare assert
+    /// right after the trigger would be a race.
+    #[cfg(unix)]
+    async fn wait_gone(pid: u32, secs: u64) -> bool {
+        for _ in 0..(secs * 20) {
+            if !alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        !alive(pid)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn build_command_puts_the_job_in_its_own_process_group() {
+        // The group is what lets termination reach the command inside
+        // `sh -c`, so assert the spawned child really leads a group of its own
+        // rather than inheriting the test process's.
+        let exec = RunnerExec::Shell {
+            command: "sleep 30".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let mut cmd = build_command(&exec).expect("build ok");
+        let mut child = cmd.spawn().expect("spawn ok");
+        let pid = child.id().expect("child has a pid") as i32;
+        // SAFETY: plain syscall wrapper, no memory contract.
+        let pgid = unsafe { libc::getpgid(pid) };
+        assert_eq!(pgid, pid, "child must be its own process group leader");
+        // SAFETY: as above.
+        let own_pgid = unsafe { libc::getpgid(0) };
+        assert_ne!(
+            pgid, own_pgid,
+            "child must not share the runner's process group"
+        );
+        let _ = child.kill().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_terminates_the_command_inside_the_shell() {
+        // `sh -c 'sleep 30'` on most shells execs into sleep, so print the pid
+        // of a *background* sleep to get a genuine grandchild — the case
+        // `kill_on_drop` alone cannot reach.
+        let exec = RunnerExec::Shell {
+            command: "sleep 30 & echo $!; wait".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null(), Some(Duration::from_millis(200)))
+            .await
+            .expect("spawn ok");
+        assert!(outcome.timed_out, "outcome must report the timeout");
+        assert!(!outcome.status.success());
+        let pid: u32 = outcome
+            .stdout_tail
+            .front()
+            .expect("the command printed the background pid")
+            .trim()
+            .parse()
+            .expect("pid parses");
+        assert!(
+            wait_gone(pid, 10).await,
+            "grandchild {pid} survived the timeout"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_result_reports_a_timeout_not_a_signal() {
+        let exec = RunnerExec::Shell {
+            command: "sleep 30".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null(), Some(Duration::from_millis(200)))
+            .await
+            .expect("spawn ok");
+        let msg = outcome_to_handler_result(outcome, "test:job")
+            .expect_err("a timed-out command must fail the execution")
+            .to_string();
+        assert!(msg.starts_with("timed out"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_kills_a_command_that_ignores_sigterm() {
+        // Trapping SIGTERM is the case the straight-kill shortcut gets wrong:
+        // the polite phase is ignored, and only the SIGKILL escalation ends it.
+        // The shell ignores SIGTERM and restarts its sleep, so the polite
+        // phase cannot end it — only the SIGKILL escalation can.
+        let exec = RunnerExec::Shell {
+            command: "trap '' TERM; while :; do sleep 0.2; done".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let start = std::time::Instant::now();
+        let outcome = run(&exec, &LogWriter::null(), Some(Duration::from_millis(200)))
+            .await
+            .expect("spawn ok");
+        assert!(outcome.timed_out);
+        assert!(!outcome.status.success());
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(TERM_GRACE_SECS),
+            "SIGTERM alone should not have ended this command: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(TERM_GRACE_SECS + 20),
+            "the escalation to SIGKILL never landed: {elapsed:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_the_handler_terminates_the_whole_process_group() {
+        // The reported bug: aborting the handler future left the command
+        // running while the execution was acked as cancelled.
+        let exec = RunnerExec::Shell {
+            command: "sleep 30 & echo $! > \"$CRONIQ_TEST_PIDFILE\"; wait".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::from([(
+                "CRONIQ_TEST_PIDFILE".to_string(),
+                std::env::temp_dir()
+                    .join(format!("croniq-576-{}.pid", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned(),
+            )]),
+        };
+        let pidfile = std::env::temp_dir().join(format!("croniq-576-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+
+        let handle = tokio::spawn(async move {
+            let _ = run(&exec, &LogWriter::null(), None).await;
+        });
+
+        // Wait for the background sleep to record its pid.
+        let mut pid = None;
+        for _ in 0..200 {
+            if let Ok(raw) = std::fs::read_to_string(&pidfile)
+                && let Ok(parsed) = raw.trim().parse::<u32>()
+            {
+                pid = Some(parsed);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let pid = pid.expect("the command recorded its background pid");
+        assert!(alive(pid), "precondition: the grandchild is running");
+
+        handle.abort();
+        assert!(
+            wait_gone(pid, 20).await,
+            "grandchild {pid} survived the cancel"
+        );
+        let _ = std::fs::remove_file(&pidfile);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_zero_timeout_means_unbounded() {
+        // The server sends `timeout` as a string; a caller that means "no
+        // limit" must not get an instant kill.
+        let exec = RunnerExec::Shell {
+            command: "echo done".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null(), Some(Duration::ZERO))
+            .await
+            .expect("spawn ok");
+        assert!(outcome.status.success());
+        assert!(!outcome.timed_out);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_finishing_inside_its_timeout_is_untouched() {
+        let exec = RunnerExec::Shell {
+            command: "echo quick".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null(), Some(Duration::from_secs(30)))
+            .await
+            .expect("spawn ok");
+        assert!(outcome.status.success());
+        assert!(!outcome.timed_out);
+        assert!(outcome.stdout_tail.iter().any(|l| l.contains("quick")));
     }
 }

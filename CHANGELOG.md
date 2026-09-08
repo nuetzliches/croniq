@@ -8,6 +8,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A cancelled or timed-out shell job no longer leaves its command running
+  ([#576](https://github.com/nuetzliches/croniq/issues/576)).**
+  `croniq-shell-runner` spawned the subprocess without `kill_on_drop`, and
+  nothing enforced the execution `timeout`. A server-issued cancel aborts the
+  handler *future* (the documented behaviour since
+  [#176](https://github.com/nuetzliches/croniq/issues/176)) — correct for a
+  handler that only awaits network I/O, but the shell runner is the one handler
+  that owns an OS resource, and tokio detaches a dropped `Child` into its orphan
+  queue instead of killing it. So cancel marked the execution `cancelled`,
+  released the slot, and left the command running to completion. Cosmetic for a
+  read-only command; the opposite of what the button promises for one that
+  mutates state or holds a lock.
+
+  The `timeout` contract had no owner at all: the SDK passed it into the
+  context as a string and the runner ignored it. The server's stale-claim reaper
+  documents itself as a safety net for a *lost* runner ("a live, connected
+  runner enforces `timeout` itself") — but a shell runner blocked in
+  `child.wait()` is alive and renewing its lease, so the reaper requeued the
+  attempt while the original subprocess was still running. That is a second
+  concurrent copy of the command, and neither `singleton` nor
+  `concurrency_group` prevents it: both count `claimed` rows, and the reap is
+  precisely what stopped the first row from being one.
+
+  The subprocess is now bound to the execution that owns it. Jobs spawn with
+  `kill_on_drop(true)` and, on unix, into their own process group — the group is
+  what makes termination reach the command inside `sh -c`, where the direct
+  child is the shell and the command is a grandchild. Cancel and timeout both
+  terminate with `SIGTERM` → 5 s grace → `SIGKILL`, so a command that releases a
+  lock or removes a partial artefact still gets the chance to. A timed-out
+  execution now fails with `timed out — the command was terminated` rather than
+  reporting the signal it died from, which said nothing about why. The pipe
+  readers are aborted with the handler instead of draining a surviving child's
+  pipes into an already-acked execution, and they are no longer waited on
+  indefinitely when a backgrounded process inherits the pipes.
+
+  On Windows only the spawned process is terminated — there is no
+  process-group equivalent wired up, so anything it spawned in turn survives.
+  Documented in `docs/operations.md` and the runner's module docs, since "what
+  happens to my command when I press cancel" was previously unanswerable from
+  the documentation.
+
 - **`PUT /v1/jobs/{job_key}` no longer treats a wrong-typed value as `null`
   ([#569](https://github.com/nuetzliches/croniq/issues/569)).** The endpoint
   uses patch semantics -- a missing key leaves the field alone, an explicit

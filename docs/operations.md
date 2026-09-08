@@ -266,6 +266,38 @@ the job ran with *more* privilege than it asked for, possibly root. Set a
 numeric uid, or drop the directive and run the runner process itself as the
 desired user.
 
+### Shell-runner cancel and timeout behaviour
+
+Since issue #576 a shell/exec job's subprocess is bound to the execution that
+owns it. Two operator-visible guarantees follow:
+
+- **Cancelling an execution stops the command.** Before #576 the cancel button
+  aborted the runner's bookkeeping only: the execution went to `cancelled`, the
+  slot was released, and the command kept running to completion. It now gets
+  `SIGTERM` and, if it is still alive 5 s later, `SIGKILL`.
+- **The job's `timeout` is enforced by the runner**, with the same
+  SIGTERM → 5 s → SIGKILL sequence, and the execution fails with
+  `timed out — the command was terminated`. Previously nothing enforced it: the
+  server's stale-claim reaper eventually requeued the attempt, which meant a
+  *second* copy of a command whose first copy had never stopped — bypassing
+  `singleton` and `concurrency_group`, both of which count `claimed` rows.
+
+Two details worth knowing:
+
+- Termination targets the job's **process group**, not just the spawned
+  process. This is what makes it work for `runner shell { … }`, where the
+  direct child is `sh -c` and the command itself is a grandchild. A side effect
+  is that jobs no longer share the runner's process group, so a `Ctrl-C` in an
+  interactive runner no longer forwards `SIGINT` into running jobs.
+- **On Windows only the spawned process is terminated** — anything it spawned
+  in turn survives. The published runner images are Linux, so this affects
+  runners built and run on Windows.
+
+A job that deliberately backgrounds a long-lived process and exits is
+unaffected on the success path (nothing is signalled when the command exits on
+its own), but that background process is inside the group and *will* be
+terminated if the execution is cancelled or times out.
+
 ### SMTP (`CRONIQ_SMTP_*` + `smtp {}` block)
 
 The alert `email` channel, invitation mails, and password-reset mails all
