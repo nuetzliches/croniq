@@ -162,8 +162,12 @@ else
   fi
 
   echo "Verifying checksum..."
+  # `-c`, not `--check`: busybox's sha256sum — which is what Alpine has, and
+  # Alpine became an install target with the musl artefacts in #577 — rejects
+  # the GNU long option outright ("unrecognized option: check"). The short form
+  # is understood by busybox, GNU coreutils and `shasum -a 256` alike.
   # Run the check in a subshell so the working directory change is scoped
-  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
+  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD -c -)
   echo "Checksum verified."
 fi
 

@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` no longer aborts at checksum verification on Alpine.** The
+  verification step invoked `sha256sum --check`, and busybox's `sha256sum` — the
+  one Alpine ships — rejects the GNU long option outright ("unrecognized
+  option: check"). Under `set -e` that failed the install after the archive had
+  already downloaded, so nothing was installed and the output was busybox's
+  usage text rather than an explanation.
+
+  Latent until now: before the musl artefacts arrived in
+  [#577](https://github.com/nuetzliches/croniq/issues/577) the installer handed
+  every Linux host the glibc archive, which cannot start on Alpine anyway, so
+  no one got as far as the checksum. The short `-c` form is understood by
+  busybox, GNU coreutils and `shasum -a 256` alike.
+
+  `install.sh` is served from `main`, not from a release tag, so this fixes
+  v0.38.0 installs as well.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
