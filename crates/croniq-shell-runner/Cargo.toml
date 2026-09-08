@@ -15,11 +15,19 @@ path = "src/lib.rs"
 [dependencies]
 croniq-runner-sdk = { path = "../croniq-runner-sdk" }
 croniq-config = { path = "../croniq-config" }
+# For `parse_duration`, so the runner reads the execution's `timeout` with the
+# exact grammar every other Croniq surface accepts (issue #576).
+croniq-execution = { path = "../croniq-execution" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
 thiserror = "2"
+
+# `killpg` for terminating a job's whole process group (issue #576). Already in
+# the tree as a tokio dependency on unix; there is no extra closure here.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util", "macros"] }
