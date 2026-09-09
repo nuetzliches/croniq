@@ -167,6 +167,60 @@ mod tests {
         allowed_origin(s).map(|v| v.to_str().unwrap().to_string())
     }
 
+    /// The dashboard has two delivery paths since #587: this server with
+    /// `--ui-dir`, and the `ui-runtime` container, where nginx sends the
+    /// headers instead. They must agree, and nothing else makes them —
+    /// `docker/ui/nginx.conf` is a text file the compiler never sees, so a
+    /// directive added here would silently not reach the container while the
+    /// container's own copy kept claiming to be the policy.
+    ///
+    /// Same shape as the site/generator.js parity guards: assert both
+    /// directions against the source of truth, and normalise line endings
+    /// first because this repo is checked out with CRLF on Windows.
+    #[test]
+    fn nginx_config_carries_the_same_csp() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docker/ui/nginx.conf");
+        let conf = std::fs::read_to_string(path)
+            .expect("docker/ui/nginx.conf must exist — it is the other half of this policy")
+            .replace("\r\n", "\n");
+
+        assert!(
+            conf.contains(CONTENT_SECURITY_POLICY),
+            "docker/ui/nginx.conf has drifted from CONTENT_SECURITY_POLICY.\n\
+             Expected it to contain, verbatim:\n  {CONTENT_SECURITY_POLICY}"
+        );
+
+        // The other three headers apply_security_headers sets, so the
+        // container is not quietly weaker than the server.
+        for header in [
+            r#"X-Content-Type-Options "nosniff""#,
+            r#"X-Frame-Options "DENY""#,
+            r#"Referrer-Policy "no-referrer""#,
+        ] {
+            assert!(
+                conf.contains(header),
+                "docker/ui/nginx.conf is missing {header}, which this server sends"
+            );
+        }
+    }
+
+    /// The container must not become a second route to the API. ADR-0001's
+    /// same-origin requirement is satisfied by the reverse proxy in front, and
+    /// a `proxy_pass` here would be an undocumented path to the secret-bearing
+    /// service from a container whose job is static files.
+    #[test]
+    fn nginx_config_proxies_nothing() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docker/ui/nginx.conf");
+        let conf = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
+        for line in conf.lines() {
+            let code = line.split('#').next().unwrap_or("");
+            assert!(
+                !code.contains("proxy_pass"),
+                "docker/ui/nginx.conf must not proxy — found: {line}"
+            );
+        }
+    }
+
     #[test]
     fn plain_origin_passes_through() {
         assert_eq!(

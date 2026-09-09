@@ -206,7 +206,7 @@ jobs:
     # Same pattern as ci.yml::docker — each matrix job pushes the per-arch
     # image *by digest* (no tag), and docker-merge below stitches the
     # digests into a single manifest list under the human-readable tags.
-    name: Docker build (${{ matrix.platform }})
+    name: Docker build (${{ matrix.variant }}, ${{ matrix.platform }})
     # Same reasoning as the build job — never re-publish on workflow_dispatch.
     if: github.event_name == 'push'
     runs-on: ${{ matrix.runner }}
@@ -216,6 +216,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Three images from one Dockerfile, same as ci.yml::docker. Every
+        # variant is published under the same tags in the merge job below --
+        # that lockstep is the version-skew rule the split topology rests on
+        # (#587, #598), so a release that publishes one variant and not the
+        # others would be worse than not splitting at all.
+        variant: [combined, server, ui]
+        platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
@@ -223,6 +230,20 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve variant to a build target and image name
+        id: var
+        run: |
+          case '${{ matrix.variant }}' in
+            combined) target=combined;       image=${{ env.REGISTRY_IMAGE }};        title=croniq ;;
+            server)   target=server-runtime; image=${{ env.REGISTRY_IMAGE }}-server; title=croniq-server ;;
+            ui)       target=ui-runtime;     image=${{ env.REGISTRY_IMAGE }}-ui;     title=croniq-ui ;;
+            *) echo "::error::unknown variant '${{ matrix.variant }}'"; exit 1 ;;
+          esac
+          {
+            echo "target=$target"
+            echo "image=$image"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
       - name: Derive artefact-safe platform name
         id: plat
         # `linux/amd64` → `linux-amd64`, used as cache scope + artefact
@@ -285,7 +306,8 @@ jobs:
           # Push by digest only — no tag yet. docker-merge below creates the
           # manifest list under :latest, :<version>, :<tag> once both arches
           # are uploaded.
-          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          target: ${{ steps.var.outputs.target }}
+          outputs: type=image,name=${{ steps.var.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           # Per-arch cache scopes so amd64 and arm64 don't fight over the
           # same slot. The `release-` prefix keeps these distinct from
           # ci.yml's `docker-<plat>` scope, since release builds embed a
@@ -300,7 +322,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: digests-${{ steps.plat.outputs.name }}
+          name: digests-${{ matrix.variant }}-${{ steps.plat.outputs.name }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -310,18 +332,34 @@ jobs:
     # multi-arch manifest list. After this runs, `docker pull
     # ghcr.io/nuetzliches/croniq:<version>` resolves to the right image
     # for whatever arch the host is on.
-    name: Docker manifest merge
+    name: Docker manifest merge (${{ matrix.variant }})
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: docker
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [combined, server, ui]
     steps:
+      - name: Resolve variant to an image name
+        id: var
+        run: |
+          case '${{ matrix.variant }}' in
+            combined) image=${{ env.REGISTRY_IMAGE }} ;;
+            server)   image=${{ env.REGISTRY_IMAGE }}-server ;;
+            ui)       image=${{ env.REGISTRY_IMAGE }}-ui ;;
+            *) echo "::error::unknown variant '${{ matrix.variant }}'"; exit 1 ;;
+          esac
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: /tmp/digests
-          pattern: digests-*
+          # Only this variant's digests -- otherwise every manifest is stitched
+          # out of all three images' digests.
+          pattern: digests-${{ matrix.variant }}-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -336,13 +374,13 @@ jobs:
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            --tag ${{ env.REGISTRY_IMAGE }}:latest \
-            --tag ${{ env.REGISTRY_IMAGE }}:${{ steps.version.outputs.version }} \
-            --tag ${{ env.REGISTRY_IMAGE }}:${{ github.ref_name }} \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+            --tag ${{ steps.var.outputs.image }}:latest \
+            --tag ${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }} \
+            --tag ${{ steps.var.outputs.image }}:${{ github.ref_name }} \
+            $(printf '${{ steps.var.outputs.image }}@sha256:%s ' *)
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.version.outputs.version }}
+          docker buildx imagetools inspect ${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }}
 
   release:
     name: GitHub Release

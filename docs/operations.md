@@ -157,6 +157,119 @@ option and needs no flags at all. (Local development is unaffected: `npm run
 dev` proxies `/v1` through the Vite dev server, so the browser sees a single
 origin and gets the cookie.)
 
+### Running the dashboard in its own container
+
+The published images are three, built from one `Dockerfile` and always pushed
+under the same tags:
+
+| Image | Contains | Target |
+|---|---|---|
+| `ghcr.io/nuetzliches/croniq` | server binaries **and** the dashboard | `combined` |
+| `ghcr.io/nuetzliches/croniq-server` | server binaries only | `server-runtime` |
+| `ghcr.io/nuetzliches/croniq-ui` | the dashboard behind nginx | `ui-runtime` |
+
+`ghcr.io/nuetzliches/croniq` is unchanged and remains the supported default —
+one container, `--ui-dir` wired up, the quickstart in the README. The other two
+exist for deployments that already terminate at a reverse proxy.
+
+#### The rule that is not optional
+
+**A reverse proxy must put the dashboard and the API on one origin.** This is
+not a deployment preference; it is what the refresh cookie requires. The cookie
+is `HttpOnly; SameSite=Strict; Path=/v1/auth` and a browser will not send it to
+a different origin, so a dashboard served from its own hostname falls back to
+keeping the refresh token in `localStorage` — the exposure removed in
+[#454](https://github.com/nuetzliches/croniq/issues/454), where any XSS can
+lift a seven-day credential. See *Where the dashboard keeps its tokens* above.
+
+`croniq-ui` therefore proxies nothing itself. It serves files on `:8080` and
+that is all; routing is the front proxy's job. Putting a `proxy_pass` inside it
+would create a second, undocumented route to the API from a container whose job
+is HTML.
+
+#### A worked example
+
+```yaml
+services:
+  proxy:
+    image: caddy:alpine
+    ports: ["8080:80"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on: [ui, server]
+
+  ui:
+    image: ghcr.io/nuetzliches/croniq-ui:0.38.0   # same tag as the server
+    restart: unless-stopped
+
+  server:
+    image: ghcr.io/nuetzliches/croniq-server:0.38.0
+    restart: unless-stopped
+    volumes:
+      - croniq-data:/var/lib/croniq
+      - ./Croniqfile:/etc/croniq/Croniqfile:ro
+    environment:
+      CRONIQ_DATA_DIR: /var/lib/croniq
+      # Pin the public URL so invitation and reset links are not derived from
+      # forwarded headers.
+      CRONIQ_APP_URL: https://croniq.example.com
+
+volumes:
+  croniq-data:
+```
+
+```caddy
+:80
+
+# Everything the API owns, by prefix. `handle` (not `handle_path`) leaves the
+# path untouched — croniq-server serves these paths as-is.
+handle /v1/* {
+	reverse_proxy server:4000
+}
+handle /health {
+	reverse_proxy server:4000
+}
+handle /version {
+	reverse_proxy server:4000
+}
+# Only if the MCP HTTP transport is enabled in the Croniqfile.
+handle /mcp* {
+	reverse_proxy server:4000
+}
+
+# Everything else is the dashboard.
+handle {
+	reverse_proxy ui:8080
+}
+```
+
+`/metrics` is deliberately absent: it belongs on an internal interface, not
+behind the public proxy — see the next section.
+
+Terminate TLS at the proxy. The refresh cookie only gains its `Secure` flag
+when the server can tell the page is on HTTPS, which it reads from `Origin`,
+`X-Forwarded-Proto`, or an `https://` `app_url`.
+
+#### Keep the tags in lockstep
+
+All three images are published together under the same tags by the same
+workflow run, and they are meant to be deployed that way. Pinning
+`croniq-ui:0.39.0` against `croniq-server:0.38.0` gives you a dashboard calling
+endpoints its server may not have; the failure is a scattering of 404s rather
+than a clear message.
+
+The combined image cannot have this problem — one digest, both halves — which
+is one of the reasons it stays the default. There is not yet a runtime guard
+against a mismatch; until there is, the tag is the contract.
+
+#### What the dashboard container serves
+
+`croniq-ui` sends the same response headers croniq-server does when it serves
+the bundle itself: `Content-Security-Policy` identical to
+`croniq_server::api::hardening::CONTENT_SECURITY_POLICY` (a unit test asserts
+the two have not drifted), `nosniff`, `DENY`, `no-referrer`, a year of
+`immutable` on `/assets/*` and `no-cache` on the document. It answers
+`/healthz` for container health checks without reaching through to the API.
+
 ### Keep `/metrics` on an internal interface
 
 The Prometheus endpoint is unauthenticated by design (the standard scrape

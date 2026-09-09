@@ -6,6 +6,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Two more images: `croniq-server` and `croniq-ui`
+  ([#587](https://github.com/nuetzliches/croniq/issues/587),
+  [#598](https://github.com/nuetzliches/croniq/issues/598)).** The same
+  `Dockerfile` now has three targets, all published under the same tags by the
+  same workflow run:
+
+  | Image | Contains |
+  |---|---|
+  | `ghcr.io/nuetzliches/croniq` | server binaries **and** the dashboard — unchanged |
+  | `ghcr.io/nuetzliches/croniq-server` | server binaries only, built with no Node stage at all |
+  | `ghcr.io/nuetzliches/croniq-ui` | the dashboard behind nginx-unprivileged |
+
+  This is additive. The combined image keeps its name, its contents and its
+  `CMD`, and stays the supported default for quickstart, demo and single-host
+  deployments; `--ui-dir` is untouched. The split is for deployments that
+  already terminate at a reverse proxy.
+
+  It is worth saying what this is *not* for, because both obvious motivations
+  turn out to be wrong when measured. Not size: the dashboard is 0.37 MB of the
+  published image's 55.92 MB, where the base image and its `apt` layer are
+  31.2 MB. Not build time: the buildx cache keeps the `rust-builder` stage
+  across runs, so a UI-only change already costs 72–99 s against 433 s for a
+  change under `crates/`. What it *is* for is supply chain — `croniq-server` is
+  built without the ui-builder and wasm-builder stages, so no npm tree and
+  nothing from `ui/` appears in its provenance. ADR-0002 carried the build-time
+  claim as a consequence and has been corrected with the measurements.
+
+  The combined image is defined as `FROM server-runtime`, so it extends the
+  server image rather than repeating it and the two cannot drift.
+
+  **A reverse proxy is mandatory when running the split**, and not as a
+  preference: the refresh token is a `SameSite=Strict` cookie that a browser
+  will not send to a different origin, so a dashboard on its own hostname falls
+  back to `localStorage` — the exposure removed in
+  [#454](https://github.com/nuetzliches/croniq/issues/454). `croniq-ui`
+  therefore proxies nothing itself; routing is the front proxy's job. See
+  *Running the dashboard in its own container* in `docs/operations.md` for a
+  worked Caddy + compose example.
+
+  The dashboard container sends the same headers croniq-server does — identical
+  CSP, `nosniff`, `DENY`, `no-referrer`, a year of `immutable` on `/assets/*`,
+  `no-cache` on the document. A unit test asserts the CSP in
+  `docker/ui/nginx.conf` has not drifted from
+  `croniq_server::api::hardening::CONTENT_SECURITY_POLICY`, and a second one
+  asserts the container never gains a `proxy_pass`.
+
+  Deploy the three under one tag. There is no runtime guard against a mismatch
+  yet; until there is, the tag is the contract, and the combined image — one
+  digest for both halves — is the variant that cannot have the problem.
+
 ### Changed
 
 - **The dashboard is now served with cache headers and compression
