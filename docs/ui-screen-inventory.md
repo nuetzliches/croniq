@@ -134,38 +134,85 @@ Command-Palette, Wartungsmodus-Banner, Dead-Letter-Zähler in der Topbar.
 
 ---
 
-## Offene Fragen
+## Entschieden (2026-09-10)
 
-Vier Stück, alle mit echten Alternativen.
+Alle vier offenen Fragen beantwortet.
 
-1. **Dead Letters — eigener Screen oder Status in der Runs-Liste?**
-   Datenmodell: eigene Tabelle, aber jede Zeile trägt `execution_id`, ist also
-   an einen Lauf gebunden. *Als Status-Filter* wäre es ein Screen weniger und
-   der Weg vom fehlgeschlagenen Lauf zum Dead Letter wäre ein Filterwechsel
-   statt eines Seitenwechsels. *Als eigener Screen* bleibt sichtbar, dass hier
-   etwas auf eine Handlung wartet — plus Retention und Massenlöschung sind
-   eigene Semantik, die in einer Runs-Liste fremd wirkt.
+**Dead Letters bleiben ein eigener Screen.** Technisch wäre der Filter möglich
+— `ExecutionState::Dead` existiert und `/v1/executions?state=dead` funktioniert
+heute schon. Ausschlaggebend war die Rolle, nicht die Technik: Dead Letters
+sind die einzige Fläche im Produkt, die eine To-do-Liste ist. Eine Arbeitsliste
+in eine Browsing-Liste zu mischen macht die Arbeit unsichtbar — man müsste den
+Filter erst setzen, um zu sehen, dass etwas ansteht. Das Topbar-Badge behält
+sein Ziel; das Run-Detail eines toten Laufs verlinkt hierher.
 
-2. **Kalender — Hauptnavigation oder Einstellungen?**
-   Sie sind Konfiguration, keine Betriebsansicht, und werden selten angefasst.
-   Dagegen: sie hängen fachlich an Jobs, nicht an der Serververwaltung.
+**Dashboard wird Statusboard plus Fehler-Auszug.** Zahlen, Durchsatz, Heatmap,
+dazu ein schmaler Auszug ausschließlich der letzten Fehlschläge mit Link in die
+gefilterte Runs-Liste. Kein allgemeiner „letzte Läufe"-Block — der wäre das
+vierte Rendering derselben Tabelle. Der Auszug ist bewusst eine andere
+Darstellung (kompakt, nur Fehler), kein verkleinerter Klon.
 
-3. **Konsole — bleibt sie ein eigener Screen?**
-   Empfehlung ja: sie tailt den Tracing-Feed des Servers, nicht die Logs eines
-   Laufs. Das ist eine andere Sache als das Log im Run-Detail, auch wenn beides
-   „Logs" heißt.
+**Kalender bleiben in der Hauptnavigation.** Sie hängen fachlich an Jobs, nicht
+an der Serververwaltung, und der Regel-Builder ist zu groß für einen
+Settings-Tab.
 
-4. **Dashboard — was bleibt darauf?**
-   Heute Health, KPIs, Durchsatz, Failure-Heatmap, letzte Läufe, Dead-Letter-
-   Zahl. Wenn die Runs-Liste die eine Ausführungsansicht wird, ist der
-   „letzte Läufe"-Block dort das vierte Duplikat. Als Einstiegsseite ist ein
-   Auszug aber genau richtig. Die Frage ist, ob das Dashboard Zahlen zeigt und
-   verlinkt (schmal) oder Listen einbettet (wie heute).
+**Konsole bleibt ein eigener Screen**, rollenbasiert eingeblendet wie heute.
+Server-Tracing und Lauf-Logs heißen beide „Logs" und sind verschiedene Dinge;
+zusammenzulegen erzeugt genau die Verwechslung, die beim Debuggen stört.
 
----
+## Resultierender Zuschnitt
 
-## Reihenfolge
+```
+Betrieb    Dashboard   Runs   Runner   Dead Letters
+Konfig     Jobs        Kalender   Alerts
+System     Konsole (admin)   Einstellungen
+```
 
-Erst 1 und 4 beantworten — sie entscheiden, wie viele Screens es überhaupt
-gibt. 2 und 3 sind Navigationsdetails und können mit dem ersten Aufschlag der
-Shell fallen.
+| Route | Inhalt |
+|---|---|
+| `/` | Statusboard + Fehler-Auszug |
+| `/executions`, `/executions/:id` | die eine Lauf-Liste; Filter job/runner/state/zeit in der URL |
+| `/runners` | Live-Liste + Detail **ohne** Executions-Block |
+| `/dead-letters` | Arbeitsliste: Replay, Löschen, Massenaktion, Retention |
+| `/jobs`, `/jobs/:key` | Master/Detail, **zwei** Tabs (Übersicht inkl. Schedule, DSL) |
+| `/calendars` | CRUD + Regel-Builder |
+| `/alerts` | Regeln, Kanäle, Overrides |
+| `/console` | Live-Tail, admin-only |
+| `/settings` | Profil, Benutzer, API-Clients, Audit |
+| `/login` | inkl. MFA und OIDC |
+
+**Es sind weiterhin zehn Routen.** Der Gewinn liegt nicht in der Anzahl der
+Screens, sondern im entfallenen Inhalt: Job-Detail von sechs auf zwei Tabs,
+Executions-Block im Runner-Detail weg, Audit und Alert-Zustellungen mit je
+einem Ort statt zwei, Dashboard ohne allgemeine Lauf-Liste. Vier Renderings der
+Executions-Tabelle werden eins.
+
+## Noch nicht entschieden
+
+Der Alerts-Vorschlag oben (§4: Konfiguration und Zustellhistorie trennen) ist
+**Vorschlag geblieben**, nicht entschieden — die Navigationsfrage hat ihn nicht
+mitbeantwortet. Zu klären, wenn der Alerts-Screen dran ist: bleibt die
+Zustellhistorie auf demselben Screen wie die Regeln, oder wird sie eine
+filterbare Liste neben den Runs?
+
+## Reihenfolge für den Aufbau
+
+Der Zuschnitt steht; als Nächstes das Gerüst. Reihenfolge nach Abhängigkeit,
+nicht nach Größe:
+
+1. **Scaffold + Daten-Layer** — Vite/Vue-Projekt, Nuxt UI 4, Pinia-Stores mit
+   identischen localStorage-Keys, vue-query über `ofetch`, Dev-Proxy und die
+   WASM-Hooks unverändert übernommen.
+2. **Shell + Auth** — Navigation nach obigem Zuschnitt, Router-Guard *plus*
+   Watch auf `isAuthenticated` (Vue-Guards feuern nur bei Navigation), Login
+   inkl. MFA.
+3. **Runs-Liste** — der Screen, den drei andere ersetzt. Zuerst, weil Job- und
+   Runner-Detail auf ihn verlinken statt ihn nachzubauen.
+4. **Dashboard, Runner, Dead Letters** — bauen auf denselben Listen-Bausteinen.
+5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen Bausteinen.
+6. **Kalender, Alerts, Settings, Konsole.**
+
+Abnahmekriterium pro Schritt bleibt die Playwright-Suite
+([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), Scope-Guard 2). Sie
+prüft Routen, Session, URL-Verträge und beide SSE-Flächen — nichts davon
+Optik.
