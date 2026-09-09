@@ -44,10 +44,13 @@ supported default for quickstart, demo and single-host deployments.
   release build, `wasm-pack`, and the npm install, per platform.
 - **The npm dependency tree is part of the build that produces the server
   binary.** Two supply chains share one build context.
-- **Static-serving quality is limited to what `ServeDir` does.** It sets no
-  `Cache-Control` and there is no compression layer, so every dashboard load
-  revalidates every asset. That is a gap to close, not a consequence anyone
-  chose — see the tracking issue.
+- **Static-serving quality is limited to what the server implements.** As
+  recorded, `ServeDir` set no `Cache-Control` and there was no compression, so
+  every dashboard load revalidated every asset. That was a gap rather than a
+  consequence anyone chose, and it was closed in
+  [#582](https://github.com/nuetzliches/croniq/issues/582) — see
+  `croniq_server::ui_assets`. Noted here because it was part of the picture
+  when this decision was weighed, not because the decision changed.
 - The dashboard cannot be scaled or cached independently of the scheduler.
 
 ## Enforced by
