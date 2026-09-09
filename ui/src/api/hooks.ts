@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, apiPost, apiPut, apiDelete } from './client'
 import type * as T from './types'
 import { useAuthStore } from '@/auth/store'
 import { refreshAccessToken } from '@/auth/session'
+import { createSseStream } from '@/lib/sse'
 
 // Health
 export function useHealth() {
@@ -243,64 +244,31 @@ export function useRunnersSSE() {
   const qc = useQueryClient()
   const [data, setData] = useState<T.RunnerSummary[] | undefined>()
   const [isConnected, setIsConnected] = useState(false)
-  const retryRef = useRef(0)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
-    let stopped = false
-    let ctrl = new AbortController()
     const BASE = import.meta.env.VITE_API_URL ?? ''
-
-    async function connect() {
-      const token = useAuthStore.getState().token
-      try {
-        const res = await fetch(`${BASE}/v1/runners/stream`, {
-          signal: ctrl.signal,
-          headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        })
-        if (res.status === 401) {
-          // An expired access token, most likely: the stream outlives it by
-          // design. Refresh and reconnect rather than ending the session
-          // (issue #454); a genuinely dead session fails the refresh and
-          // `refreshAccessToken` clears it for us.
-          if (await refreshAccessToken()) throw new Error('SSE 401 — retrying with a fresh token')
-          return
+    // Transport, frame assembly, backoff and the 401-refresh dance live in
+    // `lib/sse.ts` (#585) — this hook keeps only what is specific to the
+    // runners feed. The default backoff (1 s doubling to 30 s) is the one
+    // this stream always used.
+    return createSseStream({
+      url: () => `${BASE}/v1/runners/stream`,
+      getToken: () => useAuthStore.getState().token,
+      // `refreshAccessToken` resolves the new token or null; the stream only
+      // needs to know whether a session came back.
+      refresh: async () => (await refreshAccessToken()) !== null,
+      onOpen: () => setIsConnected(true),
+      onClose: () => setIsConnected(false),
+      onData: (payload) => {
+        try {
+          const runners: T.RunnerSummary[] = JSON.parse(payload)
+          setData(runners)
+          qc.setQueryData(['runners'], runners)
+        } catch {
+          /* ignore parse errors */
         }
-        if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
-
-        setIsConnected(true)
-        retryRef.current = 0
-        const reader = res.body.getReader()
-        const dec = new TextDecoder()
-        let buf = ''
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += dec.decode(value, { stream: true })
-          const parts = buf.split('\n\n')
-          buf = parts.pop() ?? ''
-          for (const msg of parts) {
-            const line = msg.split('\n').find(l => l.startsWith('data:'))
-            if (!line) continue
-            try {
-              const runners: T.RunnerSummary[] = JSON.parse(line.slice(5).trim())
-              setData(runners)
-              qc.setQueryData(['runners'], runners)
-            } catch { /* ignore parse errors */ }
-          }
-        }
-      } catch { /* will reconnect below */ }
-      finally { setIsConnected(false) }
-
-      if (!stopped) {
-        const delay = Math.min(1000 * 2 ** retryRef.current, 30_000)
-        retryRef.current++
-        timerRef.current = setTimeout(() => { ctrl = new AbortController(); connect() }, delay)
-      }
-    }
-
-    connect()
-    return () => { stopped = true; ctrl.abort(); clearTimeout(timerRef.current) }
+      },
+    })
   }, [qc])
 
   return { data, isConnected }
