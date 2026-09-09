@@ -79,3 +79,23 @@ them consequences of how sessions work rather than of Playwright:
 | Runners | `/runners` | Connected runners with status |
 | Executions | `/executions` | Execution history with log viewer |
 | Dead Letters | `/dead-letters` | Failed executions with detail panel |
+
+### Class-name convention
+
+`src/styles/*.css` is plain, unlayered CSS. Tailwind v4 emits its utilities in
+`@layer utilities`, and unlayered CSS beats layered CSS regardless of source
+order — so a rule here named after a Tailwind utility wins over it silently and
+unconditionally. Component classes therefore carry a `cq-` prefix where the
+name would otherwise collide (`cq-grid`, `cq-gap-6`, `cq-grow`).
+`src/styles/no-tailwind-collision.test.ts` keeps it that way.
+
+`scripts/style-snapshot.mjs` captures the computed layout properties of every
+element on every page, so a CSS refactor can be shown not to change anything
+visible rather than assumed not to:
+
+```sh
+node scripts/style-snapshot.mjs before.json
+# …make the change, npm run build…
+node scripts/style-snapshot.mjs after.json
+node scripts/style-snapshot.mjs --diff before.json after.json
+```

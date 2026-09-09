@@ -243,7 +243,7 @@ function WeeklyEditor({ rule, onChange }: RuleEditorProps) {
   }
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-7 gap-1">
+      <div className="cq-grid grid-cols-7 gap-1">
         {WEEKDAYS.map((d) => {
           const on = active.has(d)
           return (
@@ -327,7 +327,7 @@ function MonthlyEditor({ rule, onChange }: RuleEditorProps) {
   }
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-8 gap-1">
+      <div className="cq-grid grid-cols-8 gap-1">
         {ORDINALS.map((o) => {
           const on = active.has(o.toLowerCase())
           return (

@@ -60,7 +60,7 @@ export function DashboardPage() {
   const runnersTotal = runners.data?.length ?? 0
   const deadCount = deadLetters.data?.length ?? 0
 
-  // Heatmap → flatten to a 24-cell-wide grid where each row is one day
+  // Heatmap → flatten to a 24-cell-wide cq-grid where each row is one day
   // (oldest first, newest last). Cap intensity to the 95th percentile so
   // one extreme outlier doesn't wash out the rest.
   const heatPeak = useMemo(() => {
@@ -84,7 +84,7 @@ export function DashboardPage() {
         </Link>
       </div>
 
-      <div className="grid cols-4">
+      <div className="cq-grid cols-4">
         <KPICard
           title="Queue depth"
           value={queueDepth}
@@ -157,7 +157,7 @@ export function DashboardPage() {
         />
       </div>
 
-      <div className="grid cols-2" style={{ marginTop: 14 }}>
+      <div className="cq-grid cols-2" style={{ marginTop: 14 }}>
         <ThroughputCard ok={okSeries} err={errSeries} loading={throughput.isLoading} />
         <HeatmapCard
           rows={heatmap.data?.rows ?? []}
@@ -167,14 +167,14 @@ export function DashboardPage() {
         />
       </div>
 
-      <div className="grid cols-2" style={{ marginTop: 14 }}>
+      <div className="cq-grid cols-2" style={{ marginTop: 14 }}>
         <ActivityCard executions={recentExecutions.data ?? []} loading={recentExecutions.isLoading} />
         <RunnerFleetCard runners={runners.data ?? []} loading={runners.isLoading} />
       </div>
 
       {health.data && health.data.status !== 'ok' ? (
         <div className="banner warn" style={{ marginTop: 14 }} role="status">
-          <span className="grow">
+          <span className="cq-grow">
             Backend health: <strong>{health.data.status}</strong>
           </span>
         </div>
@@ -198,7 +198,7 @@ function ThroughputCard({
     <section className="card">
       <div className="card-head">
         <p className="card-title">Throughput · last 24h</p>
-        <span className="dim row gap-6" style={{ fontSize: 11.5 }}>
+        <span className="dim row cq-gap-6" style={{ fontSize: 11.5 }}>
           <BarChart2 size={12} /> hourly buckets
         </span>
       </div>
@@ -317,7 +317,7 @@ function ActivityCard({ executions, loading }: { executions: Execution[]; loadin
               }}
             >
               <StatusPill state={e.state} />
-              <span className="ellipsis grow mono" style={{ fontSize: 12 }}>
+              <span className="ellipsis cq-grow mono" style={{ fontSize: 12 }}>
                 <JobLink jobKey={e.job_key} />
               </span>
               {e.duration_ms != null ? (

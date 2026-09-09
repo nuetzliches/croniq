@@ -143,7 +143,7 @@ export function Topbar() {
           aria-label="Open command palette"
         >
           <Search size={14} />
-          <span className="grow">Search jobs, runners, executions…</span>
+          <span className="cq-grow">Search jobs, runners, executions…</span>
           <span className="kbd">{isMac ? '⌘K' : 'Ctrl K'}</span>
         </button>
       </div>

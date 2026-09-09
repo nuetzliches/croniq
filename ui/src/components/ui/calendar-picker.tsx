@@ -3,7 +3,7 @@ import { useCalendars } from '@/api/hooks'
 
 interface Props extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'children'> {
   /// Wrapper class — applied to the surrounding `<div>` so the field can
-  /// be inlined in grid rows next to other controls.
+  /// be inlined in cq-grid rows next to other controls.
   wrapperClassName?: string
 }
 

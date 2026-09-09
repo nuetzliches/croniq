@@ -142,7 +142,7 @@ function TotpSection({ enabled }: { enabled: boolean }) {
           </div>
 
           <div className="banner warn" role="status" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-            <span className="grow"><strong>2. Save these recovery codes.</strong> They're shown once and let you sign in if you lose your authenticator.</span>
+            <span className="cq-grow"><strong>2. Save these recovery codes.</strong> They're shown once and let you sign in if you lose your authenticator.</span>
             <ul className="mono" style={{ margin: 0, paddingLeft: 18, columns: 2, gap: 4, fontSize: 12 }}>
               {setupData.recovery_codes.map((c, i) => (
                 <li key={i}>{c}</li>
@@ -283,7 +283,7 @@ function PatSection() {
                 {issuedSecret ? (
                   <>
                     <div className="banner warn" role="status">
-                      <span className="grow">Copy this token now — it's shown only once.</span>
+                      <span className="cq-grow">Copy this token now — it's shown only once.</span>
                     </div>
                     <div className="row" style={{ gap: 8 }}>
                       <code

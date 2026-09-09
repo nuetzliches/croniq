@@ -10,7 +10,7 @@ import { formatDate, isRescheduled } from '@/lib/utils'
 export function ExecutionDetail({ execution }: { execution: Execution }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+      <div className="cq-grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
         {[
           ['ID', (
             <span key="id" className="flex items-center gap-1.5 font-mono">

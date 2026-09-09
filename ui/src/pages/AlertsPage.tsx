@@ -631,7 +631,7 @@ function DeliveriesPane() {
             Filter:
           </span>
         </div>
-        <div className="row gap-6">
+        <div className="row cq-gap-6">
           {(['all', 'delivered', 'failed', 'throttled'] as const).map((s) => (
             <button
               key={s}

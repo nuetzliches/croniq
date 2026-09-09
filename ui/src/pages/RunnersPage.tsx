@@ -85,7 +85,7 @@ export function RunnersPage() {
             </span>
           </div>
           {(tagCounts.data?.length ?? 0) > 0 && (
-            <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+            <div className="row cq-gap-6" style={{ flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className={clsx('pill', activeTags.size === 0 ? 'accent' : 'outline')}
@@ -160,7 +160,7 @@ function RunnerRow({
   return (
     <button type="button" className={clsx('job-row', active && 'active')} onClick={onClick}>
       <div className="row between" style={{ gap: 8, alignItems: 'center' }}>
-        <span className="row gap-6" style={{ minWidth: 0, flex: 1, alignItems: 'center' }}>
+        <span className="row cq-gap-6" style={{ minWidth: 0, flex: 1, alignItems: 'center' }}>
           <Badge variant={statusVariant(runner.status)}>{runner.status}</Badge>
           <span className="key ellipsis mono" style={{ fontSize: 12 }} title={runner.runner_id}>
             {runner.runner_id}
@@ -214,7 +214,7 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
       <div className="card" style={{ padding: '16px 20px' }}>
         <div className="row between" style={{ marginBottom: 14, gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div className="col" style={{ gap: 6, minWidth: 0, flex: '1 1 280px' }}>
-            <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="row cq-gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
               <Badge variant={statusVariant(runner.status)}>{runner.status}</Badge>
               <h1 className="mono ellipsis" style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--fg)' }} title={runner.runner_id}>
                 {runner.runner_id}
@@ -225,7 +225,7 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
               Last poll <RelativeTime iso={runner.last_poll_at} />
             </span>
           </div>
-          <div className="row gap-6" style={{ flexShrink: 0 }}>
+          <div className="row cq-gap-6" style={{ flexShrink: 0 }}>
             <Button
               variant="destructive"
               size="sm"
@@ -237,15 +237,15 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
           </div>
         </div>
 
-        <div className="grid" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 24, rowGap: 10, fontSize: 13, alignItems: 'center' }}>
+        <div className="cq-grid" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 24, rowGap: 10, fontSize: 13, alignItems: 'center' }}>
           <span className="dim">Capacity</span>
-          <div className="row gap-8" style={{ alignItems: 'center' }}>
+          <div className="row cq-gap-8" style={{ alignItems: 'center' }}>
             <CapacityRing inflight={runner.inflight} max={runner.max_inflight} size={42} />
             <span className="mono">{runner.inflight} / {runner.max_inflight} inflight</span>
           </div>
 
           <span className="dim">Capabilities</span>
-          <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+          <div className="row cq-gap-6" style={{ flexWrap: 'wrap' }}>
             {runner.capabilities.length === 0
               ? <span className="dim">—</span>
               : runner.capabilities.map((c) => (
@@ -254,7 +254,7 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
           </div>
 
           <span className="dim">Tags</span>
-          <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+          <div className="row cq-gap-6" style={{ flexWrap: 'wrap' }}>
             {(runner.tags ?? []).length === 0
               ? <span className="dim">—</span>
               : (runner.tags ?? []).map((t) => (
@@ -267,7 +267,7 @@ function RunnerDetail({ runner, onClose }: { runner: RunnerSummary; onClose: () 
       <div className="card" style={{ padding: 0 }}>
         <div className="row between" style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
           <p className="card-title" style={{ margin: 0 }}>Recent executions</p>
-          <div className="row gap-8" style={{ alignItems: 'center' }}>
+          <div className="row cq-gap-8" style={{ alignItems: 'center' }}>
             <span className="dim mono" style={{ fontSize: 11 }}>
               {executions.data?.length ?? 0} rows
             </span>

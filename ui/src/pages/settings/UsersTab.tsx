@@ -103,7 +103,7 @@ function UsersTabAdmin() {
                   {issued ? (
                     <>
                       <div className="banner info" role="status">
-                        <span className="grow">Share this accept URL with {issued.email}. It expires when the invitation does.</span>
+                        <span className="cq-grow">Share this accept URL with {issued.email}. It expires when the invitation does.</span>
                       </div>
                       <div className="row" style={{ gap: 8 }}>
                         <code

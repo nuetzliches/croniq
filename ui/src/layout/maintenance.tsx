@@ -208,7 +208,7 @@ export function MaintenanceBanner() {
   return (
     <div className="banner warn" role="status" style={{ marginBottom: 14 }}>
       <TriangleAlert size={16} style={{ flexShrink: 0 }} />
-      <span className="grow">
+      <span className="cq-grow">
         <strong>Maintenance mode is active.</strong>{' '}
         {data.note?.trim()
           ? data.note
