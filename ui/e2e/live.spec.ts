@@ -25,7 +25,13 @@ test.describe('live surfaces', () => {
     expect(response.status()).toBe(200)
   })
 
-  test('the console page opens a log stream and stays mounted', async ({ app }) => {
+  /**
+   * Asserts events actually arrive, not merely that the stream opens with a
+   * 200. "The page renders, it just stops updating" is the failure mode this
+   * describe block exists for, and a status-code check cannot see it — which
+   * is why the stack runs the server at `RUST_LOG=info`.
+   */
+  test('the console page receives log events', async ({ app }) => {
     const streamed = app.waitForResponse(
       (r) => r.request().headers()['accept'] === 'text/event-stream',
       { timeout: 20_000 },
@@ -33,7 +39,17 @@ test.describe('live surfaces', () => {
     await app.goto('/console')
     const response = await streamed
     expect(response.status()).toBe(200)
-    await expect(app.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
+
+    // The header reads "<filtered> / <total> events".
+    await expect
+      .poll(
+        async () => {
+          const text = (await app.getByText(/\d+ \/ \d+ events?/).first().textContent()) ?? ''
+          return Number(text.match(/\/\s*(\d+)/)?.[1] ?? 0)
+        },
+        { timeout: 20_000 },
+      )
+      .toBeGreaterThan(0)
   })
 })
 

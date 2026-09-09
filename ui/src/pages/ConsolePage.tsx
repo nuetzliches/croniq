@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Terminal, Pause, Play, Trash2, Copy, Download, X } from 'lucide-react'
 import { useAuthStore } from '@/auth/store'
 import { refreshAccessToken } from '@/auth/session'
+import { createSseStream } from '@/lib/sse'
 
 // One event as emitted by GET /v1/events/stream. Keep in sync with
 // `ConsoleEvent` in crates/croniq-server/src/live_console.rs.
@@ -56,104 +57,55 @@ export function ConsolePage() {
     pausedRef.current = paused
   }, [paused])
 
-  // SSE connection
+  // SSE connection. Transport, frame assembly and the 401-refresh dance live
+  // in `lib/sse.ts` (#585); what stays here is what is specific to the console.
   useEffect(() => {
-    let stopped = false
-    let ctrl = new AbortController()
-    let backfilled = false
     const BASE = import.meta.env.VITE_API_URL ?? ''
-
-    async function connect() {
-      const token = useAuthStore.getState().token
+    return createSseStream({
       // Level filtering happens client-side (see `filtered`) so toggling a
       // level updates the view instantly instead of tearing down and
       // re-opening the stream — hence we subscribe to every level. Backfill
       // only on the first connect; reconnects pass snapshot=0 so a dropped
       // stream doesn't replay events already in the buffer.
-      const url = `${BASE}/v1/events/stream${backfilled ? '?snapshot=0' : ''}`
-      try {
-        const res = await fetch(url, {
-          signal: ctrl.signal,
-          headers: {
-            Accept: 'text/event-stream',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        })
-        if (res.status === 401) {
-          // Expired access token — refresh and let the backoff reconnect
-          // (issue #454). A dead session fails the refresh, which clears it.
-          if (await refreshAccessToken()) throw new Error('SSE 401 — retrying with a fresh token')
-          return
+      url: (hasOpened) => `${BASE}/v1/events/stream${hasOpened ? '?snapshot=0' : ''}`,
+      getToken: () => useAuthStore.getState().token,
+      // `refreshAccessToken` resolves the new token or null; the stream only
+      // needs to know whether a session came back.
+      refresh: async () => (await refreshAccessToken()) !== null,
+      // 403: not an admin — this stream will never open for this session.
+      // 503: server has no console hub (older binary, or tests). Both are
+      // settled answers, so retrying every 2 s would only make noise.
+      fatalStatuses: [403, 503],
+      onFatal: (status) => {
+        if (status === 403) setForbidden(true)
+      },
+      // A flat 2 s, not the exponential default: the console is a live tail
+      // someone is watching, and a 30 s gap after a brief blip reads as
+      // broken.
+      backoff: () => 2000,
+      onOpen: () => setIsConnected(true),
+      onClose: () => setIsConnected(false),
+      onData: (payload) => {
+        let ev: LogEvent
+        try {
+          ev = JSON.parse(payload)
+        } catch {
+          return // skip malformed frame
         }
-        if (res.status === 403) {
-          // Not an admin — the console stream will never open for this
-          // session. Stop here rather than retrying every 2s.
-          stopped = true
-          setForbidden(true)
-          setIsConnected(false)
-          return
-        }
-        if (res.status === 503) {
-          // Server has no console hub (older binary, or tests). Don't
-          // hammer it with reconnects.
-          setIsConnected(false)
-          return
-        }
-        if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
-
-        backfilled = true
-        setIsConnected(true)
-        const reader = res.body.getReader()
-        const dec = new TextDecoder()
-        let buf = ''
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += dec.decode(value, { stream: true })
-          const parts = buf.split('\n\n')
-          buf = parts.pop() ?? ''
-          for (const msg of parts) {
-            const line = msg.split('\n').find((l) => l.startsWith('data:'))
-            if (!line) continue
-            try {
-              const ev: LogEvent = JSON.parse(line.slice(5).trim())
-              if (pausedRef.current) {
-                pendingRef.current.push(ev)
-                if (pendingRef.current.length > MAX_BUFFER) {
-                  pendingRef.current.splice(0, pendingRef.current.length - MAX_BUFFER)
-                }
-              } else {
-                setEvents((cur) => {
-                  const next = cur.length >= MAX_BUFFER ? cur.slice(-MAX_BUFFER + 1) : cur.slice()
-                  next.push(ev)
-                  return next
-                })
-              }
-            } catch {
-              // skip malformed frame
-            }
+        if (pausedRef.current) {
+          pendingRef.current.push(ev)
+          if (pendingRef.current.length > MAX_BUFFER) {
+            pendingRef.current.splice(0, pendingRef.current.length - MAX_BUFFER)
           }
+        } else {
+          setEvents((cur) => {
+            const next = cur.length >= MAX_BUFFER ? cur.slice(-MAX_BUFFER + 1) : cur.slice()
+            next.push(ev)
+            return next
+          })
         }
-      } catch {
-        /* will reconnect */
-      } finally {
-        setIsConnected(false)
-      }
-
-      if (!stopped) {
-        setTimeout(() => {
-          if (stopped) return
-          ctrl = new AbortController()
-          connect()
-        }, 2000)
-      }
-    }
-
-    connect()
-    return () => {
-      stopped = true
-      ctrl.abort()
-    }
+      },
+    })
   }, [])
 
   // When unpausing, flush buffered events.

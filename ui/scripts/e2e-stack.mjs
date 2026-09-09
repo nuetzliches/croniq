@@ -153,7 +153,10 @@ spawnChild(
     // refuses to bind a non-loopback address, which is why the listen above
     // is explicitly 127.0.0.1 rather than :PORT.
     CRONIQ_DEMO_MODE: "1",
-    RUST_LOG: process.env.RUST_LOG ?? "warn",
+    // `info`, not `warn`: the console page tails this feed, and a suite that
+    // only ever sees an empty console cannot tell a working stream from a
+    // broken one.
+    RUST_LOG: process.env.RUST_LOG ?? "info",
   },
 );
 
