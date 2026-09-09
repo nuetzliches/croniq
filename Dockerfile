@@ -83,8 +83,20 @@ COPY --from=wasm-builder \
 
 RUN npm run build
 
-# ── Stage 3: Runtime image ───────────────────────────────────────────────────
-FROM debian:bookworm-slim
+# ── Stage 3: Server runtime, without the dashboard ───────────────────────────────────────────────────
+# Buildable on its own (`--target server-runtime`), and in that case buildx
+# never touches the ui-builder or wasm-builder stages above — no Node, no npm
+# tree, nothing from ui/ in this image's provenance. That separation is the
+# point of the target (#598); it is *not* about size, where the dashboard is
+# 0.37 MB of 55.92 MB, nor about build time, which the layer cache already
+# isolates. See ADR-0002.
+#
+# The combined image at the bottom of this file extends this stage rather than
+# repeating it, so the two cannot drift. That inheritance is also why the
+# binary set here is the full one, `croniq-demo-runner` included: dropping it
+# here would drop it from the combined image too, and docker-compose.yml's demo
+# profile runs it. Which binaries belong where is #599.
+FROM debian:bookworm-slim AS server-runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 gosu && \
@@ -97,9 +109,6 @@ COPY --from=rust-builder /build/target/release/croniq /usr/local/bin/croniq
 COPY --from=rust-builder /build/target/release/croniq-mcp /usr/local/bin/croniq-mcp
 COPY --from=rust-builder /build/target/release/croniq-demo-runner /usr/local/bin/croniq-demo-runner
 COPY --from=rust-builder /build/target/release/croniq-shell-runner /usr/local/bin/croniq-shell-runner
-
-# Copy UI static files
-COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui
 
 # Copy assets
 COPY assets/ /usr/share/croniq/assets/
@@ -124,4 +133,35 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 # CRONIQ_DATA_DIR=…` override stays consistent between the entrypoint's
 # first-run init and the server itself. Hardcoding the path would silently
 # diverge.
+CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000"]
+
+
+# ── Stage 4: Dashboard runtime ───────────────────────────────────────────────
+# Serves the built bundle and nothing else. It deliberately does **not** proxy
+# /v1: the reverse proxy in front routes / here and /v1 to croniq-server, and
+# that is what keeps the dashboard same-origin with the API — which ADR-0001
+# requires, because the refresh token is a `SameSite=Strict` cookie that cannot
+# reach a different origin. A `proxy_pass` in here would add a second,
+# undocumented route to the API inside a container whose job is HTML.
+#
+# Running this image *without* such a proxy is not a deployment variation, it
+# is the localStorage exposure #454 removed. docs/operations.md says so.
+#
+# nginx-unprivileged rather than the official nginx image: this container hands
+# static files to a browser and does not need to start as root to do it. It
+# runs as UID 101 and listens on 8080, so no capability is needed to bind.
+FROM nginxinc/nginx-unprivileged:1.29-alpine AS ui-runtime
+COPY docker/ui/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=ui-builder /build/ui/dist /usr/share/nginx/html
+EXPOSE 8080
+
+
+# ── Stage 5: Combined image (the default target) ─────────────────────────────
+# Last stage, so a plain `docker build .` still produces exactly what it always
+# did: server plus dashboard on one port. This is the supported default for
+# quickstart, demo and single-host deployments (ADR-0002), and the split above
+# is an option for deployments that already run a reverse proxy — not a
+# replacement.
+FROM server-runtime AS combined
+COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui
 CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]
