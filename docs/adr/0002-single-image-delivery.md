@@ -40,10 +40,27 @@ supported default for quickstart, demo and single-host deployments.
 ## Consequences
 
 - **UI↔API version skew cannot happen.** Both come from one digest.
-- **Any UI change rebuilds everything.** A CSS fix goes through the Rust
-  release build, `wasm-pack`, and the npm install, per platform.
+- ~~**Any UI change rebuilds everything.** A CSS fix goes through the Rust
+  release build, `wasm-pack`, and the npm install, per platform.~~
+  **Corrected 2026-09-09 — this was wrong.** The buildx cache
+  (`type=gha, mode=max, scope=docker-<platform>`) keeps the `rust-builder`
+  stage across runs, and a change under `ui/` invalidates only `COPY ui/` and
+  what follows it. Measured across six consecutive `main` builds: a UI-only
+  change costs **72–99 s**, a change under `crates/` costs **433 s**, and a
+  docs-only change 21 s. The claim was written from the Dockerfile's structure
+  rather than from a build, and the structure does not decide this.
 - **The npm dependency tree is part of the build that produces the server
-  binary.** Two supply chains share one build context.
+  binary.** Two supply chains share one build context. This is the one cost of
+  the combined image that measurement did not shrink, and it is the argument a
+  separate server image would rest on — see
+  [#598](https://github.com/nuetzliches/croniq/issues/598).
+- **The dashboard is not what makes the image big.** Published amd64 image,
+  compressed layers: 55.92 MB total, of which the base (26.92 MB) and its
+  `apt` layer (4.28 MB) are 56%, the five binaries are 24.3 MB, and
+  `ui/dist` is **0.37 MB — 0.66%**. Recorded because "split the UI out to
+  slim the image" is the obvious next thought and the numbers do not support
+  it; the levers are the base image and which binaries ship —
+  [#599](https://github.com/nuetzliches/croniq/issues/599).
 - **Static-serving quality is limited to what the server implements.** As
   recorded, `ServeDir` set no `Cache-Control` and there was no compression, so
   every dashboard load revalidated every asset. That was a gap rather than a
@@ -67,3 +84,12 @@ an *additional* `croniq-ui` image for deployments that already run a reverse
 proxy is compatible with this decision, as long as the combined image stays the
 default quickstart and `--ui-dir` keeps working. It would need its own answer
 for version skew, which this decision gets for free.
+
+It also does not settle **what the `croniq` tag should contain in the long
+run**. Shipping a UI-less server as `croniq` and moving the combined variant to
+a different name is a breaking change for every existing `docker pull`, and
+that trade — a cleaner default against an established tag — is deliberately
+left open here rather than decided in passing. It belongs with the work on the
+image variants ([#587](https://github.com/nuetzliches/croniq/issues/587),
+[#598](https://github.com/nuetzliches/croniq/issues/598)), not to this ADR,
+which records only what ships today.
