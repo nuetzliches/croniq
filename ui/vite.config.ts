@@ -63,7 +63,6 @@ export default defineConfig(({ mode }) => {
         output: {
           codeSplitting: {
             groups: [
-              { name: 'charts', test: /node_modules\/recharts/ },
               { name: 'radix', test: /node_modules\/@radix-ui/ },
               { name: 'react', test: /node_modules\/(react|react-dom|scheduler)\// },
               { name: 'router', test: /node_modules\/react-router/ },
