@@ -3,6 +3,7 @@
 ## Core Expectations
 
 1. **Target Stack** — Rust (latest stable edition), React + TypeScript for UI
+   ([ADR-0003](docs/adr/0003-react-for-the-dashboard.md))
 2. **Language** — Documentation, commits, and code comments in English
 3. **Dependencies** — MIT-compatible licenses only. Use latest stable versions.
 4. **Code Style** — `cargo clippy` clean, `cargo fmt` formatted
@@ -18,7 +19,20 @@
 - `croniq-shell-runner` is the generic runner that executes `runner shell { … }` / `runner exec { … }` jobs as subprocesses
 - `croniq-store` holds persistence traits + SQLite/Postgres implementations
 - `croniq-auth` handles JWT, API keys, password auth
-- UI is a React SPA under `ui/`
+- UI is a React SPA under `ui/`, served by `croniq-server --ui-dir` from the
+  same origin as the API ([ADR-0001](docs/adr/0001-same-origin-dashboard.md),
+  [ADR-0002](docs/adr/0002-single-image-delivery.md))
+
+## Architecture decisions
+
+Standing constraints that no single file owns are recorded under
+[`docs/adr/`](docs/adr/README.md). Read the index before proposing a change to
+delivery topology, auth-token storage, or the UI stack — each of those has an
+ADR that names the alternatives already weighed.
+
+Most decisions do **not** belong there. Reasoning goes in a comment at the
+decision site, in the CHANGELOG entry for the change, or in `operations.md` for
+operator-visible behaviour. `docs/adr/README.md` states the admission test.
 
 ## Key Patterns
 
