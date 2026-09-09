@@ -1,3 +1,16 @@
+>**Überholt (2026-09-09).** Dieses Dokument plant einen *Paritäts-Port* mit
+>"sieht aus wie vorher" als Abnahmekriterium. Entschieden wurde stattdessen ein
+>**Neubau mit neuem Design** — siehe
+>[ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md).
+>
+>Was hier weiterhin gilt: das Bibliotheks-Mapping, die benannten Risiken
+>(vue-query-Reaktivität, ConsolePage-Puffer, Auth-Guard-Semantik) und die
+>Drift-Regeln. Was nicht mehr gilt: **die Aufwandsschätzung** (40–48 PT für
+>9.900 LOC TSX — der Baum ist seit dem ~42 % gewachsen, und ein Neubau hat
+>ohnehin kein Paritätskriterium), der Phasenplan ab Phase 2, und die Annahme
+>6 UI-Commits/Woche (gemessen: 2,7). Phase 0 ist erledigt: Playwright-Suite
+>(#586), tote Deps (#583), CSS-Kollisionen (#584), SSE-Kern (#585).
+
 # Migrationsplan: UI von React auf Vue 3 (Tailwind bleibt)
 
 Stand: 2026-06-11. Basis: Vollinventur der Codebasis (55 TSX-Dateien, ~9.900 LOC TSX,

@@ -1,6 +1,6 @@
 # ADR-0003: React + TypeScript for the dashboard
 
-- **Status:** Accepted, under review
+- **Status:** Superseded by [ADR-0004](0004-vue-rebuild-for-the-dashboard.md)
 - **Date:** 2026-04-11 (recorded 2026-09-09)
 - **Related:** `docs/vue-migration-plan.md`, `docs/ui-architecture-decision.md`
 

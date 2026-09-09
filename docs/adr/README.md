@@ -61,4 +61,5 @@ it from four files the way this practice was started.
 |---|---|---|
 | [0001](0001-same-origin-dashboard.md) | The dashboard is served from the same origin as the API | Accepted |
 | [0002](0002-single-image-delivery.md) | One image serves the API, the dashboard and MCP | Accepted |
-| [0003](0003-react-for-the-dashboard.md) | React + TypeScript for the dashboard | Accepted, under review |
+| [0003](0003-react-for-the-dashboard.md) | React + TypeScript for the dashboard | Superseded by 0004 |
+| [0004](0004-vue-rebuild-for-the-dashboard.md) | Rebuild the dashboard in Vue 3 | Accepted |
