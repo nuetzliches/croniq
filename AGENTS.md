@@ -2,8 +2,12 @@
 
 ## Core Expectations
 
-1. **Target Stack** — Rust (latest stable edition), React + TypeScript for UI
-   ([ADR-0003](docs/adr/0003-react-for-the-dashboard.md))
+1. **Target Stack** — Rust (latest stable edition). The shipping dashboard is
+   React + TypeScript and stays so until cutover, but it is being rebuilt in
+   Vue 3 with a new design
+   ([ADR-0004](docs/adr/0004-vue-rebuild-for-the-dashboard.md), superseding
+   [ADR-0003](docs/adr/0003-react-for-the-dashboard.md)). Fixes to a screen
+   that already exists in the Vue tree go there first.
 2. **Language** — Documentation, commits, and code comments in English
 3. **Dependencies** — MIT-compatible licenses only. Use latest stable versions.
 4. **Code Style** — `cargo clippy` clean, `cargo fmt` formatted
