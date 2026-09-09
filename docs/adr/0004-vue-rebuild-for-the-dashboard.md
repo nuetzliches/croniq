@@ -64,9 +64,14 @@ component at a time.
 - **Scope guard, because a rebuild has no natural edge.** Three rules, all of
   which exist to make "done" answerable:
 
-  1. **The screen list is frozen at what exists** — the ten routes the React
-     dashboard serves today. New features wait for after the cutover. A rebuild
-     that also grows the product has no completion criterion.
+  1. **The capability list is frozen at what exists.** New features wait for
+     after the cutover; a rebuild that also grows the product has no completion
+     criterion. *Amended 2026-09-10:* this first read "the screen list is
+     frozen at the ten routes the React dashboard serves today", which was too
+     literal — the screens are being deliberately re-cut and merged, and
+     merging is the opposite of scope growth. What is frozen is the set of
+     capabilities, enumerated in `docs/ui-screen-inventory.md` under *Was nicht
+     verloren gehen darf*; the arrangement is open.
   2. **The acceptance gate is the Playwright suite** (`ui/e2e/`, #586). It
      asserts routes, the login and refresh-cookie session behaviour, the URL
      contracts, both SSE surfaces, and preference persistence — all of it
@@ -112,9 +117,11 @@ component at a time.
 
 ## What this ADR does not say
 
-It does not name the design system, the component library, or the screen
-inventory. Those are the design phase's output, and writing them here before
-that phase would be guessing.
+It did not name the design system, the component library, or the screen
+inventory — those were the design phase's output. That phase has since chosen
+the `nuts-customer-portal` stack (Vue 3 + Nuxt UI 4 + Pinia + vue-query) and a
+re-cut screen set; both live in `docs/ui-screen-inventory.md`, which is the
+document to read before writing any of it.
 
 It does not set a date. The rebuild competes with everything else for the same
 single developer, and the scope guard above matters more than a schedule.
