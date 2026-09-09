@@ -31,9 +31,12 @@ fn app_with(app_url: Option<&str>, ui_dir: Option<&std::path::Path>) -> axum::Ro
     Arc::get_mut(&mut state).unwrap().app_base_url = app_url.map(str::to_string);
     let mut app = server_router(state);
     if let Some(dir) = ui_dir {
-        use tower_http::services::{ServeDir, ServeFile};
-        let index = dir.join("index.html");
-        app = app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(&index)));
+        // `ui_assets::mount` is what main.rs calls; going through it rather
+        // than re-assembling a ServeDir here is the point of this helper —
+        // otherwise the security-header assertions below cover a shape that
+        // production no longer has. Since #582 that shape includes a nested
+        // `/assets` router, which the outer application must also reach.
+        app = croniq_server::ui_assets::mount(app, dir);
         // Mirror main.rs: the outer application is what covers the fallback.
         app = hardening::apply_security_headers(app);
     }
@@ -113,8 +116,29 @@ async fn security_headers_present_on_spa_fallback() {
         "<!doctype html><title>Croniq</title>",
     )
     .unwrap();
+    std::fs::create_dir(dir.path().join("assets")).unwrap();
+    std::fs::write(
+        dir.path().join("assets").join("index-abc123.js"),
+        "console.log('long enough to pass the compression size predicate')",
+    )
+    .unwrap();
 
     let app = app_with(None, Some(dir.path()));
+
+    // A hashed asset out of the nested `/assets` router (#582). `Router::layer`
+    // wraps what is already mounted, nested routes included — but that is the
+    // kind of property that holds until someone reorders the assembly, and a
+    // bundle chunk served without a CSP is exactly what #429 set out to fix.
+    let resp = send(
+        app.clone(),
+        Request::builder()
+            .uri("/assets/index-abc123.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_security_headers(&resp);
 
     // A client-side route: no file exists, ServeFile serves index.html.
     let resp = send(

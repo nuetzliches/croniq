@@ -1044,12 +1044,12 @@ async fn main() -> Result<()> {
         tracing::info!("MCP HTTP transport disabled by Croniqfile");
     }
 
-    // Serve UI static files if --ui-dir is set
+    // Serve UI static files if --ui-dir is set. `ui_assets::mount` splits the
+    // bundle into the content-hashed half (cached for a year) and the document
+    // half (revalidated), and compresses both — see that module for why the
+    // two cannot share one policy.
     if let Some(ref ui_dir) = cli.ui_dir {
-        use tower_http::services::{ServeDir, ServeFile};
-        let index = ui_dir.join("index.html");
-        let serve = ServeDir::new(ui_dir).fallback(ServeFile::new(&index));
-        app = app.fallback_service(serve);
+        app = croniq_server::ui_assets::mount(app, ui_dir);
         tracing::info!(path = %ui_dir.display(), "serving UI static files");
     }
 

@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard is now served with cache headers and compression
+  ([#582](https://github.com/nuetzliches/croniq/issues/582)).** `--ui-dir` was
+  handed to a bare `ServeDir`, which sets no `Cache-Control` and compresses
+  nothing. `ServeDir` does emit a `Last-Modified`, so browsers revalidated
+  rather than re-downloaded — but that is still one conditional request per
+  asset per page load, on a bundle that code-splits into a dozen chunks, and
+  every one of them travelled uncompressed.
+
+  Vite's output makes the split unambiguous. Everything under `assets/` carries
+  a content hash in its filename, so a name cannot change meaning and now
+  arrives with `public, max-age=31536000, immutable`. Everything else —
+  `index.html` above all — is served `no-cache`, because a cached `index.html`
+  names asset files from an older build and shows a blank page after an
+  upgrade. That is why the two halves are separate stacks rather than one with
+  an exception: a blanket `max-age` would trade a solved problem for a worse
+  one.
+
+  Compression is negotiated per request (gzip, brotli) and applied to the
+  static services only. The API router is deliberately left out — compressing
+  an SSE stream buffers it, and both the runners page and the console are SSE.
+
+  No configuration: an existing `--ui-dir` deployment gets this on upgrade.
+  Behind a reverse proxy the headers pass through unless the proxy is
+  configured to set its own, in which case its values continue to apply.
+
 ### Fixed
 
 - **`install.sh` no longer aborts at checksum verification on Alpine.** The
