@@ -96,7 +96,7 @@ export function AuditTab() {
                     {e.created_at.slice(11, 19)}
                   </span>
                   <span className="mono" style={{ minWidth: 160 }}>{e.action}</span>
-                  <span className="dim grow ellipsis">
+                  <span className="dim cq-grow ellipsis">
                     {e.target_type}
                     {e.target_id ? ` · ${e.target_id.slice(0, 8)}` : ''}
                   </span>

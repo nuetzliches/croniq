@@ -219,7 +219,7 @@ export function ApiClientsTab() {
                           <fieldset key={group.label} className="space-y-1">
                             <legend className="text-xs font-semibold text-muted-foreground mb-1">{group.label}</legend>
                             {/* Single column — hints can be long and a 2-col
-                                grid was crashing them into neighbouring
+                                cq-grid was crashing them into neighbouring
                                 checkboxes. The list is short enough that
                                 stacking reads fine. */}
                             <div className="space-y-1">
@@ -370,7 +370,7 @@ export function ApiClientsTab() {
               <span className="flex-1 break-all">{newKey.raw_key}</span>
               <CopyButton value={newKey.raw_key} />
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs items-center">
+            <div className="mt-2 cq-grid grid-cols-2 gap-x-4 text-xs items-center">
               <span className="text-muted-foreground">Key ID</span>
               <span className="flex items-center gap-1.5 font-mono">
                 {newKey.key_id}

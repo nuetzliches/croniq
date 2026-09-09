@@ -171,7 +171,7 @@ export function NewJobDialog({ open, onOpenChange }: Props) {
             </div>
             {deadLetterOn && (
               <div className="space-y-3 border-l-2 border-border pl-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="cq-grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">
                       Retention

@@ -188,7 +188,7 @@ export function JobsPage() {
             gap: 10,
           }}
         >
-          <div className="row gap-6">
+          <div className="row cq-gap-6">
             <div style={{ position: 'relative', flex: 1 }}>
               <Search
                 size={13}
@@ -220,7 +220,7 @@ export function JobsPage() {
             </button>
           </div>
           {(tagCounts.data ?? []).length > 0 ? (
-            <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+            <div className="row cq-gap-6" style={{ flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className={clsx('pill', activeTags.size === 0 ? 'accent' : 'outline')}
@@ -372,7 +372,7 @@ function JobRow({
             </span>
           ))}
         </div>
-        <div className="row gap-6" style={{ flexShrink: 0 }}>
+        <div className="row cq-gap-6" style={{ flexShrink: 0 }}>
           <ExecutionBars
             counts={recent.map(outcomeFor).reverse()}
             durations={recent.map((e) => e.duration_ms).reverse()}
@@ -680,7 +680,7 @@ function JobDetailHeader({
       }}
     >
       <div className="col" style={{ gap: 6, minWidth: 0, flex: '1 1 380px' }}>
-        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+        <div className="row cq-gap-8" style={{ flexWrap: 'wrap' }}>
           <h1
             className="mono"
             style={{
@@ -705,7 +705,7 @@ function JobDetailHeader({
           ) : null}
           <CopyBtn value={job.job_key} />
         </div>
-        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+        <div className="row cq-gap-8" style={{ flexWrap: 'wrap' }}>
           {(job.tags ?? []).map((t) => (
             <span key={t} className="tag">
               {t}
@@ -733,7 +733,7 @@ function JobDetailHeader({
           </p>
         ) : null}
       </div>
-      <div className="row gap-6" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      <div className="row cq-gap-6" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <Toggle on={job.is_active} onChange={onToggle} disabled={dslManaged} label="Active" />
         {dslManaged ? (
           <button
@@ -834,7 +834,7 @@ function KpiRow({
     : undefined
 
   return (
-    <div className="grid cols-4">
+    <div className="cq-grid cols-4">
       <KPICard
         title="Last 24h"
         value={runsLast24.length}
@@ -1122,7 +1122,7 @@ function OverviewTab({
           <div className="card-title" style={{ marginBottom: 12 }}>
             Owned by
           </div>
-          <div className="row gap-8">
+          <div className="row cq-gap-8">
             <Avatar name={ownerName} />
             <div className="col" style={{ gap: 0 }}>
               <div>{ownerName}</div>
@@ -1298,7 +1298,7 @@ function ScheduleTab({
                     </td>
                     <td className="dim">{formatRelative(s.updated_at)}</td>
                     <td>
-                      <div className="row gap-6">
+                      <div className="row cq-gap-6">
                         <button
                           type="button"
                           className="btn icon sm ghost"
@@ -1350,7 +1350,7 @@ function DslTab({
         <div className="mono dim" style={{ fontSize: 12 }}>
           Croniqfile
         </div>
-        <div className="row gap-6">
+        <div className="row cq-gap-6">
           <CopyBtn value={dsl} label="Copy" />
         </div>
       </div>
@@ -1427,7 +1427,7 @@ function AuditTab({ events, loading }: { events: AuditEvent[]; loading: boolean 
                 <Icon size={13} />
               </div>
               <div className="audit-content">
-                <div className="row gap-8" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <div className="row cq-gap-8" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--fg)', fontWeight: 500, fontSize: 13 }}>
                     {e.actor_type}
                     {e.actor_id ? <span className="dim mono" style={{ fontWeight: 400, marginLeft: 4 }}>· {e.actor_id.slice(0, 8)}</span> : null}
@@ -1441,7 +1441,7 @@ function AuditTab({ events, loading }: { events: AuditEvent[]; loading: boolean 
                     </span>
                   ) : null}
                 </div>
-                <div className="row gap-6 dim mono" style={{ fontSize: 11 }}>
+                <div className="row cq-gap-6 dim mono" style={{ fontSize: 11 }}>
                   <span>{formatDate(e.created_at)}</span>
                   <span>·</span>
                   <span>{formatRelative(e.created_at)}</span>

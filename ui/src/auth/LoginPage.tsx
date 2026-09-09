@@ -375,7 +375,7 @@ export function LoginPage() {
               ) : null}
 
               {bothDisabled ? (
-                <div className="col gap-14">
+                <div className="col cq-gap-14">
                   <div className="login-sso-card">
                     <span className="login-sso-icon">
                       <Lock size={18} />
@@ -409,7 +409,7 @@ export function LoginPage() {
                     onCancel={cancelEnrollment}
                   />
                 ) : (
-                <form className="col gap-14" onSubmit={handleSubmit}>
+                <form className="col cq-gap-14" onSubmit={handleSubmit}>
                   <LoginField label="Username">
                     <input
                       className="input"
@@ -489,7 +489,7 @@ export function LoginPage() {
               ) : null}
 
               {!bothDisabled && effectiveMethod === 'sso' ? (
-                <div className="col gap-14">
+                <div className="col cq-gap-14">
                   {oidc?.enabled && oidc.login_url ? (
                     <>
                       <div className="login-sso-card">
@@ -530,7 +530,7 @@ export function LoginPage() {
                   <div className="login-divider">
                     <span>Lost access?</span>
                   </div>
-                  <div className="row gap-10" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <div className="row cq-gap-10" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
                     <button type="button" className="login-recovery" onClick={handleForgotPassword}>
                       <Bell size={12} /> Email a recovery link
                     </button>
@@ -587,7 +587,7 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
         <span className="login-name">Croniq</span>
         {version ? <VersionChip version={version} /> : null}
         {version ? <EnvBadge env={version.env} /> : null}
-        <span className="row gap-6" style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11.5 }}>
+        <span className="row cq-gap-6" style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11.5 }}>
           <span className="live-dot" />
           <span>{window.location.host}</span>
         </span>
@@ -638,7 +638,7 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
         >
           {new URL(DOCS_URL).host}
         </a>
-        <span className="row gap-6" style={{ marginLeft: 'auto' }}>
+        <span className="row cq-gap-6" style={{ marginLeft: 'auto' }}>
           <span className="live-dot" />
           {stats.status === 'ok' ? 'all systems operational' : 'backend degraded'}
         </span>
@@ -764,7 +764,7 @@ function LoginDemoConsole() {
         </span>
         {headerLabel ? (
           <span
-            className="row gap-6"
+            className="row cq-gap-6"
             style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}
           >
             <span className="live-dot" />
@@ -857,7 +857,7 @@ function LoginCompactStrip({ health }: { health: HealthResponse | null }) {
         {version ? <VersionChip version={version} /> : null}
         {version ? <EnvBadge env={version.env} /> : null}
         <span
-          className="row gap-6"
+          className="row cq-gap-6"
           style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11 }}
         >
           <span className="live-dot" />
@@ -978,7 +978,7 @@ function SubmitButton({
 function ErrorBanner({ msg }: { msg: string }) {
   return (
     <div className="banner error" role="alert" style={{ fontSize: 12.5 }}>
-      <span className="grow">{msg}</span>
+      <span className="cq-grow">{msg}</span>
     </div>
   )
 }
@@ -1008,9 +1008,9 @@ function LoginEnrollView({
   onCancel: () => void
 }) {
   return (
-    <form className="col gap-14" onSubmit={onConfirm}>
+    <form className="col cq-gap-14" onSubmit={onConfirm}>
       <div className="banner warn" role="status" style={{ fontSize: 12.5 }}>
-        <span className="grow">
+        <span className="cq-grow">
           Two-factor is required here. Set it up now to finish signing in.
         </span>
       </div>
@@ -1048,7 +1048,7 @@ function LoginEnrollView({
         role="status"
         style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}
       >
-        <span className="grow">
+        <span className="cq-grow">
           <strong>Save these recovery codes.</strong> They're shown once and let you sign in if you
           lose your authenticator.
         </span>

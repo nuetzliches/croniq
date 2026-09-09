@@ -98,7 +98,7 @@ function DeadLetterDetail({
             <span className="dim" style={{ fontSize: 12 }}>{data.dead_reason} · attempt {data.attempt}</span>
             <JobDescription jobKey={data.job_key} />
           </div>
-          <div className="row gap-6">
+          <div className="row cq-gap-6">
             <button
               type="button"
               className="btn sm primary"
@@ -117,7 +117,7 @@ function DeadLetterDetail({
             </button>
           </div>
         </div>
-        <div className="grid" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 6, fontSize: 12.5 }}>
+        <div className="cq-grid" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 16, rowGap: 6, fontSize: 12.5 }}>
           {[
             ['Execution', (
               <span key="x" className="row mono" style={{ gap: 6, alignItems: 'center' }}>
@@ -276,7 +276,7 @@ export function DeadLettersPage() {
               }}
             >
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" style={{ color: 'var(--success)' }} />
-              <div className="grow" style={{ minWidth: 0 }}>
+              <div className="cq-grow" style={{ minWidth: 0 }}>
                 <p style={{ margin: 0, color: 'var(--success)' }}>
                   Replay queued for {lastReplay.job_key} · attempt {lastReplay.attempt}
                 </p>

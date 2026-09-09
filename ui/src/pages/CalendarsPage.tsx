@@ -293,7 +293,7 @@ export function CalendarsPage() {
             return (
               <Card key={cal.calendar_id}>
                 <CardContent className="py-3">
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center cq-gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-medium">{cal.name}</span>

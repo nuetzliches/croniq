@@ -101,7 +101,7 @@ export function ScheduleBuilder({ onChange, initial }: Props) {
       </div>
 
       {payload.mode === 'interval' && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="cq-grid grid-cols-2 gap-2">
           <div>
             <label className="text-xs font-medium text-foreground block mb-1">Count</label>
             <input
@@ -149,7 +149,7 @@ export function ScheduleBuilder({ onChange, initial }: Props) {
       {payload.mode === 'weekdays' && (
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Days</label>
-          <div className="grid grid-cols-7 gap-1">
+          <div className="cq-grid grid-cols-7 gap-1">
             {WEEKDAYS.map((d) => {
               const active = payload.days.includes(d)
               return (
@@ -179,7 +179,7 @@ export function ScheduleBuilder({ onChange, initial }: Props) {
       {payload.mode === 'monthly' && (
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Day(s) of month</label>
-          <div className="grid grid-cols-8 gap-1">
+          <div className="cq-grid grid-cols-8 gap-1">
             {ORDINALS.map((o) => {
               const active = payload.ordinals.includes(o)
               return (

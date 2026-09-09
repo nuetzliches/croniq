@@ -26,7 +26,7 @@
   display: inline-block;
   /* A shortcut badge must keep its natural size: as a flex item (e.g. in
    * .search-trigger) it would otherwise share the row's shrink and get
-   * squished. Let the adjacent flexible text (.grow) absorb the shrink. */
+   * squished. Let the adjacent flexible text (.cq-grow) absorb the shrink. */
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -241,17 +241,17 @@
 .kpi-delta.flat { background: var(--neutral-bg); color: var(--fg-2); }
 
 /* ── grid helpers ──────────────────────────────────────────── */
-.grid { display: grid; gap: 14px; }
-.grid.cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.grid.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cq-grid { display: grid; gap: 14px; }
+.cq-grid.cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.cq-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cq-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cq-grid.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 @media (max-width: 1100px) {
-  .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cq-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cq-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
-  .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+  .cq-grid.cols-2, .cq-grid.cols-3, .cq-grid.cols-4 { grid-template-columns: 1fr; }
 }
 
 /* ── tables ────────────────────────────────────────────────── */
@@ -363,7 +363,7 @@
 .banner.warn  { background: var(--warn-bg);  border-color: oklch(0.80 0.16 82 / 0.30); color: var(--warn); }
 .banner.error { background: var(--error-bg); border-color: oklch(0.68 0.20 25 / 0.30); color: var(--error); }
 .banner.info  { background: var(--info-bg);  border-color: oklch(0.74 0.13 230 / 0.30); color: var(--info); }
-.banner .grow { color: var(--fg); }
+.banner .cq-grow { color: var(--fg); }
 
 /* ── segmented control ─────────────────────────────────────── */
 .seg {
@@ -393,9 +393,9 @@
 .row      { display: flex; align-items: center; gap: 10px; }
 .col      { display: flex; flex-direction: column; gap: 10px; }
 .between  { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.gap-4    { gap: 4px; } .gap-6 { gap: 6px; } .gap-8 { gap: 8px; }
-.gap-10   { gap: 10px; } .gap-14 { gap: 14px; } .gap-20 { gap: 20px; }
-.grow     { flex: 1; min-width: 0; }
+.cq-gap-4  { gap: 4px; } .cq-gap-6 { gap: 6px; } .cq-gap-8 { gap: 8px; }
+.cq-gap-10 { gap: 10px; } .cq-gap-14 { gap: 14px; } .cq-gap-20 { gap: 20px; }
+.cq-grow   { flex: 1; min-width: 0; }
 .ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .center   { display: grid; place-items: center; }
 .section-title {
