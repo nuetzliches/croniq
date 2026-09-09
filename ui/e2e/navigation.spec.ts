@@ -22,7 +22,11 @@ test.describe('navigation', () => {
 
       await app.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: label }).click()
 
-      await expect(app).toHaveURL(new RegExp(`${path.replace(/\//g, '\\/')}$`))
+      // Compare the pathname directly rather than building a regex out of it.
+      // A hand-rolled escape is both unnecessary (a forward slash needs none
+      // inside `RegExp`) and wrong (it left backslashes alone) — CodeQL's
+      // js/incomplete-sanitization, and it was right.
+      await expect.poll(() => new URL(app.url()).pathname).toBe(path)
       // The shell must survive the navigation — if the page component throws,
       // React unmounts the tree and the nav goes with it.
       await expect(app.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
