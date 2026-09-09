@@ -20,5 +20,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  // The e2e suite belongs here rather than in tsconfig.app.json: it runs in
+  // Node under Playwright, not in the bundle. Without it `tsc -b` type checks
+  // neither the specs nor the config, and a type error in a spec would only
+  // surface when the suite runs.
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "e2e"]
 }

@@ -34,6 +34,39 @@ relative URLs by default, so it works in any deployment where the server
 serves both the UI and the API. Set `VITE_API_URL` at build time only if
 you deploy the UI on a different origin than the API.
 
+## Tests
+
+```sh
+npm test          # unit tests (vitest)
+npm run test:e2e  # browser smoke suite (Playwright)
+```
+
+The e2e suite brings up its own stack — it seeds a fresh database, starts
+`croniq-server` over `Croniqfile.demo` on `127.0.0.1:4010`, and attaches one
+demo runner. Build the binaries and the bundle once first:
+
+```sh
+cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \
+  --bin croniq --bin croniq-server --bin croniq-demo-runner
+npm run build
+npx playwright install chromium
+```
+
+`CRONIQ_BIN_DIR` overrides where the binaries are looked up (default
+`target/debug`), and `CRONIQ_E2E_PORT` the port. `npm run test:e2e:ui` opens
+Playwright's UI mode for debugging a single spec.
+
+Two things about the suite are worth knowing before extending it, both of
+them consequences of how sessions work rather than of Playwright:
+
+- **The whole suite shares one signed-in page** (a worker-scoped fixture).
+  Playwright's usual `storageState` pattern does not work here, because
+  `POST /v1/auth/refresh` rotates the refresh token — a saved state is
+  single-use, and every test after the first replays a revoked token.
+- **Logins are rate-limited** at 30 attempts per five minutes per IP, so
+  specs should use the shared `app` fixture rather than logging in.
+  `auth.spec.ts` is the exception, and it is deliberately small.
+
 ## Views
 
 | View | Route | Description |
