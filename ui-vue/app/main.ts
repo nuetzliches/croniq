@@ -6,7 +6,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import ui from '@nuxt/ui/vue-plugin'
 
 import App from './App.vue'
-import { router } from './router'
+import { installAuthWatch, router } from './router'
 
 const app = createApp(App)
 
@@ -27,5 +27,9 @@ app.use(createPinia())
 app.use(router)
 app.use(ui)
 app.use(VueQueryPlugin, { queryClient })
+
+// After the pinia plugin is installed, so the store exists. See the comment on
+// installAuthWatch: a guard alone does not notice a session dying in place.
+installAuthWatch()
 
 app.mount('#app')
