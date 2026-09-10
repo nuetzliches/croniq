@@ -136,9 +136,9 @@ function messageFor(caught: unknown): string {
     <UCard class="w-full max-w-sm">
       <template #header>
         <div class="flex items-center gap-2">
-          <UIcon
-            name="i-lucide-timer"
-            class="size-5 text-primary"
+          <BrandMark
+            :size="20"
+            chip
           />
           <span class="font-semibold">Sign in to Croniq</span>
         </div>

@@ -1,2 +1,33 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+/*
+ * The Croniq brand ramp, built around #6A54DF at 500 — the purple in
+ * `public/icons/mark-mono.svg` and on the favicon. Nuxt UI's `primary` aliases
+ * to this (see vite.config.ts), so the accent colour is the product's own
+ * rather than a framework default.
+ *
+ * Carried over, not chosen: the shades around 500 are a mechanical ramp. What
+ * the dashboard should actually *look* like is still open — see
+ * `docs/ui-visual-design.md`.
+ *
+ * `@theme static` rather than `@theme`: plain `@theme` only emits the
+ * variables some generated utility actually references, and nothing here
+ * writes `bg-brand-500` literally — Nuxt UI reaches them through its own
+ * `primary` alias at runtime. Without `static` the whole ramp is tree-shaken
+ * away and every `bg-primary` in the app resolves to transparent, which is
+ * exactly what it did.
+ */
+@theme static {
+  --color-brand-50: #f3f1fd;
+  --color-brand-100: #e9e5fc;
+  --color-brand-200: #d5cef9;
+  --color-brand-300: #b8aaf4;
+  --color-brand-400: #9780ec;
+  --color-brand-500: #6a54df;
+  --color-brand-600: #5b45c9;
+  --color-brand-700: #4c39a6;
+  --color-brand-800: #403188;
+  --color-brand-900: #372c6e;
+  --color-brand-950: #221a45;
+}

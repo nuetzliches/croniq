@@ -54,9 +54,9 @@ async function signOut() {
       :class="ui.sidebarCollapsed ? 'w-16' : 'w-60'"
     >
       <div class="flex h-14 items-center gap-2 px-4">
-        <UIcon
-          name="i-lucide-timer"
-          class="size-5 shrink-0 text-primary"
+        <BrandMark
+          :size="20"
+          class="shrink-0 text-primary"
         />
         <span
           v-if="!ui.sidebarCollapsed"
