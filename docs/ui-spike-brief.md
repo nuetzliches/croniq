@@ -11,7 +11,7 @@ node -v                                      # muss ≥ 20.19 sein
 cd /home/sebastian/dev/croniq/ui
 npm ci                                       # ~30s
 docker compose up -d                         # Backend auf :4000
-npm run dev                                  # Vite HMR auf :4100 (proxied → :4000)
+npm run dev                                  # Vite HMR auf :4231 (proxied → :4230)
 ```
 
 Health-Check vor Beginn: `curl http://localhost:4000/health` → `{"status":"ok",...}`.

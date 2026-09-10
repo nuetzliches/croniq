@@ -8,7 +8,7 @@ import ui from '@nuxt/ui/vite'
  * React ships until this passes the acceptance gate, and both dev servers run
  * at once so the two can be compared — see `scripts/dev-stack.mjs`.
  *
- * Port 4101, because `ui/` holds 4100.
+ * Port 4232, in croniq's 4230-4233 development block; `ui/` holds 4231.
  *
  * There is deliberately no `VITE_API_URL` escape hatch here, unlike the React
  * tree. That flag exists there for cross-origin builds and needs a guard to
@@ -18,7 +18,7 @@ import ui from '@nuxt/ui/vite'
  * topology. If a cross-origin build is ever needed, it needs the guard back
  * with it, not the flag alone.
  */
-const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4000'
+const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4230'
 
 export default defineConfig({
   plugins: [
@@ -54,7 +54,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 4101,
+    port: 4232,
     // See ui/vite.config.ts: a silent move to another port makes the
     // side-by-side comparison compare the wrong things.
     strictPort: true,

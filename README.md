@@ -900,7 +900,7 @@ cargo build --workspace              # Build all crates
 cargo test --workspace               # Run all tests
 cargo clippy --workspace -- -D warnings  # Lint
 
-cd ui && npm run dev                 # Vite dev server on :4100
+cd ui && npm run dev                 # Vite dev server on :4231
 croniq-server --config Croniqfile.example --data-dir .data  # API on :4000
 ```
 

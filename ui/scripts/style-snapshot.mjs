@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import { chromium } from "@playwright/test";
 
-const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4010);
+const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 /** Layout-affecting properties the components.css/Tailwind overlap can touch. */

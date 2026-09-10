@@ -5,10 +5,10 @@ import path from 'path'
 
 // API base URL for the dev proxy. The default of "" in api/base.ts means
 // "same origin" — fine for production (UI + API share the origin), but in
-// dev the UI runs on :4100 and the API on :4000, so we need to forward the
+// dev the UI runs on :4231 and the API on :4230, so we need to forward the
 // API paths. Override via CRONIQ_API_ORIGIN if you run the server on a
 // different host/port while developing the UI.
-const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4000'
+const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4230'
 
 /** Env var that acknowledges the weaker cross-origin token storage. */
 const ACK = 'VITE_ALLOW_LOCALSTORAGE_REFRESH'
@@ -75,17 +75,18 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      // 4100 rather than Vite's default 5173. Two reasons, in order of weight:
-      // the 5100-5400 range is where .NET/Aspire tooling lives and 5173 is
-      // Vite's default for *every* project, so a developer with a second Vite
-      // app open loses the coin toss; and keeping croniq's ports together
-      // (4000 server, 4010 e2e, 4100/4101 dev UIs) makes the whole set one
-      // thing to remember.
-      port: 4100,
+      // 4231, inside croniq's 4230-4233 development block. Not Vite's default
+      // 5173: that is every project's default, so a developer with a second
+      // Vite app open loses a coin toss, and on this machine 5173 belongs to
+      // .NET Aspire's control plane with the rest of 5100-5400 around it.
+      // Not 41xx either, which sits one project away from a neighbour already
+      // holding 4200/4201. A contiguous block that is unmistakably croniq's is
+      // both collision-proof and one thing to remember.
+      port: 4231,
       // Fail rather than drift. Vite's default is to take the next free port
       // when one is busy, which is convenient alone and wrong in the dev
       // stack: `scripts/dev-stack.mjs` prints fixed URLs and runs this beside
-      // the Vue tree on 4101, so a silent move means comparing the wrong pair.
+      // the Vue tree on 4232, so a silent move means comparing the wrong pair.
       strictPort: true,
       proxy: {
         '/v1': API_ORIGIN,
