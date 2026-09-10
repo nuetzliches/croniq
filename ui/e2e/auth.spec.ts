@@ -57,6 +57,13 @@ test.describe('authentication', () => {
    *
    * Note the menu items are plain `<button>`s inside a `role="menu"` container
    * with no `role="menuitem"`, so `getByRole('menuitem')` finds nothing here.
+   *
+   * **These two selectors are React-specific and will not match the Vue tree.**
+   * `.user-pill` and `.user-menu` are class names from `ui/src/layout/`, and
+   * the rebuild's shell uses an accessible name instead. ADR-0004 calls this
+   * suite the framework-agnostic acceptance gate, which is true of every other
+   * spec here but not of this line — generalising it is cutover work, and
+   * saying so here is cheaper than discovering it then.
    */
   test('logging out revokes the session server-side', async ({ page }) => {
     await login(page)
