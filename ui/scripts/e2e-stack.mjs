@@ -26,8 +26,12 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** Where the suite expects the server. Not :4000 — a dev stack may hold it. */
-export const E2E_PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4010);
+/**
+ * Where the suite expects the server: 4233, the last slot in croniq's
+ * 4230-4233 development block. Deliberately not the dev stack's own port —
+ * running the suite must not require stopping what you were looking at.
+ */
+export const E2E_PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233);
 
 /** Fixed demo credentials. Public by design; see docker-compose.yml. */
 export const E2E_USER = "admin";

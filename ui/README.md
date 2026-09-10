@@ -15,7 +15,7 @@ React dashboard for Croniq — the distributed job scheduling platform.
 
 ```sh
 npm install
-npm run dev       # http://localhost:4100
+npm run dev       # http://localhost:4231
 ```
 
 The Vite dev server proxies `/v1`, `/health`, and `/metrics` to
@@ -42,7 +42,7 @@ npm run test:e2e  # browser smoke suite (Playwright)
 ```
 
 The e2e suite brings up its own stack — it seeds a fresh database, starts
-`croniq-server` over `Croniqfile.demo` on `127.0.0.1:4010`, and attaches one
+`croniq-server` over `Croniqfile.demo` on `127.0.0.1:4233`, and attaches one
 demo runner. Build the binaries and the bundle once first:
 
 ```sh

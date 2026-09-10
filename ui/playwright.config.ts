@@ -12,7 +12,7 @@ import { defineConfig, devices } from '@playwright/test'
  * is off in CI and on locally, where re-seeding a database for every `--watch`
  * iteration would be the slowest part of the loop.
  */
-const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4010)
+const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233)
 const BASE_URL = `http://127.0.0.1:${PORT}`
 
 export default defineConfig({

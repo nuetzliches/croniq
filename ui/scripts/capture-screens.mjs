@@ -33,8 +33,8 @@ const tree = process.argv[2] ?? "react";
 const outDir = path.resolve(process.argv[3] ?? path.join(ROOT, "screens", tree));
 
 const PORTS = {
-  react: Number(process.env.CRONIQ_DEV_UI_PORT ?? 4100),
-  vue: Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4101),
+  react: Number(process.env.CRONIQ_DEV_UI_PORT ?? 4231),
+  vue: Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4232),
 };
 const port = PORTS[tree];
 if (!port) {

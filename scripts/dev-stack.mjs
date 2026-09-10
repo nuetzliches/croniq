@@ -2,9 +2,15 @@
 //
 // Start everything needed to compare the two dashboards side by side:
 //
-//   croniq-server   http://127.0.0.1:4000   API, seeded demo data, one runner
-//   ui   (React)    http://127.0.0.1:4100   the shipping dashboard
-//   ui-vue (Vue)    http://127.0.0.1:4101   the rebuild (ADR-0004)
+//   croniq-server   http://127.0.0.1:4230   API, seeded demo data, one runner
+//   ui   (React)    http://127.0.0.1:4231   the shipping dashboard
+//   ui-vue (Vue)    http://127.0.0.1:4232   the rebuild (ADR-0004)
+//
+// 4230-4233 is croniq's development block, deliberately contiguous and
+// deliberately not 4000. The server's *product* default stays 4000 -- it is
+// baked into Croniqfile.demo, docker-compose.yml and the README quickstart --
+// but the dev stack running there too meant `docker compose up` and this
+// script could not coexist. They can now.
 //
 // Both dev servers proxy /v1, /health, /version and /metrics to :4000, so each
 // is same-origin with the API and gets the refresh cookie exactly as
@@ -17,7 +23,7 @@
 //   node scripts/dev-stack.mjs --no-ui   server + Vue only
 //   node scripts/dev-stack.mjs --api     server only (use your own dev server)
 //
-// Ports default to 4000 / 4100 / 4101 and are overridable when something else
+// Ports default to 4230 / 4231 / 4232 and are overridable when something else
 // on the machine already holds one:
 //   CRONIQ_DEV_PORT, CRONIQ_DEV_UI_PORT, CRONIQ_DEV_VUE_PORT
 //
@@ -47,9 +53,9 @@ const apiOnly = args.has("--api");
 const withReact = !apiOnly && !args.has("--no-ui");
 const withVue = !apiOnly && !args.has("--no-vue");
 
-const PORT = Number(process.env.CRONIQ_DEV_PORT ?? 4000);
-const REACT_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4100);
-const VUE_PORT = Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4101);
+const PORT = Number(process.env.CRONIQ_DEV_PORT ?? 4230);
+const REACT_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4231);
+const VUE_PORT = Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4232);
 const USER = "admin";
 const PASSWORD = "demo-admin";
 const API_KEY = "croniq_dev_stack_key_not_for_production_use";
