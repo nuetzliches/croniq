@@ -15,7 +15,7 @@ React dashboard for Croniq — the distributed job scheduling platform.
 
 ```sh
 npm install
-npm run dev       # http://localhost:5173
+npm run dev       # http://localhost:4100
 ```
 
 The Vite dev server proxies `/v1`, `/health`, and `/metrics` to

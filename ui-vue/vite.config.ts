@@ -8,7 +8,7 @@ import ui from '@nuxt/ui/vite'
  * React ships until this passes the acceptance gate, and both dev servers run
  * at once so the two can be compared — see `scripts/dev-stack.mjs`.
  *
- * Port 5174, because `ui/` holds 5173.
+ * Port 4101, because `ui/` holds 4100.
  *
  * There is deliberately no `VITE_API_URL` escape hatch here, unlike the React
  * tree. That flag exists there for cross-origin builds and needs a guard to
@@ -51,7 +51,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5174,
+    port: 4101,
     // See ui/vite.config.ts: a silent move to another port makes the
     // side-by-side comparison compare the wrong things.
     strictPort: true,

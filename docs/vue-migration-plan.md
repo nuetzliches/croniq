@@ -173,7 +173,7 @@ bei Abbruch der Migration kein Totalverlust.
 
 ### Phase 4 — Seiten-Port aufsteigend nach Komplexität (9–13 PT)
 
-Beide UIs parallel laufen lassen (React :5173, Vue :5174, gleiche API), jede Seite
+Beide UIs parallel laufen lassen (React :4100, Vue :4101, gleiche API), jede Seite
 einzeln side-by-side abnehmen, PORTING-NOTES als Gate, Playwright-Specs pro Seite
 grün ziehen:
 
