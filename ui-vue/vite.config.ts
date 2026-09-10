@@ -26,7 +26,10 @@ export default defineConfig({
     ui({
       ui: {
         colors: {
-          primary: 'blue',
+          // The product's own purple (see app/assets/css/main.css), not a
+          // framework default. `primary: 'blue'` was a placeholder I set
+          // without flagging it as a decision.
+          primary: 'brand',
           neutral: 'slate',
           success: 'green',
           info: 'blue',
