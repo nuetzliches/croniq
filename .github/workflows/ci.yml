@@ -325,6 +325,53 @@ jobs:
             exit 1
           fi
 
+  ui-vue:
+    # The Vue rebuild (ADR-0004). Not a required check: it ships nothing yet,
+    # and gating merges on a tree that is still being scaffolded would block
+    # work on the dashboard that is actually in production. It exists so the
+    # new tree cannot rot silently while the React one is still the product.
+    #
+    # Note the job name differs from `UI (build + typecheck)`, which is a
+    # required check. At cutover the two swap contents, not names — renaming a
+    # required job blocks every merge until branch protection catches up
+    # (incident #98).
+    name: UI-Vue (build + typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui-vue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Same reason as the `ui` job: the build's prebuild hook produces the
+      # wasm bridge in place, so the toolchain has to be here.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          # Shares the `wasm` scope with the `ui` job on purpose: both build
+          # the identical crate, and a separate scope would compile it twice.
+          workspaces: ". -> target"
+          shared-key: wasm
+      - name: Install wasm-pack
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui-vue/package-lock.json
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm run test
+      # `npm run build` is `vue-tsc --build && vite build`, so the type check
+      # is part of it and cannot be skipped by building alone.
+      - run: npm run build
+
   e2e:
     # Browser-level smoke suite (#586). Deliberately NOT a required check yet:
     # it is the first e2e job in this repo and needs a couple of weeks of

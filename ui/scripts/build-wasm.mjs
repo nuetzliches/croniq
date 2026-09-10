@@ -22,7 +22,12 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CRATE_DIR = path.join(ROOT, "crates", "croniq-config-wasm");
 const OUT_PKG = path.join(CRATE_DIR, "pkg");
-const UI_DEST = path.join(ROOT, "ui", "src", "lib", "wasm");
+// Destination, repo-relative, overridable by the first argument. The default
+// is the React tree; `ui-vue` passes its own path (ADR-0004) so both trees
+// share one script rather than one drifting copy each. Both are checked in as
+// gitignored build output, so the two destinations never disagree about
+// content — only about which tree asked for it.
+const UI_DEST = path.join(ROOT, ...(process.argv[2] ?? "ui/src/lib/wasm").split("/"));
 
 function mtimeOrNull(file) {
   try {
@@ -112,4 +117,7 @@ for (const file of [
   fs.copyFileSync(path.join(OUT_PKG, file), path.join(UI_DEST, file));
 }
 
-console.log("wasm bridge: copied to ui/src/lib/wasm/");
+// Report the destination that was actually used, not a literal. Since the
+// path became an argument this message is read by two trees, and a hardcoded
+// one would tell the Vue build that its artefacts went somewhere they did not.
+console.log(`wasm bridge: copied to ${path.relative(ROOT, UI_DEST).replace(/\\/g, "/")}/`);

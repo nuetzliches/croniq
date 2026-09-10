@@ -75,6 +75,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      // Fail rather than drift. Vite's default is to take the next free port
+      // when 5173 is busy, which is convenient alone and wrong in the dev
+      // stack: `scripts/dev-stack.mjs` prints fixed URLs and runs this beside
+      // the Vue tree on 5174, so a silent move means comparing the wrong pair.
+      strictPort: true,
       proxy: {
         '/v1': API_ORIGIN,
         '/health': API_ORIGIN,
