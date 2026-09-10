@@ -1,4 +1,4 @@
-# Visuelle Gestaltung — offene Punkte
+# Visuelle Gestaltung — Bestandsaufnahme und Richtung
 
 Stand: 2026-09-10.
 
@@ -7,98 +7,157 @@ Dieses Dokument existiert, weil es gefehlt hat.
 Design-Phase liefere „das Design-System, die Komponenten-Bibliothek und das
 Screen-Inventar". Geliefert wurden Bibliothek (Nuxt UI 4) und Inventar
 ([`ui-screen-inventory.md`](ui-screen-inventory.md)). **Das Design selbst hat
-nie jemand entschieden** — und weil es auf keiner Liste stand, war die Lücke
-nicht sichtbar, sondern sah aus wie „kommt noch".
+nie jemand entschieden** — und weil es auf keiner Liste stand, sah die Lücke
+nach „kommt noch" aus statt nach „dafür ist niemand zuständig".
 
-Der Vue-Baum ist **kein Prototyp**. ADR-0004 sagt, er ersetzt das ausgelieferte
-Dashboard; er muss also Auslieferqualität erreichen. Aktuell ist er ein
-funktionierendes Gerüst im Standardaussehen von Nuxt UI.
+Der Vue-Baum ist **kein Prototyp**. ADR-0004 macht ihn zum Ersatz des
+ausgelieferten Dashboards; er muss dessen Niveau erreichen.
 
-## Was übernommen wurde — keine Entscheidung, sondern Vorgabe
+---
+
+## Bestandsaufnahme
+
+Ich hatte das React-Dashboard bis jetzt nur im Quelltext gelesen. Das ist keine
+Grundlage für „kein Rückschritt", also habe ich es aufgenommen und angesehen —
+alle elf Screens, angemeldet, mit den Demo-Daten des Dev-Stacks.
+`ui/scripts/capture-screens.mjs` macht das reproduzierbar, für beide Bäume.
+
+### Was es gut macht — die Liste, hinter die nicht zurückgefallen werden darf
+
+1. **Cards-Chrome auf Farbverlauf-Grund.** Sidebar, Topbar und Inhalt sind
+   abgerundete Karten mit Außenabstand auf einem violett-nach-blau laufenden
+   Grund. Das ist eigenständig und sieht nicht nach Bootstrap-Admin aus.
+2. **Eine eigene KPI-Sprache.** Versale Mikro-Beschriftung mit Sperrung, große
+   Zahl, erklärende Unterzeile, eingebettete Sparkline. Konsequent auf
+   Dashboard und Job-Detail.
+3. **Tag-Chips mit Zähler** (`env=demo 5`, `kind=ops 2`) als Filterleiste.
+4. **Job-Zeilen tragen ihre Historie.** Jede Zeile in der Job-Liste zeigt eine
+   Balken-Sparkline der letzten Läufe plus Erfolgsquote. Sehr viel Information
+   auf sehr wenig Fläche.
+5. **Definitionslisten als Detail-Schiene** — Beschriftung links, Wert rechts,
+   monospace wo es Werte sind. Hervorragend zu überfliegen.
+6. **Die Konsole.** Dunkles Terminal-Panel im hellen Chrome, Zeitstempel /
+   Level / Target / Nachricht in Spalten, strukturierte Felder gedimmt
+   angehängt, Level-Chips mit Farbpunkt. Der stärkste Screen.
+7. **Login als Produktseite.** Schlagzeile („Schedule. Observe. Recover."),
+   Positionierungstext, **echte Live-Kennzahlen aus dem öffentlichen
+   `/health`** und ein animiertes Terminal. Man sieht vor dem Anmelden, dass
+   der Server lebt.
+8. **Command-Palette** (Ctrl K) in der Topbar.
+9. Status-Pillen, monospace IDs als Links, relative Zeiten, rechtsbündige
+   Dauern.
+
+### Wo es schwach ist
+
+1. **Master/Detail wird uniform angewandt, auch wo es nichts zu zeigen gibt.**
+   Auf *Executions* steht das Detail-Panel leer und beansprucht ~60 % der
+   Fläche; auf *Runners* mit einem Runner sind es ~85 %. Der Farbverlauf
+   dominiert dann eine Fläche, die er nicht rahmt, sondern füllt.
+2. **Die Executions-Liste ist die unwirtschaftlichste Fläche der App.**
+   Jede Ausführung ist eine dreizeilige Karte (~88 px) — sichtbar sind sieben.
+   Als Tabelle wären es fünfundzwanzig. Und weil es keine Spalten gibt, kann
+   man Dauern nicht untereinander vergleichen. Ausgerechnet dieser Screen wird
+   laut Inventar die *eine* Ausführungsansicht.
+3. **Natives `<select>`** als Statusfilter — unstilisiert, bricht mit allem
+   anderen auf der Seite.
+4. **Spalten brechen um.** „29m ago" läuft im Job-Detail auf zwei Zeilen, in
+   jeder Zeile. Die Dichte ist gewollt, aber nicht zu Ende gerechnet.
+5. **Die Detail-Schiene wird unten abgeschnitten**, ohne dass etwas darauf
+   hinweist, dass unterhalb noch Inhalt liegt.
+
+Zusammengefasst: **starke Informationsgestaltung, schwache Layout-Robustheit.**
+Das ist eine gute Ausgangslage — das Schwierige ist da, das Fehlende ist
+handwerklich.
+
+---
+
+## Übernommen, nicht entschieden
 
 Die Produktidentität existiert und wird nicht neu erfunden, solange niemand das
 Gegenteil beschließt:
 
-- **Marke:** das Orbit-Zeichen aus `public/icons/mark-mono.svg`, als
-  `app/components/BrandMark.vue` portiert (mit `useId` für die Mask-ID, weil
-  die React-Fassung eine konstante DOM-ID nutzt und zwei Zeichen auf einer
-  Seite kollidieren).
-- **Markenfarbe:** `#6A54DF`, als Ramp `--color-brand-50…950` mit 500 auf dem
-  Markenwert. Nuxt UIs `primary` zeigt darauf. Vorher stand dort `blue` — ein
-  Platzhalter, den ich gesetzt und nicht als Entscheidung gekennzeichnet hatte.
-- **Icon-Satz:** vollständig aus `ui/public/icons/` übernommen, inklusive
-  Manifest und Apple-Touch-Icon.
+- **Marke:** das Orbit-Zeichen aus `public/icons/mark-mono.svg`, portiert als
+  `app/components/BrandMark.vue`.
+- **Markenfarbe:** `#6A54DF` als Ramp mit 500 auf dem Markenwert.
+- **Icon-Satz:** vollständig übernommen, inklusive Manifest.
 
-## Was offen ist
+---
 
-Keine dieser Fragen ist beantwortet, und keine beantwortet sich beim Bauen von
-selbst.
+## Richtung
 
-### 1. Login-Seite
+### Behalten
 
-Der React-Login ist eine inszenierte Seite: Bühne, simulierte Konsole,
-rotierende Schlagzeile, Statistik-Kacheln (`login-hero`, `login-stage`,
-`login-console`, `login-stats` in `ui/src/styles/login.css`). Der Vue-Login hat
-den vollständigen Flow und **keine** Gestaltung — eine zentrierte Karte.
+Cards-Chrome samt Grund, die KPI-Sprache, die Tag-Chips, die Historie in
+Listenzeilen, die Definitionslisten, die Konsole als dunkles Terminal, und den
+Login als Produktseite mit echten Kennzahlen.
 
-Das war eine Auslassung, keine Entscheidung. Zu klären: trägt die Login-Seite
-weiterhin das Gesicht des Produkts, oder ist sie ein Formular? Beides ist
-vertretbar; ein selbst gehostetes Werkzeug wird von Betreibern benutzt, nicht
-von Besuchern beworben.
+### Ändern
 
-### 2. Dichte und Typografie
+- **Listen sind Listen.** Master/Detail nur, wo das Detail auch gebraucht wird.
+  Runs wird eine echte Tabelle mit Spalten; das Detail öffnet als Seitenpanel
+  oder eigene Route, statt dauerhaft zwei Drittel der Fläche leer zu belegen.
+- **Eine Dichte, festgelegt an einer Stelle.** Die Tabelle im Job-Detail hat
+  die richtige Dichte; sie wird der Maßstab, inklusive Spaltenbreiten, die
+  nicht umbrechen.
+- **Leerzustände verdienen ihre Fläche.** Ein Symbol plus zwei Zeilen in einem
+  60-%-Panel ist kein Leerzustand, sondern eine Lücke mit Beschriftung.
+- **Filter sind Komponenten**, keine nativen Steuerelemente.
 
-Das React-Dashboard ist dicht: 11,5–12,5 px in Tabellen, schmale Zeilenhöhen,
-viel auf einem Bildschirm. Nuxt UIs Vorgaben sind großzügiger. Für eine
-Betriebsoberfläche, in der Läufe und Runner in Listen gelesen werden, ist das
-eine spürbare Entscheidung — und sie fällt einmal, in der Theme-Konfiguration,
-oder hundertmal verstreut in den Screens.
+### Neue Impulse
 
-### 3. Theme-Umschalter
+Der Punkt, den ich beim Ansehen am stärksten vermisst habe:
 
-Funktioniert und persistiert unter `croniq_theme` (System/Hell/Dunkel), ist
-aber ein nacktes `USelect` in der Topbar. Zu klären: bleibt es eine
-Auswahlliste, oder wird es ein Umschalter wie im Referenzprojekt (Sonne/Mond
-mit View-Transition)? Der Referenz-Umschalter ist hübsch und kostet eine
-Animation samt `::view-transition`-Regeln.
+**Croniq zeigt überall die Vergangenheit und nirgends die Zukunft.** Es ist ein
+Scheduler — das Interessanteste ist, was *gleich* passiert. „NEXT FIRE in 33s"
+existiert genau einmal, im Detail eines einzelnen Jobs. Eine kompakte
+Vorschau-Schiene („was feuert in der nächsten Stunde") wäre echter neuer Wert
+und nutzt Daten, die der Server über `/v1/jobs/states` und den Forecast bereits
+liefert.
 
-### 4. Dunkelmodus als erste Klasse
+Weitere Kandidaten, schwächer begründet:
 
-Croniq ist ein Werkzeug für Betreiber; viele arbeiten dauerhaft dunkel. Der
-React-Baum behandelt Dunkel als gleichwertig. Ob Nuxt UIs Dunkelvarianten dafür
-ohne Nacharbeit reichen, ist ungeprüft.
+- **Die Failure-Heatmap zur Hauptantwort machen.** Sie beantwortet „ist etwas
+  kaputt" besser als jede Zahl, ist aber klein, unbeschriftet und steht unten
+  rechts.
+- **Tastatur zuerst.** Ctrl K gibt es; `j`/`k` in Listen und Enter zum Öffnen
+  passen zu einem Betriebswerkzeug und kosten wenig.
+- **Dichte-Umschalter** (kompakt/komfortabel). Betreiber sind sich hier
+  uneinig, und die Entscheidung muss nicht global fallen.
+- **Dunkelmodus gleichwertig.** Heute ist die App hell mit einer dunklen
+  Konsole. Für ein Werkzeug, in dem Leute Stunden verbringen, ist das eine
+  offene Frage, keine Antwort.
 
-### 5. Leerzustände, Ladezustände, Fehlerzustände
+---
 
-Das React-Dashboard hat eine eigene `EmptyState`-Komponente und einen
-Marken-Spinner (`BrandMark spinning`). Im Vue-Baum existiert bisher keiner von
-beiden. Diese drei Zustände machen den Großteil des Eindrucks aus, den eine
-frische Installation hinterlässt — dort ist alles leer.
+## Vorgehen
 
-## Wie das eingeplant wird
+In Durchgängen, mit Haltepunkten — nicht in einem Rutsch. Genau das
+Nacheinander gibt Gelegenheit, gegenzusteuern, bevor eine Entscheidung in
+sieben Screens steckt.
 
-Zwei Wege, und das ist eine echte Wahl:
+| # | Inhalt | Ergebnis, an dem man es beurteilen kann |
+|---|---|---|
+| 1 | Bestandsaufnahme und Richtung | dieses Dokument |
+| 2 | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
+| 3 | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
+| 4 | Dashboard, Runners, Dead Letters | die Bausteine tragen |
+| 5 | Jobs, danach der Rest | — |
 
-**A — ein Gestaltungsdurchgang vor den Screens.** Login, Dichte, Zustände und
-Theme einmal festlegen, danach bauen die Screens dagegen. Teurer im Vorlauf,
-aber die Screens entstehen nur einmal.
+Nach jedem Durchgang: Aufnahmen beider Bäume nebeneinander
+(`node ui/scripts/capture-screens.mjs react|vue …`), damit „kein Rückschritt"
+eine Feststellung bleibt und keine Behauptung wird.
 
-**B — pro Screen mitentscheiden.** Schneller sichtbar, führt aber
-erfahrungsgemäß dazu, dass Screen 1 den Ton setzt und Screen 7 nachgezogen
-werden muss.
-
-Ungeachtet dessen: die Punkte oben gehören als Issues geführt, sonst
-wiederholt sich genau der Fehler, aus dem dieses Dokument entstanden ist.
+---
 
 ## Nachtrag: was das Testnetz nicht sieht
 
-Die Playwright-Suite prüft Routen, Session, URL-Verträge und SSE — nichts
-davon Optik. Das ist Absicht ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md),
-Scope-Guard 2), hat aber eine Konsequenz, die beim Bauen sichtbar wurde: das
-Theme war eine Zeit lang **gar nicht aktiv** — `@theme` statt `@theme static`
-ließ Tailwind die gesamte Farb-Ramp wegoptimieren, sodass jedes `bg-primary`
-transparent auflöste. Alle Verhaltensprüfungen blieben grün.
+Die Playwright-Suite prüft Routen, Session, URL-Verträge und SSE — nichts davon
+Optik. Das ist Absicht ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md),
+Scope-Guard 2), hatte aber eine Konsequenz: das Theme war eine Zeit lang **gar
+nicht aktiv**. `@theme` statt `@theme static` ließ Tailwind die gesamte
+Farb-Ramp wegoptimieren, sodass jedes `bg-primary` transparent auflöste. Alle
+Verhaltensprüfungen blieben grün.
 
-Wer Optik nicht prüft, merkt nicht, wenn sie fehlt. Ein Screenshot-Vergleich
-ist für ein Ein-Personen-Projekt überdimensioniert; eine einzelne Zusicherung,
-dass die Markenfarbe ankommt, ist es nicht.
+`ui-vue/app/lib/theme.test.ts` schließt die billige Hälfte dieser Lücke. Die
+teure Hälfte — ob es *gut aussieht* — schließt kein Test, sondern Hinsehen.
+Deshalb das Aufnahme-Skript.
