@@ -27,14 +27,14 @@ node ../scripts/dev-stack.mjs
 ```
 
 That starts `croniq-server` on `:4000` with seeded demo data and a runner, the
-React tree on `:5173`, and this one on `:5174`. See the script's header for
+React tree on `:4100`, and this one on `:4101`. See the script's header for
 prerequisites and for the environment variables that move the ports when
 something else on the machine holds one.
 
 This tree alone, against a server you started yourself:
 
 ```sh
-npm run dev        # :5174, proxies /v1 /health /version /metrics to :4000
+npm run dev        # :4101, proxies /v1 /health /version /metrics to :4000
 ```
 
 The proxy is what makes development same-origin, so the `HttpOnly` refresh
@@ -79,7 +79,7 @@ reactivity model is how a rebuild loses hard-won behaviour.
 
 | | |
 |---|---|
-| `npm run dev` | dev server on :5174 |
+| `npm run dev` | dev server on :4101 |
 | `npm run build` | `vue-tsc --build && vite build` — the type check is part of it |
 | `npm run typecheck` | type check alone |
 | `npm run lint` | eslint |

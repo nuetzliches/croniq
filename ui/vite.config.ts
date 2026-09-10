@@ -5,7 +5,7 @@ import path from 'path'
 
 // API base URL for the dev proxy. The default of "" in api/base.ts means
 // "same origin" — fine for production (UI + API share the origin), but in
-// dev the UI runs on :5173 and the API on :4000, so we need to forward the
+// dev the UI runs on :4100 and the API on :4000, so we need to forward the
 // API paths. Override via CRONIQ_API_ORIGIN if you run the server on a
 // different host/port while developing the UI.
 const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4000'
@@ -75,10 +75,17 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      // 4100 rather than Vite's default 5173. Two reasons, in order of weight:
+      // the 5100-5400 range is where .NET/Aspire tooling lives and 5173 is
+      // Vite's default for *every* project, so a developer with a second Vite
+      // app open loses the coin toss; and keeping croniq's ports together
+      // (4000 server, 4010 e2e, 4100/4101 dev UIs) makes the whole set one
+      // thing to remember.
+      port: 4100,
       // Fail rather than drift. Vite's default is to take the next free port
-      // when 5173 is busy, which is convenient alone and wrong in the dev
+      // when one is busy, which is convenient alone and wrong in the dev
       // stack: `scripts/dev-stack.mjs` prints fixed URLs and runs this beside
-      // the Vue tree on 5174, so a silent move means comparing the wrong pair.
+      // the Vue tree on 4101, so a silent move means comparing the wrong pair.
       strictPort: true,
       proxy: {
         '/v1': API_ORIGIN,

@@ -1,7 +1,7 @@
 // Default to same-origin (relative URLs) so the UI works unchanged in any
 // deployment where croniq-server serves both the UI and the API — which is
 // the standard setup, including the official Docker image. For local dev
-// (npm run dev on :5173) the Vite dev-server proxies /v1, /health, /metrics
+// (npm run dev on :4100) the Vite dev-server proxies /v1, /health, /metrics
 // to http://localhost:4000 — see vite.config.ts. Override VITE_API_URL at
 // build time only when UI and API live on different origins.
 export const API_BASE = import.meta.env.VITE_API_URL ?? ''

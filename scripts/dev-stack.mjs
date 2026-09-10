@@ -3,8 +3,8 @@
 // Start everything needed to compare the two dashboards side by side:
 //
 //   croniq-server   http://127.0.0.1:4000   API, seeded demo data, one runner
-//   ui   (React)    http://127.0.0.1:5173   the shipping dashboard
-//   ui-vue (Vue)    http://127.0.0.1:5174   the rebuild (ADR-0004)
+//   ui   (React)    http://127.0.0.1:4100   the shipping dashboard
+//   ui-vue (Vue)    http://127.0.0.1:4101   the rebuild (ADR-0004)
 //
 // Both dev servers proxy /v1, /health, /version and /metrics to :4000, so each
 // is same-origin with the API and gets the refresh cookie exactly as
@@ -17,7 +17,7 @@
 //   node scripts/dev-stack.mjs --no-ui   server + Vue only
 //   node scripts/dev-stack.mjs --api     server only (use your own dev server)
 //
-// Ports default to 4000 / 5173 / 5174 and are overridable when something else
+// Ports default to 4000 / 4100 / 4101 and are overridable when something else
 // on the machine already holds one:
 //   CRONIQ_DEV_PORT, CRONIQ_DEV_UI_PORT, CRONIQ_DEV_VUE_PORT
 //
@@ -48,8 +48,8 @@ const withReact = !apiOnly && !args.has("--no-ui");
 const withVue = !apiOnly && !args.has("--no-vue");
 
 const PORT = Number(process.env.CRONIQ_DEV_PORT ?? 4000);
-const REACT_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 5173);
-const VUE_PORT = Number(process.env.CRONIQ_DEV_VUE_PORT ?? 5174);
+const REACT_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4100);
+const VUE_PORT = Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4101);
 const USER = "admin";
 const PASSWORD = "demo-admin";
 const API_KEY = "croniq_dev_stack_key_not_for_production_use";
@@ -133,7 +133,7 @@ let shuttingDown = false;
  * `child.kill()` is not enough for the dev servers: npm on Windows is a `.cmd`
  * shim, so the direct child is the shim and vite is its grandchild. Killing
  * the shim leaves vite holding its port, and the next run of this script finds
- * 5173 occupied and silently moves to another port — which is how you end up
+ * the port occupied and silently moves to another one — which is how you end up
  * comparing two dashboards on the wrong URLs.
  */
 function killTree(child) {
