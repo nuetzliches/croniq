@@ -487,5 +487,43 @@ await step("the audit log names people rather than UUIDs, and links its targets"
   if (uuidish.length) throw new Error(`actors still render as UUIDs: ${uuidish[0]}`);
 });
 
+/* ─── Console ───────────────────────────────────────────────────────────── */
+//
+// Nothing is written here, but the tail has state a screenshot cannot show:
+// what pausing does with the events that keep arriving, and whether the level
+// filter actually narrows the view.
+
+await step("the console tails, filters and pauses without losing the tail", async () => {
+  await page.goto(`${base}/console`, { waitUntil: "domcontentloaded" });
+  // The demo server speaks roughly once a minute, so give it a moment. The
+  // first connect asks for a snapshot, which is what makes this bounded.
+  await page.waitForTimeout(6000);
+
+  const rows = () => page.locator('[role="log"] > div').count();
+  const initial = await rows();
+  if (initial === 0) throw new Error("no events arrived on the stream");
+
+  // Levels filter client-side: the count changes without the stream moving.
+  await page.getByRole("button", { name: "info", exact: true }).click();
+  await page.waitForTimeout(400);
+  const withoutInfo = await rows();
+  if (withoutInfo >= initial) throw new Error("turning off a level did not narrow the view");
+  await page.getByRole("button", { name: "info", exact: true }).click();
+  await page.waitForTimeout(400);
+
+  // Pausing must hold what arrives, not drop it.
+  await page.getByRole("button", { name: "Pause the console" }).click();
+  await page.waitForTimeout(500);
+  const frozen = await rows();
+  await page.waitForTimeout(3000);
+  if ((await rows()) !== frozen) throw new Error("the view moved while paused");
+  await page.getByRole("button", { name: "Resume the console" }).click();
+  await page.waitForTimeout(600);
+
+  await page.getByRole("button", { name: "Clear the console" }).click();
+  await page.waitForTimeout(400);
+  if ((await rows()) > 1) throw new Error("clear left events behind");
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();

@@ -5,13 +5,12 @@ import { useAuthStore } from '~/stores/auth'
 /**
  * Routes follow the screen set agreed in `docs/ui-screen-inventory.md`.
  *
- * Screens not yet built render `NotBuiltYet` rather than 404ing. During the
- * rebuild the shell has to be walkable to be judged at all, and a page that
- * says which step it belongs to is honest in a way an empty route is not —
- * nobody mistakes it for finished.
+ * Every screen in that set is now built. Until this point unbuilt routes
+ * rendered a `NotBuiltYet` placeholder naming the build step they belonged to,
+ * so the shell stayed walkable and nobody mistook a gap for a finished screen.
+ * The placeholder is gone with the last gap; a route that does not exist is a
+ * bug now, not a to-do.
  */
-const placeholder = () => import('~/pages/NotBuiltYet.vue')
-
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -107,7 +106,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/AlertsView.vue'),
         meta: { title: 'Alert deliveries' },
       },
-      { path: 'console', name: 'console', component: placeholder, meta: { title: 'Console', step: 6 } },
+      {
+        path: 'console',
+        name: 'console',
+        component: () => import('~/pages/ConsoleView.vue'),
+        meta: { title: 'Console' },
+      },
       {
         path: 'settings',
         name: 'settings',

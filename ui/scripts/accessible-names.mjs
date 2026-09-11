@@ -137,6 +137,7 @@ for (const path of [
   "/settings/people",
   "/settings/clients",
   "/settings/audit",
+  "/console",
 ]) {
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1600);
