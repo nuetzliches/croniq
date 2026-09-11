@@ -133,6 +133,10 @@ for (const path of [
   "/alerts",
   "/alerts/channels",
   "/alerts/deliveries",
+  "/settings",
+  "/settings/people",
+  "/settings/clients",
+  "/settings/audit",
 ]) {
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1600);

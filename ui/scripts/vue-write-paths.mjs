@@ -345,5 +345,147 @@ await step("a delivery links to the run that caused it", async () => {
   await page.waitForURL(/\/executions\/.+/, { timeout: 5000 });
 });
 
+/* ─── Settings ──────────────────────────────────────────────────────────── */
+
+const PAT = "smoke-token";
+const CLIENT = "smoke-client";
+
+await step("a minted token is shown once and guarded on the way out", async () => {
+  await page.goto(`${base}/settings`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+  await page.getByRole("button", { name: "New token" }).click();
+  await page.getByPlaceholder("laptop-cli").fill(PAT);
+  await page.getByRole("button", { name: "Read-only", exact: true }).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/users/me/tokens") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Create token" }).click(),
+  ]);
+  await page.waitForTimeout(900);
+
+  // The whole point of SecretOnce: it will not let itself be dismissed until
+  // the value has been copied or the acknowledgement ticked, because this
+  // render is the only copy that will ever exist.
+  const done = page.getByRole("button", { name: "Done" });
+  if (!(await done.isDisabled())) throw new Error("Done was clickable before acknowledgement");
+  await page.getByRole("checkbox", { name: /stored this somewhere safe/i }).check();
+  if (await done.isDisabled()) throw new Error("Done stayed disabled after acknowledgement");
+  await done.click();
+  await page.waitForTimeout(600);
+});
+
+await step("the token is listed, then revoked out of existence", async () => {
+  const row = page.locator("tbody tr", { hasText: PAT });
+  if ((await row.count()) === 0) throw new Error("the new token is not in the list");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/users/me/tokens/") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: `Revoke ${PAT}` }).click(),
+  ]);
+  await page.waitForTimeout(1100);
+  // The server does not keep a tombstone: a revoked token leaves the list
+  // entirely. Asserting it here is what stopped the UI from carrying a
+  // "revoked" rendering that nothing could ever produce.
+  if ((await page.locator("tbody tr", { hasText: PAT }).count()) > 0) {
+    throw new Error("the revoked token is still listed");
+  }
+});
+
+await step("an invitation hands back its accept link", async () => {
+  await page.goto(`${base}/settings/people`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+
+  // Clear anything a previous interrupted run left behind. The server allows
+  // several pending invitations for one address, so without this the run after
+  // a failure sees two rows and blames the product.
+  for (let guard = 0; guard < 10; guard += 1) {
+    const stale = page.getByRole("button", {
+      name: "Revoke the invitation for smoke@example.com",
+    });
+    if ((await stale.count()) === 0) break;
+    await stale.first().click();
+    await page.waitForTimeout(700);
+  }
+
+  await page.getByRole("button", { name: "Invite someone" }).click();
+  await page.getByPlaceholder("someone@example.com").fill("smoke@example.com");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/invitations") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Invite", exact: true }).click(),
+  ]);
+  await page.waitForTimeout(900);
+  const shown = await page.getByRole("alert").first().innerText();
+  if (!/accept/i.test(shown) && !/http/i.test(shown)) {
+    throw new Error(`the accept link was not surfaced: ${shown.slice(0, 120)}`);
+  }
+  await page.getByRole("checkbox", { name: /sent the link/i }).check();
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.waitForTimeout(600);
+});
+
+await step("the invited person appears in the one people list, then is revoked", async () => {
+  const row = page.locator("tbody tr", { hasText: "smoke@example.com" });
+  const before = await row.count();
+  if (before === 0) throw new Error("the invitation is not in the people list");
+  if (before > 1) throw new Error(`${before} rows for one person — revoked invitations are lingering`);
+  if (!/invited/.test(await row.innerText())) throw new Error("it is not marked as invited");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/invitations/") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: "Revoke the invitation for smoke@example.com" }).click(),
+  ]);
+  await page.waitForTimeout(1100);
+  // A revoked invitation is a decision already carried out; it leaves the
+  // list of who has access and lives on in the audit log.
+  if ((await page.locator("tbody tr", { hasText: "smoke@example.com" }).count()) > 0) {
+    throw new Error("the revoked invitation is still listed");
+  }
+});
+
+await step("an API client is created with a preset, given a key, and deleted", async () => {
+  await page.goto(`${base}/settings/clients`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+  await page.getByRole("button", { name: "New client" }).click();
+  await page.getByPlaceholder("ci-pipeline").fill(CLIENT);
+  // The preset is the point: nobody reasons correctly about twenty booleans.
+  await page.getByRole("button", { name: "Runner", exact: true }).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/api-clients") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Create client" }).click(),
+  ]);
+  await page.waitForTimeout(1100);
+
+  const card = page.locator("li", { hasText: CLIENT }).first();
+  const scopes = await card.innerText();
+  if (!scopes.includes("work:poll")) throw new Error(`the preset did not apply: ${scopes}`);
+
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/api-keys") && r.request().method() === "POST"),
+    card.getByRole("button", { name: "New key" }).click(),
+  ]);
+  await page.waitForTimeout(900);
+  const keyDone = page.getByRole("button", { name: "Done" });
+  if (!(await keyDone.isDisabled())) throw new Error("the key could be dismissed unacknowledged");
+  await page.getByRole("checkbox", { name: /stored this somewhere safe/i }).check();
+  await keyDone.click();
+  await page.waitForTimeout(600);
+
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/api-clients/") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: `Delete ${CLIENT}` }).click(),
+  ]);
+  await page.waitForTimeout(900);
+  if ((await page.locator("li", { hasText: CLIENT }).count()) > 0) {
+    throw new Error("the client survived deletion");
+  }
+});
+
+await step("the audit log names people rather than UUIDs, and links its targets", async () => {
+  await page.goto(`${base}/settings/audit`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1600);
+  const rows = await page.locator("tbody tr").count();
+  if (rows === 0) throw new Error("the audit log is empty after all of the above");
+  const who = await page.locator("tbody tr td:nth-child(2)").allInnerTexts();
+  const uuidish = who.filter((text) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(text.trim()));
+  if (uuidish.length) throw new Error(`actors still render as UUIDs: ${uuidish[0]}`);
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();

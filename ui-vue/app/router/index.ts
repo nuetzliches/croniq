@@ -108,7 +108,20 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Alert deliveries' },
       },
       { path: 'console', name: 'console', component: placeholder, meta: { title: 'Console', step: 6 } },
-      { path: 'settings', name: 'settings', component: placeholder, meta: { title: 'Settings', step: 6 } },
+      {
+        path: 'settings',
+        name: 'settings',
+        component: () => import('~/pages/SettingsView.vue'),
+        meta: { title: 'Settings' },
+      },
+      {
+        // Path segments rather than `?tab=`, matching the alerts screen. One
+        // idiom for "several views of one screen" across the tree.
+        path: 'settings/:section(people|clients|audit)',
+        name: 'settings-section',
+        component: () => import('~/pages/SettingsView.vue'),
+        meta: { title: 'Settings' },
+      },
       { path: 'scaffold', name: 'scaffold', component: () => import('~/pages/ScaffoldCheck.vue'), meta: { title: 'Scaffold check' } },
     ],
   },

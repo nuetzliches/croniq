@@ -634,3 +634,89 @@ Button, der auf einen Klick nichts tut. Die Version ist eine Tatsache über den
 Server, keine Handlung, und soll hier oben das am wenigsten klickbare Element
 sein. Jetzt schlichter Text; sha, Bauzeit und Umgebung stehen im `title`.
 
+## Durchgang 10 — Settings
+
+Vier Ansichten auf einem Screen, adressiert über Pfadsegmente statt `?tab=` —
+der React-Baum nutzte einen Query-Parameter, der Rest dieses Baums nutzt
+Pfadsegmente für genau diese Form (siehe Alerts). Ein Idiom.
+
+### Zwei Tabellen werden eine
+
+*Users* und *Invitations* standen im React-Baum als zwei Tabellen
+untereinander. Es sind zwei Antworten auf **eine** Frage — eine Einladung ist
+jemand, der Zugang bekommen hat und noch nicht angekommen ist — und getrennt
+musste man „wer kann sich an diesem Server anmelden" aus zwei Listen mit
+verschiedenen Spalten im Kopf zusammensetzen. Jetzt eine Liste mit einem
+Status.
+
+Was dabei zu entscheiden war: welche Einladungen gehören auf eine Liste, die
+„wer hat Zugang" heißt?
+
+- **Angenommen** → ist jetzt ein Benutzer, wäre doppelt gezählt.
+- **Widerrufen** → eine bereits getroffene und ausgeführte Entscheidung. Die
+  Zeile ist Rauschen, das sich für immer ansammelt; ins Audit-Log gehört sie,
+  nicht hierher.
+- **Abgelaufen** → bleibt. Und genau darin liegt der Unterschied: eine
+  abgelaufene Einladung ist keine erledigte Sache, sondern jemand, der immer
+  noch wartet. „Warum hat sie sich nie angemeldet" wird hier beantwortet, und
+  die Antwort ist, sie erneut einzuladen.
+
+### Ein Bauteil für alles, was man nur einmal sieht
+
+API-Keys, Personal Access Tokens, Einladungslinks und TOTP-Wiederherstellungs­codes
+teilen eine Eigenschaft, die die umgebende Oberfläche immer wieder vergisst:
+**dieser Render ist die einzige Kopie.** Im React-Baum war jedes davon eigenes
+Markup — und die Wiederherstellungscodes waren das eine, das durchfiel: die
+Checkbox bat den Nutzer zu bestätigen, dass er Codes gespeichert hat, die nie
+gerendert wurden.
+
+Jetzt `SecretOnce`, ein Bauteil, und es lässt sich absichtlich nicht aus
+Versehen wegklicken: „Done" bleibt deaktiviert, bis kopiert oder ausdrücklich
+bestätigt wurde. Der Schreibpfad-Test prüft genau das.
+
+### Scopes bekommen Presets
+
+Das React-Formular waren zwanzig Checkboxen und sonst nichts — dort gehen
+Credentials schief: niemand überlegt sich zwanzig Booleans, also kreuzt man
+`admin` an oder ungefähr die richtigen und merkt es später. Drei Presets
+benennen, was Leute tatsächlich ausdrücken wollen; die vollständige Liste
+bleibt darunter. `Runner` ist das, das sich lohnt: die Pull-Protokoll-Scopes
+plus Registrierung und Heartbeat von Hand falsch zu setzen ergibt einen Runner,
+der sich verbindet und dann still keine Arbeit annimmt.
+
+### Das Audit-Log sagt jetzt wer, nicht welche UUID
+
+Die „Who"-Spalte zeigte Actor-IDs. Eine Spalte UUIDs beantwortet „wer hat was
+getan" mit „irgendwer hat was getan". Die Benutzerliste ist auf diesem Screen
+ohnehin geladen, also löst die ID zu einem Namen auf — mit Kurz-ID als
+Rückfall für einen Actor, der kein Benutzer mehr ist, also genau dem Fall, in
+dem das Log am meisten zählt. Zeilen verlinken außerdem auf das, was sie
+verändert haben.
+
+### Zwei Befunde aus dem Prüfen
+
+**Ein Zweig, den nichts je erreichen konnte.** Die Token-Tabelle hatte eine
+Darstellung für widerrufene Tokens. `GET /v1/users/me/tokens` liefert nach
+einem Widerruf schlicht `[]` — kein Grabstein. Der Zweig war toter Code; der
+Filter bleibt (falls ein Server das je ändert, wäre „als gültig rendern" der
+schlimmere Fehler), die zweite Sektion ist weg. Der Test prüft jetzt das
+Verschwinden.
+
+**Und ein Testfehler, der fast als Produktfehler durchging.** Zwei Zeilen für
+dieselbe Einladung sahen aus, als würden widerrufene Einladungen hängen
+bleiben. Der Blick in die Antwort des Servers zeigte drei Einladungen: eine
+widerrufen (korrekt ausgefiltert) und **zwei offene**, aus zwei Testläufen, die
+vor dem Aufräumen abgebrochen waren. Das Produkt war in Ordnung, der Test
+hinterließ Müll. Er räumt jetzt vorher auf.
+
+### Admin-Ableitung in einer Composable
+
+`isAdmin` stand in der Shell und wäre in den Settings ein zweites Mal
+entstanden — mit einem subtilen Default: **`true`, wenn es keinen
+Benutzerdatensatz gibt.** Das ist kein Durchwinken, sondern der Fall
+API-Key-Session: `GET /v1/users/me` löst nur für Passwort-, OIDC- und
+PAT-Sessions auf, und die Autorität einer Key-Session kommt aus ihren Scopes,
+die der Server bei jedem Request durchsetzt. Kurz genug zum Abtippen und subtil
+genug, um es falsch abzutippen — also `useIsAdmin()`, einmal, mit der
+Begründung daneben.
+
