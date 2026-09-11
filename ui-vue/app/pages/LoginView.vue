@@ -55,6 +55,45 @@ const error = ref('')
 const busy = ref(false)
 
 const passwordEnabled = computed(() => config.value?.password.enabled !== false)
+
+/** Which server this is. See the card header. */
+const host = computed(() => window.location.host)
+
+const resetPending = ref(false)
+/** What the reset request said — deliberately the same either way. */
+const resetNotice = ref<string | null>(null)
+
+/**
+ * Ask for a password-reset link.
+ *
+ * The server answers 202 whether or not the account exists, and the wording
+ * here matches: telling someone "no such user" turns this form into a way to
+ * enumerate accounts. The username field is reused rather than asking for an
+ * email, because the endpoint takes a username and the address it mails is the
+ * one on file.
+ *
+ * The link lands on `/password-reset/confirm`, which this tree now serves —
+ * it did not, in either tree, until the route beside this one was added.
+ */
+async function requestReset() {
+  const name = username.value.trim()
+  if (!name) {
+    error.value = 'Enter your username first — the link goes to the address on file for it.'
+    return
+  }
+  error.value = ''
+  resetPending.value = true
+  try {
+    await apiPost('/v1/auth/password-reset/request', { username: name })
+  } catch {
+    // Same notice either way, on purpose: a failure that reads differently
+    // from a success is itself an account-enumeration oracle.
+  } finally {
+    resetPending.value = false
+    resetNotice.value =
+      'If that account exists, a reset link is on its way. It is good for one hour.'
+  }
+}
 const oidcEnabled = computed(() => config.value?.oidc.enabled === true)
 
 /** Shown from the start when the server enforces 2FA, so an enforced login is
@@ -237,8 +276,16 @@ function messageFor(caught: unknown): string {
           <h2 class="text-xl font-semibold tracking-tight text-highlighted">
             Welcome back
           </h2>
+          <!--
+            Which server. An operator with a staging and a production Croniq
+            open in two tabs has no other way to tell them apart from inside
+            this card, and typing production credentials into staging is a
+            mistake the page can simply prevent. Carried over from the
+            shipping dashboard, which got this right.
+          -->
           <p class="mt-1 mb-5 text-sm text-muted">
-            Sign in to continue.
+            Sign in to
+            <span class="font-mono text-default">{{ host }}</span>
           </p>
 
           <!-- role="alert" so the message is announced, not merely rendered. -->
@@ -333,6 +380,43 @@ function messageFor(caught: unknown): string {
             >
               Password sign-in is disabled on this server.
             </p>
+
+            <!--
+              Lost access.
+
+              This was missing, and it was the one thing on this screen that is
+              a capability rather than decoration: without it a person who has
+              forgotten their password has no way back in that does not involve
+              an administrator and a shell. The server has always had the
+              endpoint.
+
+              Deliberately below the sign-in button and quiet: it is the rare
+              path, and a recovery link competing with the primary action is
+              how people end up resetting a password they still remember.
+            -->
+            <div
+              v-if="passwordEnabled && step === 'credentials'"
+              class="flex flex-col items-center gap-2 border-t border-default pt-4"
+            >
+              <p
+                v-if="resetNotice"
+                class="text-center text-xs text-muted"
+                role="status"
+              >
+                {{ resetNotice }}
+              </p>
+              <UButton
+                v-else
+                variant="link"
+                color="neutral"
+                size="xs"
+                icon="i-lucide-mail"
+                :loading="resetPending"
+                @click="requestReset"
+              >
+                Forgot your password?
+              </UButton>
+            </div>
           </form>
 
           <!-- Enforced 2FA with no confirmed secret. Enrolling inline is the

@@ -129,7 +129,12 @@ Kopieren, NDJSON-Export. Admin-only.
 **Settings:** Profil inkl. TOTP-Enrolment und PATs, Benutzer und Einladungen,
 API-Clients und Token, Audit-Log.
 
-**Querschnitt:** Login inkl. MFA und OIDC, Theme-Umschaltung, Sidebar-Zustand,
+**Querschnitt:** Login inkl. MFA und OIDC **sowie Passwort-Wiederherstellung
+(Anforderung *und* Zielseite) und Einladungsannahme** — diese drei fehlten in
+der ersten Fassung dieser Liste, und die beiden Zielseiten fehlten sogar im
+ausgelieferten Dashboard: der Server verschickt `…/password-reset/confirm` und
+`…/invitations/accept`, und keiner der Bäume bediente die Routen (Durchgang 12).
+Theme-Umschaltung, Sidebar-Zustand,
 Command-Palette, Dead-Letter-Zähler in der Topbar, und der Wartungsmodus in
 **beiden** Hälften — der Banner für alle, die Steuerung (manuell an/aus,
 geplantes Fenster, Notiz) admin-only in der Topbar. Die erste Fassung dieser
