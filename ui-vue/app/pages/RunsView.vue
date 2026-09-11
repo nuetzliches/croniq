@@ -37,7 +37,49 @@ const filters = computed(() => ({
   state: (route.query.state as string) || '',
   job_key: (route.query.job_key as string) || '',
   runner_id: (route.query.runner_id as string) || '',
+  window: (route.query.window as string) || '',
 }))
+
+/**
+ * The time window, as a length rather than two instants.
+ *
+ * "The last hour" is the question people actually have; two datetime pickers
+ * make them do arithmetic to ask it. The URL carries the length, so a pasted
+ * link means "the last hour" whenever it is opened rather than freezing a
+ * window around when it was copied — which is almost always what the sender
+ * meant.
+ *
+ * `since` is derived on each render for that reason; the server takes
+ * instants.
+ */
+const WINDOWS = [
+  { label: 'Last hour', value: '1h', ms: 3_600_000 },
+  { label: 'Last 24 hours', value: '24h', ms: 86_400_000 },
+  { label: 'Last 7 days', value: '7d', ms: 604_800_000 },
+]
+
+const since = computed(() => {
+  const chosen = WINDOWS.find((entry) => entry.value === filters.value.window)
+  return chosen ? new Date(Date.now() - chosen.ms).toISOString() : undefined
+})
+
+/**
+ * How far back the list has been paged, as a cursor.
+ *
+ * Named apart from the keyboard `cursor` below deliberately — one is a row
+ * index, the other an instant, and the two live in the same file.
+ *
+ * It holds a `created_at` **the server sent**, verbatim. Reconstructing one
+ * from a `Date` would truncate to milliseconds, and the server compares the
+ * bound as a string at full precision — a truncated cursor sorts below a row
+ * inside that instant and drops it. Losing rows quietly, not repeating them.
+ *
+ * Deliberately not in the URL: a link should mean "this filter", not "this
+ * filter and the four pages I happened to scroll".
+ */
+const pageCursor = ref<string | undefined>(undefined)
+/** Pages already fetched, oldest page last. Reset whenever a filter changes. */
+const pages = ref<Execution[][]>([])
 
 // A getter, not a value — see useExecutions. Passing `filters.value` here is
 // the mistake that makes the list freeze on its first filter.
@@ -45,15 +87,58 @@ const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   state: filters.value.state || undefined,
   job_key: filters.value.job_key || undefined,
   runner_id: filters.value.runner_id || undefined,
+  since: since.value,
+  until: pageCursor.value,
 }))
 
-const rows = computed<Execution[]>(() => data.value ?? [])
+const PAGE_SIZE = 200
+
+/**
+ * Everything fetched so far: the pages already paged in, then the live one.
+ *
+ * De-duplicated by id, because `until` is *inclusive* — the row the cursor
+ * points at comes back in the next page too. That is the server erring on the
+ * side of repeating rather than losing, and dropping the repeat is this end's
+ * half of the bargain.
+ */
+const rows = computed<Execution[]>(() => {
+  const seen = new Set<string>()
+  const out: Execution[] = []
+  for (const row of [...pages.value.flat(), ...(data.value ?? [])]) {
+    if (seen.has(row.id)) continue
+    seen.add(row.id)
+    out.push(row)
+  }
+  return out
+})
+
+/** A full page back means there is probably more behind it. */
+const mayHaveMore = computed(() => (data.value?.length ?? 0) >= PAGE_SIZE)
+
+function loadOlder() {
+  const page = data.value ?? []
+  const oldest = page[page.length - 1]
+  if (!oldest) return
+  pages.value = [...pages.value, page]
+  // The server's own value, untouched.
+  pageCursor.value = oldest.created_at
+}
+
+// Any change of filter starts again from the newest rows. Keeping the pages
+// would mean showing rows that the new filter excludes.
+watch(
+  () => [filters.value.state, filters.value.job_key, filters.value.runner_id, filters.value.window],
+  () => {
+    pages.value = []
+    pageCursor.value = undefined
+  },
+)
 
 /** The detail comes out of the list; there is no GET /v1/executions/{id}. */
 const selectedId = computed(() => (route.params.id as string | undefined) ?? undefined)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
 
-function setFilter(key: 'state' | 'job_key' | 'runner_id', value: string) {
+function setFilter(key: 'state' | 'job_key' | 'runner_id' | 'window', value: string) {
   const query = { ...route.query }
   if (value) query[key] = value
   else delete query[key]
@@ -75,7 +160,12 @@ function close() {
 }
 
 const hasFilters = computed(() =>
-  Boolean(filters.value.state || filters.value.job_key || filters.value.runner_id),
+  Boolean(
+    filters.value.state ||
+      filters.value.job_key ||
+      filters.value.runner_id ||
+      filters.value.window,
+  ),
 )
 
 const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
@@ -147,6 +237,15 @@ function onKey(event: KeyboardEvent) {
         aria-label="Filtered to one runner"
         icon="i-lucide-cpu"
         class="w-56 font-mono"
+      />
+      <USelectMenu
+        :model-value="filters.window || undefined"
+        :items="WINDOWS"
+        value-key="value"
+        placeholder="Any time"
+        aria-label="Filter by time window"
+        class="w-44"
+        @update:model-value="(value: string) => setFilter('window', value ?? '')"
       />
       <UButton
         v-if="hasFilters"
@@ -266,6 +365,39 @@ function onKey(event: KeyboardEvent) {
             </tr>
           </tbody>
         </table>
+
+        <!--
+          Paging back.
+
+          The list was hard-capped at 200 rows, so anything older than that was
+          unreachable and a deep link to an older run found nothing. It pages
+          with `until` set to the oldest row's `created_at` — the server's own
+          value, verbatim, because a reconstructed one truncates and silently
+          skips rows.
+
+          At the end it says so, rather than leaving a button that returns
+          nothing new.
+        -->
+        <div
+          v-if="rows.length > 0"
+          class="flex items-center justify-center gap-3 border-t border-default px-3 py-3"
+        >
+          <UButton
+            v-if="mayHaveMore"
+            color="neutral"
+            variant="subtle"
+            size="xs"
+            icon="i-lucide-arrow-down"
+            :loading="isPending"
+            @click="loadOlder"
+          >
+            Load older
+          </UButton>
+          <span
+            v-else
+            class="text-xs text-muted"
+          >That is everything{{ filters.window ? ' in this window' : '' }}.</span>
+        </div>
       </div>
 
       <!-- Only when there is something to show. The pane the audit complained

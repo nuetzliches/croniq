@@ -251,10 +251,10 @@ Zeilen exakt 38 px.
 
 ### Noch offen an diesem Screen
 
-- **Zeitfenster-Filter.** Der Server kann `since`/`until`, die Oberfläche nicht.
-- **Nachladen.** Es wird hart auf 200 Zeilen begrenzt; ältere Läufe sind nicht
-  erreichbar, und ein Deep-Link auf einen älteren Lauf findet ihn nicht — das
-  Panel sagt das ehrlich, statt leer zu bleiben.
+- ~~**Zeitfenster-Filter.**~~ ✓ Durchgang 14 — und der Server konnte es
+  *doch nicht* ganz: `ExecutionFilter` trug `since`/`until` von Anfang an, der
+  HTTP-Handler las die Parameter nur nie.
+- ~~**Nachladen.**~~ ✓ Durchgang 14.
 - **Verlinkung** von Job und Runner in die jeweiligen Screens, sobald es sie
   gibt.
 
@@ -910,4 +910,58 @@ dieses Symptom gesehen, `/v1/schedules` gegen `/v1/jobs` gejoint, „null
 verwaiste Trigger" gemessen und es als Fehlalarm abgelegt. Ich hatte die
 falsche Tabelle geprüft: Store-Trigger und Jobs sind konsistent — die Registry,
 die Scheduler und Forecast tatsächlich benutzen, ist es nicht. Eigener Vorgang.
+
+## Durchgang 14 — Zeitfenster und Nachladen
+
+Die zwei letzten Punkte vom Runs-Screen, und der erste war nicht das, was
+dort stand.
+
+### „Der Server kann es, die Oberfläche nicht" stimmte nur halb
+
+`ExecutionFilter` trägt `since` und `until` seit jeher, und das SQL wendet
+beide an. Der **HTTP-Handler las die Query-Parameter nie** — der einzige
+Zugang zur Lauf-Historie konnte also gar kein Zeitfenster ausdrücken. Dieselbe
+Klasse wie der ungenutzte Forecast: die Fähigkeit war da und niemand rief sie.
+
+Ein unlesbarer Wert wird ignoriert statt abgelehnt, wie dieser Endpunkt es mit
+`state` und `limit` immer schon hält — eine 400 wäre ein neuer Fehlermodus für
+Aufrufer, die heute eine sinnvolle Liste bekommen.
+
+### `until` ist zugleich der Cursor
+
+Die Liste ist nach `created_at` absteigend sortiert, und `until` begrenzt
+dasselbe Feld inklusiv. Damit ist Keyset-Paging ohne Store-Änderung möglich:
+nochmal anfragen mit `until` = `created_at` der ältesten Zeile.
+
+**Die Präzision ist dabei der springende Punkt**, und der Test hält ihn fest.
+`created_at` liegt als RFC3339-*String* in SQLite und wird lexikografisch
+verglichen. Ein auf Millisekunden gekürzter Cursor — genau das, was
+`Date.toISOString()` liefert — sortiert **unter** einer Zeile innerhalb
+derselben Millisekunde (`+` ist 0x2B, `4` ist 0x34) und lässt sie herausfallen.
+
+Das ist die verlierende Richtung: gekürzt würden Zeilen **still übersprungen**,
+nicht wiederholt. Meine erste Annahme war das Gegenteil, der Test hat sie
+widerlegt. Die Regel steht jetzt im Handler, im Typ und in der OpenAPI-Spec:
+**den `created_at`-Wert unverändert zurückgeben, den der Server geliefert hat.
+Niemals rekonstruieren.**
+
+Die inklusive Grenze liefert die Cursor-Zeile noch einmal mit; der Client wirft
+sie über die `id` weg. Belegt am laufenden Stack: 200 Zeilen, nach *Load older*
+**399** — zweimal 200 minus die eine Überlappung.
+
+### Das Fenster ist eine Länge, keine zwei Zeitpunkte
+
+„Die letzte Stunde" ist die Frage, die Leute haben; zwei Datumsfelder lassen
+sie dafür rechnen. In der URL steht `window=1h`, nicht zwei Instanzen — ein
+geteilter Link bedeutet dann „die letzte Stunde" *wann immer er geöffnet wird*
+statt ein Fenster um den Moment des Kopierens einzufrieren. Das ist fast immer,
+was der Absender meinte.
+
+### Eine Beobachtung, die nach Fehler aussah und keiner war
+
+Die Spalte *Fired* läuft nicht streng monoton: die Liste sortiert nach
+`created_at`, angezeigt wird `fire_at`. Nachgemessen, statt umzubauen: auf 200
+Zeilen unterscheiden sich die beiden **199-mal** — aber nur um etwa eine
+Sekunde, und sichtbar aus der Reihe fallen **2 von 200**. Ein Artefakt im
+Sekundenbereich, das die relative Zeitangabe rundet. Kein Umbaugrund.
 

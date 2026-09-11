@@ -711,5 +711,57 @@ await step("what fires next lists only jobs that still exist", async () => {
   }
 });
 
+/* ─── Runs: time window and paging ──────────────────────────────────────── */
+
+const count = () => page.locator("tbody tr").count();
+
+await step("the list starts capped at one page", async () => {
+  await page.goto(`${base}/executions`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  const n = await count();
+  if (n !== 200) throw new Error(`expected a full first page of 200, got ${n}`);
+});
+
+await step("load older reaches past the cap", async () => {
+  const before = await count();
+  await page.getByRole("button", { name: "Load older" }).click();
+  await page.waitForTimeout(1800);
+  const after = await count();
+  if (after <= before) throw new Error(`still ${after} rows — paging added nothing`);
+  console.log(`     ${before} -> ${after} rows`);
+});
+
+await step("no row is shown twice despite the inclusive cursor", async () => {
+  const ids = await page.locator("tbody tr td:nth-child(3)").allInnerTexts();
+  const trimmed = ids.map((t) => t.trim());
+  const dupes = trimmed.filter((v, i) => trimmed.indexOf(v) !== i);
+  if (dupes.length) throw new Error(`duplicated rows: ${[...new Set(dupes)].slice(0, 3).join(", ")}`);
+});
+
+await step("the window filter narrows, and lives in the URL", async () => {
+  await page.goto(`${base}/executions?window=1h`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  const windowed = await count();
+  await page.goto(`${base}/executions`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  const unbounded = await count();
+  if (windowed >= unbounded) throw new Error(`1h window (${windowed}) did not narrow ${unbounded}`);
+  console.log(`     last hour: ${windowed} rows, unbounded: ${unbounded}`);
+});
+
+await step("changing a filter starts the paging over", async () => {
+  await page.goto(`${base}/executions`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1600);
+  await page.getByRole("button", { name: "Load older" }).click();
+  await page.waitForTimeout(1600);
+  const paged = await count();
+  await page.getByRole("button", { name: "Filter by time window" }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole("option", { name: "Last hour" }).click();
+  await page.waitForTimeout(1800);
+  const after = await count();
+  if (after >= paged) throw new Error(`filter kept ${after} rows from the previous paging`);
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();

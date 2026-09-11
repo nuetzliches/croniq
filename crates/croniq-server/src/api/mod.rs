@@ -1805,6 +1805,13 @@ async fn handle_trigger(
     )
 }
 
+/// An RFC3339 instant from a query parameter, or `None` if it is not one.
+fn parse_rfc3339(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
 /// `GET /v1/executions` — list recent executions from the store.
 async fn handle_list_executions(
     State(state): State<Arc<ServerState>>,
@@ -1829,7 +1836,19 @@ async fn handle_list_executions(
             _ => None,
         }),
         limit: params.get("limit").and_then(|l| l.parse().ok()),
-        ..Default::default()
+        // `since` / `until` were in `ExecutionFilter` and in the SQL from the
+        // start; this handler simply never read them, so the one HTTP entry
+        // point to the execution history could not express a time window at
+        // all. Both are RFC3339 and both bound `created_at`, which is also
+        // the sort key — so `until` doubles as the cursor for paging back
+        // through a history longer than one `limit`.
+        //
+        // A malformed value is ignored rather than rejected: this endpoint has
+        // always ignored an unparseable `state` and `limit` the same way, and
+        // answering 400 here would be a new failure mode for callers that
+        // currently get a sane list.
+        since: params.get("since").and_then(|v| parse_rfc3339(v)),
+        until: params.get("until").and_then(|v| parse_rfc3339(v)),
     };
     let executions = store
         .list_executions(&filter)
@@ -3101,6 +3120,148 @@ mod tests {
             })
             .unwrap();
         id
+    }
+
+    /// `GET /v1/executions` honours a time window (issue #621-adjacent, the
+    /// Runs screen's open item).
+    ///
+    /// `ExecutionFilter` has carried `since` and `until` since it was written,
+    /// and the SQL applies both — this handler simply never read the query
+    /// parameters, so the one HTTP entry point to the execution history could
+    /// not express a window at all.
+    ///
+    /// Both bound `created_at`, which is also the sort key, and `until` is
+    /// inclusive. That last detail is not incidental: it is what lets `until`
+    /// double as a cursor for paging back through a history longer than one
+    /// `limit`, and it is why a caller doing that has to drop the boundary row
+    /// it already has.
+    #[tokio::test]
+    async fn listing_executions_honours_a_time_window() {
+        let (state, store) = make_store_state();
+        let base = Utc::now() - chrono::Duration::hours(10);
+
+        let old = seed_keyed_execution(&store, "etl:sync", "a", ExecutionState::Completed, base);
+        let mid = seed_keyed_execution(
+            &store,
+            "etl:sync",
+            "b",
+            ExecutionState::Completed,
+            base + chrono::Duration::hours(1),
+        );
+        let new = seed_keyed_execution(
+            &store,
+            "etl:sync",
+            "c",
+            ExecutionState::Completed,
+            base + chrono::Duration::hours(2),
+        );
+
+        let ids = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        // No window: everything, newest first.
+        let all = get_json(server_router(Arc::clone(&state)), "/v1/executions").await;
+        assert_eq!(
+            ids(&all),
+            vec![new.to_string(), mid.to_string(), old.to_string()],
+            "unfiltered list must be newest-first"
+        );
+
+        // `since` drops what is older than it. `Z` rather than `+00:00`:
+        // a bare `+` in a query string means a space, so the offset form
+        // would arrive mangled — and `Z` is what a client sends anyway.
+        let since = (base + chrono::Duration::minutes(90))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let recent = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?since={since}"),
+        )
+        .await;
+        assert_eq!(
+            ids(&recent),
+            vec![new.to_string()],
+            "since must bound below"
+        );
+
+        // `until` drops what is newer, inclusively — the boundary row is in.
+        //
+        // At full precision, and the precision is the point. A cursor
+        // truncated to whole seconds names an instant *earlier* than a row
+        // inside that second, so an inclusive `<=` excludes it. True on both
+        // backends for different mechanics — SQLite compares the RFC3339 text
+        // lexicographically, Postgres compares `TIMESTAMPTZ` values — and
+        // either way the truncated value is the smaller one.
+        //
+        // Which matters far beyond this assertion: `until` is how a caller
+        // pages back through a history longer than one `limit`, and a
+        // truncating cursor skips rows rather than repeating them.
+        let exact = (base + chrono::Duration::hours(1))
+            .to_rfc3339()
+            .replace('+', "%2B");
+        let older = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?until={exact}"),
+        )
+        .await;
+        assert_eq!(
+            ids(&older),
+            vec![mid.to_string(), old.to_string()],
+            "until must bound above, including the boundary row itself"
+        );
+
+        // The trap, pinned deliberately: a cursor **truncated** to
+        // milliseconds loses the row it points at, because `…123` is an
+        // earlier instant than `…123456789` and the bound admits only
+        // equal-or-earlier.
+        //
+        // This is the losing direction. A caller paging back with a truncated
+        // cursor skips rows silently rather than repeating them, which is why
+        // the rule for a client is: page with the `created_at` the server
+        // handed you, verbatim. `Date.toISOString()` truncates to
+        // milliseconds and is exactly the wrong thing to send.
+        let truncated = (base + chrono::Duration::hours(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let lossy = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?until={truncated}"),
+        )
+        .await;
+        assert!(
+            !ids(&lossy).contains(&mid.to_string()),
+            "documenting the trap: a truncated cursor drops its own boundary row"
+        );
+
+        // Echoing the server's own value back is exact, which is what makes
+        // `until` usable as a paging cursor at all.
+        let echoed = all.as_array().unwrap()[1]["created_at"]
+            .as_str()
+            .unwrap()
+            .replace('+', "%2B");
+        let round_tripped = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?until={echoed}"),
+        )
+        .await;
+        assert_eq!(
+            ids(&round_tripped),
+            vec![mid.to_string(), old.to_string()],
+            "a cursor echoed from the response must round-trip exactly"
+        );
+
+        // A value that is not an instant is ignored, the way an unparseable
+        // `state` or `limit` always has been — not answered with a 400.
+        let junk = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?since=not-a-timestamp",
+        )
+        .await;
+        assert_eq!(ids(&junk).len(), 3, "a malformed window must not filter");
     }
 
     #[tokio::test]
