@@ -1,4 +1,5 @@
 import { test, expect, login, USER } from './fixtures'
+import { contract } from './trees'
 
 // These specs drive the login form itself, so they use the plain `page`
 // fixture — a fresh, signed-out context per test — rather than the shared
@@ -55,25 +56,19 @@ test.describe('authentication', () => {
    * The UI fires that request without awaiting it, so this waits on the
    * response rather than on the navigation that races it.
    *
-   * Note the menu items are plain `<button>`s inside a `role="menu"` container
-   * with no `role="menuitem"`, so `getByRole('menuitem')` finds nothing here.
-   *
-   * **These two selectors are React-specific and will not match the Vue tree.**
-   * `.user-pill` and `.user-menu` are class names from `ui/src/layout/`, and
-   * the rebuild's shell uses an accessible name instead. ADR-0004 calls this
-   * suite the framework-agnostic acceptance gate, which is true of every other
-   * spec here but not of this line — generalising it is cutover work, and
-   * saying so here is cheaper than discovering it then.
+   * Reaching the control differs between the shells — see `signOut` in
+   * `trees.ts` — so it comes from the tree contract. This spec used to carry a
+   * note saying the suite was framework-agnostic "except for these two
+   * selectors"; it no longer needs one.
    */
   test('logging out revokes the session server-side', async ({ page }) => {
     await login(page)
 
-    await page.locator('.user-pill').click()
     const [response] = await Promise.all([
       page.waitForResponse(
         (r) => r.url().includes('/v1/auth/logout') && r.request().method() === 'POST',
       ),
-      page.locator('.user-menu').getByRole('button', { name: 'Sign out' }).click(),
+      contract.signOut(page),
     ])
     expect(response.status()).toBeLessThan(400)
 

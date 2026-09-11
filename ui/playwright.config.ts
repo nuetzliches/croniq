@@ -11,9 +11,23 @@ import { defineConfig, devices } from '@playwright/test'
  * to exist, so a laptop run and a CI run are the same run. `reuseExistingServer`
  * is off in CI and on locally, where re-seeding a database for every `--watch`
  * iteration would be the slowest part of the loop.
+ *
+ * `CRONIQ_E2E_TREE` picks the dashboard: `vue` (default) or `react`. Locally,
+ * `reuseExistingServer` means switching trees needs the old stack stopped —
+ * it serves one build and will happily be reused by a run expecting the other.
  */
 const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233)
 const BASE_URL = `http://127.0.0.1:${PORT}`
+
+/**
+ * Which dashboard this run points at — see `e2e/trees.ts`.
+ *
+ * It names the project so a failure report says which tree failed, which
+ * matters while two of them exist: the same spec failing against one and
+ * passing against the other is the most informative result this suite can
+ * produce, and an unnamed project throws that away.
+ */
+const TREE = process.env.CRONIQ_E2E_TREE ?? 'vue'
 
 export default defineConfig({
   testDir: './e2e',
@@ -37,7 +51,7 @@ export default defineConfig({
     video: 'off',
   },
 
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [{ name: `chromium (${TREE})`, use: { ...devices['Desktop Chrome'] } }],
 
   webServer: {
     command: 'node scripts/e2e-stack.mjs',

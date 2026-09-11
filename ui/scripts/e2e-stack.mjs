@@ -33,6 +33,22 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
  */
 export const E2E_PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233);
 
+/**
+ * Which dashboard build the server serves.
+ *
+ * `vue` by default: ADR-0004 makes the Vue tree the replacement, and the gate
+ * it names is this suite (#620). `react` still works, and CI runs both — the
+ * React dashboard is what ships until the cutover, so it keeps its cover until
+ * it is deleted rather than losing it the moment the new tree exists.
+ *
+ * One tree per server, one server per run. Serving both at once would need
+ * either two ports (croniq's development block is 4230-4233 and 4233 is this
+ * one) or two SPA roots on one origin, and neither is worth it for a
+ * distinction the suite can make by being run twice.
+ */
+export const E2E_TREE = process.env.CRONIQ_E2E_TREE ?? "vue";
+const UI_DIST = path.join(ROOT, E2E_TREE === "react" ? "ui" : "ui-vue", "dist");
+
 /** Fixed demo credentials. Public by design; see docker-compose.yml. */
 export const E2E_USER = "admin";
 export const E2E_PASSWORD = "demo-admin";
@@ -131,6 +147,20 @@ function shutdown(code = 0) {
 
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => shutdown(0));
 
+// A missing bundle would otherwise surface as every test failing on a blank
+// page, which reads as a broken dashboard rather than a missing build step.
+if (!fs.existsSync(path.join(UI_DIST, "index.html"))) {
+  console.error(
+    `no built dashboard at ${UI_DIST}
+` +
+      `Build it first:
+` +
+      `  npm --prefix ${E2E_TREE === "react" ? "ui" : "ui-vue"} run build`,
+  );
+  process.exit(1);
+}
+console.log(`[e2e] serving the ${E2E_TREE} dashboard from ${UI_DIST}`);
+
 const dataDir = freshDataDir();
 seed(dataDir);
 
@@ -148,7 +178,7 @@ spawnChild(
     "--data-dir",
     dataDir,
     "--ui-dir",
-    path.join(ROOT, "ui", "dist"),
+    UI_DIST,
   ],
   {
     CRONIQ_DATA_DIR: dataDir,

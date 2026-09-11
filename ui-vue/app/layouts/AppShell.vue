@@ -103,7 +103,17 @@ async function signOut() {
     its content, and the whole page scrolls instead of the list. A fixed height
     here is what makes "only the list moves" possible at all.
   -->
-  <div class="flex h-screen gap-3 overflow-hidden p-3">
+  <!--
+    `data-sidebar` is a published state hook, not a styling one. The React
+    shell exposes the same attribute, and the e2e suite asserts the collapsed
+    sidebar survives a reload through it — keeping the spelling identical is
+    what lets one spec cover both trees instead of two spellings of one
+    promise (#620).
+  -->
+  <div
+    class="app flex h-screen gap-3 overflow-hidden p-3"
+    :data-sidebar="ui.sidebarCollapsed ? 'collapsed' : 'expanded'"
+  >
     <!--
       `<nav>` with an accessible name: a page with several landmarks of one
       type is unnavigable without them, and the Playwright suite selects on
@@ -193,8 +203,13 @@ async function signOut() {
         <UDropdownMenu
           :items="[
             [
-              { label: 'Profile & account', icon: 'i-lucide-user', to: '/settings?tab=profile' },
-              { label: 'API keys & clients', icon: 'i-lucide-key', to: '/settings?tab=clients' },
+              // Path segments, not `?tab=` — this tree addresses several
+              // views of one screen that way. These two were written before
+              // the settings screen existed and still carried the React
+              // spelling, so both landed on the profile view with the query
+              // silently ignored. The e2e suite found it (#620).
+              { label: 'Profile & account', icon: 'i-lucide-user', to: '/settings' },
+              { label: 'API keys & clients', icon: 'i-lucide-key', to: '/settings/clients' },
             ],
             [{ label: 'Sign out', icon: 'i-lucide-log-out', color: 'error', onSelect: signOut }],
           ]"

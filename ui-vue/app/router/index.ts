@@ -158,8 +158,21 @@ router.beforeEach(async (to) => {
   if (auth.status === 'unknown') await untilResolved()
   if (auth.isAuthenticated) return true
 
-  return { name: 'login', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
+  return { name: 'login', query: loginQuery(to.fullPath) }
 })
+
+/**
+ * Where to come back to after signing in.
+ *
+ * `/` is the default landing route, so carrying it as `next` adds a query
+ * parameter that changes nothing — noise in a URL people see at their most
+ * suspicious moment. The guard and the reactive watch below must agree about
+ * this: they answer the same question and used not to, so the same situation
+ * produced two different URLs depending on which half of the rule fired.
+ */
+function loginQuery(fullPath: string): Record<string, string> {
+  return fullPath === '/' ? {} : { next: fullPath }
+}
 
 function untilResolved(): Promise<void> {
   const auth = useAuthStore()
@@ -197,9 +210,13 @@ export function installAuthWatch() {
     (status) => {
       if (status !== 'anonymous') return
       if (router.currentRoute.value.meta.public) return
+      // A deliberate sign-out navigates itself, with a full reload that drops
+      // the query cache and the open streams. Racing it here is how `/login`
+      // became `/login?next=/` on a slow enough machine.
+      if (auth.signedOut) return
       void router.replace({
         name: 'login',
-        query: { next: router.currentRoute.value.fullPath },
+        query: loginQuery(router.currentRoute.value.fullPath),
       })
     },
   )

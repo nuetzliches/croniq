@@ -38,10 +38,29 @@ export const useAuthStore = defineStore('auth', () => {
     status.value = 'authenticated'
   }
 
-  function clear() {
+  /**
+   * Whether the session ended because the person asked it to.
+   *
+   * The two cases look identical in `status` and are not the same thing. A
+   * session that *died* — expired refresh token, revoked elsewhere, another
+   * tab signing out — should send you to the login screen with a `next` so you
+   * land back where you were. A deliberate sign-out should not: you left on
+   * purpose, and being returned to the page you just left is the opposite of
+   * what you asked for.
+   *
+   * It also settles a race. Signing out reloads the whole app to drop the
+   * query cache and the open streams; the reactive auth watch was navigating
+   * at the same moment, and which one won depended on how fast the machine
+   * was. On CI the watch won and left `/login?next=/` behind — a URL no
+   * assertion had any reason to expect and no user any reason to see.
+   */
+  const signedOut = ref(false)
+
+  function clear(options: { deliberate?: boolean } = {}) {
     token.value = null
     status.value = 'anonymous'
+    signedOut.value = options.deliberate ?? false
   }
 
-  return { token, status, isAuthenticated, setToken, clear }
+  return { token, status, isAuthenticated, signedOut, setToken, clear }
 })

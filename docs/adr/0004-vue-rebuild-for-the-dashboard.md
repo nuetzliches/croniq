@@ -79,6 +79,14 @@ component at a time.
      the Vue build before cutover. It survives the rebuild unchanged; the
      computed-style snapshot tool (`ui/scripts/style-snapshot.mjs`, #584) does
      not, since there is deliberately nothing to keep identical.
+     *Amended 2026-09-11:* until
+     [#620](https://github.com/nuetzliches/croniq/issues/620) this guard was
+     aspirational — the suite ran only against the React build the server
+     serves, so the gate was measuring the tree being replaced. It now runs
+     against both, one per invocation (`CRONIQ_E2E_TREE`), and CI does both on
+     every push. The three places the two dashboards genuinely promise
+     different things are named in `ui/e2e/trees.ts` rather than duplicated
+     across specs; the React half of that file leaves with the React tree.
   3. **Fixes go to the Vue tree first** once a file is rebuilt, and are
      cherry-picked back if the React tree still needs them. Never the reverse.
      *Amended 2026-09-11:* the cherry-pick half is withdrawn. The React tree

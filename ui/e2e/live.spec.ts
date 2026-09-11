@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures'
+import { contract } from './trees'
 
 /**
  * The two SSE surfaces and the preferences that must survive a reload.
@@ -40,11 +41,13 @@ test.describe('live surfaces', () => {
     const response = await streamed
     expect(response.status()).toBe(200)
 
-    // The header reads "<filtered> / <total> events".
+    // Both shells print "<filtered> / <total>" for the buffer — React
+    // appends "events", the Vue toolbar does not, so the match stops at the
+    // pair of numbers that is the actual assertion.
     await expect
       .poll(
         async () => {
-          const text = (await app.getByText(/\d+ \/ \d+ events?/).first().textContent()) ?? ''
+          const text = (await app.getByText(/\d+\s*\/\s*\d+/).first().textContent()) ?? ''
           return Number(text.match(/\/\s*(\d+)/)?.[1] ?? 0)
         },
         { timeout: 20_000 },
@@ -55,16 +58,14 @@ test.describe('live surfaces', () => {
 
 test.describe('preferences survive a reload', () => {
   test('the theme choice persists', async ({ app }) => {
-    await app.locator('.user-pill').click()
-    await app.locator('.user-menu').getByRole('radio', { name: /light/i }).click()
+    await contract.pickTheme(app, 'light')
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light')
 
     await app.reload()
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light')
 
     // Restore, so a later test does not inherit a non-default theme.
-    await app.locator('.user-pill').click()
-    await app.locator('.user-menu').getByRole('radio', { name: /dark/i }).click()
+    await contract.pickTheme(app, 'dark')
   })
 
   test('the collapsed sidebar persists', async ({ app }) => {
