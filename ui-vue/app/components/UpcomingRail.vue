@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useForecast, useJobStates } from '~/api/queries'
+import { useForecast, useJobStates, useJobs } from '~/api/queries'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 
 /**
@@ -24,10 +24,33 @@ import { formatAbsolute, formatRelative } from '~/lib/format'
  */
 const { data: states, isPending } = useJobStates()
 const { data: forecast } = useForecast(60, 5)
+const { data: jobs } = useJobs()
+
+/**
+ * Only jobs that still exist.
+ *
+ * `GET /v1/jobs/states` outlives the job. That is deliberate on the server's
+ * side and it says so at boot: "job_states rows exist for jobs this
+ * configuration does not define. They are kept (a job may be temporarily
+ * absent) and no longer produce metrics" — a job pulled out of the Croniqfile
+ * and put back should not lose its history (issue #470).
+ *
+ * Which means a state row is not evidence that a job exists, and this panel
+ * read it as though it were. The result was that deleted jobs sat in "what
+ * fires next" forever, with a next fire time that nothing would ever honour.
+ * The jobs list never had the bug because it builds from `/v1/jobs` and joins
+ * state onto it; this built from state and joined nothing.
+ */
+const liveKeys = computed(() => new Set((jobs.value ?? []).map((job) => job.job_key)))
+const liveStates = computed(() =>
+  // Before the job list arrives, show nothing rather than everything: a brief
+  // empty rail is better than one that flashes jobs that are gone.
+  jobs.value ? (states.value ?? []).filter((state) => liveKeys.value.has(state.job_key)) : [],
+)
 
 /** The soonest handful, nearest first. Jobs with no next fire are not due. */
 const upcoming = computed(() => {
-  const rows = (states.value ?? [])
+  const rows = liveStates.value
     .filter((state) => state.next_fire_at && state.status === 'active')
     .sort((a, b) => Date.parse(a.next_fire_at!) - Date.parse(b.next_fire_at!))
   return rows.slice(0, 6)
@@ -40,7 +63,7 @@ const upcoming = computed(() => {
  * component knows, and burying it inside a chronological list would be the
  * wrong emphasis — it is not "upcoming", it is late.
  */
-const overdue = computed(() => (states.value ?? []).filter((state) => state.overdue))
+const overdue = computed(() => liveStates.value.filter((state) => state.overdue))
 
 const buckets = computed(() => forecast.value?.buckets ?? [])
 const peak = computed(() => Math.max(1, ...buckets.value.map((bucket) => bucket.count)))

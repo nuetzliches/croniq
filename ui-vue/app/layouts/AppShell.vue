@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCurrentUser, useDeadLetterCount } from '~/api/queries'
 import { useHealth, useVersion } from '~/api/queries'
 import { logout } from '~/api/session'
 import { useUiStore } from '~/stores/ui'
+import { useGoToShortcuts } from '~/composables/useGoToShortcuts'
 import { useIsAdmin } from '~/composables/useIsAdmin'
 import { NAV_SECTIONS } from '~/router/nav'
 
@@ -32,6 +33,26 @@ const deadLetters = useDeadLetterCount()
  * beats one that answers 403.
  */
 const isAdmin = useIsAdmin()
+
+/**
+ * The command palette, and the `g`-chord that goes with it.
+ *
+ * Mounted once, in the shell, rather than wherever a trigger happens to be:
+ * the React tree mounted a second instance from its topbar, so two could be
+ * open at once with different search terms in them.
+ */
+const paletteOpen = ref(false)
+const { armed: goArmed } = useGoToShortcuts()
+
+function onGlobalKey(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    paletteOpen.value = true
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onGlobalKey))
+onUnmounted(() => window.removeEventListener('keydown', onGlobalKey))
 
 /** What to call the signed-in user. */
 const displayName = computed(() => me.value?.display_name ?? me.value?.username ?? '…')
@@ -282,6 +303,26 @@ async function signOut() {
 
         <div class="ml-auto flex items-center gap-1.5">
           <!--
+            A visible trigger, not only a shortcut. A palette reachable solely
+            by a key combination nobody has been told about is, for most
+            people, not there at all — and the shortcut is printed on the
+            button, which is how anyone learns it.
+          -->
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            icon="i-lucide-search"
+            class="gap-2"
+            aria-label="Open the command palette"
+            @click="paletteOpen = true"
+          >
+            <span class="hidden text-muted lg:inline">Search</span>
+            <kbd class="cq-label hidden rounded border border-default px-1.5 py-0.5 lg:inline">
+              ctrl k
+            </kbd>
+          </UButton>
+          <!--
             Plain text, not a badge.
 
             It was a `UBadge` at `h-8`, which gave it a filled box the same
@@ -390,5 +431,28 @@ async function signOut() {
         </div>
       </main>
     </div>
+
+    <CommandPalette v-model:open="paletteOpen" />
+
+    <!--
+      That `g` was heard and something is expected next. Without it the chord
+      is invisible state: you press `g`, nothing happens, and there is no way
+      to tell whether the key registered or the feature exists.
+    -->
+    <Transition
+      enter-active-class="transition-opacity"
+      leave-active-class="transition-opacity"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="goArmed"
+        class="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-lg border border-default bg-default px-3 py-1.5 text-xs shadow-lg"
+        role="status"
+      >
+        <kbd class="font-mono font-medium">g</kbd>
+        <span class="ml-2 text-muted">then d · r · n · x · j · c · a · l · s</span>
+      </div>
+    </Transition>
   </div>
 </template>
