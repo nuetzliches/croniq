@@ -54,6 +54,25 @@ const sections = computed(() =>
   })).filter((section) => section.items.length > 0),
 )
 
+/**
+ * Which nav entry is the current one.
+ *
+ * `active-class` cannot express this. Vue Router marks a link active on a
+ * *prefix* match, and `/` is a prefix of every route — so the Dashboard entry
+ * was highlighted on every screen in the product. `exact-active-class` fixes
+ * that one entry and breaks the rest: `/jobs` has to stay lit on
+ * `/jobs/demo:report`, and `/executions` on `/executions/<id>`.
+ *
+ * So the rule is written out: the root matches only itself, everything else
+ * matches itself and its children. The `/` on the prefix test is load-bearing
+ * — without it `/dead-letters` would light up for a hypothetical
+ * `/dead-letters-archive`.
+ */
+function isCurrent(to: string): boolean {
+  if (to === '/') return route.path === '/'
+  return route.path === to || route.path.startsWith(`${to}/`)
+}
+
 const currentTitle = computed(() => {
   for (const section of NAV_SECTIONS) {
     const hit = section.items.find((item) => item.to === route.path)
@@ -137,8 +156,13 @@ async function signOut() {
               <RouterLink
                 :to="item.to"
                 :title="ui.sidebarCollapsed ? item.label : undefined"
-                class="group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-sm text-toned transition-colors hover:bg-elevated hover:text-highlighted"
-                active-class="bg-elevated text-highlighted font-medium"
+                class="group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors hover:bg-elevated hover:text-highlighted"
+                :class="
+                  isCurrent(item.to)
+                    ? 'bg-elevated font-medium text-highlighted'
+                    : 'text-toned'
+                "
+                :aria-current="isCurrent(item.to) ? 'page' : undefined"
               >
                 <UIcon
                   :name="item.icon"
