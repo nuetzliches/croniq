@@ -38,7 +38,21 @@
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <PackageReference Include="MinVer" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+    <!--
+      No `Microsoft.SourceLink.GitHub` reference. SourceLink is part of the
+      .NET SDK from 8.0.100 onward, and this tree builds on 10.0.100
+      (global.json) targeting net10.0;net8.0 — so the package added nothing the
+      SDK was not already doing. What it did add was `Microsoft.Build.Tasks.Git`
+      8.0.0 transitively, which carries GHSA-23fw-v26w-5fgq and has no fixed
+      version on that line: the package was archived when the SDK absorbed it.
+
+      The knobs that drive it — PublishRepositoryUrl, EmbedUntrackedSources,
+      ContinuousIntegrationBuild — are SDK properties and are set in
+      Directory.Build.targets. Dropping the reference removes the advisory
+      rather than suppressing it, which is the better trade whenever it is
+      available: a suppression would have hidden the same GHSA arriving later
+      through something that actually needed fixing.
+    -->
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)croniq-icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
