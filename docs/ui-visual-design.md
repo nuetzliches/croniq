@@ -140,7 +140,7 @@ sieben Screens steckt.
 | 1 | Bestandsaufnahme und Richtung | dieses Dokument |
 | 2 ✓ | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
 | 3 ✓ | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
-| 4 | Dashboard, Runners, Dead Letters | die Bausteine tragen |
+| 4 ✓ | Dashboard, Runners, Dead Letters | die Bausteine tragen |
 | 5 | Jobs, danach der Rest | — |
 
 Nach jedem Durchgang: Aufnahmen beider Bäume nebeneinander
@@ -253,3 +253,45 @@ Zeilen exakt 38 px.
   Panel sagt das ehrlich, statt leer zu bleiben.
 - **Verlinkung** von Job und Runner in die jeweiligen Screens, sobald es sie
   gibt.
+
+---
+
+## Durchgang 4 — Dashboard, Runners, Dead Letters
+
+**Die Vorschau-Schiene ist da, und sie kostete keine Server-Arbeit.**
+`/v1/dashboard/forecast` existiert seit jeher — das React-Dashboard ruft ihn nur
+nie auf, allein die Jobs-Seite tut es. Der schärfste Audit-Befund („zeigt
+überall die Vergangenheit, nirgends die Zukunft") war also eine fehlende
+Abfrage, keine fehlenden Daten.
+
+Die Schiene nutzt zwei Quellen, absichtlich: `jobs/states` liefert den exakten
+nächsten Feuerzeitpunkt je Job — das, was ein Betreiber liest —, der Forecast
+die Form der nächsten Stunde in Buckets, also „und dann wird es voll". Eine
+Liste allein verbirgt die Last, ein Histogramm allein die Namen. Überfällige
+Jobs stehen darüber und nicht mittendrin: sie sind nicht „demnächst", sie sind
+zu spät.
+
+**Dashboard** wie im Inventar beschlossen — Statusboard plus *ausschließlich*
+Fehlschläge, keine allgemeine Lauf-Liste. Die wäre das vierte Rendering
+derselben Tabelle gewesen. Die Failure-Heatmap ist aus der unteren rechten Ecke
+nach oben gewandert und hat Wochentags- und Stundenbeschriftung bekommen; sie
+beantwortet „ist etwas kaputt" besser als jede Zahl daneben.
+
+**Runners** verliert das Master/Detail. Mit einem Runner waren im React-Baum
+~85 % der Fläche ein leeres Panel. Alles, was das Detail zeigte, ist entweder
+ein Feld, das in die Zeile passt, oder eine Lauf-Liste — und Läufe leben jetzt
+an einem Ort, also verlinkt die Zeile dorthin. Der SSE-Kern aus #585 bekommt
+hier seinen ersten Verbraucher, mit `shallowRef` für die Zeilen: jeder Frame
+ersetzt das ganze Array.
+
+**Dead Letters** behält den eigenen Screen, wie entschieden. Neu gegenüber der
+React-Fassung: eine abgelehnte Wiedervorlage zeigt die Begründung des Servers.
+Der Stale-Replay-Guard lehnt ab, wenn der logische Feuerzeitpunkt älter ist als
+die Policy erlaubt — das ist eine Entscheidung, kein Fehler, und „Replay
+failed" verschweigt sie.
+
+### Beim Ansehen gefunden
+
+Das Durchsatz-Diagramm war leer, obwohl „186 runs" danebenstand: Prozenthöhen
+in einem Zwischen-`div` ohne definierte Höhe lösen zu null auf. Sichtbar nur
+durch Hinsehen — kein Test hätte das gemeldet.

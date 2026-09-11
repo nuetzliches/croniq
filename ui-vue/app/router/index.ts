@@ -23,7 +23,12 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: () => import('~/layouts/AppShell.vue'),
     children: [
-      { path: '', name: 'dashboard', component: placeholder, meta: { title: 'Dashboard', step: 4 } },
+      {
+        path: '',
+        name: 'dashboard',
+        component: () => import('~/pages/DashboardView.vue'),
+        meta: { title: 'Dashboard' },
+      },
       {
         path: 'executions',
         name: 'runs',
@@ -38,8 +43,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/RunsView.vue'),
         meta: { title: 'Runs' },
       },
-      { path: 'runners', name: 'runners', component: placeholder, meta: { title: 'Runners', step: 4 } },
-      { path: 'dead-letters', name: 'dead-letters', component: placeholder, meta: { title: 'Dead Letters', step: 4 } },
+      {
+        path: 'runners',
+        name: 'runners',
+        component: () => import('~/pages/RunnersView.vue'),
+        meta: { title: 'Runners' },
+      },
+      {
+        path: 'dead-letters',
+        name: 'dead-letters',
+        component: () => import('~/pages/DeadLettersView.vue'),
+        meta: { title: 'Dead Letters' },
+      },
       { path: 'jobs', name: 'jobs', component: placeholder, meta: { title: 'Jobs', step: 5 } },
       { path: 'jobs/:jobKey', name: 'job', component: placeholder, meta: { title: 'Job', step: 5 } },
       { path: 'calendars', name: 'calendars', component: placeholder, meta: { title: 'Calendars', step: 6 } },
