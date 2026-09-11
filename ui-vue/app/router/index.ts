@@ -81,7 +81,32 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/CalendarsView.vue'),
         meta: { title: 'Calendar' },
       },
-      { path: 'alerts', name: 'alerts', component: placeholder, meta: { title: 'Alerts', step: 6 } },
+      {
+        // One screen, three views, all addressable — see AlertsView.vue for
+        // why the delivery log did not become a separate screen.
+        path: 'alerts',
+        name: 'alerts',
+        component: () => import('~/pages/AlertsView.vue'),
+        meta: { title: 'Alerts' },
+      },
+      {
+        path: 'alerts/rules/:ruleName',
+        name: 'alert-rule',
+        component: () => import('~/pages/AlertsView.vue'),
+        meta: { title: 'Alert rule' },
+      },
+      {
+        path: 'alerts/channels',
+        name: 'alert-channels',
+        component: () => import('~/pages/AlertsView.vue'),
+        meta: { title: 'Alert channels' },
+      },
+      {
+        path: 'alerts/deliveries',
+        name: 'alert-deliveries',
+        component: () => import('~/pages/AlertsView.vue'),
+        meta: { title: 'Alert deliveries' },
+      },
       { path: 'console', name: 'console', component: placeholder, meta: { title: 'Console', step: 6 } },
       { path: 'settings', name: 'settings', component: placeholder, meta: { title: 'Settings', step: 6 } },
       { path: 'scaffold', name: 'scaffold', component: () => import('~/pages/ScaffoldCheck.vue'), meta: { title: 'Scaffold check' } },

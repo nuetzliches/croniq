@@ -577,3 +577,60 @@ gemeldet war. Das Projekt-Skript `npm run typecheck` ruft `vue-tsc --build`
 auf und findet ihn — CI war die ganze Zeit in Ordnung, der Handaufruf war das
 Loch.
 
+## Durchgang 9 — Alerts
+
+Die letzte offene Frage aus dem Inventar, beim Bauen beantwortet. Die
+Entscheidung samt Begründung steht in `ui-screen-inventory.md`; kurz: **ein
+Screen, drei Ansichten** (Regeln, Kanäle, Zustellungen), statt Konfiguration
+und Protokoll auf zwei Screens zu trennen. Der Einwand der Bestandsaufnahme
+war *Vermischung*, und deren Gegenteil ist Struktur, nicht Entfernung — man
+schnoozt eine Regel wegen dem, was das Protokoll zeigt.
+
+### Was sichtbar wird, das vorher stumm war
+
+**Ein Kanal, den keine Regel nutzt.** Steht jetzt als `unused` in der
+Kanal-Liste — dieselbe Klasse Befund wie beim unbenutzten Kalender.
+
+**Eine Regel, die einen Kanal nennt, den es nicht gibt.** Der Compiler behält
+die Referenz wörtlich und warnt erst zur Feuerzeit. Die Regel sieht also
+konfiguriert aus und stellt nirgends zu — im Produkt bisher ein stiller
+Ausfall, hier in Liste und Detail markiert.
+
+**Eine Regel, die nicht tut, was die Datei sagt.** Overrides (Snooze, Throttle,
+Disable) stehen in der Zeile, und in der Kopfleiste zählt ein Warnhinweis, wie
+viele Regeln gerade übersteuert sind. Der Unterschied zwischen „nichts ist
+kaputt" und „nichts wird gemeldet" ist die wichtigste Aussage dieses Screens.
+
+**Jede Zustellung verlinkt in beide Richtungen** — auf den Lauf, der sie
+ausgelöst hat, und auf die Regel, die sie geschickt hat. Die React-Fassung
+nannte beides und verlinkte nichts, obwohl „welcher Lauf war das?" die erste
+Frage nach einem Alarm ist.
+
+### Die Notiz ist Pflicht, und das ist gut so
+
+Der Server verlangt bei jedem Override eine Begründung. Das Formular hält sich
+daran, statt sie mit einem Platzhalter zu füllen: eine Regel, die aus einem
+unerklärten Grund still ist, ist schlimmer als eine laute.
+
+### Der Demo zeigte das Feature nicht
+
+`Croniqfile.demo` hatte keinen `alerts { }`-Block. Der Demo lässt absichtlich
+Läufe fehlschlagen (`RUNNER_FAIL_RATE`) und meldete das nirgends — der
+Alerts-Screen wäre leer geblieben, und damit unprüfbar. Jetzt ein Kanal
+(`shell "echo …"`, folgenlos) und eine Regel auf `demo:*`. Damit zeigt der
+Demo die Alarmierung so, wie die Jobs den Scheduler zeigen.
+
+`alerts { }` ist Boot-only — ein Reload meldet es als `pending_restart`, statt
+es anzuwenden (siehe `operations.md`). Der Dev-Stack musste dafür neu starten.
+
+Verifiziert bis in den Log: `alerts.delivered rule=demo-failures
+channel=demo-log job_key=demo:heartbeat`, und die Zeile steht im Screen.
+
+### Nebenbei: die Version sah aus wie ein Button
+
+Gemeldet. Sie war ein `UBadge` auf `h-8` — gefüllte Box, gleiche Höhe wie die
+Icon-Buttons daneben, also in einer Reihe von Bedienelementen der vierte
+Button, der auf einen Klick nichts tut. Die Version ist eine Tatsache über den
+Server, keine Handlung, und soll hier oben das am wenigsten klickbare Element
+sein. Jetzt schlichter Text; sha, Bauzeit und Umgebung stehen im `title`.
+

@@ -123,7 +123,17 @@ await Promise.all([
   page.locator('button[type="submit"]').click(),
 ]);
 
-for (const path of ["/", "/executions", "/runners", "/dead-letters", "/jobs", "/calendars"]) {
+for (const path of [
+  "/",
+  "/executions",
+  "/runners",
+  "/dead-letters",
+  "/jobs",
+  "/calendars",
+  "/alerts",
+  "/alerts/channels",
+  "/alerts/deliveries",
+]) {
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1600);
   total += await check(path);

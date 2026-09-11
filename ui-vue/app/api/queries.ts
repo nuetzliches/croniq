@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, type MaybeRefOrGetter, toValue } from 'vue'
 import { api, apiDelete, apiGet, apiPost, apiPut } from './client'
 import type {
+  AlertDelivery,
+  AlertDeliveryListQuery,
+  AlertRuleOverride,
+  AlertsConfig,
   AuthConfigResponse,
   CalendarDefinition,
   DeadLetter,
@@ -668,5 +672,130 @@ export function useUnadoptCalendar() {
     mutationFn: (apiId: string) =>
       apiPost<void>(`/v1/calendars/${encodeURIComponent(apiId)}/unadopt`, {}),
     onSuccess: () => invalidateCalendar(queryClient),
+  })
+}
+
+/* ─── Alerts ──────────────────────────────────────────────────────────────
+ *
+ * Two shapes that answer each other: the configuration (channels and rules,
+ * all of it declared in the Croniqfile and read-only here) and the delivery
+ * log (what actually went out). The one thing that *is* writable is an
+ * override — snooze, disable, throttle — which is an operational decision
+ * taken because of what the log shows.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** Channels, rules and any active overrides, as the server resolved them. */
+export function useAlertsConfig() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['alerts', 'config'],
+    queryFn: () => apiGet<AlertsConfig>('/v1/alerts/config'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+/**
+ * The delivery log.
+ *
+ * A getter, like `useExecutions` — the filters live in the URL and change
+ * under the query. Polled rather than streamed: deliveries are rare compared
+ * to runs, and an SSE surface for them would be a third stream to keep alive
+ * for a list that changes a few times an hour.
+ */
+export function useAlertDeliveries(filters: MaybeRefOrGetter<AlertDeliveryListQuery>) {
+  const auth = useAuthStore()
+  const active = computed(() => toValue(filters))
+  return useQuery({
+    queryKey: ['alerts', 'deliveries', active],
+    queryFn: () => {
+      const query: Record<string, string | number> = {}
+      const { job_key, rule_name, state, since, limit } = active.value
+      if (job_key) query.job_key = job_key
+      if (rule_name) query.rule_name = rule_name
+      if (state) query.state = state
+      if (since) query.since = since
+      query.limit = limit ?? 200
+      return apiGet<AlertDelivery[]>('/v1/alerts/deliveries', query)
+    },
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 20_000,
+  })
+}
+
+/**
+ * Overrides.
+ *
+ * Snooze, disable and throttle are three distinct intents and the server
+ * treats them as such: each call replaces the rule's override wholesale rather
+ * than merging into it. One hook per intent keeps that visible at the call
+ * site instead of hiding it behind a single `setOverride` that would imply
+ * they compose.
+ */
+function invalidateAlerts(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['alerts'] })
+}
+
+export function useSnoozeRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, until, note }: { name: string; until: string; note: string }) =>
+      apiPost<AlertRuleOverride>(`/v1/alerts/rules/${encodeURIComponent(name)}/snooze`, {
+        until,
+        note,
+      }),
+    onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+export function useDisableRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      note,
+      expires_at,
+    }: {
+      name: string
+      note: string
+      expires_at?: string | null
+    }) =>
+      apiPost<AlertRuleOverride>(`/v1/alerts/rules/${encodeURIComponent(name)}/disable`, {
+        note,
+        expires_at: expires_at ?? null,
+      }),
+    onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+export function useThrottleRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      throttle,
+      note,
+      expires_at,
+    }: {
+      name: string
+      throttle: string
+      note: string
+      expires_at?: string | null
+    }) =>
+      apiPost<AlertRuleOverride>(`/v1/alerts/rules/${encodeURIComponent(name)}/throttle`, {
+        throttle,
+        note,
+        expires_at: expires_at ?? null,
+      }),
+    onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+/** Back to whatever the Croniqfile says. */
+export function useClearOverride() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiDelete(`/v1/alerts/rules/${encodeURIComponent(name)}/override`),
+    onSuccess: () => invalidateAlerts(queryClient),
   })
 }

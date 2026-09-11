@@ -265,14 +265,32 @@ async function signOut() {
         </nav>
 
         <div class="ml-auto flex items-center gap-1.5">
-          <UBadge
+          <!--
+            Plain text, not a badge.
+
+            It was a `UBadge` at `h-8`, which gave it a filled box the same
+            height as the icon buttons beside it — so in a row of controls it
+            read as a fourth button and invited a click that does nothing. The
+            version is a fact about the server, not an action, and it should
+            look like the least clickable thing up here.
+
+            The build details go in the title: an operator debugging a version
+            question wants the sha, and it does not deserve permanent space.
+          -->
+          <span
             v-if="version?.version"
-            color="neutral"
-            variant="subtle"
-            class="h-8 px-2.5 font-mono"
-          >
-            v{{ version.version }}
-          </UBadge>
+            class="cq-num px-1 font-mono text-xs text-dimmed"
+            :title="
+              [
+                `Croniq ${version.version}`,
+                version.git_sha && `build ${version.git_sha}`,
+                version.build_time && `built ${version.build_time}`,
+                version.env && `env ${version.env}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            "
+          >v{{ version.version }}</span>
           <!-- aria-live: an operator who cannot see the dot still needs to
                learn that the server stopped answering. -->
           <span
