@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/vue-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed } from 'vue'
-import { apiGet } from './client'
+import { apiGet, apiPut } from './client'
 import type {
   AuthConfigResponse,
   DeadLetter,
   HealthResponse,
+  MaintenanceResponse,
   User,
   VersionResponse,
 } from './types'
@@ -95,5 +96,48 @@ export function useVersion() {
     queryFn: () => apiGet<VersionResponse>('/version'),
     staleTime: Infinity,
     retry: false,
+  })
+}
+
+/**
+ * The global maintenance switch.
+ *
+ * Any authenticated user may read it — the banner is for everyone, since
+ * maintenance pauses dispatch and a dashboard that looks normal while nothing
+ * fires is misleading. Only admins may set it.
+ *
+ * Polled at ten seconds so a window opening or an admin toggling it reaches
+ * every open tab without a reload.
+ */
+export function useMaintenance() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['maintenance'],
+    queryFn: () => apiGet<MaintenanceResponse>('/v1/maintenance'),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 10_000,
+  })
+}
+
+export interface MaintenancePatch {
+  manual_active: boolean
+  window_start: string | null
+  window_end: string | null
+  note: string | null
+}
+
+/**
+ * Set the maintenance switch. Admin-only, enforced by the server.
+ *
+ * The response is written straight into the cache rather than invalidated: the
+ * banner is driven by the same query, and a round trip between clicking "Save"
+ * and the banner appearing reads as the action not having worked.
+ */
+export function useSetMaintenance() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (patch: MaintenancePatch) =>
+      apiPut<MaintenanceResponse>('/v1/maintenance', patch),
+    onSuccess: (data) => queryClient.setQueryData(['maintenance'], data),
   })
 }

@@ -130,7 +130,11 @@ Kopieren, NDJSON-Export. Admin-only.
 API-Clients und Token, Audit-Log.
 
 **Querschnitt:** Login inkl. MFA und OIDC, Theme-Umschaltung, Sidebar-Zustand,
-Command-Palette, Wartungsmodus-Banner, Dead-Letter-Zähler in der Topbar.
+Command-Palette, Dead-Letter-Zähler in der Topbar, und der Wartungsmodus in
+**beiden** Hälften — der Banner für alle, die Steuerung (manuell an/aus,
+geplantes Fenster, Notiz) admin-only in der Topbar. Die erste Fassung dieser
+Liste nannte nur den Banner; die Steuerung fehlte und wäre damit still unter den
+Tisch gefallen.
 
 ---
 

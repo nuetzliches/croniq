@@ -32,6 +32,21 @@ const deadLetters = useDeadLetterCount()
  */
 const isAdmin = computed(() => (me.value ? me.value.role === 'admin' : true))
 
+/** What to call the signed-in user. */
+const displayName = computed(() => me.value?.display_name ?? me.value?.username ?? '…')
+
+/**
+ * The role, as a second line — but only when it says something the first line
+ * does not. The seeded demo account is a user named `admin` with the role
+ * `admin`, and stacking those reads as a rendering bug rather than as
+ * information.
+ */
+const roleLine = computed(() => {
+  const role = me.value?.role
+  if (!role) return null
+  return role.toLowerCase() === displayName.value.toLowerCase() ? null : role
+})
+
 const sections = computed(() =>
   NAV_SECTIONS.map((section) => ({
     ...section,
@@ -70,12 +85,9 @@ async function signOut() {
     <nav
       aria-label="Main navigation"
       class="flex shrink-0 flex-col rounded-xl border border-default bg-default shadow-sm transition-[width] duration-200"
-      :class="ui.sidebarCollapsed ? 'w-[4.25rem]' : 'w-56'"
+      :class="ui.sidebarCollapsed ? 'w-14' : 'w-56'"
     >
-      <div
-        class="flex h-14 items-center gap-2.5 px-4"
-        :class="ui.sidebarCollapsed && 'justify-center px-0'"
-      >
+      <div class="flex h-14 items-center gap-2.5 px-[1.125rem]">
         <BrandMark
           :size="22"
           chip
@@ -92,18 +104,24 @@ async function signOut() {
           v-for="section in sections"
           :key="section.label"
         >
-          <p
-            v-if="!ui.sidebarCollapsed"
-            class="cq-label px-2 pt-4 pb-1.5"
-          >
-            {{ section.label }}
-          </p>
-          <!-- Collapsed: a rule instead of a heading, so the grouping survives
-               without a label to carry it. -->
-          <div
-            v-else
-            class="mx-3 my-3 border-t border-default"
-          />
+          <!--
+            Fixed height in both states. A heading when there is room for one,
+            a rule when there is not — but the same 2.25rem either way, so
+            nothing below shifts when the sidebar collapses.
+          -->
+          <div class="flex h-9 items-end px-2.5 pb-1.5">
+            <p
+              v-if="!ui.sidebarCollapsed"
+              class="cq-label"
+            >
+              {{ section.label }}
+            </p>
+            <div
+              v-else
+              class="mb-1 w-full border-t border-default"
+              aria-hidden="true"
+            />
+          </div>
           <ul class="flex flex-col gap-0.5">
             <li
               v-for="item in section.items"
@@ -112,8 +130,7 @@ async function signOut() {
               <RouterLink
                 :to="item.to"
                 :title="ui.sidebarCollapsed ? item.label : undefined"
-                class="group relative flex items-center gap-2.5 rounded-lg py-1.5 text-sm text-toned transition-colors hover:bg-elevated hover:text-highlighted"
-                :class="ui.sidebarCollapsed ? 'justify-center px-0' : 'px-2.5'"
+                class="group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-sm text-toned transition-colors hover:bg-elevated hover:text-highlighted"
                 active-class="bg-elevated text-highlighted font-medium"
               >
                 <UIcon
@@ -140,10 +157,7 @@ async function signOut() {
       </div>
 
       <!-- Who you are, at the bottom, where the shipping dashboard keeps it. -->
-      <div
-        class="border-t border-default p-2"
-        :class="ui.sidebarCollapsed && 'flex justify-center'"
-      >
+      <div class="border-t border-default p-2">
         <UDropdownMenu
           :items="[
             [
@@ -156,23 +170,28 @@ async function signOut() {
           <UButton
             color="neutral"
             variant="ghost"
-            :block="!ui.sidebarCollapsed"
-            :square="ui.sidebarCollapsed"
-            class="justify-start"
+            block
+            class="h-11 justify-start gap-2.5 px-1.5"
             :aria-label="me ? `Account menu for ${me.username}` : 'Account menu'"
           >
             <UAvatar
               :alt="me?.username ?? '?'"
-              size="2xs"
+              size="xs"
             />
             <span
               v-if="!ui.sidebarCollapsed"
-              class="flex-1 truncate text-left"
-            >{{ me?.display_name ?? me?.username ?? '…' }}</span>
+              class="flex min-w-0 flex-1 flex-col items-start text-left leading-tight"
+            >
+              <span class="w-full truncate text-sm font-medium">{{ displayName }}</span>
+              <span
+                v-if="roleLine"
+                class="w-full truncate text-xs text-muted"
+              >{{ roleLine }}</span>
+            </span>
             <UIcon
               v-if="!ui.sidebarCollapsed"
               name="i-lucide-chevron-up"
-              class="size-3.5 text-dimmed"
+              class="size-4 shrink-0 text-dimmed"
             />
           </UButton>
         </UDropdownMenu>
@@ -187,7 +206,6 @@ async function signOut() {
           icon="i-lucide-panel-left"
           color="neutral"
           variant="subtle"
-          size="sm"
           aria-label="Toggle sidebar"
           @click="ui.toggleSidebar()"
         />
@@ -210,50 +228,75 @@ async function signOut() {
             v-if="version?.version"
             color="neutral"
             variant="subtle"
-            size="sm"
-            class="font-mono"
+            class="h-8 px-2.5 font-mono"
           >
             v{{ version.version }}
           </UBadge>
           <!-- aria-live: an operator who cannot see the dot still needs to
                learn that the server stopped answering. -->
           <span
-            class="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+            class="flex h-8 items-center gap-2 rounded-md px-2.5 text-sm"
             :class="live ? 'text-success' : 'text-error'"
             role="status"
             aria-live="polite"
           >
             <span
-              class="size-1.5 rounded-full"
+              class="size-2 rounded-full"
               :class="live ? 'bg-success' : 'bg-error'"
               aria-hidden="true"
             />
             {{ live ? 'live' : 'offline' }}
           </span>
-          <USelect
-            v-model="ui.theme"
+          <!-- Admin-only, and not rendered otherwise: a button that can only
+               ever answer 403 is worse than no button. -->
+          <MaintenanceControl v-if="me && isAdmin" />
+          <UDropdownMenu
             :items="[
-              { label: 'System', value: 'system', icon: 'i-lucide-monitor' },
-              { label: 'Light', value: 'light', icon: 'i-lucide-sun' },
-              { label: 'Dark', value: 'dark', icon: 'i-lucide-moon' },
+              [
+                {
+                  label: 'System',
+                  icon: 'i-lucide-monitor',
+                  type: 'checkbox' as const,
+                  checked: ui.theme === 'system',
+                  onSelect: () => (ui.theme = 'system'),
+                },
+                {
+                  label: 'Light',
+                  icon: 'i-lucide-sun',
+                  type: 'checkbox' as const,
+                  checked: ui.theme === 'light',
+                  onSelect: () => (ui.theme = 'light'),
+                },
+                {
+                  label: 'Dark',
+                  icon: 'i-lucide-moon',
+                  type: 'checkbox' as const,
+                  checked: ui.theme === 'dark',
+                  onSelect: () => (ui.theme = 'dark'),
+                },
+              ],
             ]"
-            aria-label="Colour theme"
-            variant="ghost"
-            size="sm"
-            :icon="
-              ui.theme === 'light'
-                ? 'i-lucide-sun'
-                : ui.theme === 'dark'
-                  ? 'i-lucide-moon'
-                  : 'i-lucide-monitor'
-            "
-            :ui="{ value: 'sr-only', trailingIcon: 'hidden' }"
-            class="w-9"
-          />
+          >
+            <UButton
+              color="neutral"
+              variant="subtle"
+              :icon="
+                ui.theme === 'light'
+                  ? 'i-lucide-sun'
+                  : ui.theme === 'dark'
+                    ? 'i-lucide-moon'
+                    : 'i-lucide-monitor'
+              "
+              :aria-label="`Colour theme: ${ui.theme}`"
+            />
+          </UDropdownMenu>
         </div>
       </header>
 
       <main class="min-w-0 flex-1 overflow-y-auto rounded-xl border border-default bg-default p-5 shadow-sm">
+        <!-- Above the routed view, not inside it: maintenance pauses dispatch
+             everywhere, so it has to be visible wherever you happen to be. -->
+        <MaintenanceBanner class="mb-5" />
         <RouterView />
       </main>
     </div>
