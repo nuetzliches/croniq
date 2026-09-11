@@ -12,10 +12,12 @@ export const PASSWORD = 'demo-admin'
  * would test a session shape production never produces — and the reload
  * behaviour in `auth.spec.ts` is precisely what that cookie decides.
  *
- * The fields carry no accessible name (the login form's `<label>` elements
- * have neither `htmlFor` nor a nested input), so these select on the
- * autocomplete attributes instead. When that is fixed, switch to
- * `getByLabel` — the selectors here are a workaround, not a preference.
+ * The fields are selected on their autocomplete attributes rather than by
+ * label. In the React tree that is a workaround — its login `<label>`s have
+ * neither `htmlFor` nor a nested input, so the fields have no accessible name
+ * at all (#595). The Vue tree names them properly and `getByLabel` would work
+ * there; one selector that works against both is worth more than two spellings
+ * while both trees exist, and this one goes when React does.
  */
 export async function login(page: Page) {
   await page.goto('/login')

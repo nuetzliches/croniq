@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures'
+import { contract } from './trees'
 
 /**
  * The routes reachable from the sidebar, and the URL contracts the dashboard
@@ -6,16 +7,10 @@ import { test, expect } from './fixtures'
  * checks perfectly while pointing at a component that throws on mount.
  */
 test.describe('navigation', () => {
-  for (const { label, path } of [
-    { label: 'Dashboard', path: '/' },
-    { label: 'Jobs', path: '/jobs' },
-    { label: 'Executions', path: '/executions' },
-    { label: 'Runners', path: '/runners' },
-    { label: 'Dead Letters', path: '/dead-letters' },
-    { label: 'Alerts', path: '/alerts' },
-    { label: 'Calendars', path: '/calendars' },
-    { label: 'Settings', path: '/settings' },
-  ]) {
+  // The labels differ between the two dashboards — "Executions" became "Runs"
+  // when three screens were merged into one — so the list comes from the tree
+  // contract rather than being written twice.
+  for (const { label, path } of contract.nav) {
     test(`the ${label} page loads without an error boundary`, async ({ app }) => {
       const errors: string[] = []
       app.on('pageerror', (e) => errors.push(e.message))
@@ -27,8 +22,9 @@ test.describe('navigation', () => {
       // inside `RegExp`) and wrong (it left backslashes alone) — CodeQL's
       // js/incomplete-sanitization, and it was right.
       await expect.poll(() => new URL(app.url()).pathname).toBe(path)
-      // The shell must survive the navigation — if the page component throws,
-      // React unmounts the tree and the nav goes with it.
+      // The shell must survive the navigation. A page component that throws
+      // on mount takes the surrounding tree down with it in both frameworks,
+      // and the nav disappearing is how that shows.
       await expect(app.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
       expect(errors, `uncaught errors on ${path}`).toEqual([])
     })

@@ -408,23 +408,37 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
         working-directory: ui
+      - run: npm ci
+        working-directory: ui-vue
       # Debug build: the suite exercises HTTP behaviour, not throughput, and a
       # release build costs several minutes for nothing here.
       - name: Build croniq binaries
         run: |
           cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \
             --bin croniq --bin croniq-server --bin croniq-demo-runner
-      # The bundle the suite actually navigates. `prebuild` produces the wasm
-      # bridge in-place, same as the `ui` job.
-      - name: Build the dashboard
+      # Both bundles the suite navigates. `prebuild` produces the wasm bridge
+      # in-place in each tree, same as the `ui` and `ui-vue` jobs.
+      - name: Build the React dashboard
         run: npm run build
         working-directory: ui
+      - name: Build the Vue dashboard
+        run: npm run build
+        working-directory: ui-vue
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
         working-directory: ui
-      - name: Run the smoke suite
+      # Two runs, one per dashboard. ADR-0004 names this suite the acceptance
+      # gate for the Vue rebuild, and until #620 it only ever ran against the
+      # tree being replaced. The React run stays until the cutover removes that
+      # tree: it is what ships today, and it costs about ten seconds.
+      - name: Run the smoke suite against the Vue dashboard
         run: npm run test:e2e
         working-directory: ui
+      - name: Run the smoke suite against the React dashboard
+        run: npm run test:e2e
+        working-directory: ui
+        env:
+          CRONIQ_E2E_TREE: react
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
