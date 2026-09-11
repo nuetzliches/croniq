@@ -846,3 +846,68 @@ zwei Tabs offen hat, kann sie aus der Karte sonst nicht unterscheiden — und
 Produktionszugangsdaten ins Staging zu tippen ist ein Fehler, den die Seite
 schlicht verhindern kann. Die React-Fassung hatte das richtig.
 
+## Durchgang 13 — Command-Palette, und ein Geisterjob
+
+Die Palette stand in der Fähigkeitsliste und fehlte — also keine Kür, sondern
+eine Lücke gegen den Scope-Guard.
+
+### Kürzel, die es nicht gab
+
+Die React-Palette druckte neben jedem Eintrag ein Kürzel: `G D`, `G J`, `G E`.
+**Nichts implementierte sie.** `g` dann `d` tat auf keinem Screen irgendetwas.
+Ein Hinweis, der lügt, ist schlechter als keiner — also portiert die neue
+Fassung ihn nicht, sondern macht ihn wahr: `useGoToShortcuts` setzt die Akkorde
+um, und die Palette druckt sie, *weil* sie funktionieren.
+
+Drei Dinge, die ein Zwei-Tasten-Akkord braucht und die der Test einzeln prüft:
+er stiehlt keine Taste aus einem Eingabefeld, er läuft nach 1,2 s ab (ein
+vergessenes `g` darf nicht Minuten später die nächste Taste in eine Navigation
+verwandeln), und dass er scharf ist, ist sichtbar — sonst ist es unsichtbarer
+Zustand.
+
+Dazu ein **sichtbarer Auslöser** in der Kopfzeile mit aufgedrucktem Kürzel.
+Eine Palette, die nur über eine Tastenkombination erreichbar ist, von der
+niemand erzählt hat, ist für die meisten schlicht nicht da.
+
+Gesucht wird außerdem in Kalendern und Alert-Regeln, die es inzwischen als
+Screens gibt.
+
+### Und dabei: ein Job, den es nicht mehr gibt, stand in „Next hour"
+
+Aufgefallen am Screenshot der Palette — im Dashboard dahinter standen
+`smoke:calendar-user` und `smoke:vue-jobs`, beide gelöscht.
+
+`GET /v1/jobs/states` **überlebt den Job**, und das ist Absicht. Der Server
+sagt es beim Start:
+
+> job_states rows exist for jobs this configuration does not define. They are
+> kept (a job may be temporarily absent) and no longer produce metrics.
+
+Ein Job, der kurz aus dem Croniqfile fliegt und zurückkommt, soll seine
+Historie nicht verlieren (#470). Eine State-Zeile ist damit **kein Beleg, dass
+der Job existiert** — und genau so hat die Leiste sie gelesen. Die Job-Liste
+hatte den Fehler nie, weil sie aus `/v1/jobs` baut und den State dazujoint; die
+Leiste baute aus dem State und joint nichts.
+
+Jetzt filtert sie auf Jobs, die es gibt — und zeigt vor dem Eintreffen der
+Job-Liste lieber nichts als kurz Gelöschtes.
+
+### Ein größerer Fund, der daraus fiel — und eine Korrektur an mir
+
+Beim Nachrechnen passte die Zahl nicht: „99 fires" bei fünf Jobs, gerechnet
+79. `/v1/dashboard/forecast` liest `state.triggers` — die **In-Memory**-
+Registry, nicht den Store.
+
+Und die driftet: `DELETE /v1/jobs/{key}` räumt Definition, Trigger-Zeilen und
+`job_states` im Store, entfernt den Job aber **nicht aus der laufenden
+Registry**. Der Scheduler feuert ihn weiter, der Watchdog storniert jede
+Ausführung als „stranded", und das läuft bis zum nächsten Reload oder Neustart.
+Belegt im Log: `smoke:calendar-user` wurde um 15:19:30 eingereiht — Minuten
+nach dem Löschen.
+
+**Das widerlegt meinen Freispruch aus Durchgang 11.** Dort hatte ich genau
+dieses Symptom gesehen, `/v1/schedules` gegen `/v1/jobs` gejoint, „null
+verwaiste Trigger" gemessen und es als Fehlalarm abgelegt. Ich hatte die
+falsche Tabelle geprüft: Store-Trigger und Jobs sind konsistent — die Registry,
+die Scheduler und Forecast tatsächlich benutzen, ist es nicht. Eigener Vorgang.
+

@@ -646,5 +646,70 @@ await step("clean up the smoke account", async () => {
   await page.waitForTimeout(800);
 });
 
+/* ─── Command palette ───────────────────────────────────────────────────── */
+
+await step("the palette opens, finds a job by name, and goes there", async () => {
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(600);
+  await page.getByPlaceholder(/Search jobs, runners/).fill("heartbeat");
+  await page.waitForTimeout(600);
+  const options = await page.getByRole("option").allInnerTexts();
+  if (!options.some((t) => t.includes("demo:heartbeat"))) {
+    throw new Error(`no job match: ${options.join(" | ")}`);
+  }
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(900);
+  if (!/\/jobs\/demo%3Aheartbeat/.test(page.url())) throw new Error(`went to ${page.url()}`);
+});
+
+await step("the g chord works, unlike the hints it replaces", async () => {
+  // The React palette printed `G D`, `G J` and the rest beside its entries
+  // while nothing implemented them. These are printed because they work.
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  await page.keyboard.press("g");
+  await page.waitForTimeout(300);
+  if ((await page.getByRole("status").filter({ hasText: "then d" }).count()) === 0) {
+    throw new Error("nothing showed that the chord was armed");
+  }
+  await page.keyboard.press("r");
+  await page.waitForTimeout(800);
+  if (new URL(page.url()).pathname !== "/executions") throw new Error(`g r went to ${page.url()}`);
+});
+
+await step("the chord never steals a key from a field", async () => {
+  await page.goto(`${base}/jobs`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1000);
+  const box = page.getByPlaceholder("Job key or description…");
+  await box.fill("");
+  await box.type("gr");
+  await page.waitForTimeout(600);
+  if (new URL(page.url()).pathname !== "/jobs") throw new Error(`typing navigated to ${page.url()}`);
+  if ((await box.inputValue()) !== "gr") throw new Error("the field lost the keystrokes");
+});
+
+await step("an abandoned chord expires rather than arming forever", async () => {
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  await page.keyboard.press("g");
+  await page.waitForTimeout(1600);
+  await page.keyboard.press("r");
+  await page.waitForTimeout(600);
+  if (new URL(page.url()).pathname !== "/") throw new Error(`a stale chord fired: ${page.url()}`);
+});
+
+await step("what fires next lists only jobs that still exist", async () => {
+  // `/v1/jobs/states` outlives the job on purpose (#470). The rail used to
+  // read it alone, so deleted jobs sat in "what fires next" forever.
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(2000);
+  const railText = await page.locator("section", { hasText: "NEXT HOUR" }).first().innerText();
+  for (const ghost of ["smoke:", "probe"]) {
+    if (railText.includes(ghost)) throw new Error(`a deleted job is listed: ${railText}`);
+  }
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();
