@@ -76,7 +76,14 @@ async function signOut() {
 </script>
 
 <template>
-  <div class="flex min-h-screen gap-3 p-3">
+  <!--
+    `h-screen` with `overflow-hidden`, not `min-h-screen`. The difference is
+    load-bearing: with a minimum height nothing below has a *definite* one, so
+    `h-full` inside a page resolves to auto, its scroll container grows to fit
+    its content, and the whole page scrolls instead of the list. A fixed height
+    here is what makes "only the list moves" possible at all.
+  -->
+  <div class="flex h-screen gap-3 overflow-hidden p-3">
     <!--
       `<nav>` with an accessible name: a page with several landmarks of one
       type is unnavigable without them, and the Playwright suite selects on
@@ -304,11 +311,25 @@ async function signOut() {
         </div>
       </header>
 
-      <main class="min-w-0 flex-1 overflow-y-auto rounded-xl border border-default bg-default p-5 shadow-sm">
+      <main
+        class="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-default bg-default p-5 shadow-sm"
+      >
         <!-- Above the routed view, not inside it: maintenance pauses dispatch
-             everywhere, so it has to be visible wherever you happen to be. -->
-        <MaintenanceBanner class="mb-5" />
-        <RouterView />
+             everywhere, so it has to be visible wherever you happen to be —
+             and `shrink-0` so it stays visible rather than scrolling away. -->
+        <MaintenanceBanner class="mb-5 shrink-0" />
+
+        <!--
+          The one scroll region the shell owns, and it serves both page shapes.
+          A document-shaped page (the dashboard) is taller than this box and
+          scrolls inside it. A list-shaped page sets `h-full`, so it is exactly
+          this box, nothing here overflows, and the only thing that moves is the
+          table body inside its own bordered container. Either way the sidebar,
+          the header and the page chrome above the list stay put.
+        -->
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <RouterView />
+        </div>
       </main>
     </div>
   </div>

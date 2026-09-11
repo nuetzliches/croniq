@@ -102,6 +102,22 @@
   }
 }
 
+/* One row, for every list in the product.
+ *
+ * There was a compact/comfortable toggle. It is gone: a density control asks
+ * the reader to solve a problem the design should have solved, and two
+ * densities means every future table has to be made to look right twice. The
+ * comfortable height won because these rows carry a status pill and
+ * monospaced ids, and both need the leading.
+ *
+ * It lives here rather than as a constant in each view so that changing list
+ * density stays one edit in the token layer. */
+@utility cq-row {
+  height: var(--cq-row-h);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
 /* The micro-label above every number and every column: uppercase, tracked,
  * muted. Carried over from the shipping dashboard's KPI cards, where it is the
  * most recognisable single element of the design. */
