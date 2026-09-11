@@ -1168,12 +1168,41 @@ paths:
         - name: state
           in: query
           schema: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
+        - name: runner_id
+          in: query
+          schema: { type: string }
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+        - name: since
+          in: query
+          description: >
+            Lower bound on `created_at`, inclusive. RFC3339. An unparseable
+            value is ignored rather than rejected, as with `state` and `limit`.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: >
+            Upper bound on `created_at`, inclusive. RFC3339.
+
+
+            Doubles as the cursor for paging back through a history longer than
+            one `limit`: the list is ordered by `created_at` descending, so
+            re-requesting with `until` set to the oldest row's `created_at`
+            returns the page before it — including that row again, which the
+            caller drops by `id`.
+
+
+            **Pass the `created_at` value from the response verbatim.** It is
+            compared as a string at full precision, so a cursor truncated to
+            milliseconds or seconds sorts *below* a row inside that instant and
+            drops it. Truncating loses rows silently rather than repeating
+            them.
+          schema: { type: string, format: date-time }
       responses:
         "200":
-          description: List of executions
+          description: >
+            Executions, newest first, ordered by `created_at` descending.
           content:
             application/json:
               schema:

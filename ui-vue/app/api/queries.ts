@@ -203,6 +203,17 @@ export interface ExecutionFilters {
   state?: string
   runner_id?: string
   limit?: number
+  /** Lower bound on `created_at`, inclusive. RFC3339. */
+  since?: string
+  /**
+   * Upper bound on `created_at`, inclusive. RFC3339.
+   *
+   * Also the paging cursor. **Pass a `created_at` the server sent, verbatim.**
+   * The server compares it as a string at full precision, so a value
+   * reconstructed from a `Date` — milliseconds, no nanoseconds — sorts below a
+   * row inside that instant and drops it. Truncating loses rows silently.
+   */
+  until?: string
 }
 
 /**
@@ -228,6 +239,8 @@ export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
       if (active.job_key) query.job_key = active.job_key
       if (active.state) query.state = active.state
       if (active.runner_id) query.runner_id = active.runner_id
+      if (active.since) query.since = active.since
+      if (active.until) query.until = active.until
       query.limit = active.limit ?? 200
       return apiGet<Execution[]>('/v1/executions', query)
     },
