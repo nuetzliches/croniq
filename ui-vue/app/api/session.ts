@@ -96,5 +96,7 @@ export async function logout(): Promise<void> {
   } catch {
     // ignored on purpose — see above
   }
-  useAuthStore().clear()
+  // `deliberate`: the auth watch must not chase this with a redirect carrying
+  // a `next` back to the page just left. See the store.
+  useAuthStore().clear({ deliberate: true })
 }
