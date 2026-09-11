@@ -4,11 +4,17 @@ import { api, apiGet, apiPut } from './client'
 import type {
   AuthConfigResponse,
   DeadLetter,
-  HealthResponse,
   Execution,
   ExecutionLogEntry,
+  FailureHeatmap,
+  ForecastResponse,
+  HealthResponse,
+  JobDefinition,
+  JobScheduleState,
   MaintenanceResponse,
   ReloadSuccess,
+  RunnerSummary,
+  ThroughputResponse,
   User,
   VersionResponse,
 } from './types'
@@ -250,5 +256,127 @@ export function useCancelExecution() {
         { method: 'POST' },
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['executions'] }),
+  })
+}
+
+/**
+ * What is about to happen.
+ *
+ * The endpoint has existed all along and the React dashboard never called it —
+ * only the job detail did. The audit's sharpest finding was that croniq shows
+ * the past on every screen and the future on none, which turned out to be a
+ * missing call rather than missing data.
+ *
+ * Polled at a minute: the window slides, so a rail that never refreshes drifts
+ * into showing fires that have already happened.
+ */
+export function useForecast(windowMinutes = 60, bucketMinutes = 5) {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['forecast', windowMinutes, bucketMinutes],
+    queryFn: () =>
+      apiGet<ForecastResponse>('/v1/dashboard/forecast', {
+        window_minutes: windowMinutes,
+        bucket_minutes: bucketMinutes,
+      }),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 60_000,
+  })
+}
+
+/** Per-job scheduling liveness: next fire, last fire, and whether it is late. */
+export function useJobStates() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['job-states'],
+    queryFn: () => apiGet<JobScheduleState[]>('/v1/jobs/states'),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useJobs() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['jobs'],
+    queryFn: () => apiGet<JobDefinition[]>('/v1/jobs'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+export function useThroughput(window = '24h') {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['throughput', window],
+    queryFn: () => apiGet<ThroughputResponse>('/v1/executions/throughput', { window }),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useFailureHeatmap(days = 7) {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['failure-heatmap', days],
+    queryFn: () => apiGet<FailureHeatmap>('/v1/insights/failures', { days }),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useRunners() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['runners'],
+    queryFn: () => apiGet<RunnerSummary[]>('/v1/runners'),
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 10_000,
+  })
+}
+
+export function useDeadLetters(jobKey?: MaybeRefOrGetter<string | undefined>) {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['dead-letters', computed(() => (jobKey ? toValue(jobKey) : undefined))],
+    queryFn: () => {
+      const key = jobKey ? toValue(jobKey) : undefined
+      return apiGet<DeadLetter[]>('/v1/dead-letters', key ? { job_key: key } : undefined)
+    },
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 30_000,
+  })
+}
+
+/**
+ * Put a dead letter back in the queue.
+ *
+ * The server refuses one whose logical fire time is too old for the job's
+ * policy, so a caller must be ready for a 4xx that is a decision rather than a
+ * fault — see the replay guard in operations.md.
+ */
+export function useReplayDeadLetter() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api(`/v1/dead-letters/${id}/replay`, { method: 'POST' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['dead-letters'] })
+      void queryClient.invalidateQueries({ queryKey: ['executions'] })
+    },
+  })
+}
+
+export function useDeleteDeadLetter() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api(`/v1/dead-letters/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dead-letters'] }),
+  })
+}
+
+export function useDeleteRunner() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api(`/v1/runners/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runners'] }),
   })
 }
