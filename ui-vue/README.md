@@ -63,10 +63,14 @@ reactivity model is how a rebuild loses hard-won behaviour.
 
 ## Conventions
 
-- **Explicit imports in `.ts` files** even though Nuxt UI's `autoImport` would
-  supply `ref`/`computed`. Auto-imports are declared in a file the Vite plugin
-  generates, so a type check would depend on a build having run first — a
-  footgun in CI and in a fresh clone. Templates and components still use them.
+- **Import `ref`/`computed`/`watch` explicitly**, in `.ts` and `.vue` alike,
+  even though Nuxt UI's `autoImport` supplies them at runtime. They are
+  declared in `auto-imports.d.ts`, which the Vite plugin generates and which is
+  gitignored and outside `tsconfig.app.json`'s `include` — so relying on them
+  would make the type check depend on a build having run first, a footgun in CI
+  and in a fresh clone. Nuxt UI's *components* (`UButton`, `UCard`, …) need no
+  import: the package types them globally, so they work without the generated
+  file.
 - **Accessible names are not optional.** Every form control gets one as it is
   written; the ARIA containers are valid. This is the acceptance criterion
   [#595](https://github.com/nuetzliches/croniq/issues/595) was retargeted into,

@@ -138,7 +138,7 @@ sieben Screens steckt.
 | # | Inhalt | Ergebnis, an dem man es beurteilen kann |
 |---|---|---|
 | 1 | Bestandsaufnahme und Richtung | dieses Dokument |
-| 2 | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
+| 2 ✓ | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
 | 3 | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
 | 4 | Dashboard, Runners, Dead Letters | die Bausteine tragen |
 | 5 | Jobs, danach der Rest | — |
@@ -161,3 +161,52 @@ Verhaltensprüfungen blieben grün.
 `ui-vue/app/lib/theme.test.ts` schließt die billige Hälfte dieser Lücke. Die
 teure Hälfte — ob es *gut aussieht* — schließt kein Test, sondern Hinsehen.
 Deshalb das Aufnahme-Skript.
+
+---
+
+## Durchgang 2 — was entschieden wurde
+
+**Grund.** Getönt, nicht weiß, mit zwei schwachen Radialverläufen in
+gegenüberliegenden Ecken. Der erste Versuch war 9 % Marke auf Weiß und damit
+unsichtbar; die Ursache lag aber tiefer als die Deckkraft — bei weißem Grund
+*und* weißen Karten gibt es nichts, worüber die Karten schweben könnten. Jetzt
+ist der Grund getönt und die Karten sind opak.
+
+**Dunkel ist gleichwertig.** Nicht die invertierte Helligkeit, sondern ein
+eigener Grund aus denselben zwei Ankern mit anderen Gewichten. Das React-Baum
+ist hell mit eingebetteter dunkler Konsole; für ein Werkzeug, das den ganzen
+Tag offen ist, war das die Frage wert.
+
+**Dichte an einer Stelle.** `--cq-row-h` (2,375 rem), `--cq-cell-x`, `--cq-cell-y`
+und die Utilities `cq-label` / `cq-num`. Die Maße stammen aus der Tabelle im
+Job-Detail des React-Baums, die als einzige die richtige Dichte hat. `cq-num`
+setzt `tabular-nums` *und* `white-space: nowrap` — letzteres gegen genau den
+Defekt, den das Audit fand: „29m ago" auf zwei Zeilen in jeder Zeile.
+
+**Zustände.** `AppEmpty`, `AppLoading`, `AppError`. Zwei Entscheidungen darin,
+die über Kosmetik hinausgehen: `AppEmpty` hat einen `action`-Slot, weil ein
+Leerzustand, der nur Leere meldet, den einen Moment verschenkt, in dem jemand
+sicher nach einem nächsten Schritt sucht. Und `AppError` bietet „Try again"
+**nicht** bei 403 und 404 an — eine Schaltfläche, die eine abschließende
+Antwort zu wiederholen verspricht, erzieht dazu, sie sinnlos zu drücken.
+Serverseitige Fehlermeldungen bleiben erhalten; Croniqs API sagt Nützliches,
+und das durch ein freundliches Allgemeines zu ersetzen macht das eigene Backend
+schwerer zu betreiben.
+
+**Login als Produktseite.** Schlagzeile, Positionierung und drei Kacheln mit
+echten Zahlen aus dem öffentlichen `/health`, plus Build-Zeile. Übernommen,
+weil die erste Frage bei selbst gehosteter Software „läuft das überhaupt" ist
+und diese Seite sie beantworten kann, bevor man Zugangsdaten hat.
+
+**Nicht übernommen:** das simulierte Terminal, das einen Befehl tippt, den
+niemand ausführt. Es ist charmant und unecht, und die ehrliche Fassung
+derselben Idee — der tatsächliche Serverzustand — steht bereits daneben.
+
+### Offen geblieben
+
+- **Dichte-Umschalter** (kompakt/komfortabel). Die Tokens stehen, der Schalter
+  nicht. Sinnvoll erst, wenn es Listen gibt, an denen man ihn merkt.
+- **Tastatur über Ctrl K hinaus** (`j`/`k`, Enter). Ebenfalls erst mit Listen.
+- **Command-Palette.** Der React-Baum hat sie, dieser noch nicht.
+- **Die Vorschau-Schiene** („was feuert als Nächstes") aus den neuen Impulsen —
+  gehört zum Dashboard, also Durchgang 4.
