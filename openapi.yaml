@@ -784,6 +784,27 @@ paths:
           description: >
             No refresh token supplied, or it is unknown, revoked or expired —
             including a machine token whose API client has been deleted.
+
+
+            The two are distinguishable, which matters to a browser client that
+            cannot inspect an `HttpOnly` cookie for itself. When nothing was
+            presented at all the body carries `{"error": "no_session"}`; when a
+            credential *was* presented and rejected, it does not. A client that
+            retries once on a rejected token — worth doing, since a parallel
+            tab may have rotated it away — can then skip the retry in the case
+            where it cannot possibly help. Additive: a client that ignores the
+            body sees the same 401 it always saw.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum: [no_session]
+                    description: >
+                      Present only when no refresh credential was supplied.
+                  message: { type: string }
         "403":
           description: >
             The owning identity is deactivated: the user for a session token,

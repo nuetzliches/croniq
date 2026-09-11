@@ -52,11 +52,18 @@ async function runRefresh(allowRetry: boolean): Promise<string | null> {
   }
 
   if (response.status === 401) {
-    // Once. Two tabs share one cookie jar, so a tab whose refresh raced
-    // another tab's rotation sees a 401 for a token that has already been
-    // replaced; the retry reads whatever `Set-Cookie` landed meanwhile and
-    // usually succeeds.
-    if (allowRetry) return runRefresh(false)
+    // Two tabs share one cookie jar, so a tab whose refresh raced another
+    // tab's rotation sees a 401 for a token that has already been replaced.
+    // Retrying once reads whatever `Set-Cookie` landed meanwhile and usually
+    // succeeds.
+    //
+    // But only when a credential was actually presented. The server marks the
+    // other case — nothing sent at all — as `no_session` (#621), because the
+    // cookie is `HttpOnly` and this page cannot look for itself. Without that
+    // marker every first-ever visitor, and everyone whose seven-day refresh
+    // token has expired, paid a second round trip that could not possibly
+    // succeed.
+    if (allowRetry && !(await isNoSession(response))) return runRefresh(false)
     useAuthStore().clear()
     return null
   }
@@ -65,6 +72,24 @@ async function runRefresh(allowRetry: boolean): Promise<string | null> {
   const reply = (await response.json()) as TokenReply
   useAuthStore().setToken(reply.access_token)
   return reply.access_token
+}
+
+/**
+ * Did the server say no credential was presented, rather than rejected one?
+ *
+ * Tolerant on purpose: an older server answers 401 with no body at all, and a
+ * proxy may replace the body with something else entirely. Anything this
+ * cannot read is treated as "a credential was presented", which keeps the
+ * retry — the conservative direction, since the cost of a wrong guess here is
+ * one extra request rather than a session that fails to come back.
+ */
+async function isNoSession(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.clone().json()) as { error?: string }
+    return body?.error === 'no_session'
+  } catch {
+    return false
+  }
 }
 
 /**

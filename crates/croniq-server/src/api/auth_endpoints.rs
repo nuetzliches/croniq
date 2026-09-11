@@ -189,6 +189,33 @@ pub(super) fn password_disabled_response() -> Response {
         .into_response()
 }
 
+/// 401 for a refresh with **no credential presented at all** (issue #621).
+///
+/// The status stays 401 deliberately: "you have no session" is what a first
+/// visit needs to hear, and promoting it to 400 would make a normal first load
+/// look like a malformed request in every access log.
+///
+/// What the body adds is the one distinction the client cannot make for
+/// itself. `POST /v1/auth/refresh` answers 401 both when no cookie was sent
+/// and when the cookie it was sent is stale, and the two call for different
+/// behaviour: a stale one may have been rotated out from under this tab by
+/// another one, which is worth exactly one retry, while a missing one can
+/// never become present by asking again. The refresh cookie is `HttpOnly`, so
+/// the page cannot look; without this marker every first-ever visitor pays a
+/// guaranteed-useless round trip.
+///
+/// Additive: a client that ignores the body sees the same 401 it always saw.
+pub(super) fn no_session_response() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({
+            "error": "no_session",
+            "message": "no refresh credential was presented",
+        })),
+    )
+        .into_response()
+}
+
 /// 429 response for the per-IP login throttle (issue #428). Keyed by the
 /// socket peer address — deployments behind a reverse proxy should
 /// throttle at the proxy, since every request reaches us from the
@@ -840,10 +867,12 @@ pub async fn handle_refresh(
         Some(body_token) => (body_token, refresh_cookie::Delivery::Body),
         None => match refresh_cookie::read(&headers) {
             Some(cookie_token) => (cookie_token, refresh_cookie::Delivery::Cookie),
-            // Neither source. 401 rather than 400: "you have no session" is
-            // exactly what the SPA's bootstrap refresh needs to hear on a
-            // first visit, and it is indistinguishable from a stale token.
-            None => return Err(status_err(StatusCode::UNAUTHORIZED)),
+            // Neither source. Still a 401 — "you have no session" is exactly
+            // what the SPA's bootstrap refresh needs to hear on a first visit
+            // — but now a *distinguishable* one, so a client can tell it from
+            // a token that was presented and rejected. See
+            // [`no_session_response`].
+            None => return Err(no_session_response()),
         },
     };
     let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
@@ -1626,6 +1655,79 @@ mod tests {
         )
         .await
         .expect("a client within the caller's scopes still issues");
+    }
+
+    /// Reading a response body out of an `axum::Response` in a test.
+    async fn body_json(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body must be readable");
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// A refresh with nothing presented says so, distinguishably (issue #621).
+    ///
+    /// The status must stay 401: a first visit is not a client error, and
+    /// promoting it would make every first page load look like a bad request.
+    /// What the body buys is the retry decision — the dashboard retries a
+    /// refresh once, because another tab may have rotated the cookie out from
+    /// under this one, and that retry can never help when no cookie exists.
+    #[tokio::test]
+    async fn refreshing_without_a_credential_is_marked_no_session() {
+        let store = make_store();
+        let state = state_with(&store);
+
+        // `match`, not `expect_err`: that would need `Debug` on the success
+        // type, and `TokenResponse` carries an access token — a struct holding
+        // a live credential has no business being printable.
+        let response = match handle_refresh(
+            State(state),
+            HeaderMap::new(),
+            Json(RefreshRequest {
+                refresh_token: None,
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("a refresh with no credential must fail"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body_json(response).await["error"],
+            "no_session",
+            "the no-credential case must be distinguishable from a rejected one"
+        );
+    }
+
+    /// And a credential that *was* presented and rejected must NOT carry the
+    /// marker — otherwise the client stops retrying in exactly the case the
+    /// retry exists for: a token rotated away by a parallel tab.
+    #[tokio::test]
+    async fn refreshing_with_a_stale_credential_is_not_marked_no_session() {
+        let store = make_store();
+        let state = state_with(&store);
+
+        let response = match handle_refresh(
+            State(state),
+            HeaderMap::new(),
+            Json(RefreshRequest {
+                refresh_token: Some("not-a-real-token".into()),
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("a refresh with an unknown credential must fail"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_ne!(
+            body_json(response).await["error"],
+            "no_session",
+            "a rejected token is not the same as no token"
+        );
     }
 
     /// The endpoint advertises a `refresh_token`, so it has to leave a row
