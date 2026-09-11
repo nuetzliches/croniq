@@ -174,9 +174,19 @@ async function signOut() {
             class="h-11 justify-start gap-2.5 px-1.5"
             :aria-label="me ? `Account menu for ${me.username}` : 'Account menu'"
           >
+            <!--
+              The fallback initial is set to the same type as the label beside
+              it, on purpose. Every box here is geometrically centred — avatar,
+              its inner span and the label all share a midline — but the glyphs
+              did not look aligned, because a 12px initial in a 16px line box
+              and a 14px label in a 20px one sit at different heights *within*
+              their boxes. Matching the metrics removes the difference instead
+              of nudging one of them to hide it.
+            -->
             <UAvatar
               :alt="me?.username ?? '?'"
               size="xs"
+              :ui="{ fallback: 'text-sm leading-5 font-medium' }"
             />
             <span
               v-if="!ui.sidebarCollapsed"
