@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
-import { useUiStore } from '~/stores/ui'
 
 /**
  * Runs — the one list of executions.
@@ -28,7 +27,6 @@ import { useUiStore } from '~/stores/ui'
  */
 const route = useRoute()
 const router = useRouter()
-const ui = useUiStore()
 
 /**
  * Filters live in the URL, not in component state. That is the contract the
@@ -114,9 +112,6 @@ function onKey(event: KeyboardEvent) {
   }
 }
 
-const rowClass = computed(() =>
-  ui.compact ? 'h-8 text-xs' : 'h-[var(--cq-row-h)] text-sm',
-)
 </script>
 
 <template>
@@ -163,17 +158,7 @@ const rowClass = computed(() =>
         Clear
       </UButton>
 
-      <div class="ml-auto flex items-center gap-2">
-        <span class="cq-num text-sm text-muted">{{ rows.length }} runs</span>
-        <UButton
-          color="neutral"
-          variant="ghost"
-          :icon="ui.compact ? 'i-lucide-rows-3' : 'i-lucide-rows-4'"
-          :aria-label="ui.compact ? 'Comfortable rows' : 'Compact rows'"
-          :title="ui.compact ? 'Comfortable rows' : 'Compact rows'"
-          @click="ui.toggleCompact()"
-        />
-      </div>
+      <span class="cq-num ml-auto text-sm text-muted">{{ rows.length }} runs</span>
     </div>
 
     <div class="flex min-h-0 flex-1 gap-4">
@@ -242,7 +227,7 @@ const rowClass = computed(() =>
               v-for="(row, index) in rows"
               :key="row.id"
               :class="[
-                rowClass,
+                'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
                 row.id === selectedId && 'bg-elevated',
                 index === cursor && row.id !== selectedId && 'ring-1 ring-primary/40 ring-inset',

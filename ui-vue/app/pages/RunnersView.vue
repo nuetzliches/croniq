@@ -3,7 +3,6 @@ import { computed, ref } from 'vue'
 import { useDeleteRunner } from '~/api/queries'
 import { useRunnersStream } from '~/composables/useRunnersStream'
 import { formatAbsolute, formatRelative } from '~/lib/format'
-import { useUiStore } from '~/stores/ui'
 
 /**
  * The runner fleet.
@@ -15,7 +14,6 @@ import { useUiStore } from '~/stores/ui'
  * place, so the row links there instead of re-rendering them here
  * (docs/ui-screen-inventory.md).
  */
-const ui = useUiStore()
 const { runners, connected, received } = useRunnersStream()
 const removeRunner = useDeleteRunner()
 
@@ -37,8 +35,6 @@ const rows = computed(() =>
 )
 
 const online = computed(() => runners.value.filter((r) => r.status === 'online').length)
-
-const rowClass = computed(() => (ui.compact ? 'h-8 text-xs' : 'h-[var(--cq-row-h)] text-sm'))
 
 /**
  * Removing a runner is not a graceful drain, and the wording says so: the
@@ -152,7 +148,7 @@ async function remove(runnerId: string) {
           <tr
             v-for="runner in rows"
             :key="runner.runner_id"
-            :class="[rowClass, 'border-b border-default/60']"
+            class="cq-row border-b border-default/60"
           >
             <td class="px-[var(--cq-cell-x)]">
               <StatusPill :state="runner.status" />

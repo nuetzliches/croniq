@@ -4,7 +4,6 @@ import { ApiError } from '~/api/client'
 import { useDeadLetters, useDeleteDeadLetter, useReplayDeadLetter } from '~/api/queries'
 import type { DeadLetter } from '~/api/types'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
-import { useUiStore } from '~/stores/ui'
 
 /**
  * Dead letters — the work queue.
@@ -15,7 +14,6 @@ import { useUiStore } from '~/stores/ui'
  * or discard. Folding it into a browsing list would mean setting a filter
  * before you could see that anything was waiting.
  */
-const ui = useUiStore()
 const { data, isPending, isError, error, refetch } = useDeadLetters()
 const replay = useReplayDeadLetter()
 const remove = useDeleteDeadLetter()
@@ -26,8 +24,6 @@ const selected = computed(() => rows.value.find((row) => row.id === selectedId.v
 
 /** What the last replay attempt said, when it said no. */
 const replayError = ref<string | null>(null)
-
-const rowClass = computed(() => (ui.compact ? 'h-8 text-xs' : 'h-[var(--cq-row-h)] text-sm'))
 
 /**
  * Replay can be refused, and the refusal is a decision rather than a fault:
@@ -122,7 +118,7 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
               v-for="row in rows"
               :key="row.id"
               :class="[
-                rowClass,
+                'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
                 row.id === selectedId && 'bg-elevated',
               ]"

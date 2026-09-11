@@ -235,10 +235,14 @@ frieren Query-Key und Anfrage auf dem ersten Render ein, die Seite rendert neu
 und zeigt stillschweigend die alten Zeilen. `toValue` in `queryKey` *und*
 `queryFn` ist, was die Abfrage erneut laufen lässt.
 
-**Zwei neue Impulse eingelöst:** Tastaturnavigation (`j`/`k`, Enter, Escape —
-und sie stiehlt keine Tasten aus Eingabefeldern) und ein Dichte-Umschalter, der
-unter `croniq_density` pro Browser bleibt. Beides brauchte eine Liste, um
+**Ein neuer Impuls eingelöst:** Tastaturnavigation (`j`/`k`, Enter, Escape —
+und sie stiehlt keine Tasten aus Eingabefeldern). Sie brauchte eine Liste, um
 sinnvoll zu sein.
+
+> **Nachtrag (Durchgang 5).** Hier stand ein zweiter Impuls: ein
+> Dichte-Umschalter unter `croniq_density`. Der ist wieder draußen — die
+> Begründung steht unten.
+
 
 **Ein Befund beim Ansehen:** die Run-Spalte brach mit dem Attempt-Marker `#2`
 auf zwei Zeilen um — genau die Fehlerklasse, gegen die `cq-num` gebaut wurde,
@@ -295,3 +299,48 @@ failed" verschweigt sie.
 Das Durchsatz-Diagramm war leer, obwohl „186 runs" danebenstand: Prozenthöhen
 in einem Zwischen-`div` ohne definierte Höhe lösen zu null auf. Sichtbar nur
 durch Hinsehen — kein Test hätte das gemeldet.
+
+## Durchgang 5 — Dichte und Scrollverhalten
+
+Zwei Korrekturen an bereits Gebautem, beide aus dem Betrachten heraus.
+
+### Der Dichte-Umschalter ist wieder draußen
+
+Er war in Durchgang 3 als „neuer Impuls" eingezogen, und das war die falsche
+Einordnung. Ein Dichte-Regler gibt dem Lesenden ein Problem zurück, das das
+Design hätte lösen sollen — und er verdoppelt die Arbeit dauerhaft: jede
+künftige Tabelle muss in zwei Dichten richtig aussehen, sonst ist eine davon
+die schlechtere. `comfortable` gewinnt, weil diese Zeilen eine Status-Pille und
+monospaced Ids tragen; beides braucht den Durchschuss.
+
+Die Zeilenhöhe steht jetzt als `@utility cq-row` in `main.css` statt als
+Konstante in drei Views. Das war vorher dreimal derselbe Kommentar — ein
+verlässliches Zeichen, dass die Entscheidung eine Ebene zu tief lag.
+
+Der Schlüssel `croniq_density` wird nicht mehr gelesen und nicht mehr
+geschrieben; ein Rest im `localStorage` eines Entwicklerbrowsers ist folgenlos.
+
+### Es scrollt die Liste, nicht die Seite
+
+Filter, Spaltenköpfe und der Wartungsbanner wanderten beim Scrollen mit nach
+oben. Die Ursache ist dieselbe Klasse wie das leere Durchsatz-Diagramm aus
+Durchgang 4, nur andersherum: die Shell war `min-h-screen`. Eine
+*Mindest*höhe ist keine definite Höhe, also löste `h-full` in jeder Listenseite
+zu `auto` auf, ihr `overflow-auto`-Container wuchs mit dem Inhalt statt zu
+scrollen — und was dann scrollte, war das Dokument.
+
+Die Kette, damit es trägt:
+
+| Ebene | vorher | jetzt |
+| --- | --- | --- |
+| Shell-Wurzel | `min-h-screen` | `h-screen overflow-hidden` |
+| `<main>` | `overflow-y-auto`, Block | `flex flex-col min-h-0 overflow-hidden` |
+| Wartungsbanner | scrollt mit | `shrink-0`, steht |
+| Scrollbereich | — | ein `min-h-0 flex-1 overflow-y-auto` um `<RouterView>` |
+
+Dieser eine Bereich bedient beide Seitenformen, und das ist der Grund, ihn in
+der Shell zu haben statt in jeder Seite: eine dokumentförmige Seite (das
+Dashboard) ist höher als die Box und scrollt darin; eine listenförmige Seite
+setzt `h-full`, ist damit exakt die Box, nichts läuft über, und das einzige,
+was sich bewegt, ist der Tabellenkörper in seinem eigenen Rahmen. Sidebar,
+Kopfzeile und die Filterleiste über der Liste stehen in beiden Fällen.
