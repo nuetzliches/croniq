@@ -249,6 +249,7 @@ async function signOut() {
           </span>
           <!-- Admin-only, and not rendered otherwise: a button that can only
                ever answer 403 is worse than no button. -->
+          <ReloadConfigControl v-if="me && isAdmin" />
           <MaintenanceControl v-if="me && isAdmin" />
           <UDropdownMenu
             :items="[

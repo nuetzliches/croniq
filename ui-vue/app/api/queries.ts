@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed } from 'vue'
-import { apiGet, apiPut } from './client'
+import { api, apiGet, apiPut } from './client'
 import type {
   AuthConfigResponse,
   DeadLetter,
   HealthResponse,
   MaintenanceResponse,
+  ReloadSuccess,
   User,
   VersionResponse,
 } from './types'
@@ -139,5 +140,34 @@ export function useSetMaintenance() {
     mutationFn: (patch: MaintenancePatch) =>
       apiPut<MaintenanceResponse>('/v1/maintenance', patch),
     onSuccess: (data) => queryClient.setQueryData(['maintenance'], data),
+  })
+}
+
+/**
+ * Re-read the Croniqfile.
+ *
+ * `dryRun` is what makes this safe to put behind a button: the server
+ * validates, computes the diff and reports the boot-only settings that would
+ * stay pending — all without touching anything. The dashboard shows that, and
+ * only then offers to apply.
+ *
+ * Not invalidating job queries on a dry run is deliberate; nothing changed.
+ * On a real apply the schedule did change, so everything that reads it is
+ * dropped.
+ */
+export function useReloadConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ dryRun }: { dryRun: boolean }) =>
+      api<ReloadSuccess>(`/v1/admin/reload-config${dryRun ? '?dry_run=true' : ''}`, {
+        method: 'POST',
+      }),
+    onSuccess: (result) => {
+      if (result.applied) {
+        for (const key of [['jobs'], ['schedules'], ['calendars'], ['job-states']]) {
+          void queryClient.invalidateQueries({ queryKey: key })
+        }
+      }
+    },
   })
 }

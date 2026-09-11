@@ -511,3 +511,65 @@ export interface AlertDeliveryListQuery {
   since?: string
   limit?: number
 }
+
+// ─── Config reload (POST /v1/admin/reload-config) ────────────────────────────
+
+/** Job keys a reload would add, remove or change, and the resulting total. */
+export interface ReloadDiff {
+  added: string[]
+  removed: string[]
+  changed: string[]
+  total: number
+}
+
+/**
+ * A setting the file changed that a reload cannot apply.
+ *
+ * `server { }`, `pull_api { }`, `observability { }`, `mcp { }`, `oidc { }`,
+ * `smtp { }`, `auth { }` and `alerts { }` are read at boot only, so editing one
+ * and reloading is a no-op. It used to be a *silent* no-op; the server now
+ * names each one (issue #406), which is what lets the dashboard say "applied,
+ * 2 settings need a restart" instead of a plain success.
+ */
+export interface PendingRestart {
+  /** Dotted DSL path, e.g. `server.execution_retention`. */
+  setting: string
+  /** What the running server uses. `null` ⇒ not set at boot. */
+  running: string | null
+  /** What the reloaded file asks for. `null` ⇒ removed from the file. */
+  pending: string | null
+}
+
+export type ClientOutcomeAction =
+  | 'created'
+  | 'rotated'
+  | 'key_revived'
+  | 'scopes_updated'
+  | 'adopted'
+  | 'unchanged'
+  | 'error'
+
+/** What the reload did to one environment-declared API client (issue #471). */
+export interface ClientOutcome {
+  client: string
+  action: ClientOutcomeAction
+  detail?: string
+}
+
+export interface ReloadSuccess {
+  applied: boolean
+  dry_run: boolean
+  diff: ReloadDiff
+  /** Absent when nothing is pending — the server omits empty arrays. */
+  pending_restart?: PendingRestart[]
+  credentials?: ClientOutcome[]
+  credentials_error?: string
+}
+
+/** 422 body for a file that could not be read or did not validate. */
+export interface ReloadFailure {
+  error: string
+  message: string
+  line?: number
+  column?: number
+}
