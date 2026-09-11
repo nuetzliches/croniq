@@ -720,3 +720,52 @@ die der Server bei jedem Request durchsetzt. Kurz genug zum Abtippen und subtil
 genug, um es falsch abzutippen — also `useIsAdmin()`, einmal, mit der
 Begründung daneben.
 
+## Durchgang 11 — Konsole, und das Ende der Aufbaureihenfolge
+
+Der letzte Screen aus `ui-screen-inventory.md`, und der zweite Verbraucher des
+SSE-Kerns aus #585. Genau dafür wurde der Kern extrahiert: Runner-Stream und
+Konsole unterscheiden sich in fast allem, was man sieht, und in nichts, was
+leicht falsch geht — Frame-Zusammenbau über Chunk-Grenzen, der 401-Refresh, das
+Reconnect-Backoff.
+
+### Was ein Tail verschweigt, sagt er jetzt
+
+Die React-Fassung pufferte still, während sie pausiert war, und warf die
+ältesten Ereignisse still weg, wenn ihr Puffer volllief. Eine Konsole, von der
+man wegsieht, sagte danach nichts über die Lücke. Beides wird jetzt gezählt und
+angezeigt: der *Resume*-Knopf trägt die Zahl der wartenden Ereignisse, und über
+der Liste steht, wie viele hinten herausgefallen sind.
+
+### Zwei Sachen, die das Lesen erleichtern
+
+**Ein farbiger Rand links** bei `warn` und `error`, zusätzlich zur
+Level-Spalte: einen Fehler findet man, indem man die linke Kante überfliegt,
+nicht indem man jede Zeile liest.
+
+**Das Mitlaufen hört auf, wenn man hochscrollt**, und ein *Follow*-Knopf
+erscheint. Etwas zu lesen, während sich die Ansicht alle paar hundert
+Millisekunden nach unten reißt, ist das Ärgerlichste, was ein Live-Tail kann.
+
+### Ein Fehlalarm, nachgeprüft statt geglaubt
+
+Im Log standen `WARN … no job config for completion — job not in DSL or store`
+für `smoke:calendar-user`, einen Job, den ich Minuten vorher gelöscht hatte.
+Das sah nach einem echten Fehler aus: gelöschter Job, Trigger feuert weiter.
+
+Nachgesehen statt gemeldet: `/v1/schedules` gegen `/v1/jobs` gejoint ergibt
+**null verwaiste Trigger**. Die Warnungen stammten aus Ausführungen, die vor
+dem Löschen in der Warteschlange standen und danach fertig wurden — korrektes
+Verhalten, und die Warnung ist genau die richtige.
+
+### Der Platzhalter ist in Rente
+
+Bis hierher rendern nicht gebaute Routen ein `NotBuiltYet`, das den
+Aufbauschritt nennt, zu dem sie gehören — damit die Shell begehbar blieb und
+niemand eine Lücke für fertig hielt. Mit der letzten Lücke ist er weg. Eine
+Route, die es nicht gibt, ist ab jetzt ein Fehler, keine Notiz.
+
+**Damit ist die Aufbaureihenfolge aus dem Inventar abgearbeitet.** Was bleibt,
+steht unter „Noch offen" — allen voran, dass der Vue-Baum weiterhin kein
+eigenes Playwright-Projekt hat (#620) und das Abnahmekriterium aus ADR-0004
+deshalb noch das React-Dashboard misst.
+

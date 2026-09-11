@@ -242,7 +242,11 @@ nicht nach Größe:
 5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen
    Bausteinen. ✓ (Durchgang 6 in `ui-visual-design.md`)
 6. **Kalender** ✓ (Durchgang 7), **Alerts** ✓ (Durchgang 9),
-   **Settings** ✓ (Durchgang 10), dann **Konsole.**
+   **Settings** ✓ (Durchgang 10), **Konsole** ✓ (Durchgang 11).
+
+**Die Reihenfolge ist abgearbeitet.** Jede Route des Zuschnitts oben ist
+gebaut; der `NotBuiltYet`-Platzhalter ist entfernt. Offen bleibt das
+Abnahmekriterium selbst — siehe unten.
 
 Abnahmekriterium pro Schritt bleibt die Playwright-Suite
 ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), Scope-Guard 2). Sie
