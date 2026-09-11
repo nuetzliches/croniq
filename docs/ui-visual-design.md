@@ -497,6 +497,83 @@ Dialoge geöffnet. Zum Vergleich zählte #595 im React-Dashboard 51 von 54.
 
 - Der Schedule-Editor wird vom Namensprüfer nur erreicht, wenn ein
   API-verwalteter Job existiert; sonst sagt er das, statt „sauber" zu melden.
-- **Der DSL-Tab am Job emittiert Text, der nicht parst** — siehe unten, eigener
-  Vorgang.
+- **Der DSL-Tab am Job emittiert Text, der nicht parst** — erledigt, siehe
+  Durchgang 8.
+
+## Durchgang 8 — der DSL-Tab, der nicht parste
+
+Aus dem React-Baum treu mitportiert, als „die einzige Stelle im Produkt, die
+einen Job in der Form zeigt, in der er geschrieben wird" dokumentiert — und
+falsch. Was der Tab ausgab:
+
+```
+job "demo:report" {
+  description = "Generates a summary report"
+  tags        = ["env=demo","kind=report"]
+}
+```
+
+Die echte Grammatik kennt kein `=`, quotet den Job-Key nicht und schreibt Tags
+als blanke Liste. Gegen croniqs eigenen Lexer:
+
+```
+× unexpected character '='
+   ╭─[rendered.croniq:2:15]
+ 2 │   description = "Generates a summary report"
+   ·               ┬
+```
+
+Zeile 2. Wer den Text in ein Croniqfile kopierte, bekam einen Parse-Fehler.
+
+### Nichts wird mehr von Hand zusammengesetzt
+
+`formatJobBlock` und `formatCalendarBlock` kommen aus `croniq-config`, nach
+wasm kompiliert — derselben Crate, mit der der Server ein Croniqfile lädt. Und
+die Rust-Seite **parst ihre eigene Ausgabe**, bevor sie sie zurückgibt, und
+formatiert sie kanonisch neu. Was zurückkommt, parst per Konstruktion.
+
+Das ist genau das Argument, mit dem in Durchgang 7 der Kalender-Builder gebaut
+wurde. Dieser Tab ist, was passiert, wenn man es nicht anwendet.
+
+### Was die API nicht weiß, wird gesagt statt geraten
+
+Der gespeicherte Job trägt `max_retries` — eine Zahl, keine Strategie. Die DSL
+braucht eine (`retry exponential { … }`). Also schreibt der Block *keinen*
+Retry-Block und sagt daneben, warum:
+
+> The job retries 3 times, but the API does not record which backoff strategy,
+> so no retry block is written — it would have to invent one.
+
+Dasselbe für eine Regel, die die DSL gar nicht kennt. Die API akzeptiert
+`*/7 * * * *`; die Croniqfile-Grammatik kennt Intervalle, täglich, Wochentage
+und monatlich — kein rohes Cron. So ein Job ist nicht darstellbar, und der Tab
+sagt das, statt etwas Ähnliches zu zeigen.
+
+### Geprüft, nicht behauptet
+
+`ui/scripts/dsl-parses.mjs` liest, was das laufende Dashboard auf den Schirm
+schreibt, und gibt es derselben Binary, die ein Operator hätte:
+
+```
+checking 6 job block(s)
+ok   demo:heartbeat … ok   demo:reload-probe
+every rendered block parses
+```
+
+Dazu zehn Unit-Tests um den Formatter herum (welche Felder ankommen, ob die
+Hinweise die Wahrheit sagen) und zwei neue Schritte in `vue-write-paths.mjs`.
+
+### Zwei Messfehler auf dem Weg
+
+**Ein Skript, das nichts prüfte, meldete „bestanden".** `dsl-parses.mjs` fand
+keine Job-Zeilen und gab trotzdem „every rendered block parses" aus. Eine leere
+Prüfmenge ist jetzt ein Fehler, kein Erfolg.
+
+**Und `npx vue-tsc --noEmit` prüft in `ui-vue/` gar nichts.** `tsconfig.json`
+hat `"files": []` und nur `references`; ohne `--build` folgt TypeScript denen
+nicht. Ein `const x: number = "str"` geht durch. Deshalb fiel ein fehlender
+Export in `croniq-dsl.ts` erst im Browser auf, nachdem „typecheck grün"
+gemeldet war. Das Projekt-Skript `npm run typecheck` ruft `vue-tsc --build`
+auf und findet ihn — CI war die ganze Zeit in Ordnung, der Handaufruf war das
+Loch.
 

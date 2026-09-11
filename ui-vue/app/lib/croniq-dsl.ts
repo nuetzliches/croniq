@@ -91,3 +91,29 @@ export async function formatCalendarRules(rules: CalendarRulePayload[]): Promise
   await ensureLoaded()
   return wasm.formatCalendarRules(rules) as string
 }
+
+/** The rules wrapped in their `calendar <name> { … }` block, paste-ready. */
+export async function formatCalendarBlock(
+  rules: CalendarRulePayload[],
+  name: string,
+): Promise<string> {
+  await ensureLoaded()
+  return wasm.formatCalendarBlock(rules, name) as string
+}
+
+/**
+ * A whole `job <key> { … }` block: the schedule plus the job-level options.
+ *
+ * The Rust side parses what it built before handing it back, then re-emits it
+ * through the canonical formatter — so the result parses by construction.
+ * That guarantee is the entire reason the job DSL view calls this instead of
+ * assembling text itself.
+ */
+export async function formatJobBlock(
+  schedule: SchedulePayload,
+  key: string,
+  options: unknown,
+): Promise<string> {
+  await ensureLoaded()
+  return wasm.formatJobBlock(schedule, key, options) as string
+}

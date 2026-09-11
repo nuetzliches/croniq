@@ -80,20 +80,20 @@ await step("the new job is API-managed, so editing is offered", async () => {
 
 await step("add a schedule", async () => {
   await page.getByRole("button", { name: "Add" }).click();
-  await page.getByPlaceholder("0 3 * * *").fill("*/10 * * * *");
+  await page.getByPlaceholder("0 3 * * *").fill("every 10 minutes");
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/v1/schedules") && r.request().method() === "POST"),
     page.getByRole("button", { name: "Add schedule" }).click(),
   ]);
   await page.waitForTimeout(700);
-  await page.getByText("*/10 * * * *").first().waitFor({ timeout: 3000 });
+  await page.getByText("every 10 minutes").first().waitFor({ timeout: 3000 });
 });
 
 await step("the list shows the rule and a next fire", async () => {
   await page.waitForTimeout(1200);
   const row = page.locator("tbody tr", { hasText: KEY });
   const text = await row.innerText();
-  if (!text.includes("*/10")) throw new Error(`rule missing from the row: ${text}`);
+  if (!text.includes("every 10 minutes")) throw new Error(`rule missing from the row: ${text}`);
 });
 
 await step("disable and re-enable the schedule", async () => {
@@ -133,12 +133,35 @@ await step("edit the job", async () => {
   await page.getByText("Edited by the smoke script").first().waitFor({ timeout: 3000 });
 });
 
-await step("the DSL tab renders the job", async () => {
+await step("the DSL tab renders real Croniqfile syntax", async () => {
   await page.getByRole("tab", { name: "DSL" }).click();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(900);
   const pre = await page.locator("pre").last().innerText();
-  if (!pre.includes(`job "${KEY}"`)) throw new Error("the job block is missing");
-  if (!pre.includes("*/10 * * * *")) throw new Error("the schedule is missing");
+  // Unquoted key and no `=`: the grammar the lexer actually accepts. The
+  // previous renderer emitted `job "key" { description = … }`, which does not
+  // parse — see ui/scripts/dsl-parses.mjs.
+  if (!pre.includes(`job ${KEY} {`)) throw new Error(`no job block: ${pre.slice(0, 80)}`);
+  if (pre.includes(`job "${KEY}"`)) throw new Error("the key is quoted; that does not parse");
+  if (pre.includes(" = ")) throw new Error("assignment syntax; that does not parse");
+  if (!pre.includes("every 10 minutes")) throw new Error("the schedule is missing");
+});
+
+await step("a schedule with no DSL spelling is reported, not faked", async () => {
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "Edit this schedule" }).click();
+  await page.getByPlaceholder("0 3 * * *").fill("*/7 * * * *");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/schedules") && r.request().method() === "PUT"),
+    page.getByRole("button", { name: "Save", exact: true }).click(),
+  ]);
+  await page.waitForTimeout(1000);
+  await page.getByRole("tab", { name: "DSL" }).click();
+  await page.waitForTimeout(1000);
+  const panel = await page.locator('aside[aria-label="Job detail"]').innerText();
+  if (!panel.includes("*/7 * * * *")) throw new Error("the offending rule is not named");
+  if (!panel.includes("not raw cron")) throw new Error("no explanation of why it cannot be written");
+  if ((await page.locator("pre").count()) > 0) throw new Error("it rendered a block anyway");
 });
 
 await step("adopt on a Croniqfile job surfaces the server's answer", async () => {
