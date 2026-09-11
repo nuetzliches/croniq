@@ -213,7 +213,8 @@ nicht nach Größe:
 3. **Runs-Liste** — der Screen, den drei andere ersetzt. Zuerst, weil Job- und
    Runner-Detail auf ihn verlinken statt ihn nachzubauen.
 4. **Dashboard, Runner, Dead Letters** — bauen auf denselben Listen-Bausteinen.
-5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen Bausteinen.
+5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen
+   Bausteinen. ✓ (Durchgang 6 in `ui-visual-design.md`)
 6. **Kalender, Alerts, Settings, Konsole.**
 
 Abnahmekriterium pro Schritt bleibt die Playwright-Suite

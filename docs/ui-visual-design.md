@@ -344,3 +344,88 @@ Dashboard) ist höher als die Box und scrollt darin; eine listenförmige Seite
 setzt `h-full`, ist damit exakt die Box, nichts läuft über, und das einzige,
 was sich bewegt, ist der Tabellenkörper in seinem eigenen Rahmen. Sidebar,
 Kopfzeile und die Filterleiste über der Liste stehen in beiden Fällen.
+
+## Durchgang 6 — Jobs
+
+Der dickste Screen, und der, an dem die Bestandsaufnahme am deutlichsten war:
+sechs Tabs, zwei davon dieselbe Executions-Tabelle mit unterschiedlichem
+Zeilenlimit.
+
+### Sechs Tabs auf zwei
+
+| Tab | wohin |
+| --- | --- |
+| Overview | bleibt — und nimmt *Schedule* auf |
+| Executions | entfällt; Kopfzeile verlinkt `/executions?job_key=…` |
+| Schedule | in die Übersicht; es sind vier Felder |
+| DSL | bleibt |
+| Alerts | `/alerts` |
+| Audit | Audit-Log in den Einstellungen |
+
+*Schedule* in die Übersicht zu holen war die Entscheidung mit dem größten
+Effekt: die Regel eines Jobs ist das Erste, was jemand wissen will, der einen
+Job öffnet. Sie einen Klick entfernt zu halten machte die Übersicht zu einer
+Feldliste, in der genau das Wichtige fehlte.
+
+### Die Liste beantwortet jetzt die Frage, für die man sie öffnete
+
+Die React-Liste war eine Spalte Namen. „Wann läuft das nächste Mal" und „ist
+etwas zu spät" beantwortete man, indem man Jobs einzeln aufmachte. Drei
+Endpunkte hatten die Antwort und wurden hier nie zusammengeführt:
+`/v1/jobs` (Definition), `/v1/jobs/states` (nächster/letzter Lauf, `overdue`,
+Lebenszyklus) und `/v1/schedules` (die Regeln). Die neue Liste joint sie und
+sortiert überfällige nach oben.
+
+Neu gegenüber der React-Fassung ist außerdem, dass *Quelle* eine Spalte ist:
+Croniqfile-verwaltet oder API-verwaltet. Vorher war das eine Eigenschaft, die
+man erst bemerkte, wenn ein Button ausgegraut war.
+
+### Drei Befunde beim Hinsehen
+
+**Die Tag-Chips tragen nicht.** Aus der Runner-Liste übernommen, wo eine Flotte
+eine Handvoll Tags hat. Jobs sind nach Team, Umgebung *und* Art getaggt — schon
+die Demo hat sieben, und die Reihe schob Zähler und Primäraktion aus der
+Werkzeugleiste. Jetzt ein Menü, dessen Breite nicht von der Tag-Anzahl abhängt.
+
+**„just now" ist in einer Zukunftsspalte die falsche Zeitform.**
+`formatRelative` sagt das innerhalb seiner Fünf-Sekunden-Schwelle, und in der
+Spalte *Next fire* liest es sich als Vergangenheit. Dort steht jetzt „due now".
+
+**Spalten, die neben dem offenen Detail nicht passen, werden weggelassen statt
+abgeschnitten.** Mit geöffnetem Detail war die Tabelle rechts hart beschnitten
+— der Container scrollt zwar horizontal, aber ohne sichtbaren Hinweis. *Last
+fire*, *Fires* und *Source* verschwinden jetzt, solange ein Job offen ist.
+
+Und eine Korrektur an der eigenen Dichte-Entscheidung aus Durchgang 5: die
+Job-Zeile ist die einzige zweizeilige im Produkt (Key über Beschreibung) und
+bekommt mit 49 px die Höhe, die zwei Zeilen brauchen. `cq-row` ist für
+Tabellenzeilen ohnehin ein Minimum, kein Fixwert — genau dafür.
+
+### Geprüft
+
+`ui/scripts/vue-write-paths.mjs` fährt zwölf Schreibpfade gegen den Dev-Stack:
+anlegen, Schedule anhängen, deaktivieren/aktivieren, triggern, pausieren/
+fortsetzen, bearbeiten, DSL rendern, adoptieren, löschen. Alle zwölf grün, und
+die Ablehnung der Adoption kommt im Wortlaut des Servers an:
+
+> DSL adoption is disabled — set `policy { dsl_adopt_on_mutate true }` in the
+> Croniqfile to enable
+
+Dazu zehn Unit-Tests für `renderDsl`.
+
+### Noch offen an diesem Screen
+
+- **Der Vue-Baum hat keine e2e-Suite.** Das Abnahmekriterium aus ADR-0004 ist
+  die Playwright-Suite, die aber gegen das *gebaute* React-Dashboard auf 4233
+  läuft. Bis der Vue-Baum dort ein eigenes Projekt hat, ist
+  `vue-write-paths.mjs` ein Notbehelf und heißt in seinem Kopf auch so.
+- **Zwei `401` beim Kaltstart.** Nicht aus dieser Arbeit, aber hier gemessen:
+  `runRefresh` wiederholt einmal, weil ein anderer Tab den Refresh-Token
+  rotiert haben könnte. Beim allerersten Besuch gibt es gar kein Cookie, und
+  der Wiederholungsversuch ist garantiert vergeblich. Server und Client
+  unterscheiden „kein Cookie präsentiert" und „Cookie abgelehnt" beide nicht —
+  der Kommentar im Handler nennt das sogar ausdrücklich als Absicht. Eigener
+  Vorgang.
+- **Kalender-Auswahl im Schedule-Editor** listet Namen, aber es gibt noch
+  keinen Kalender-Screen, auf dem man einen anlegen könnte (Durchgang 7).
+
