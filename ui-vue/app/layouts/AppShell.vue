@@ -5,6 +5,7 @@ import { useCurrentUser, useDeadLetterCount } from '~/api/queries'
 import { useHealth, useVersion } from '~/api/queries'
 import { logout } from '~/api/session'
 import { useUiStore } from '~/stores/ui'
+import { useIsAdmin } from '~/composables/useIsAdmin'
 import { NAV_SECTIONS } from '~/router/nav'
 
 /**
@@ -30,7 +31,7 @@ const deadLetters = useDeadLetterCount()
  * loading the caller may well be one, and an entry appearing a moment later
  * beats one that answers 403.
  */
-const isAdmin = computed(() => (me.value ? me.value.role === 'admin' : true))
+const isAdmin = useIsAdmin()
 
 /** What to call the signed-in user. */
 const displayName = computed(() => me.value?.display_name ?? me.value?.username ?? '…')

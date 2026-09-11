@@ -6,8 +6,14 @@ import type {
   AlertDeliveryListQuery,
   AlertRuleOverride,
   AlertsConfig,
+  ApiClient,
+  AuditEvent,
   AuthConfigResponse,
   CalendarDefinition,
+  CreateApiKeyResponse,
+  CreateClientResponse,
+  CreateInvitationResponse,
+  CreatePatResponse,
   DeadLetter,
   Execution,
   ExecutionLogEntry,
@@ -16,11 +22,15 @@ import type {
   HealthResponse,
   JobDefinition,
   JobScheduleState,
+  Invitation,
   JobStatsResponse,
   MaintenanceResponse,
+  PersonalAccessToken,
   ReloadSuccess,
+  Role,
   RunnerSummary,
   ThroughputResponse,
+  TotpSetupResponse,
   TriggerDefinition,
   TriggerResponse,
   User,
@@ -797,5 +807,196 @@ export function useClearOverride() {
     mutationFn: (name: string) =>
       apiDelete(`/v1/alerts/rules/${encodeURIComponent(name)}/override`),
     onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+/* ─── Settings ────────────────────────────────────────────────────────────
+ *
+ * Four surfaces that share one screen: who you are, who else has access,
+ * which machines have access, and what everyone did.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+export function useUsers() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: () => apiGet<User[]>('/v1/users'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+export function useDeleteUser() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => apiDelete(`/v1/users/${encodeURIComponent(userId)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useInvitations() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['invitations'],
+    queryFn: () => apiGet<Invitation[]>('/v1/invitations'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+/**
+ * Invite someone.
+ *
+ * The response carries the accept URL, and with no SMTP configured that link
+ * is the *only* copy — the server says so on boot. So the caller has to show
+ * it rather than report success and move on.
+ */
+export function useCreateInvitation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { email: string; role: Role; expires_in_hours?: number }) =>
+      apiPost<CreateInvitationResponse>('/v1/invitations', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invitations'] }),
+  })
+}
+
+export function useRevokeInvitation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/invitations/${encodeURIComponent(id)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invitations'] }),
+  })
+}
+
+export function usePersonalAccessTokens() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['users', 'me', 'tokens'],
+    queryFn: () => apiGet<PersonalAccessToken[]>('/v1/users/me/tokens'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+export function useCreatePat() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; scopes: string[]; expires_in_hours?: number }) =>
+      apiPost<CreatePatResponse>('/v1/users/me/tokens', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+  })
+}
+
+export function useRevokePat() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/users/me/tokens/${encodeURIComponent(id)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+  })
+}
+
+/** Begin TOTP enrolment: returns the secret, the otpauth URL and recovery codes. */
+export function useTotpSetup() {
+  return useMutation({
+    mutationFn: () => apiPost<TotpSetupResponse>('/v1/users/me/totp/setup', {}),
+  })
+}
+
+export function useTotpConfirm() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiPost('/v1/users/me/totp/confirm', { code }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users', 'me'] }),
+  })
+}
+
+/**
+ * Turning 2FA off takes the *password*, not a current code.
+ *
+ * Removing a second factor is a security downgrade, so the server re-verifies
+ * the primary credential instead of the thing being removed.
+ */
+export function useTotpDisable() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (password: string) => apiPost('/v1/users/me/totp/disable', { password }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users', 'me'] }),
+  })
+}
+
+export function useApiClients() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['api-clients'],
+    queryFn: () => apiGet<ApiClient[]>('/v1/api-clients'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+export function useCreateApiClient() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { name: string; scopes: string[] }) =>
+      apiPost<CreateClientResponse>('/v1/api-clients', data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['api-clients'] }),
+  })
+}
+
+export function useUpdateApiClient() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      client_id,
+      ...patch
+    }: {
+      client_id: string
+      name?: string
+      scopes?: string[]
+      is_active?: boolean
+    }) => apiPut<ApiClient>(`/v1/api-clients/${encodeURIComponent(client_id)}`, patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['api-clients'] }),
+  })
+}
+
+export function useDeleteApiClient() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/api-clients/${encodeURIComponent(id)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['api-clients'] }),
+  })
+}
+
+/** Mint a key. The raw value is in the response and nowhere else, ever again. */
+export function useIssueClientToken() {
+  return useMutation({
+    mutationFn: (clientId: string) =>
+      apiPost<CreateApiKeyResponse>('/v1/api-keys', { client_id: clientId }),
+  })
+}
+
+export function useRevokeApiKey() {
+  return useMutation({
+    mutationFn: (keyId: string) => apiDelete(`/v1/api-keys/${encodeURIComponent(keyId)}`),
+  })
+}
+
+export interface AuditFilters {
+  limit?: number
+  actor_id?: string
+  target_type?: string
+  action?: string
+}
+
+/** Who did what. The one surface that answers it; the job detail links here. */
+export function useAuditEvents(filters: MaybeRefOrGetter<AuditFilters> = () => ({})) {
+  const auth = useAuthStore()
+  const active = computed(() => toValue(filters))
+  return useQuery({
+    queryKey: ['audit', active],
+    queryFn: () => {
+      const query: Record<string, string | number> = { limit: active.value.limit ?? 200 }
+      if (active.value.actor_id) query.actor_id = active.value.actor_id
+      if (active.value.target_type) query.target_type = active.value.target_type
+      if (active.value.action) query.action = active.value.action
+      return apiGet<AuditEvent[]>('/v1/audit', query)
+    },
+    enabled: computed(() => auth.isAuthenticated),
   })
 }
