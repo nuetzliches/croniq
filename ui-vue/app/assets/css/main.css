@@ -31,3 +31,106 @@
   --color-brand-900: #372c6e;
   --color-brand-950: #221a45;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * The ground
+ *
+ * The shipping dashboard puts its chrome — sidebar, topbar, content — on a
+ * washed gradient rather than a flat page, and that is most of why it does not
+ * read as a generic admin panel. Carried over, with one correction the audit
+ * turned up (docs/ui-visual-design.md): there the wash is strong enough that
+ * on a screen with an empty detail pane it stops framing the content and
+ * starts being the content. Here the two tints are anchored in opposite
+ * corners and kept faint, so they describe the edges of the page and leave the
+ * middle to the data.
+ *
+ * Dark is a first-class ground, not an inversion. The React tree is light with
+ * a dark console embedded; for a tool operators keep open all day that is a
+ * decision worth making the other way round, so both grounds are built from
+ * the same two anchors at different weights.
+ * ─────────────────────────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    /* The ground is tinted and the cards on it are not. That contrast is what
+     * makes the chrome read as floating; with a white ground under white cards
+     * there is nothing to float above, which is exactly how the first attempt
+     * at this looked. */
+    --cq-ground: var(--color-slate-100);
+    --cq-ground-brand: color-mix(in oklch, var(--color-brand-500) 22%, transparent);
+    --cq-ground-cool: color-mix(in oklch, var(--color-sky-400) 20%, transparent);
+  }
+
+  .dark {
+    --cq-ground: var(--color-slate-950);
+    --cq-ground-brand: color-mix(in oklch, var(--color-brand-400) 16%, transparent);
+    --cq-ground-cool: color-mix(in oklch, var(--color-sky-500) 10%, transparent);
+  }
+
+  body {
+    background-color: var(--cq-ground);
+    background-image:
+      radial-gradient(1100px 700px at 4% -8%, var(--cq-ground-brand), transparent 70%),
+      radial-gradient(900px 650px at 100% 108%, var(--cq-ground-cool), transparent 70%);
+    background-attachment: fixed;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Density
+ *
+ * One decision, in one place. The audit found the shipping dashboard's own
+ * job-detail table already has the right density for an operations tool —
+ * roughly 12px type on ~38px rows — while its Executions list spends 88px a
+ * row on three-line cards and shows seven where a table shows twenty-five.
+ *
+ * These are the numbers every list is built against, so the choice is made
+ * once here rather than a hundred times across screens. `--cq-row-h` is a
+ * minimum, not a fixed height: a row that needs two lines gets them, it just
+ * does not get them by accident from a column that is too narrow.
+ * ─────────────────────────────────────────────────────────────────────────── */
+@theme static {
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1rem;
+  --text-micro--letter-spacing: 0.04em;
+}
+
+@layer base {
+  :root {
+    --cq-row-h: 2.375rem;
+    --cq-cell-x: 0.875rem;
+    --cq-cell-y: 0.5rem;
+  }
+}
+
+/* The micro-label above every number and every column: uppercase, tracked,
+ * muted. Carried over from the shipping dashboard's KPI cards, where it is the
+ * most recognisable single element of the design. */
+@utility cq-label {
+  font-size: var(--text-micro);
+  line-height: var(--text-micro--line-height);
+  letter-spacing: var(--text-micro--letter-spacing);
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ui-text-muted);
+}
+
+/* Figures that belong in a column: tabular so digits line up, and never
+ * wrapped — "29m ago" breaking across two lines in every row of the job detail
+ * is the layout defect the audit found. */
+@utility cq-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 0.9s/turn, matching the shipping dashboard's `.brand-spin`. Declared here
+ * rather than in BrandMark.vue so the loading component can use it without
+ * mounting a mark. */
+@keyframes cq-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@utility cq-spin {
+  animation: cq-spin 0.9s linear infinite;
+}

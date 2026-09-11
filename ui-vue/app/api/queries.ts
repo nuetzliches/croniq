@@ -1,7 +1,13 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed } from 'vue'
 import { apiGet } from './client'
-import type { AuthConfigResponse, DeadLetter, User } from './types'
+import type {
+  AuthConfigResponse,
+  DeadLetter,
+  HealthResponse,
+  User,
+  VersionResponse,
+} from './types'
 import { useAuthStore } from '~/stores/auth'
 
 /**
@@ -58,4 +64,36 @@ export function useDeadLetterCount() {
     refetchInterval: 30_000,
   })
   return computed(() => query.data.value?.length ?? 0)
+}
+
+/**
+ * Server health. Public, so the login page can show it before anyone signs in
+ * — which is where the shipping dashboard uses it, and a genuinely good idea:
+ * you learn the server is alive before you have credentials to check with.
+ *
+ * Polled, because the shell's live dot is only worth having if it can go out.
+ */
+export function useHealth() {
+  return useQuery({
+    queryKey: ['health'],
+    queryFn: () => apiGet<HealthResponse>('/health'),
+    refetchInterval: 5_000,
+    retry: false,
+  })
+}
+
+/**
+ * Build version. Public, and pinned forever — it cannot change without the
+ * process restarting, at which point the page reloads anyway.
+ *
+ * Failures are expected against an older server that has no `/version`, so the
+ * caller treats `undefined` as "hide the chip" rather than as an error.
+ */
+export function useVersion() {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: () => apiGet<VersionResponse>('/version'),
+    staleTime: Infinity,
+    retry: false,
+  })
 }

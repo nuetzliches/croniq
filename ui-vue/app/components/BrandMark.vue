@@ -37,7 +37,7 @@ const maskId = useId()
     :height="size"
     viewBox="0 0 100 100"
     xmlns="http://www.w3.org/2000/svg"
-    :class="spinning ? 'brand-spin' : undefined"
+    :class="spinning ? 'cq-spin' : undefined"
     :role="title ? 'img' : undefined"
     :aria-label="title"
     :aria-hidden="title ? undefined : true"
@@ -81,15 +81,3 @@ const maskId = useId()
     />
   </svg>
 </template>
-
-<style>
-/* 0.9 s/turn, matching the React tree's `.brand-spin` in components.css. */
-@keyframes brand-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.brand-spin {
-  animation: brand-spin 0.9s linear infinite;
-}
-</style>

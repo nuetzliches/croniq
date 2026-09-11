@@ -2,21 +2,33 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCurrentUser, useDeadLetterCount } from '~/api/queries'
+import { useHealth, useVersion } from '~/api/queries'
 import { logout } from '~/api/session'
 import { useUiStore } from '~/stores/ui'
 import { NAV_SECTIONS } from '~/router/nav'
 
+/**
+ * The frame: sidebar, topbar and content as cards floating on the ground
+ * defined in assets/css/main.css.
+ *
+ * That shape is carried over from the shipping dashboard, where it is most of
+ * the reason the product does not read as a generic admin panel
+ * (docs/ui-visual-design.md). What is *not* carried over is the full-bleed
+ * flatness of the first Vue shell, which was Nuxt UI's default and looked it.
+ */
 const route = useRoute()
 const ui = useUiStore()
 const { data: me } = useCurrentUser()
+const { data: health } = useHealth()
+const { data: version } = useVersion()
 const deadLetters = useDeadLetterCount()
 
 /**
  * The console tails the server's whole tracing stream, so
  * `GET /v1/events/stream` needs the `admin` scope. Hide it for known
  * non-admins — but only when the role is actually known. While `me` is still
- * loading the caller may well be an admin, and an entry that appears a moment
- * later is less confusing than one that answers 403.
+ * loading the caller may well be one, and an entry appearing a moment later
+ * beats one that answers 403.
  */
 const isAdmin = computed(() => (me.value ? me.value.role === 'admin' : true))
 
@@ -32,8 +44,15 @@ const currentTitle = computed(() => {
     const hit = section.items.find((item) => item.to === route.path)
     if (hit) return hit.label
   }
-  return route.meta.title ?? ''
+  return String(route.meta.title ?? '')
 })
+
+/**
+ * One dot for "is the server answering". The shipping dashboard has the same
+ * thing, and it earns its place on a scheduler: the dashboard can look
+ * perfectly healthy while the process behind it has stopped.
+ */
+const live = computed(() => health.value !== undefined)
 
 async function signOut() {
   await logout()
@@ -42,39 +61,49 @@ async function signOut() {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-default">
+  <div class="flex min-h-screen gap-3 p-3">
     <!--
-      `<nav>` with an accessible name, because a page with several landmarks of
-      the same type is unnavigable without one. The Playwright suite selects on
+      `<nav>` with an accessible name: a page with several landmarks of one
+      type is unnavigable without them, and the Playwright suite selects on
       exactly this name, so it is a contract as well as an affordance.
     -->
     <nav
       aria-label="Main navigation"
-      class="flex shrink-0 flex-col border-r border-default bg-elevated transition-[width]"
-      :class="ui.sidebarCollapsed ? 'w-16' : 'w-60'"
+      class="flex shrink-0 flex-col rounded-xl border border-default bg-default shadow-sm transition-[width] duration-200"
+      :class="ui.sidebarCollapsed ? 'w-[4.25rem]' : 'w-56'"
     >
-      <div class="flex h-14 items-center gap-2 px-4">
+      <div
+        class="flex h-14 items-center gap-2.5 px-4"
+        :class="ui.sidebarCollapsed && 'justify-center px-0'"
+      >
         <BrandMark
-          :size="20"
-          class="shrink-0 text-primary"
+          :size="22"
+          chip
+          class="shrink-0"
         />
         <span
           v-if="!ui.sidebarCollapsed"
-          class="font-semibold"
+          class="font-semibold tracking-tight"
         >Croniq</span>
       </div>
 
-      <div class="flex-1 overflow-y-auto px-2 pb-4">
+      <div class="flex-1 overflow-y-auto px-2 pb-3">
         <template
           v-for="section in sections"
           :key="section.label"
         >
           <p
             v-if="!ui.sidebarCollapsed"
-            class="px-2 pt-4 pb-1 text-[11px] font-medium tracking-wide text-muted uppercase"
+            class="cq-label px-2 pt-4 pb-1.5"
           >
             {{ section.label }}
           </p>
+          <!-- Collapsed: a rule instead of a heading, so the grouping survives
+               without a label to carry it. -->
+          <div
+            v-else
+            class="mx-3 my-3 border-t border-default"
+          />
           <ul class="flex flex-col gap-0.5">
             <li
               v-for="item in section.items"
@@ -83,8 +112,9 @@ async function signOut() {
               <RouterLink
                 :to="item.to"
                 :title="ui.sidebarCollapsed ? item.label : undefined"
-                class="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-toned hover:bg-accented hover:text-highlighted"
-                active-class="bg-accented text-highlighted"
+                class="group relative flex items-center gap-2.5 rounded-lg py-1.5 text-sm text-toned transition-colors hover:bg-elevated hover:text-highlighted"
+                :class="ui.sidebarCollapsed ? 'justify-center px-0' : 'px-2.5'"
+                active-class="bg-elevated text-highlighted font-medium"
               >
                 <UIcon
                   :name="item.icon"
@@ -99,6 +129,7 @@ async function signOut() {
                   color="error"
                   variant="subtle"
                   size="sm"
+                  :class="ui.sidebarCollapsed && 'absolute top-0.5 right-1.5 px-1'"
                 >
                   {{ deadLetters }}
                 </UBadge>
@@ -107,59 +138,122 @@ async function signOut() {
           </ul>
         </template>
       </div>
+
+      <!-- Who you are, at the bottom, where the shipping dashboard keeps it. -->
+      <div
+        class="border-t border-default p-2"
+        :class="ui.sidebarCollapsed && 'flex justify-center'"
+      >
+        <UDropdownMenu
+          :items="[
+            [
+              { label: 'Profile & account', icon: 'i-lucide-user', to: '/settings?tab=profile' },
+              { label: 'API keys & clients', icon: 'i-lucide-key', to: '/settings?tab=clients' },
+            ],
+            [{ label: 'Sign out', icon: 'i-lucide-log-out', color: 'error', onSelect: signOut }],
+          ]"
+        >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            :block="!ui.sidebarCollapsed"
+            :square="ui.sidebarCollapsed"
+            class="justify-start"
+            :aria-label="me ? `Account menu for ${me.username}` : 'Account menu'"
+          >
+            <UAvatar
+              :alt="me?.username ?? '?'"
+              size="2xs"
+            />
+            <span
+              v-if="!ui.sidebarCollapsed"
+              class="flex-1 truncate text-left"
+            >{{ me?.display_name ?? me?.username ?? '…' }}</span>
+            <UIcon
+              v-if="!ui.sidebarCollapsed"
+              name="i-lucide-chevron-up"
+              class="size-3.5 text-dimmed"
+            />
+          </UButton>
+        </UDropdownMenu>
+      </div>
     </nav>
 
-    <div class="flex min-w-0 flex-1 flex-col">
-      <header class="flex h-14 shrink-0 items-center gap-3 border-b border-default px-4">
+    <div class="flex min-w-0 flex-1 flex-col gap-3">
+      <header
+        class="flex h-14 shrink-0 items-center gap-3 rounded-xl border border-default bg-default px-3 shadow-sm"
+      >
         <UButton
           icon="i-lucide-panel-left"
           color="neutral"
-          variant="ghost"
+          variant="subtle"
+          size="sm"
           aria-label="Toggle sidebar"
           @click="ui.toggleSidebar()"
         />
-        <h1 class="text-sm font-medium">
-          {{ currentTitle }}
-        </h1>
+        <!-- Breadcrumb rather than a bare title: on detail routes the parent
+             is the thing you most often want to get back to. -->
+        <nav
+          aria-label="Breadcrumb"
+          class="flex min-w-0 items-center gap-1.5 text-sm"
+        >
+          <span class="text-muted">Croniq</span>
+          <span
+            class="text-dimmed"
+            aria-hidden="true"
+          >/</span>
+          <span class="truncate font-medium text-highlighted">{{ currentTitle }}</span>
+        </nav>
 
-        <div class="ml-auto flex items-center gap-2">
-          <!--
-            A real listbox rather than three bare buttons in a div with
-            role="menu" — which is what the React tree does and what makes its
-            user menu unenumerable by assistive tech (#595).
-          -->
+        <div class="ml-auto flex items-center gap-1.5">
+          <UBadge
+            v-if="version?.version"
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            class="font-mono"
+          >
+            v{{ version.version }}
+          </UBadge>
+          <!-- aria-live: an operator who cannot see the dot still needs to
+               learn that the server stopped answering. -->
+          <span
+            class="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+            :class="live ? 'text-success' : 'text-error'"
+            role="status"
+            aria-live="polite"
+          >
+            <span
+              class="size-1.5 rounded-full"
+              :class="live ? 'bg-success' : 'bg-error'"
+              aria-hidden="true"
+            />
+            {{ live ? 'live' : 'offline' }}
+          </span>
           <USelect
             v-model="ui.theme"
             :items="[
-              { label: 'System', value: 'system' },
-              { label: 'Light', value: 'light' },
-              { label: 'Dark', value: 'dark' },
+              { label: 'System', value: 'system', icon: 'i-lucide-monitor' },
+              { label: 'Light', value: 'light', icon: 'i-lucide-sun' },
+              { label: 'Dark', value: 'dark', icon: 'i-lucide-moon' },
             ]"
             aria-label="Colour theme"
+            variant="ghost"
             size="sm"
-            class="w-28"
+            :icon="
+              ui.theme === 'light'
+                ? 'i-lucide-sun'
+                : ui.theme === 'dark'
+                  ? 'i-lucide-moon'
+                  : 'i-lucide-monitor'
+            "
+            :ui="{ value: 'sr-only', trailingIcon: 'hidden' }"
+            class="w-9"
           />
-          <UDropdownMenu
-            :items="[
-              [
-                { label: 'Profile & account', icon: 'i-lucide-user', to: '/settings?tab=profile' },
-                { label: 'Sign out', icon: 'i-lucide-log-out', onSelect: signOut },
-              ],
-            ]"
-          >
-            <UButton
-              color="neutral"
-              variant="ghost"
-              trailing-icon="i-lucide-chevron-down"
-              :aria-label="me ? `Account menu for ${me.username}` : 'Account menu'"
-            >
-              {{ me?.display_name ?? me?.username ?? '…' }}
-            </UButton>
-          </UDropdownMenu>
         </div>
       </header>
 
-      <main class="min-w-0 flex-1 overflow-y-auto p-6">
+      <main class="min-w-0 flex-1 overflow-y-auto rounded-xl border border-default bg-default p-5 shadow-sm">
         <RouterView />
       </main>
     </div>
