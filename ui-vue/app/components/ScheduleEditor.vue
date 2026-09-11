@@ -199,11 +199,20 @@ const pending = computed(
               label="Calendar"
               description="Restricts firing to the days this calendar allows."
             >
+              <!--
+                `aria-label` although the field above carries a label: Nuxt UI
+                renders a select as a button and gives it `aria-label="Show
+                popup"`, which wins over the field's label in the name
+                computation. Every select on the page would otherwise announce
+                identically, describing the mechanism instead of the choice
+                (measured with ui/scripts/accessible-names.mjs, issue #595).
+              -->
               <USelectMenu
                 v-model="form.calendar"
                 :items="calendarNames"
                 class="w-full"
                 placeholder="None"
+                aria-label="Calendar this schedule is gated by"
               />
             </UFormField>
             <div class="flex justify-end gap-2">
@@ -312,6 +321,7 @@ const pending = computed(
               :items="calendarNames"
               class="w-full"
               placeholder="None"
+              aria-label="Calendar this schedule is gated by"
             />
           </UFormField>
           <div class="flex justify-end gap-2">

@@ -429,3 +429,74 @@ Dazu zehn Unit-Tests für `renderDsl`.
 - **Kalender-Auswahl im Schedule-Editor** listet Namen, aber es gibt noch
   keinen Kalender-Screen, auf dem man einen anlegen könnte (Durchgang 7).
 
+## Durchgang 7 — Kalender
+
+Schritt 6 der Aufbaureihenfolge, angefangen beim Kalender-Screen, weil der
+Schedule-Editor aus Durchgang 6 bereits Kalendernamen anbietet und es bis jetzt
+keinen Ort gab, an dem man einen anlegt.
+
+### Was der Screen jetzt beantwortet
+
+Die React-Fassung zeigte Name, Zone und den Regeltext. Damit ist die eine
+Frage, für die man einen Kalender öffnet — *tut das Gate, was ich meine?* —
+nirgends im Produkt beantwortet: man schrieb Regeln und erfuhr es später, von
+einem Job, der lief oder nicht lief.
+
+Es gibt keinen Endpunkt, der einen Kalender über einen Zeitraum auswertet, und
+nichts im Client darf die Semantik raten — die DSL gehört der Rust-Seite, eine
+zweite Implementierung wäre irgendwann falsch. Aber der Server *wendet* das
+Gate an und sagt das auch: `/v1/schedules` nennt pro Schedule den Kalender,
+`/v1/jobs/states` liefert `next_fire_at` **durch** das Gate gerechnet und
+`suppressed_by` benennt das Gate, wenn es einen Job gerade festhält.
+
+Das Detail joint beides: welche Jobs dieser Kalender steuert, wann jeder als
+Nächstes feuert und welche er in diesem Moment festhält. Empirisch statt
+behauptet — und ohne eine Zeile Server.
+
+In der Liste ist die neue Spalte *Used by*. Ein Kalender, den niemand
+referenziert, ist nicht kaputt, er tut nur nichts — und dieser Zustand war
+vorher von einem funktionierenden nicht zu unterscheiden. Jetzt steht dort
+`unused`.
+
+### Der Builder kann jetzt auch bearbeiten
+
+Die React-Fassung fiel beim Bearbeiten auf das rohe Textfeld zurück, mit der
+Begründung, gespeicherte DSL zurück in die typisierte Form zu parsen sei
+„best-effort". `parseCalendarRules` meldet aber, ob es geklappt hat. Also: erst
+versuchen, bei sauberem Parse den Builder zeigen, sonst den gespeicherten Text.
+Bearbeiten ist der häufige Fall; ihn per Default in die Notluke zu schicken hat
+den Builder zu einem Anlege-Feature gemacht.
+
+Verifiziert als Rundreise: `include weekly weekday / exclude annual 12-25`
+gespeichert, wieder geöffnet, identisch zurückformatiert.
+
+### Drei Fehler beim Prüfen
+
+**`structuredClone` sprengte den Builder.** Die Startregeln kommen über
+`serde_wasm_bindgen` aus dem wasm zurück, und diese Objekte sind nicht
+strukturiert klonbar — der Klon warf, und der Render ging mit. Jetzt eine
+Feld-für-Feld-Kopie der drei Felder, die der Typ hat.
+
+**`USelectMenu` heißt für einen Screenreader „Show popup".** Nuxt UI rendert
+ein Select als Button und setzt dieses `aria-label` selbst; es gewinnt gegen
+das Label der `UFormField` darüber. Jedes Select auf der Seite hätte identisch
+angesagt — der Mechanismus statt der Wahl. Betroffen war der Kalender-Picker im
+Schedule-Editor.
+
+**Und ein eigener Messfehler, der wichtiger ist als die beiden.** Die erste
+Fassung des Prüfskripts lief über das DOM und fiel auf `textContent` zurück,
+wenn sie keinen Namen berechnen konnte. Ergebnis: „alles sauber" — während der
+echte Baum „Show popup" ansagte. Ein nachsichtiger Prüfer ist schlechter als
+keiner, er bescheinigt den Fehler. `ui/scripts/accessible-names.mjs` liest
+jetzt Chromiums eigenen Baum über CDP (`Accessibility.getFullAXTree`).
+
+Stand danach: **0 unbenannte Bedienelemente** auf allen gebauten Vue-Screens,
+Dialoge geöffnet. Zum Vergleich zählte #595 im React-Dashboard 51 von 54.
+
+### Noch offen
+
+- Der Schedule-Editor wird vom Namensprüfer nur erreicht, wenn ein
+  API-verwalteter Job existiert; sonst sagt er das, statt „sauber" zu melden.
+- **Der DSL-Tab am Job emittiert Text, der nicht parst** — siehe unten, eigener
+  Vorgang.
+

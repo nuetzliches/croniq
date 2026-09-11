@@ -599,3 +599,74 @@ export function useDeleteSchedule() {
     onSuccess: () => invalidateJob(queryClient),
   })
 }
+
+/* ─── Calendars ───────────────────────────────────────────────────────────
+ *
+ * `useCalendars` lives above, with the job queries — the schedule editor
+ * needed it first. These are the mutations.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A calendar change can move every job gated by it, so the invalidation
+ * reaches further than `['calendars']`: next fire times, the forecast and the
+ * job list all read through the gate.
+ */
+function invalidateCalendar(queryClient: ReturnType<typeof useQueryClient>) {
+  for (const key of [['calendars'], ['job-states'], ['schedules'], ['forecast']]) {
+    void queryClient.invalidateQueries({ queryKey: key })
+  }
+}
+
+export interface CalendarPatch {
+  name?: string
+  timezone?: string
+  rules?: string
+}
+
+export function useCreateCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: CalendarPatch & { name: string }) =>
+      apiPost<CalendarDefinition>('/v1/calendars', { rules: '', ...data }),
+    onSuccess: () => invalidateCalendar(queryClient),
+  })
+}
+
+export function useUpdateCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ calendar_id, ...patch }: CalendarPatch & { calendar_id: string }) =>
+      apiPut<CalendarDefinition>(`/v1/calendars/${encodeURIComponent(calendar_id)}`, patch),
+    onSuccess: () => invalidateCalendar(queryClient),
+  })
+}
+
+export function useDeleteCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/calendars/${encodeURIComponent(id)}`),
+    onSuccess: () => invalidateCalendar(queryClient),
+  })
+}
+
+/** Copy a Croniqfile calendar into the API store so it can be edited. */
+export function useAdoptCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (dslId: string) =>
+      apiPost<{ calendar: CalendarDefinition; dsl_key: string }>(
+        `/v1/calendars/${encodeURIComponent(dslId)}/adopt`,
+        {},
+      ),
+    onSuccess: () => invalidateCalendar(queryClient),
+  })
+}
+
+export function useUnadoptCalendar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (apiId: string) =>
+      apiPost<void>(`/v1/calendars/${encodeURIComponent(apiId)}/unadopt`, {}),
+    onSuccess: () => invalidateCalendar(queryClient),
+  })
+}

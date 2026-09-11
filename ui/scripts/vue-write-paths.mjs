@@ -7,10 +7,17 @@
 // that create, edit and delete things have no automated check at all, and a
 // broken mutation is invisible in a screenshot.
 //
-// So this walks the paths a screenshot cannot: create a job, attach a
-// schedule, disable and re-enable it, trigger it, pause and resume, edit,
-// render its DSL, and delete it again — reporting any 4xx the page made along
-// the way. It cleans up after itself; the job it creates is `smoke:vue-jobs`.
+// So this walks the paths a screenshot cannot, reporting any 4xx or page error
+// made along the way:
+//
+//   Jobs      create, attach a schedule, disable and re-enable it, trigger,
+//             pause and resume, edit, render the DSL, adopt, delete.
+//   Calendars build rules, save, confirm an unreferenced calendar says so,
+//             bind a schedule to it, confirm the detail names the gated job,
+//             reopen it in the builder, delete.
+//
+// It cleans up after itself: `smoke:vue-jobs`, `smoke:calendar-user` and
+// `smoke-business-days` are all removed before it exits.
 //
 // Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/vue-write-paths.mjs
@@ -152,6 +159,104 @@ await step("delete the smoke job", async () => {
     page.getByRole("button", { name: "Delete", exact: true }).click(),
   ]);
   await page.waitForURL(/\/jobs$/, { timeout: 5000 });
+});
+
+/* ─── Calendars ─────────────────────────────────────────────────────────── */
+
+const CAL = "smoke-business-days";
+const CAL_JOB = "smoke:calendar-user";
+
+await step("create a calendar through the rule builder", async () => {
+  await page.goto(`${base}/calendars`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: "New calendar" }).first().click();
+  await page.getByPlaceholder("business-days").fill(CAL);
+  await page.getByPlaceholder("Europe/Berlin").first().fill("Europe/Berlin");
+  await page.waitForTimeout(900);
+  const dsl = await page.locator("output").innerText();
+  if (!dsl.trim() || dsl.trim() === "—") throw new Error("the builder emitted no DSL");
+  console.log(`     builder emitted: ${dsl.replace(/\s+/g, " | ").trim()}`);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/calendars") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Create calendar" }).click(),
+  ]);
+  await page.waitForURL(/\/calendars\/.+/);
+});
+
+await step("a calendar nothing references reports itself unused", async () => {
+  await page.goto(`${base}/calendars`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1000);
+  const text = await page.locator("tbody tr", { hasText: CAL }).innerText();
+  if (!text.includes("unused")) throw new Error(`expected "unused", got: ${text.replace(/\s+/g, " ")}`);
+});
+
+await step("bind a job's schedule to it", async () => {
+  await page.goto(`${base}/jobs`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "New job" }).first().click();
+  await page.getByPlaceholder("demo:report").fill(CAL_JOB);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/jobs") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Create job" }).click(),
+  ]);
+  await page.waitForTimeout(1100);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByPlaceholder("0 3 * * *").fill("*/5 * * * *");
+  // Addressed by its accessible name, which is also the assertion that it has
+  // one — Nuxt UI names a select trigger "Show popup" unless told otherwise.
+  await page.getByRole("button", { name: "Calendar this schedule is gated by" }).click();
+  await page.waitForTimeout(500);
+  await page.getByRole("option", { name: CAL }).click();
+  await page.waitForTimeout(300);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/schedules") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Add schedule" }).click(),
+  ]);
+  await page.waitForTimeout(900);
+});
+
+await step("the calendar detail names the job it gates", async () => {
+  await page.goto(`${base}/calendars`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1400);
+  const row = page.locator("tbody tr", { hasText: CAL });
+  if ((await row.innerText()).includes("unused")) throw new Error("still reported as unused");
+  await row.click();
+  await page.waitForTimeout(1400);
+  const detail = await page.locator('aside[aria-label="Calendar detail"]').innerText();
+  if (!detail.includes(CAL_JOB)) throw new Error("the gated job is missing from the detail");
+});
+
+await step("editing a calendar opens in the builder, not the raw box", async () => {
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.waitForTimeout(1400);
+  const toggle = await page
+    .getByRole("button", { name: /Edit as text|Back to the builder/ })
+    .innerText();
+  if (!toggle.includes("Edit as text")) throw new Error(`opened in raw mode ("${toggle}")`);
+  const dsl = await page.locator("output").innerText();
+  if (!dsl.trim() || dsl.trim() === "—") throw new Error("the builder did not seed from stored DSL");
+  console.log(`     round-tripped: ${dsl.replace(/\s+/g, " | ").trim()}`);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+});
+
+await step("delete the smoke calendar and its job", async () => {
+  await page.goto(`${base}/jobs/${encodeURIComponent(CAL_JOB)}`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: `Delete ${CAL_JOB}` }).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/jobs/") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: "Delete", exact: true }).click(),
+  ]);
+  await page.waitForTimeout(900);
+  await page.goto(`${base}/calendars`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1000);
+  await page.locator("tbody tr", { hasText: CAL }).click();
+  await page.waitForTimeout(1000);
+  await page.getByRole("button", { name: `Delete ${CAL}` }).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/calendars/") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: "Delete", exact: true }).click(),
+  ]);
 });
 
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
