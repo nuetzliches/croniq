@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '~/api/client'
 import {
@@ -15,7 +15,7 @@ import {
 } from '~/api/queries'
 import type { JobDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
-import { renderDsl } from '~/lib/render-dsl'
+import { renderJobDsl } from '~/lib/render-dsl'
 
 /**
  * One job, beside the list.
@@ -69,9 +69,28 @@ const dslManaged = computed(() => triggers.value.some((t) => t.managed_by === 'd
 const editing = ref(false)
 const confirmingDelete = ref(false)
 
-const dsl = computed(() =>
-  props.job ? renderDsl(props.job, triggers.value, calendars.value) : '',
-)
+/**
+ * The rendered block, plus whatever the rendering could not carry across.
+ *
+ * Asynchronous because the formatter is the real one, from `croniq-config`
+ * compiled to wasm — which is what makes the text parse. `watchEffect` rather
+ * than a computed: a computed cannot await, and the version that could not
+ * await is the version that hand-assembled invalid DSL.
+ */
+const dsl = ref('')
+const dslNotes = ref<string[]>([])
+
+watchEffect(async () => {
+  if (!props.job) {
+    dsl.value = ''
+    dslNotes.value = []
+    return
+  }
+  const rendered = await renderJobDsl(props.job, triggers.value, calendars.value)
+  dsl.value = rendered.text
+  dslNotes.value = rendered.notes
+})
+
 const copied = ref(false)
 
 async function copyDsl() {
@@ -436,11 +455,12 @@ const deadLetterFacts = computed(() => {
             <div class="mb-2 flex items-center justify-between gap-2">
               <p
                 class="text-xs text-muted"
-                title="There is no endpoint that returns a job's source text — an API-registered job never had any, so this is reconstructed rather than fetched."
+                title="There is no endpoint that returns a job's source text — an API-registered job never had any, so this is reconstructed rather than fetched. It is formatted by croniq's own compiler, so it parses."
               >
                 Reconstructed from the live job and its first schedule.
               </p>
               <UButton
+                v-if="dsl"
                 :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
                 color="neutral"
                 variant="ghost"
@@ -449,7 +469,31 @@ const deadLetterFacts = computed(() => {
                 @click="copyDsl"
               />
             </div>
-            <pre class="overflow-x-auto rounded-md border border-default bg-elevated p-3 font-mono text-xs">{{ dsl }}</pre>
+
+            <pre
+              v-if="dsl"
+              class="overflow-x-auto rounded-md border border-default bg-elevated p-3 font-mono text-xs"
+            >{{ dsl }}</pre>
+
+            <!-- What the API could not tell us, in full. A tab that silently
+                 rendered less than the job does would be worse than one that
+                 renders nothing. -->
+            <UAlert
+              v-for="(note, index) in dslNotes"
+              :key="index"
+              class="mt-2"
+              :color="dsl ? 'neutral' : 'warning'"
+              variant="subtle"
+              :icon="dsl ? 'i-lucide-info' : 'i-lucide-triangle-alert'"
+              :description="note"
+            />
+
+            <AppEmpty
+              v-if="!dsl && dslNotes.length === 0"
+              size="tight"
+              icon="i-lucide-file-x"
+              title="Nothing to render yet"
+            />
           </template>
         </div>
       </template>
