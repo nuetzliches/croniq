@@ -633,6 +633,28 @@ pub async fn handle_delete(
             "deleted the job definition but could not clear its job_states row"
         );
     }
+
+    // And out of the *running* scheduler (issue #634).
+    //
+    // Clearing the store is not enough: the scheduler ticks over its own
+    // in-memory trigger map, and until this command reaches it the deleted job
+    // keeps firing. Every fire queues an execution the watchdog then cancels
+    // as stranded — a WARN pair per tick, forever, which is how a genuinely
+    // stranded execution stops being noticed.
+    //
+    // The same map is the snapshot `state.triggers` exposes, so the drift also
+    // reached the dashboard: `GET /v1/dashboard/forecast` counted the deleted
+    // job's fires, and `GET /v1/jobs/states` filters against that snapshot
+    // (#506) and so kept reporting it as live.
+    //
+    // `handle_unadopt` below and every trigger mutation in `schedules.rs`
+    // already send this; deletion was the one path that did not.
+    if let Some(ref tx) = state.scheduler_tx {
+        let _ = tx.send(SchedulerCommand::RemoveJob {
+            job_key: job_key.clone(),
+        });
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1933,6 +1955,42 @@ mod tests {
         // The DSL snapshot dropped the adopted entry.
         let dsl = state.dsl_jobs.as_ref().unwrap().read().await;
         assert!(dsl.iter().all(|j| j.key != "billing:invoice"));
+    }
+
+    /// Deleting a job must reach the *running* scheduler, not only the store
+    /// (issue #634).
+    ///
+    /// Without the push, the scheduler keeps its in-memory trigger and goes on
+    /// firing a job that no longer exists — every fire queuing an execution
+    /// the watchdog then cancels as stranded. The same map is what
+    /// `/v1/dashboard/forecast` counts and what `/v1/jobs/states` filters
+    /// against, so the drift surfaced in the dashboard as a deleted job that
+    /// was permanently about to run.
+    ///
+    /// Measured before the fix: a job deleted at 14:5x was still being queued
+    /// at 15:19:30.
+    #[tokio::test]
+    async fn deleting_a_job_removes_it_from_the_running_scheduler() {
+        let store = make_store();
+        let (state, mut rx) = make_state_keep_rx(Vec::new(), Arc::clone(&store), false);
+
+        let (status, _) = body_json(
+            server_router(Arc::clone(&state)),
+            "DELETE",
+            "/v1/jobs/etl:nightly",
+        )
+        .await;
+        assert_eq!(status, 204, "deleting an absent job stays idempotent");
+
+        let cmd = rx
+            .try_recv()
+            .expect("deleting a job must push a scheduler command");
+        match cmd {
+            crate::scheduler::SchedulerCommand::RemoveJob { job_key } => {
+                assert_eq!(job_key, "etl:nightly");
+            }
+            other => panic!("expected RemoveJob, got {other:?}"),
+        }
     }
 
     #[tokio::test]
