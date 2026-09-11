@@ -55,8 +55,20 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/DeadLettersView.vue'),
         meta: { title: 'Dead Letters' },
       },
-      { path: 'jobs', name: 'jobs', component: placeholder, meta: { title: 'Jobs', step: 5 } },
-      { path: 'jobs/:jobKey', name: 'job', component: placeholder, meta: { title: 'Job', step: 5 } },
+      {
+        path: 'jobs',
+        name: 'jobs',
+        component: () => import('~/pages/JobsView.vue'),
+        meta: { title: 'Jobs' },
+      },
+      {
+        // Same component as the list, like /executions/:id — the detail opens
+        // beside the list rather than replacing it.
+        path: 'jobs/:jobKey',
+        name: 'job',
+        component: () => import('~/pages/JobsView.vue'),
+        meta: { title: 'Job' },
+      },
       { path: 'calendars', name: 'calendars', component: placeholder, meta: { title: 'Calendars', step: 6 } },
       { path: 'alerts', name: 'alerts', component: placeholder, meta: { title: 'Alerts', step: 6 } },
       { path: 'console', name: 'console', component: placeholder, meta: { title: 'Console', step: 6 } },

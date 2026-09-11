@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, type MaybeRefOrGetter, toValue } from 'vue'
-import { api, apiGet, apiPut } from './client'
+import { api, apiDelete, apiGet, apiPost, apiPut } from './client'
 import type {
   AuthConfigResponse,
+  CalendarDefinition,
   DeadLetter,
   Execution,
   ExecutionLogEntry,
@@ -11,10 +12,13 @@ import type {
   HealthResponse,
   JobDefinition,
   JobScheduleState,
+  JobStatsResponse,
   MaintenanceResponse,
   ReloadSuccess,
   RunnerSummary,
   ThroughputResponse,
+  TriggerDefinition,
+  TriggerResponse,
   User,
   VersionResponse,
 } from './types'
@@ -378,5 +382,220 @@ export function useDeleteRunner() {
   return useMutation({
     mutationFn: (id: string) => api(`/v1/runners/${id}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runners'] }),
+  })
+}
+
+/* ─── Jobs ────────────────────────────────────────────────────────────────
+ *
+ * The job screen's data comes from four endpoints that the React tree never
+ * joined: the definition (`/v1/jobs`), the scheduling liveness
+ * (`/v1/jobs/states`), the triggers (`/v1/schedules`) and the per-job
+ * statistics. Joining them is what lets the list answer "what fires next and
+ * is anything late" without opening a job.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** One job. The list is the source for the detail; this is for a deep link. */
+export function useJob(jobKey: MaybeRefOrGetter<string | undefined>) {
+  const auth = useAuthStore()
+  const key = computed(() => toValue(jobKey))
+  return useQuery({
+    queryKey: ['jobs', key],
+    queryFn: () => apiGet<JobDefinition>(`/v1/jobs/${encodeURIComponent(key.value!)}`),
+    enabled: computed(() => auth.isAuthenticated && Boolean(key.value)),
+  })
+}
+
+/**
+ * Triggers, optionally for one job.
+ *
+ * A getter, not a value — the same trap `useExecutions` documents. The job
+ * detail changes its key by navigation, and a frozen query key would leave the
+ * previous job's schedule on screen.
+ */
+export function useSchedules(jobKey?: MaybeRefOrGetter<string | undefined>) {
+  const auth = useAuthStore()
+  const key = computed(() => (jobKey ? toValue(jobKey) : undefined))
+  return useQuery({
+    queryKey: ['schedules', key],
+    queryFn: () =>
+      apiGet<TriggerDefinition[]>('/v1/schedules', key.value ? { job_key: key.value } : undefined),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+/** Success rate and latency percentiles over a window, for one job. */
+export function useJobStats(jobKey: MaybeRefOrGetter<string | undefined>, days = 7) {
+  const auth = useAuthStore()
+  const key = computed(() => toValue(jobKey))
+  return useQuery({
+    queryKey: ['job-stats', key, days],
+    queryFn: () =>
+      apiGet<JobStatsResponse>(`/v1/jobs/${encodeURIComponent(key.value!)}/stats`, { days }),
+    enabled: computed(() => auth.isAuthenticated && Boolean(key.value)),
+  })
+}
+
+/** Calendars, for the schedule editor's binding and for the calendars screen. */
+export function useCalendars() {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['calendars'],
+    queryFn: () => apiGet<CalendarDefinition[]>('/v1/calendars'),
+    enabled: computed(() => auth.isAuthenticated),
+  })
+}
+
+/**
+ * Everything a job mutation touches.
+ *
+ * Collected in one place because the list joins four queries: changing a job's
+ * schedule moves its next fire time, which is a column in the list and a number
+ * on the dashboard. Invalidating only `['jobs']` would leave both stale, and
+ * that staleness looks exactly like the mutation not having worked.
+ */
+function invalidateJob(queryClient: ReturnType<typeof useQueryClient>) {
+  for (const key of [['jobs'], ['job-states'], ['schedules'], ['job-stats'], ['forecast']]) {
+    void queryClient.invalidateQueries({ queryKey: key })
+  }
+}
+
+export interface JobPatch {
+  description?: string | null
+  timeout?: string | null
+  max_retries?: number | null
+  dead_letter_enabled?: boolean | null
+  dead_letter_retention?: string | null
+  dead_letter_operator_hint?: string | null
+  dead_letter_replay_max_age?: string | null
+  tags?: string[]
+}
+
+export function useCreateJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: JobPatch & { job_key: string }) =>
+      apiPost<JobDefinition>('/v1/jobs', data),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export function useUpdateJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ job_key, ...patch }: JobPatch & { job_key: string }) =>
+      apiPut<JobDefinition>(`/v1/jobs/${encodeURIComponent(job_key)}`, patch),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export function useDeleteJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiDelete(`/v1/jobs/${encodeURIComponent(jobKey)}`),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+/**
+ * Pause and resume.
+ *
+ * Two endpoints behind one hook, because from the operator's side it is one
+ * switch and calling it that way keeps the caller from having to hold two
+ * mutation objects to render one control.
+ */
+export function useSetJobActive() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ jobKey, active }: { jobKey: string; active: boolean }) =>
+      apiPost<JobDefinition>(
+        `/v1/jobs/${encodeURIComponent(jobKey)}/${active ? 'activate' : 'deactivate'}`,
+        {},
+      ),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+/**
+ * Fire a job now.
+ *
+ * The response carries `deduplicated`: the server coalesced this trigger into
+ * an execution that was already queued under the same idempotency key (#279).
+ * That is not a failure and not a success either — the caller reports it,
+ * because "nothing happened" and "it joined an existing run" look identical in
+ * the run list.
+ */
+export function useTriggerJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiPost<TriggerResponse>('/v1/trigger', { job_key: jobKey }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['executions'] })
+      void queryClient.invalidateQueries({ queryKey: ['job-states'] })
+    },
+  })
+}
+
+/**
+ * Adoption — the DSL/API boundary.
+ *
+ * A job declared in the Croniqfile is read-only through the API: the next
+ * reload would overwrite anything written here. Adopting copies the job and
+ * its trigger into the API store, where they can be edited, and the Croniqfile
+ * definition is ignored until it is unadopted again. It requires
+ * `policy { dsl_adopt_on_mutate true }` on the server, so the refusal is a
+ * configuration answer and worth showing verbatim.
+ */
+export function useAdoptJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) =>
+      apiPost<{ job: JobDefinition; dsl_key: string }>(
+        `/v1/jobs/${encodeURIComponent(jobKey)}/adopt`,
+        {},
+      ),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export function useUnadoptJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) =>
+      apiPost<void>(`/v1/jobs/${encodeURIComponent(jobKey)}/unadopt`, {}),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export interface SchedulePatch {
+  cron_expression?: string
+  timezone?: string | null
+  calendar?: string | null
+  window?: string | null
+  enabled?: boolean
+}
+
+export function useCreateSchedule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SchedulePatch & { job_key: string; cron_expression: string }) =>
+      apiPost<TriggerDefinition>('/v1/schedules', data),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export function useUpdateSchedule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ trigger_id, ...patch }: SchedulePatch & { trigger_id: string }) =>
+      apiPut<TriggerDefinition>(`/v1/schedules/${encodeURIComponent(trigger_id)}`, patch),
+    onSuccess: () => invalidateJob(queryClient),
+  })
+}
+
+export function useDeleteSchedule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/schedules/${encodeURIComponent(id)}`),
+    onSuccess: () => invalidateJob(queryClient),
   })
 }
