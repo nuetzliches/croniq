@@ -191,13 +191,39 @@ Executions-Block im Runner-Detail weg, Audit und Alert-Zustellungen mit je
 einem Ort statt zwei, Dashboard ohne allgemeine Lauf-Liste. Vier Renderings der
 Executions-Tabelle werden eins.
 
-## Noch nicht entschieden
+## Entschieden (2026-09-11): Alerts
 
-Der Alerts-Vorschlag oben (§4: Konfiguration und Zustellhistorie trennen) ist
-**Vorschlag geblieben**, nicht entschieden — die Navigationsfrage hat ihn nicht
-mitbeantwortet. Zu klären, wenn der Alerts-Screen dran ist: bleibt die
-Zustellhistorie auf demselben Screen wie die Regeln, oder wird sie eine
-filterbare Liste neben den Runs?
+Die letzte offene Frage — bleibt die Zustellhistorie beim Regelwerk oder wird
+sie eine filterbare Liste neben den Runs? — ist beim Bau des Screens
+beantwortet worden, und zwar mit **keiner der beiden Fassungen, wie gestellt**.
+
+Der Einwand aus der Bestandsaufnahme war, dass die React-Seite zwei Dinge
+*vermischt*: Konfiguration und Protokoll, flach auf einer Seite. Die Antwort
+auf Vermischung ist aber nicht Trennung auf verschiedene Screens, sondern
+Struktur. Die Fragen laufen quer über die Grenze: man schnoozt eine Regel
+*wegen* dem, was das Protokoll zeigt, und man liest das Protokoll, um
+herauszufinden, welche Regel gepiept hat. Zwei Screens setzen einen
+Navigationsschritt zwischen Frage und Antwort.
+
+Also **ein Screen, drei Ansichten**, jede eine saubere Liste einer Sache, alle
+drei adressierbar:
+
+| Route | Inhalt |
+|---|---|
+| `/alerts` | die Regeln, mit ihren Overrides |
+| `/alerts/rules/:name` | eine Regel: Konfiguration, Override, ihre Zustellungen |
+| `/alerts/channels` | wohin zugestellt wird, und welche Regel welchen Kanal nutzt |
+| `/alerts/deliveries` | was tatsächlich rausging, filterbar (Regel, Job, Status) |
+
+**Zustellungen bleiben aus `/executions` heraus**, aus demselben Grund, aus dem
+Dead Letters einen eigenen Screen behalten haben: ein Job-Lauf und eine
+Alert-Zustellung sind verschiedene Dinge, die zufällig dieselbe Form haben. Sie
+zusammenzulegen hieße, dass „200 Läufe" zweierlei bedeutet.
+
+Zwei Dinge, die der Kanal-Blick sichtbar macht und die vorher stumm waren: ein
+Kanal, den keine Regel nutzt (`unused`), und eine Regel, die einen Kanal nennt,
+den es nicht gibt — der Compiler behält die Referenz wörtlich und warnt erst
+zur Feuerzeit, die Regel sieht also konfiguriert aus und stellt nirgends zu.
 
 ## Reihenfolge für den Aufbau
 
@@ -215,7 +241,8 @@ nicht nach Größe:
 4. **Dashboard, Runner, Dead Letters** — bauen auf denselben Listen-Bausteinen.
 5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen
    Bausteinen. ✓ (Durchgang 6 in `ui-visual-design.md`)
-6. **Kalender** ✓ (Durchgang 7), dann **Alerts, Settings, Konsole.**
+6. **Kalender** ✓ (Durchgang 7), **Alerts** ✓ (Durchgang 9), dann
+   **Settings, Konsole.**
 
 Abnahmekriterium pro Schritt bleibt die Playwright-Suite
 ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), Scope-Guard 2). Sie

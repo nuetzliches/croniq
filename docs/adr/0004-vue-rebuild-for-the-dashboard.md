@@ -81,6 +81,17 @@ component at a time.
      not, since there is deliberately nothing to keep identical.
   3. **Fixes go to the Vue tree first** once a file is rebuilt, and are
      cherry-picked back if the React tree still needs them. Never the reverse.
+     *Amended 2026-09-11:* the cherry-pick half is withdrawn. The React tree
+     receives no further work of any kind and is removed in full at the
+     cutover, so a fix there is thrown away by definition. This came up as a
+     real decision rather than a hypothetical: the job DSL view was found to
+     emit text that croniq's own lexer rejects
+     ([#624](https://github.com/nuetzliches/croniq/pull/624) fixed it in Vue,
+     [#625](https://github.com/nuetzliches/croniq/issues/625) proposed the same
+     fix for React and was declined). Expect the argument to recur on each
+     defect found while porting a screen, and expect it to be tempting each
+     time — the answer is that the shipping dashboard is a dead tree and
+     patching it spends effort that the cutover erases.
 
 - **[#595](https://github.com/nuetzliches/croniq/issues/595) folds in.** 51 of
   54 form controls have no accessible name, and `UserMenu` is a `role="menu"`

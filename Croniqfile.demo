@@ -68,3 +68,32 @@ job demo:slow-job {
   retry fixed { max_attempts 1; delay 0s }
   tags "env=demo" "kind=ops"
 }
+
+# --- Alerting ---
+#
+# The demo deliberately fails some runs (RUNNER_FAIL_RATE in the shell runner),
+# and without a rule that goes nowhere: the alerting surface stays empty and
+# the dashboard's Alerts screen has nothing to show. One channel and one rule
+# make the feature visible in the demo the same way the jobs above make the
+# scheduler visible.
+#
+# `alerts { }` is read at boot only — a config reload reports it as a pending
+# restart rather than applying it (see docs/operations.md).
+alerts {
+  # Shell delivery runs `sh -c <command>`; this one just writes a line to the
+  # server's stdout, so the demo shows deliveries without needing anywhere to
+  # send them.
+  channel "demo-log" {
+    shell "echo croniq demo alert"
+  }
+
+  rule "demo-failures" {
+    when job_failed
+    job_key "demo:*"
+    # One failed attempt is enough to say something in a demo; a real rule
+    # would usually wait for the retries to be exhausted.
+    min_attempts 1
+    throttle 5m
+    channels "demo-log"
+  }
+}

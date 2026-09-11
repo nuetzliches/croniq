@@ -282,5 +282,68 @@ await step("delete the smoke calendar and its job", async () => {
   ]);
 });
 
+/* ─── Alerts ────────────────────────────────────────────────────────────── */
+//
+// Nothing here is created or deleted: alert rules and channels are declared in
+// the Croniqfile and read-only through the API. What *is* writable is an
+// override, and it is the one thing on this screen that changes whether an
+// operator gets paged — so it is the one thing worth driving.
+
+await step("snooze a rule, then clear it again", async () => {
+  await page.goto(`${base}/alerts`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1400);
+  const rule = page.locator("tbody tr").first();
+  if ((await rule.count()) === 0) throw new Error("no alert rule configured to exercise");
+  const name = (await rule.locator("td").first().innerText()).trim();
+  await rule.click();
+  await page.waitForTimeout(1200);
+
+  await page.getByRole("button", { name: "Snooze" }).click();
+  await page.getByLabel("Duration").fill("15m");
+  // The note is mandatory server-side and the form refuses without one, which
+  // is the point: a rule that is quiet for an unexplained reason is worse than
+  // one that is noisy.
+  await page.getByRole("button", { name: "Apply" }).click();
+  await page.waitForTimeout(600);
+  const refusal = await page.getByRole("alert").last().innerText().catch(() => "");
+  if (!/note is required/i.test(refusal)) throw new Error(`no note was demanded: ${refusal}`);
+
+  await page.getByLabel("Reason for the override").fill("smoke script");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/snooze") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Apply" }).click(),
+  ]);
+  await page.waitForTimeout(1200);
+
+  const detail = await page.locator('aside[aria-label="Alert rule detail"]').innerText();
+  if (!/Snoozed until/.test(detail)) throw new Error(`the snooze is not reported: ${detail.slice(0, 120)}`);
+  if (!detail.includes("smoke script")) throw new Error("the note is not shown");
+
+  const row = await page.locator("tbody tr", { hasText: name }).innerText();
+  if (!/snoozed/i.test(row)) throw new Error(`the list does not show the override: ${row}`);
+
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/override") && r.request().method() === "DELETE"),
+    page.getByRole("button", { name: "Clear override" }).click(),
+  ]);
+  await page.waitForTimeout(1200);
+  const after = await page.locator("tbody tr", { hasText: name }).innerText();
+  if (/snoozed/i.test(after)) throw new Error("the override survived clearing");
+});
+
+await step("a delivery links to the run that caused it", async () => {
+  await page.goto(`${base}/alerts/deliveries`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1600);
+  const rows = await page.locator("tbody tr").count();
+  if (rows === 0) {
+    console.log("     (no deliveries in the log yet — link check skipped)");
+    return;
+  }
+  const link = page.locator('tbody tr a[href^="/executions/"]').first();
+  if ((await link.count()) === 0) throw new Error("no delivery links to its run");
+  await link.click();
+  await page.waitForURL(/\/executions\/.+/, { timeout: 5000 });
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();
