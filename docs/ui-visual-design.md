@@ -139,7 +139,7 @@ sieben Screens steckt.
 |---|---|---|
 | 1 | Bestandsaufnahme und Richtung | dieses Dokument |
 | 2 ✓ | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
-| 3 | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
+| 3 ✓ | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
 | 4 | Dashboard, Runners, Dead Letters | die Bausteine tragen |
 | 5 | Jobs, danach der Rest | — |
 
@@ -204,9 +204,52 @@ derselben Idee — der tatsächliche Serverzustand — steht bereits daneben.
 
 ### Offen geblieben
 
-- **Dichte-Umschalter** (kompakt/komfortabel). Die Tokens stehen, der Schalter
-  nicht. Sinnvoll erst, wenn es Listen gibt, an denen man ihn merkt.
-- **Tastatur über Ctrl K hinaus** (`j`/`k`, Enter). Ebenfalls erst mit Listen.
+- ~~Dichte-Umschalter~~ und ~~Tastatur~~ — beides in Durchgang 3 gelandet.
 - **Command-Palette.** Der React-Baum hat sie, dieser noch nicht.
 - **Die Vorschau-Schiene** („was feuert als Nächstes") aus den neuen Impulsen —
   gehört zum Dashboard, also Durchgang 4.
+
+---
+
+## Durchgang 3 — Runs
+
+Der Screen, der drei ersetzt, und im React-Baum der schwächste war. Gemessen
+statt behauptet:
+
+| | React | Vue |
+|---|---|---|
+| Zeilenhöhe | ~88 px (dreizeilige Karten) | **38 px**, alle 200 identisch |
+| Sichtbare Läufe | 7 | ~20 **mit geöffnetem Detail** |
+| Spalten | keine | State, Job, Run, Runner, Fired, Duration |
+| Detail-Panel leer | belegt ~60 % | wird gar nicht erst gerendert |
+| Statusfilter | natives `<select>` | `USelectMenu` |
+
+**Das Detail ersetzt die Liste nicht, es steht daneben.** `/executions/:id`
+rendert dieselbe Komponente — der Link bleibt teilbar, die Liste behält Scroll
+und Filter. Verifiziert: nach dem Zeilenklick steht die URL auf
+`/executions/<id>?state=completed`, das Panel ist da, die Tabelle auch.
+
+**Die Reaktivitätsfalle.** `useExecutions` nimmt einen *Getter*, keinen Wert.
+Das ist das im Migrationsplan meistgenannte Risiko: mit einem einfachen Objekt
+frieren Query-Key und Anfrage auf dem ersten Render ein, die Seite rendert neu
+und zeigt stillschweigend die alten Zeilen. `toValue` in `queryKey` *und*
+`queryFn` ist, was die Abfrage erneut laufen lässt.
+
+**Zwei neue Impulse eingelöst:** Tastaturnavigation (`j`/`k`, Enter, Escape —
+und sie stiehlt keine Tasten aus Eingabefeldern) und ein Dichte-Umschalter, der
+unter `croniq_density` pro Browser bleibt. Beides brauchte eine Liste, um
+sinnvoll zu sein.
+
+**Ein Befund beim Ansehen:** die Run-Spalte brach mit dem Attempt-Marker `#2`
+auf zwei Zeilen um — genau die Fehlerklasse, gegen die `cq-num` gebaut wurde,
+nur hatte ich das Utility auf dieser Zelle vergessen. Jetzt sind alle 200
+Zeilen exakt 38 px.
+
+### Noch offen an diesem Screen
+
+- **Zeitfenster-Filter.** Der Server kann `since`/`until`, die Oberfläche nicht.
+- **Nachladen.** Es wird hart auf 200 Zeilen begrenzt; ältere Läufe sind nicht
+  erreichbar, und ein Deep-Link auf einen älteren Lauf findet ihn nicht — das
+  Panel sagt das ehrlich, statt leer zu bleiben.
+- **Verlinkung** von Job und Runner in die jeweiligen Screens, sobald es sie
+  gibt.

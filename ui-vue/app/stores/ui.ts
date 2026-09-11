@@ -11,6 +11,8 @@ import { defineStore } from 'pinia'
  * they did not ask for.
  */
 const SIDEBAR_KEY = 'croniq_sidebar'
+/** New in the Vue tree; the React one has no density control. */
+const DENSITY_KEY = 'croniq_density'
 const THEME_KEY = 'croniq_theme'
 
 export type ThemePref = 'light' | 'dark' | 'system'
@@ -35,10 +37,22 @@ function write(key: string, value: string) {
 
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(read(SIDEBAR_KEY) === 'collapsed')
+  /**
+   * Compact rows.
+   *
+   * Operators disagree about list density and the disagreement is real — one
+   * wants everything on screen, another wants to read it. The tokens made one
+   * choice; this lets a reader override it, per browser.
+   */
+  const compact = ref(read(DENSITY_KEY) === 'compact')
   const theme = ref<ThemePref>((read(THEME_KEY) as ThemePref | null) ?? 'system')
 
   watch(sidebarCollapsed, (collapsed) => {
     write(SIDEBAR_KEY, collapsed ? 'collapsed' : 'expanded')
+  })
+
+  watch(compact, (isCompact) => {
+    write(DENSITY_KEY, isCompact ? 'compact' : 'comfortable')
   })
 
   watch(
@@ -54,7 +68,11 @@ export const useUiStore = defineStore('ui', () => {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
 
-  return { sidebarCollapsed, theme, toggleSidebar }
+  function toggleCompact() {
+    compact.value = !compact.value
+  }
+
+  return { sidebarCollapsed, compact, theme, toggleSidebar, toggleCompact }
 })
 
 /**

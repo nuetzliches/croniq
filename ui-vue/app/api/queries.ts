@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed } from 'vue'
+import { computed, type MaybeRefOrGetter, toValue } from 'vue'
 import { api, apiGet, apiPut } from './client'
 import type {
   AuthConfigResponse,
   DeadLetter,
   HealthResponse,
+  Execution,
+  ExecutionLogEntry,
   MaintenanceResponse,
   ReloadSuccess,
   User,
@@ -169,5 +171,84 @@ export function useReloadConfig() {
         }
       }
     },
+  })
+}
+
+export interface ExecutionFilters {
+  job_key?: string
+  state?: string
+  runner_id?: string
+  limit?: number
+}
+
+/**
+ * Runs, filtered.
+ *
+ * **The parameter is a getter, not a value, and that is load-bearing.** This is
+ * the single most-named risk in `docs/vue-migration-plan.md`: pass a plain
+ * object here and both the query key and the request freeze at whatever the
+ * filters were on first render, so changing a filter re-renders the page and
+ * silently shows the old rows. `toValue` inside `queryKey` and `queryFn` is
+ * what makes the query re-run.
+ *
+ * Polled: a run list that does not move is indistinguishable from a scheduler
+ * that has stopped.
+ */
+export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['executions', computed(() => toValue(filters))],
+    queryFn: () => {
+      const active = toValue(filters)
+      const query: Record<string, string | number> = {}
+      if (active.job_key) query.job_key = active.job_key
+      if (active.state) query.state = active.state
+      if (active.runner_id) query.runner_id = active.runner_id
+      query.limit = active.limit ?? 200
+      return apiGet<Execution[]>('/v1/executions', query)
+    },
+    enabled: computed(() => auth.isAuthenticated),
+    refetchInterval: 5_000,
+    // Keep the previous rows on screen while a filter change is in flight, so
+    // the table does not blink through an empty state on every keystroke.
+    placeholderData: (previous) => previous,
+  })
+}
+
+/**
+ * The log events one run produced.
+ *
+ * There is deliberately no `useExecution`: the server has no
+ * `GET /v1/executions/{id}` — only the list, `/cancel` and `/logs` — so the
+ * detail panel resolves its row out of the list it already has, which is what
+ * the React tree does too. Inventing a fetch for it would have meant inventing
+ * an endpoint.
+ */
+export function useExecutionLogs(id: MaybeRefOrGetter<string | undefined>) {
+  const auth = useAuthStore()
+  return useQuery({
+    queryKey: ['executions', 'logs', computed(() => toValue(id))],
+    queryFn: () => apiGet<ExecutionLogEntry[]>(`/v1/executions/${toValue(id)}/logs`),
+    enabled: computed(() => auth.isAuthenticated && Boolean(toValue(id))),
+    refetchInterval: 5_000,
+  })
+}
+
+/**
+ * Ask a running execution to stop.
+ *
+ * The server answers whether it reached a runner: a queued run is cancelled
+ * outright, a claimed one depends on the runner honouring the signal, so the
+ * caller has something honest to report either way.
+ */
+export function useCancelExecution() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{ execution_id: string; cancelled: boolean; delivered_via_runner: boolean }>(
+        `/v1/executions/${id}/cancel`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['executions'] }),
   })
 }

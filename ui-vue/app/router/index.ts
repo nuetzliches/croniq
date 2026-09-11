@@ -24,8 +24,20 @@ const routes: RouteRecordRaw[] = [
     component: () => import('~/layouts/AppShell.vue'),
     children: [
       { path: '', name: 'dashboard', component: placeholder, meta: { title: 'Dashboard', step: 4 } },
-      { path: 'executions', name: 'runs', component: placeholder, meta: { title: 'Runs', step: 3 } },
-      { path: 'executions/:id', name: 'run', component: placeholder, meta: { title: 'Run', step: 3 } },
+      {
+        path: 'executions',
+        name: 'runs',
+        component: () => import('~/pages/RunsView.vue'),
+        meta: { title: 'Runs' },
+      },
+      {
+        // Same component: the detail opens beside the list rather than
+        // replacing it, so the list keeps its scroll and its filters.
+        path: 'executions/:id',
+        name: 'run',
+        component: () => import('~/pages/RunsView.vue'),
+        meta: { title: 'Runs' },
+      },
       { path: 'runners', name: 'runners', component: placeholder, meta: { title: 'Runners', step: 4 } },
       { path: 'dead-letters', name: 'dead-letters', component: placeholder, meta: { title: 'Dead Letters', step: 4 } },
       { path: 'jobs', name: 'jobs', component: placeholder, meta: { title: 'Jobs', step: 5 } },
