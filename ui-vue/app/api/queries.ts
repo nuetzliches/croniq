@@ -209,9 +209,10 @@ export interface ExecutionFilters {
    * Upper bound on `created_at`, inclusive. RFC3339.
    *
    * Also the paging cursor. **Pass a `created_at` the server sent, verbatim.**
-   * The server compares it as a string at full precision, so a value
-   * reconstructed from a `Date` — milliseconds, no nanoseconds — sorts below a
-   * row inside that instant and drops it. Truncating loses rows silently.
+   * A value reconstructed from a `Date` is truncated to milliseconds, which
+   * names an instant *earlier* than the row it came from — and an inclusive
+   * upper bound then excludes that row. Truncating loses rows silently rather
+   * than repeating them.
    */
   until?: string
 }

@@ -1849,7 +1849,6 @@ async fn handle_list_executions(
         // currently get a sane list.
         since: params.get("since").and_then(|v| parse_rfc3339(v)),
         until: params.get("until").and_then(|v| parse_rfc3339(v)),
-        ..Default::default()
     };
     let executions = store
         .list_executions(&filter)
@@ -3184,18 +3183,27 @@ mod tests {
             &format!("/v1/executions?since={since}"),
         )
         .await;
-        assert_eq!(ids(&recent), vec![new.to_string()], "since must bound below");
+        assert_eq!(
+            ids(&recent),
+            vec![new.to_string()],
+            "since must bound below"
+        );
 
         // `until` drops what is newer, inclusively — the boundary row is in.
         //
-        // At full precision, and the precision is the point. `created_at` is
-        // stored as an RFC3339 *string* and compared lexicographically, so a
-        // cursor truncated to whole seconds sorts *below* a row inside that
-        // second and silently drops it. Which matters far beyond this
-        // assertion: `until` is how a caller pages back through a history
-        // longer than one `limit`, and a truncating cursor would skip rows
-        // rather than repeat them.
-        let exact = (base + chrono::Duration::hours(1)).to_rfc3339().replace('+', "%2B");
+        // At full precision, and the precision is the point. A cursor
+        // truncated to whole seconds names an instant *earlier* than a row
+        // inside that second, so an inclusive `<=` excludes it. True on both
+        // backends for different mechanics — SQLite compares the RFC3339 text
+        // lexicographically, Postgres compares `TIMESTAMPTZ` values — and
+        // either way the truncated value is the smaller one.
+        //
+        // Which matters far beyond this assertion: `until` is how a caller
+        // pages back through a history longer than one `limit`, and a
+        // truncating cursor skips rows rather than repeating them.
+        let exact = (base + chrono::Duration::hours(1))
+            .to_rfc3339()
+            .replace('+', "%2B");
         let older = get_json(
             server_router(Arc::clone(&state)),
             &format!("/v1/executions?until={exact}"),
@@ -3208,14 +3216,15 @@ mod tests {
         );
 
         // The trap, pinned deliberately: a cursor **truncated** to
-        // milliseconds loses the row it points at. `created_at` is compared as
-        // a string, so `…123+00:00` sorts below `…123456789+00:00` — `+` is
-        // 0x2B and `4` is 0x34 — and the row falls outside an inclusive bound.
+        // milliseconds loses the row it points at, because `…123` is an
+        // earlier instant than `…123456789` and the bound admits only
+        // equal-or-earlier.
         //
         // This is the losing direction. A caller paging back with a truncated
-        // cursor would skip rows silently rather than repeat them, which is
-        // why the rule for a client is: page with the `created_at` the server
-        // handed you, verbatim. Never reconstruct it.
+        // cursor skips rows silently rather than repeating them, which is why
+        // the rule for a client is: page with the `created_at` the server
+        // handed you, verbatim. `Date.toISOString()` truncates to
+        // milliseconds and is exactly the wrong thing to send.
         let truncated = (base + chrono::Duration::hours(1))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let lossy = get_json(

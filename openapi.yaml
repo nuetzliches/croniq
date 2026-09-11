@@ -1193,11 +1193,11 @@ paths:
             caller drops by `id`.
 
 
-            **Pass the `created_at` value from the response verbatim.** It is
-            compared as a string at full precision, so a cursor truncated to
-            milliseconds or seconds sorts *below* a row inside that instant and
-            drops it. Truncating loses rows silently rather than repeating
-            them.
+            **Pass the `created_at` value from the response verbatim.** A
+            cursor truncated to milliseconds or seconds names an instant
+            earlier than the row it came from, and an inclusive upper bound
+            then excludes that row — so truncating loses rows silently rather
+            than repeating them.
           schema: { type: string, format: date-time }
       responses:
         "200":
