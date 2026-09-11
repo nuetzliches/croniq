@@ -215,7 +215,7 @@ nicht nach Größe:
 4. **Dashboard, Runner, Dead Letters** — bauen auf denselben Listen-Bausteinen.
 5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen
    Bausteinen. ✓ (Durchgang 6 in `ui-visual-design.md`)
-6. **Kalender, Alerts, Settings, Konsole.**
+6. **Kalender** ✓ (Durchgang 7), dann **Alerts, Settings, Konsole.**
 
 Abnahmekriterium pro Schritt bleibt die Playwright-Suite
 ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), Scope-Guard 2). Sie
