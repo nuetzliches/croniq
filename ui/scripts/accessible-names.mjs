@@ -116,6 +116,20 @@ await page.waitForTimeout(900);
 let total = 0;
 total += await check("/login");
 
+// The two pages the server's emails land on. Public, and the only screens a
+// person may ever see if they cannot get in — so they are checked before the
+// signed-in ones rather than after.
+for (const path of [
+  "/password-reset/confirm?token=example",
+  "/invitations/accept?token=example",
+]) {
+  await page.goto(base + path, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  total += await check(path.replace(/\?.*/, ""));
+}
+await page.goto(`${base}/login`, { waitUntil: "networkidle" });
+await page.waitForTimeout(700);
+
 await page.locator('input[autocomplete="username"]').fill("admin");
 await page.locator('input[autocomplete="current-password"]').fill("demo-admin");
 await Promise.all([

@@ -130,6 +130,31 @@ const routes: RouteRecordRaw[] = [
     ],
   },
   {
+    /*
+     * Where the server's emails land.
+     *
+     * Both of these links are built server-side — `password_reset.rs` and
+     * `invitations.rs` compose `{base}/password-reset/confirm?token=…` and
+     * `{base}/invitations/accept?token=…` — and until now **neither tree
+     * served the route**. Requesting a reset worked, the mail went out, and
+     * the link opened the not-found page; an invited person could not get in
+     * at all. The flow was half-built and looked complete from the side an
+     * operator tests.
+     *
+     * Public, necessarily: whoever follows one of these has no session yet.
+     */
+    path: '/password-reset/confirm',
+    name: 'password-reset',
+    component: () => import('~/pages/PasswordResetView.vue'),
+    meta: { public: true, title: 'Set a new password' },
+  },
+  {
+    path: '/invitations/accept',
+    name: 'invitation-accept',
+    component: () => import('~/pages/InvitationAcceptView.vue'),
+    meta: { public: true, title: 'Accept your invitation' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('~/pages/NotFoundView.vue'),

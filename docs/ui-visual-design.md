@@ -769,3 +769,80 @@ steht unter „Noch offen" — allen voran, dass der Vue-Baum weiterhin kein
 eigenes Playwright-Projekt hat (#620) und das Abnahmekriterium aus ADR-0004
 deshalb noch das React-Dashboard misst.
 
+## Durchgang 12 — die Login-Seite, und was hinter ihr fehlte
+
+Rückmeldung: die neue Login-Seite wirkt gegenüber der alten stark reduziert —
+steht da noch Nachbesserung aus?
+
+Beim Nachsehen statt Schätzen zerfiel der Unterschied in zwei sehr ungleiche
+Hälften.
+
+### Was Dekoration war
+
+Das Terminal-Mock mit `croniq validate Croniqfile`, der Fußbereich mit
+„all systems operational", das Gitter-Muster, die Tastaturhinweise. Das ist die
+Landing-Page-Ästhetik der React-Fassung, und ihr Wegfall war eine
+Gestaltungsentscheidung, kein Versehen. Die drei Live-Kacheln (Status, Runner,
+Queue) sind geblieben, weil sie die eigentliche Frage beantworten: *läuft das
+Ding überhaupt?*
+
+### Was eine echte Lücke war
+
+**Es gab keinen Weg zurück ins Konto.** „Forgot your password?" fehlte —
+`POST /v1/auth/password-reset/request` existiert am Server seit jeher, die
+React-Fassung bot es an, die neue nicht. Wer sein Passwort vergisst, brauchte
+einen Administrator und eine Shell.
+
+Und dann, beim Prüfen dieses einen Punktes, **das Größere**:
+
+### Zwei Links, die nirgends hinführten
+
+Der Server baut sie selbst:
+
+```rust
+// api/password_reset.rs
+let confirm_url = format!("{base}/password-reset/confirm?token={raw_token}");
+// api/invitations.rs
+let accept_url = format!("{base}/invitations/accept?token={raw_token}");
+```
+
+**Keiner der beiden Bäume hatte eine Route dafür.** Eine Passwort-Anforderung
+funktionierte, die Mail ging raus, der Link öffnete die Not-Found-Seite. Wer
+eingeladen wurde, kam überhaupt nicht herein — der Settings-Screen zeigt dem
+Administrator brav einen Link zum Weitergeben, und dieser Link war eine
+Sackgasse.
+
+Der Ablauf war halb gebaut und sah von der Seite, die ein Betreiber testet,
+vollständig aus: man lädt jemanden ein, bekommt einen Link, die Bestätigung
+erscheint. Dass er ins Leere führt, merkt nur der Eingeladene.
+
+Beide Seiten gibt es jetzt, öffentlich (wer sie öffnet, hat noch keine
+Session). Nachgewiesen als vollständige Kette: einladen → Link folgen → Konto
+anlegen → **anmelden** → aufräumen.
+
+### Passwortregeln vor dem Roundtrip
+
+`croniq_auth::password` ist die Instanz und lehnt mit 400 ab. Die Grenzen
+stehen jetzt zusätzlich in `lib/password.ts` — nicht als zweite
+Implementierung, sondern damit ein Formular „mindestens acht Zeichen" sagen
+kann, *bevor* es fragt. Die interessante Grenze ist die obere: bcrypt ignoriert
+alles über 72 **Byte**, eine längere Passphrase würde also stillschweigend
+abgeschnitten. Drei Tests, einer davon mit Emoji — vier Byte pro Zeichen ist
+genau der Fall, den eine Zeichenzählung falsch macht.
+
+### Und ein Auffangsatz auf dem häufigsten Pfad
+
+Die erste Fassung behandelte `410` und `404` eigens und ließ den Rest in „The
+server refused that." laufen. Ein **unbekanntes** Token antwortet aber `401` —
+also fiel der wahrscheinlichste Fehler überhaupt in den Auffangsatz. Jetzt ist
+jeder Zweig beider Handler aus dem Rust-Code abgelesen und benannt, und der
+Test verlangt, dass die Meldung eine *Abhilfe* nennt, nicht bloß eine
+Ablehnung.
+
+### Nebenbei
+
+„Sign in to `127.0.0.1:4232`" steht wieder da. Wer Staging und Produktion in
+zwei Tabs offen hat, kann sie aus der Karte sonst nicht unterscheiden — und
+Produktionszugangsdaten ins Staging zu tippen ist ein Fehler, den die Seite
+schlicht verhindern kann. Die React-Fassung hatte das richtig.
+

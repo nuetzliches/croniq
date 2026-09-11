@@ -525,5 +525,126 @@ await step("the console tails, filters and pauses without losing the tail", asyn
   if ((await rows()) > 1) throw new Error("clear left events behind");
 });
 
+/* ─── Account recovery ──────────────────────────────────────────────────── */
+//
+// The links the server emails have to land somewhere. Both of them —
+// `/invitations/accept` and `/password-reset/confirm` — were dead ends in both
+// dashboards until this tree served them, so this walks a whole invitation
+// from "invite someone" to "that person is signed in".
+
+const WHO = `smoke-invitee-${Date.now().toString(36)}`;
+let acceptUrl = "";
+
+await step("an invitation hands back a link", async () => {
+  await page.goto(`${base}/settings/people`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+  await page.getByRole("button", { name: "Invite someone" }).click();
+  await page.getByPlaceholder("someone@example.com").fill(`${WHO}@example.com`);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/v1/invitations") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Invite", exact: true }).click(),
+  ]);
+  await page.waitForTimeout(900);
+  acceptUrl = (await page.locator("pre").first().innerText()).trim();
+  if (!/\/invitations\/accept\?token=/.test(acceptUrl)) {
+    throw new Error(`not an accept link: ${acceptUrl.slice(0, 80)}`);
+  }
+  console.log(`     link: ${acceptUrl.replace(/token=.*/, "token=…")}`);
+});
+
+await step("the link lands on a real page, not the not-found", async () => {
+  // Point it at the dev server rather than the server's own origin.
+  const url = new URL(acceptUrl);
+  const local = `${base}${url.pathname}${url.search}`;
+  await page.goto(local, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  const body = await page.locator("body").innerText();
+  if (/not found/i.test(body)) throw new Error("the accept link still opens the not-found page");
+  if (!/Accept your invitation/i.test(body)) throw new Error(`unexpected page: ${body.slice(0, 80)}`);
+});
+
+await step("the password rules are stated before the round trip", async () => {
+  await page.getByRole("textbox", { name: "Username" }).fill(WHO);
+  await page.getByLabel("Password", { exact: true }).fill("short");
+  await page.getByLabel("Repeat it").fill("short");
+  await page.getByRole("button", { name: "Create my account" }).click();
+  await page.waitForTimeout(500);
+  const alert = await page.getByRole("alert").first().innerText();
+  if (!/at least 8/i.test(alert)) throw new Error(`no local rule check: ${alert}`);
+});
+
+await step("accepting creates the account", async () => {
+  await page.getByLabel("Password", { exact: true }).fill("smoke-password-1");
+  await page.getByLabel("Repeat it").fill("smoke-password-1");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/invitations/accept") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Create my account" }).click(),
+  ]);
+  await page.waitForTimeout(1000);
+  const body = await page.locator("body").innerText();
+  if (!/Account created/i.test(body)) throw new Error(`accept did not succeed: ${body.slice(0, 120)}`);
+});
+
+await step("the new account can sign in", async () => {
+  const fresh = await browser.newContext();
+  const p2 = await fresh.newPage();
+  await p2.goto(`${base}/login`, { waitUntil: "networkidle" });
+  await p2.locator('input[autocomplete="username"]').fill(WHO);
+  await p2.locator('input[autocomplete="current-password"]').fill("smoke-password-1");
+  const [res] = await Promise.all([
+    p2.waitForResponse((r) => r.url().includes("/v1/auth/login") && r.request().method() === "POST"),
+    p2.locator('button[type="submit"]').click(),
+  ]);
+  if (res.status() !== 200) throw new Error(`sign-in failed: ${res.status()}`);
+  await p2.waitForSelector("nav", { timeout: 8000 });
+  await fresh.close();
+});
+
+await step("a reset request is offered and says the same either way", async () => {
+  const anon = await browser.newContext();
+  const p3 = await anon.newPage();
+  await p3.goto(`${base}/login`, { waitUntil: "networkidle" });
+  await p3.waitForTimeout(900);
+  await p3.locator('input[autocomplete="username"]').fill("no-such-user-at-all");
+  await Promise.all([
+    p3.waitForResponse((r) => r.url().includes("/v1/auth/password-reset/request")),
+    p3.getByRole("button", { name: /Forgot your password/i }).click(),
+  ]);
+  await p3.waitForTimeout(700);
+  const notice = await p3.getByRole("status").last().innerText();
+  if (!/if that account exists/i.test(notice)) throw new Error(`leaky wording: ${notice}`);
+  await anon.close();
+});
+
+await step("a spent or bogus reset token is reported honestly", async () => {
+  await page.goto(`${base}/password-reset/confirm?token=definitely-not-a-token`, {
+    waitUntil: "networkidle",
+  });
+  await page.waitForTimeout(800);
+  await page.getByLabel("New password").fill("another-password-1");
+  await page.getByLabel("Repeat it").fill("another-password-1");
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.waitForTimeout(1000);
+  const alert = await page.getByRole("alert").first().innerText();
+  // It must name the remedy, not merely report a refusal.
+  if (!/no longer usable/i.test(alert)) throw new Error(`unhelpful: ${alert}`);
+  if (!/request a new one/i.test(alert)) throw new Error(`no remedy offered: ${alert}`);
+  if (/refused that/i.test(alert)) throw new Error(`fell through to the generic message: ${alert}`);
+  console.log(`     said: ${alert.replace(/\s+/g, " ").slice(0, 90)}`);
+});
+
+// Clean up: remove the user this created.
+await step("clean up the smoke account", async () => {
+  await page.goto(`${base}/settings/people`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1400);
+  const remove = page.getByRole("button", { name: `Remove ${WHO}` });
+  if ((await remove.count()) === 0) throw new Error("the new user is not in the people list");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/users/") && r.request().method() === "DELETE"),
+    remove.click(),
+  ]);
+  await page.waitForTimeout(800);
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();
