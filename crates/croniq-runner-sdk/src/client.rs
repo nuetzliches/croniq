@@ -172,6 +172,14 @@ impl CroniqClient {
         let resp = self
             .add_auth(self.http.post(format!("{}/v1/work/poll", self.base_url)))
             .json(req)
+            // 35s against the server's 30s long-poll window
+            // (`DEFAULT_LONG_POLL_TIMEOUT` in croniq-server). The margin is
+            // small because it only has to cover the handler around the wait,
+            // not the wait itself — but it does assume the server honours that
+            // window as a deadline for the whole call. It did not until #648,
+            // where every `work_notify` restarted it; a poll could then be
+            // held indefinitely and this timeout was what noticed. If the
+            // server's window ever grows, this has to grow with it.
             .timeout(std::time::Duration::from_secs(35))
             .send()
             .await?;

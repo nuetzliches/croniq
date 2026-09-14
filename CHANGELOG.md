@@ -225,6 +225,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A long-poll could be held open indefinitely, and runners logged a failure
+  for it ([#648](https://github.com/nuetzliches/croniq/issues/648)).**
+  `GET /v1/work/poll` waits up to 30 seconds for work. It woke on
+  `work_notify`, which is a *broadcast* — every enqueue wakes every waiting
+  poll, including the runners that will find nothing for them — and each of
+  those wake-ups restarted the thirty seconds rather than resuming them.
+
+  With two or more runners and a job firing regularly, a single poll could
+  therefore be held well past the SDK's 35-second request timeout. The runner
+  logged `poll failed — retrying`, waited five seconds and polled again.
+  Nothing was ever lost, which is why it went unnoticed; what it cost was a
+  warning that appears every minute or so and means nothing, on a server
+  behaving perfectly.
+
+  The wait now has one deadline for the whole call, so `LONG_POLL_TIMEOUT` is
+  the maximum hold time it always read as.
+
+- **Runner errors now name their cause.** `poll failed — retrying` reported
+  only reqwest's top line — "error sending request for url (…)" — and dropped
+  the source chain, so a connection refused, a reset, a closed connection and a
+  timeout all looked identical. They were the difference between a network
+  problem and the bug above, and the log could not tell them apart. The SDK
+  renders the whole chain now (`croniq_runner_sdk::error_chain`).
+
+
 - **`install.sh` no longer aborts at checksum verification on Alpine.** The
   verification step invoked `sha256sum --check`, and busybox's `sha256sum` — the
   one Alpine ships — rejects the GNU long option outright ("unrecognized

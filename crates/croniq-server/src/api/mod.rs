@@ -996,6 +996,22 @@ async fn handle_poll(
     // LONG_POLL_TIMEOUT waiting for a work_notify signal. The same
     // `work_notify` channel is also pinged by `AppState::push_cancel` so a
     // long-poll wakes up when a cancel arrives, not only when work does.
+    //
+    // One deadline for the whole call, computed here rather than a fresh
+    // `sleep(long_poll_timeout)` per iteration. That distinction is issue
+    // #648: `work_notify` is a broadcast, so *every* enqueue wakes *every*
+    // waiting poll. A runner that loses the race finds nothing, loops, and --
+    // with a per-iteration sleep -- started its thirty seconds again. With two
+    // runners and a job firing regularly, a single poll could be held well
+    // past the client's 35 s request timeout, which then fired and logged
+    // `poll failed - retrying`. Nothing was lost (the runner just polled
+    // again), but a warning that appears every minute or so and means nothing
+    // is a warning that gets ignored on the day it means something.
+    //
+    // With a deadline, LONG_POLL_TIMEOUT is the maximum hold time it always
+    // read as, and the client's timeout has the margin it was sized for.
+    let deadline = tokio::time::Instant::now() + state.long_poll_timeout;
+
     loop {
         // Set up the notification listener BEFORE checking the queue so we
         // cannot miss an enqueue that races with our check.
@@ -1026,8 +1042,8 @@ async fn handle_poll(
             _ = notified => {
                 // A new item was enqueued OR a cancel was pushed — loop and try again
             }
-            _ = tokio::time::sleep(state.long_poll_timeout) => {
-                // Timeout: return empty response, runner will poll again
+            _ = tokio::time::sleep_until(deadline) => {
+                // Deadline reached: return empty, the runner polls again.
                 return (StatusCode::OK, Json(PollResponse { work: vec![], cancel: vec![] }));
             }
         }
@@ -2247,6 +2263,69 @@ mod tests {
         unsafe {
             std::env::remove_var("CRONIQ_ENV");
         }
+    }
+
+    /// A long-poll must end on its own deadline, not `LONG_POLL_TIMEOUT`
+    /// counted again from every wake-up.
+    ///
+    /// `work_notify` is a broadcast: every enqueue wakes every waiting poll,
+    /// including the runners that will find nothing for them. Before #648 each
+    /// of those wake-ups restarted the sleep, so a poll could be held for as
+    /// long as *other* runners kept the queue busy — past the SDK's 35 s
+    /// request timeout, which then logged `poll failed — retrying` against a
+    /// server that was behaving perfectly.
+    ///
+    /// Two numbers make this test mean something, and the first draft had
+    /// neither. The poking has to outlast the assertion, or the unbounded
+    /// version simply finishes when the pokes stop and the test passes either
+    /// way — which is what happened: it passed with the fix reverted. And the
+    /// assertion is on elapsed time rather than on an outer `timeout`, so a
+    /// failure says how long the poll was actually held.
+    #[tokio::test]
+    async fn a_long_poll_ends_on_its_own_deadline_not_on_each_wakeup() {
+        let (state, _rx) = make_state(); // long_poll_timeout = 50ms
+        let app = server_router(Arc::clone(&state));
+
+        // 2s of continuous interruption against a 50ms budget: forty times
+        // over, and well past the 500ms the poll is allowed to take.
+        let poking = {
+            let state = Arc::clone(&state);
+            tokio::spawn(async move {
+                for _ in 0..200 {
+                    state.runner.work_notify.notify_waiters();
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+        };
+
+        let started = std::time::Instant::now();
+        let resp = post_json(
+            app,
+            "/v1/work/poll",
+            serde_json::json!({
+                "runner_id": "deadline-test",
+                "capabilities": ["shell"],
+                "max_inflight": 1,
+                "inflight": []
+            }),
+        )
+        .await;
+        let held = started.elapsed();
+        poking.abort();
+
+        // 500ms against a 50ms budget: ten times the margin, so a loaded
+        // machine does not make this flaky, while an unbounded hold (which
+        // runs for the full 2s of poking) fails it clearly.
+        assert!(
+            held < Duration::from_millis(500),
+            "long-poll was held for {held:?} against a 50ms deadline — \
+             every work_notify is extending it instead of waking it"
+        );
+
+        // And it returns the empty response, not an error — the runner's next
+        // poll is a normal continuation, not a retry after a failure.
+        assert_eq!(resp["work"].as_array().map(|a| a.len()), Some(0));
+        assert_eq!(resp["cancel"].as_array().map(|a| a.len()), Some(0));
     }
 
     // ─── Auth middleware tests ────────────────────────────────────────────────

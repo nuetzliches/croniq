@@ -692,8 +692,13 @@ impl CroniqRunner {
                     tokio::time::sleep(self.poll_retry_delay).await;
                 }
                 Err(e) => {
+                    // The whole chain, not just the top line. reqwest's
+                    // `Display` is "error sending request for url (…)" and
+                    // says nothing about whether the connection was refused,
+                    // reset, closed mid-response or timed out — which is the
+                    // only part an operator can act on (#648).
                     tracing::warn!(
-                        error = %e,
+                        error = %crate::error_chain::chain(&e),
                         delay_ms = self.poll_retry_delay.as_millis() as u64,
                         "poll failed — retrying"
                     );
