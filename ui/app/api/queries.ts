@@ -207,15 +207,25 @@ export interface ExecutionFilters {
   /** Lower bound on `created_at`, inclusive. RFC3339. */
   since?: string
   /**
-   * Upper bound on `created_at`, inclusive. RFC3339.
+   * Upper bound on `created_at`. RFC3339. Inclusive on its own, exclusive
+   * when paired with `until_id`.
    *
-   * Also the paging cursor. **Pass a `created_at` the server sent, verbatim.**
-   * A value reconstructed from a `Date` is truncated to milliseconds, which
-   * names an instant *earlier* than the row it came from — and an inclusive
-   * upper bound then excludes that row. Truncating loses rows silently rather
-   * than repeating them.
+   * **Pass a `created_at` the server sent, verbatim.** A value reconstructed
+   * from a `Date` is truncated to milliseconds, which names an instant
+   * *earlier* than the row it came from — and the bound then excludes that
+   * row. Truncating loses rows silently rather than repeating them.
    */
   until?: string
+  /**
+   * Second half of the paging cursor: the `id` of the same row `until` came
+   * from. Send both and the page starts strictly below that row.
+   *
+   * Needed because the scheduler stamps everything queued in one tick with the
+   * same `created_at`, so ties are normal. `until` alone has to be inclusive,
+   * and an inclusive bound cannot get past a tie group larger than the page
+   * size — the same page comes back forever (issue #654).
+   */
+  until_id?: string
 }
 
 /**
@@ -243,6 +253,7 @@ export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
       if (active.runner_id) query.runner_id = active.runner_id
       if (active.since) query.since = active.since
       if (active.until) query.until = active.until
+      if (active.until_id) query.until_id = active.until_id
       query.limit = active.limit ?? 200
       return apiGet<Execution[]>('/v1/executions', query)
     },

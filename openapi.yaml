@@ -1183,14 +1183,8 @@ paths:
         - name: until
           in: query
           description: >
-            Upper bound on `created_at`, inclusive. RFC3339.
-
-
-            Doubles as the cursor for paging back through a history longer than
-            one `limit`: the list is ordered by `created_at` descending, so
-            re-requesting with `until` set to the oldest row's `created_at`
-            returns the page before it — including that row again, which the
-            caller drops by `id`.
+            Upper bound on `created_at`. RFC3339. Inclusive on its own;
+            exclusive when paired with `until_id`.
 
 
             **Pass the `created_at` value from the response verbatim.** A
@@ -1199,10 +1193,38 @@ paths:
             then excludes that row — so truncating loses rows silently rather
             than repeating them.
           schema: { type: string, format: date-time }
+        - name: until_id
+          in: query
+          description: >
+            Second half of the paging cursor: the `id` of the same row whose
+            `created_at` went into `until`.
+
+
+            The list is ordered by `(created_at, id)` descending, and the pair
+            asks for everything strictly below the last row seen. Paging back
+            through a history longer than one `limit` therefore means
+            re-requesting with both values taken from the oldest row of the
+            page just received.
+
+
+            Both halves are needed because the scheduler stamps every execution
+            queued in one tick with the same `created_at`, so ties are the
+            normal case. `until` alone has to be inclusive — a strict bound
+            would drop the rest of a tie group straddling the page boundary —
+            and an inclusive bound cannot get past a tie group larger than
+            `limit`: the same page comes back forever. With `until_id` the
+            bound is strict and the cursor always advances.
+
+
+            Omitting it keeps the inclusive window behaviour, so a client
+            written before this parameter existed is unaffected. An unparseable
+            value is ignored rather than rejected, as with `state` and `limit`.
+          schema: { type: string, format: uuid }
       responses:
         "200":
           description: >
-            Executions, newest first, ordered by `created_at` descending.
+            Executions, newest first, ordered by `created_at` then `id`, both
+            descending.
           content:
             application/json:
               schema:

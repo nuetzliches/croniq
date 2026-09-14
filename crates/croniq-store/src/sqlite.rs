@@ -330,11 +330,36 @@ impl ExecutionStore for SqliteStore {
             sql.push_str(&format!(" AND created_at >= ?{}", param_values.len()));
         }
         if let Some(until) = filter.until {
-            param_values.push(Box::new(dt_to_sql(&until)));
-            sql.push_str(&format!(" AND created_at <= ?{}", param_values.len()));
+            match filter.until_id {
+                // Keyset cursor: strictly older than the row the caller last
+                // saw, ties broken by id in the same direction as the sort.
+                // Without this a tie group bigger than `limit` pins the cursor
+                // in place forever (issue #654).
+                Some(until_id) => {
+                    param_values.push(Box::new(dt_to_sql(&until)));
+                    let ts = param_values.len();
+                    param_values.push(Box::new(dt_to_sql(&until)));
+                    let ts2 = param_values.len();
+                    param_values.push(Box::new(until_id.to_string()));
+                    let id = param_values.len();
+                    sql.push_str(&format!(
+                        " AND (created_at < ?{ts} OR (created_at = ?{ts2} AND id < ?{id}))"
+                    ));
+                }
+                // No cursor: `until` is a time window bound, inclusive as it
+                // has been since #636.
+                None => {
+                    param_values.push(Box::new(dt_to_sql(&until)));
+                    sql.push_str(&format!(" AND created_at <= ?{}", param_values.len()));
+                }
+            }
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
+        // `id` is the tiebreaker, not decoration: without it the order inside a
+        // tie group is whatever SQLite feels like, so two calls can disagree
+        // about which row is oldest and a cursor built from one is meaningless
+        // to the other.
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
 
         let limit = filter.limit.unwrap_or(100);
         param_values.push(Box::new(limit));

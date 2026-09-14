@@ -78,6 +78,15 @@ const since = computed(() => {
  * filter and the four pages I happened to scroll".
  */
 const pageCursor = ref<string | undefined>(undefined)
+/**
+ * The cursor row's id, the other half of the keyset cursor.
+ *
+ * Without it the server's `until` bound has to stay inclusive, and an
+ * inclusive bound cannot get past a group of rows sharing one `created_at`
+ * that is larger than a page — which the scheduler produces whenever 200+ jobs
+ * are due in the same tick (issue #654).
+ */
+const pageCursorId = ref<string | undefined>(undefined)
 /** Pages already fetched, oldest page last. Reset whenever a filter changes. */
 const pages = ref<Execution[][]>([])
 
@@ -89,6 +98,7 @@ const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   runner_id: filters.value.runner_id || undefined,
   since: since.value,
   until: pageCursor.value,
+  until_id: pageCursorId.value,
 }))
 
 const PAGE_SIZE = 200
@@ -96,10 +106,10 @@ const PAGE_SIZE = 200
 /**
  * Everything fetched so far: the pages already paged in, then the live one.
  *
- * De-duplicated by id, because `until` is *inclusive* — the row the cursor
- * points at comes back in the next page too. That is the server erring on the
- * side of repeating rather than losing, and dropping the repeat is this end's
- * half of the bargain.
+ * De-duplicated by id. The `(created_at, id)` cursor means the server no
+ * longer repeats the row it points at, but a run that is still live can be
+ * refetched into the live page while a copy sits in a frozen one, so the guard
+ * earns its keep either way.
  */
 const rows = computed<Execution[]>(() => {
   const seen = new Set<string>()
@@ -120,8 +130,9 @@ function loadOlder() {
   const oldest = page[page.length - 1]
   if (!oldest) return
   pages.value = [...pages.value, page]
-  // The server's own value, untouched.
+  // The server's own values, untouched — see the cursor note above.
   pageCursor.value = oldest.created_at
+  pageCursorId.value = oldest.id
 }
 
 // Any change of filter starts again from the newest rows. Keeping the pages
@@ -131,6 +142,7 @@ watch(
   () => {
     pages.value = []
     pageCursor.value = undefined
+    pageCursorId.value = undefined
   },
 )
 
@@ -371,9 +383,11 @@ function onKey(event: KeyboardEvent) {
 
           The list was hard-capped at 200 rows, so anything older than that was
           unreachable and a deep link to an older run found nothing. It pages
-          with `until` set to the oldest row's `created_at` — the server's own
-          value, verbatim, because a reconstructed one truncates and silently
-          skips rows.
+          with `until` and `until_id` set to the oldest row's `created_at` and
+          `id` — the server's own values, verbatim, because a reconstructed
+          timestamp truncates and silently skips rows, and because the id is
+          what gets the cursor past a page-sized group of rows sharing one
+          timestamp.
 
           At the end it says so, rather than leaving a button that returns
           nothing new.

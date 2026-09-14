@@ -1866,6 +1866,15 @@ async fn handle_list_executions(
         // currently get a sane list.
         since: params.get("since").and_then(|v| parse_rfc3339(v)),
         until: params.get("until").and_then(|v| parse_rfc3339(v)),
+        // The other half of the paging cursor (issue #654). Pass the `id` of
+        // the same row whose `created_at` went into `until` and the bound turns
+        // strict; omit it and `until` stays the inclusive window bound #636
+        // documented. Same leniency as everything else here: an unparseable id
+        // is ignored, which degrades to the old inclusive behaviour rather than
+        // failing the request.
+        until_id: params
+            .get("until_id")
+            .and_then(|v| uuid::Uuid::parse_str(v).ok()),
     };
     let executions = store
         .list_executions(&filter)
@@ -3200,6 +3209,134 @@ mod tests {
             })
             .unwrap();
         id
+    }
+
+    /// A whole page of executions sharing one `created_at` — which is not an
+    /// edge case: the scheduler stamps everything queued in one tick with the
+    /// same `now`, so any two jobs due together tie.
+    ///
+    /// With `until` alone the cursor cannot get past such a group. The bound
+    /// has to be inclusive (a strict `<` would drop the rest of a straddling
+    /// tie group), and an inclusive bound on a group larger than `limit`
+    /// returns the same page forever. Issue #654.
+    #[tokio::test]
+    async fn paging_advances_through_a_tie_group_larger_than_the_page() {
+        let (state, store) = make_store_state();
+        let tick = Utc::now() - chrono::Duration::hours(1);
+
+        // Five rows, one tick, one timestamp.
+        for i in 0..5 {
+            seed_keyed_execution(
+                &store,
+                "etl:sync",
+                &format!("tie-{i}"),
+                ExecutionState::Completed,
+                tick,
+            );
+        }
+
+        let ids = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let created_at = |value: &serde_json::Value, i: usize| -> String {
+            value.as_array().unwrap()[i]["created_at"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        // Page through two at a time, the way a client with a `limit` does.
+        let mut seen: Vec<String> = Vec::new();
+        let mut cursor: Option<(String, String)> = None;
+        for round in 0..5 {
+            let uri = match &cursor {
+                None => "/v1/executions?limit=2".to_string(),
+                Some((ts, id)) => format!(
+                    "/v1/executions?limit=2&until={}&until_id={}",
+                    ts.replace('+', "%2B"),
+                    id
+                ),
+            };
+            let page = get_json(server_router(Arc::clone(&state)), &uri).await;
+            let page_ids = ids(&page);
+            if page_ids.is_empty() {
+                break;
+            }
+            assert!(
+                round < 4,
+                "paging did not terminate — the cursor is not advancing"
+            );
+            let last = page_ids.len() - 1;
+            cursor = Some((created_at(&page, last), page_ids[last].clone()));
+            seen.extend(page_ids);
+        }
+
+        assert_eq!(seen.len(), 5, "every row must be visited exactly once");
+        let mut unique = seen.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 5, "no row may be returned twice: {seen:?}");
+    }
+
+    /// `until` without `until_id` keeps the inclusive window semantics #636
+    /// documented — a client written before the cursor existed must not
+    /// silently start losing its boundary row.
+    #[tokio::test]
+    async fn until_without_an_id_stays_inclusive() {
+        let (state, store) = make_store_state();
+        let base = Utc::now() - chrono::Duration::hours(5);
+        let boundary = seed_keyed_execution(
+            &store,
+            "etl:sync",
+            "boundary",
+            ExecutionState::Completed,
+            base,
+        );
+
+        let until = base.to_rfc3339().replace('+', "%2B");
+        let page = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?until={until}"),
+        )
+        .await;
+
+        assert_eq!(
+            page.as_array().unwrap()[0]["id"].as_str().unwrap(),
+            boundary.to_string(),
+            "the boundary row is in when only `until` is given"
+        );
+    }
+
+    /// The same instant with the row's own id excludes it — that is what makes
+    /// the cursor advance instead of repeating the row it was built from.
+    #[tokio::test]
+    async fn until_with_an_id_excludes_the_cursor_row() {
+        let (state, store) = make_store_state();
+        let base = Utc::now() - chrono::Duration::hours(5);
+        let boundary = seed_keyed_execution(
+            &store,
+            "etl:sync",
+            "boundary",
+            ExecutionState::Completed,
+            base,
+        );
+
+        let until = base.to_rfc3339().replace('+', "%2B");
+        let page = get_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/executions?until={until}&until_id={boundary}"),
+        )
+        .await;
+
+        assert!(
+            page.as_array().unwrap().is_empty(),
+            "the cursor row itself must not come back"
+        );
     }
 
     /// `GET /v1/executions` honours a time window (issue #621-adjacent, the
