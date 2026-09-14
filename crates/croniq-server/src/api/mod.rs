@@ -581,6 +581,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs/{job_key}/unadopt", post(jobs::handle_unadopt))
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
+        // Before `/{id}`, or axum would read "count" as an id.
+        .route("/v1/dead-letters/count", get(dead_letters::handle_count))
         // Static segment — matchit routes it ahead of the `{id}` param below.
         .route(
             "/v1/dead-letters/bulk-delete",

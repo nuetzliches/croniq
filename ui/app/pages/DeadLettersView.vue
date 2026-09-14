@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ApiError } from '~/api/client'
 import {
   useBulkDeleteDeadLetters,
+  useDeadLetterCount,
   useDeadLetters,
   useDeleteDeadLetter,
   useReplayDeadLetter,
@@ -22,6 +23,16 @@ import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
 const { data, isPending, isError, error, refetch } = useDeadLetters()
 const replay = useReplayDeadLetter()
 const remove = useDeleteDeadLetter()
+
+/**
+ * How many there are, which is not how many are on screen.
+ *
+ * The list endpoint applies a page limit — 50 by default — so counting the
+ * rows here said "50 pending" for a queue of any size, and the discard-all
+ * dialog offered to remove "all 50" while the request cleared the lot
+ * (issue #661).
+ */
+const total = useDeadLetterCount()
 
 const rows = computed<DeadLetter[]>(() => data.value ?? [])
 const selectedId = ref<string | null>(null)
@@ -100,14 +111,27 @@ async function runBulk() {
  * `dead_letter_replay_max_age`. Reporting the server's own words is the
  * difference between "replay failed" and knowing why.
  */
-async function doReplay(id: string) {
+/**
+ * The one refusal that is worth arguing with.
+ *
+ * `stale_replay` is a policy the job declares, not a fault — and the server's
+ * own message ends with "Pass force:true to replay anyway". Holding the id
+ * here is what turns that sentence into a button; any other refusal just gets
+ * reported (issue #660).
+ */
+const forceable = ref<string | null>(null)
+
+async function doReplay(id: string, force = false) {
   replayError.value = null
+  forceable.value = null
   try {
-    await replay.mutateAsync(id)
+    await replay.mutateAsync({ id, force })
     if (selectedId.value === id) selectedId.value = null
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
+    const body =
+      caught instanceof ApiError ? (caught.body as { message?: string; error?: string }) : undefined
     replayError.value = body?.message ?? (caught as Error).message ?? 'Replay was refused.'
+    if (body?.error === 'stale_replay') forceable.value = id
   }
 }
 
@@ -161,7 +185,9 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
         >
           Discard all
         </UButton>
-        <span class="cq-num text-sm text-muted">{{ rows.length }} pending</span>
+        <span class="cq-num text-sm text-muted">
+          {{ total }} pending<template v-if="total > rows.length">, {{ rows.length }} shown</template>
+        </span>
       </div>
     </div>
 
@@ -186,7 +212,22 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
       role="alert"
       close
       @update:open="replayError = null"
-    />
+    >
+      <template
+        v-if="forceable"
+        #actions
+      >
+        <UButton
+          color="warning"
+          variant="solid"
+          size="xs"
+          :loading="replay.isPending.value"
+          @click="doReplay(forceable, true)"
+        >
+          Replay anyway
+        </UButton>
+      </template>
+    </UAlert>
 
     <div class="flex min-h-0 flex-1 gap-4">
       <div class="cq-list min-w-0 flex-1">
@@ -316,7 +357,7 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
         :title="confirmingBulk === 'all' ? 'Discard every dead letter?' : `Discard ${pickedRows.length} dead letter${pickedRows.length === 1 ? '' : 's'}?`"
         :description="
           confirmingBulk === 'all'
-            ? `All ${rows.length} of them go, including any that arrived while this dialog was open. Discarding is not replaying — the work does not run.`
+            ? `All ${total} of them go — the whole queue, not just the ${rows.length} on screen, and including any that arrive while this dialog is open. Discarding is not replaying — the work does not run.`
             : 'Discarding is not replaying — the work does not run. The runs stay in the history.'
         "
         @update:open="(open: boolean) => { if (!open) confirmingBulk = null }"

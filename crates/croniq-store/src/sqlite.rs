@@ -912,6 +912,20 @@ impl DeadLetterStore for SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
+    fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = match job_key {
+            Some(key) => conn.query_row(
+                "SELECT COUNT(1) FROM dead_letters WHERE job_key = ?1",
+                params![key],
+                |row| row.get(0),
+            ),
+            None => conn.query_row("SELECT COUNT(1) FROM dead_letters", [], |row| row.get(0)),
+        }
+        .map_err(map_err)?;
+        Ok(count.max(0) as u64)
+    }
+
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

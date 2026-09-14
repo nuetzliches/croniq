@@ -1472,6 +1472,20 @@ impl DeadLetterStore for PgStore {
         Ok(affected)
     }
 
+    fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let row = match job_key {
+            Some(key) => db.query_one(
+                "SELECT COUNT(1) FROM dead_letters WHERE job_key = $1",
+                &[&key],
+            ),
+            None => db.query_one("SELECT COUNT(1) FROM dead_letters", &[]),
+        }
+        .map_err(map_err)?;
+        let count: i64 = row.get(0);
+        Ok(count.max(0) as u64)
+    }
+
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
         let mut client = self.client.lock().unwrap();
         client

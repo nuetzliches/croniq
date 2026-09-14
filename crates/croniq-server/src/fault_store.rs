@@ -179,6 +179,7 @@ impl DeadLetterStore for FaultStore {
         replay_dead_letter(dead_letter_id: Uuid, execution: &Execution) -> ();
         get_dead_letter(id: Uuid) -> Option<DeadLetter>;
         list_dead_letters(filter: &DeadLetterFilter) -> Vec<DeadLetter>;
+        count_dead_letters(job_key: Option<&str>) -> u64;
         remove_dead_letter(id: Uuid) -> ();
         remove_dead_letters(ids: &[Uuid]) -> u64;
         clear_dead_letters(job_key: Option<&str>) -> u64;

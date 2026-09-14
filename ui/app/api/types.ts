@@ -154,6 +154,11 @@ export interface ReplayResponse {
 }
 
 /** 409 body when the stale-replay guard rejects a replay. */
+/** Response of `GET /v1/dead-letters/count`. */
+export interface DeadLetterCount {
+  count: number
+}
+
 export interface StaleReplayError {
   error: 'stale_replay'
   message: string

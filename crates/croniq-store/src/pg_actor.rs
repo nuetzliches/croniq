@@ -447,6 +447,11 @@ impl DeadLetterStore for PgStoreHandle {
         self.call(move |s| s.list_dead_letters(&filter))
     }
 
+    fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
+        let job_key = job_key.map(str::to_owned);
+        self.call(move |s| s.count_dead_letters(job_key.as_deref()))
+    }
+
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
         self.call(move |s| s.remove_dead_letter(id))
     }

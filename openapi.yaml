@@ -1378,18 +1378,47 @@ paths:
   /v1/dead-letters:
     get:
       summary: List dead letters
+      description: >
+        Newest first, and **paged**: `limit` defaults to 50 and is capped at
+        1000. The length of the answer is therefore the size of a page, not the
+        size of the queue — use `/v1/dead-letters/count` for that.
+      parameters:
+        - name: job_key
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 1000 }
+      responses:
+        "200":
+          description: A page of dead letters
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeadLetter" }
+
+  /v1/dead-letters/count:
+    get:
+      summary: How many dead letters there are
+      description: >
+        The number of rows matching the filter, with no page limit applied —
+        what a "N pending" indicator needs, and what a caller has to know
+        before offering to discard the queue.
       parameters:
         - name: job_key
           in: query
           schema: { type: string }
       responses:
         "200":
-          description: List of dead letters
+          description: The count
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/DeadLetter" }
+                type: object
+                required: [count]
+                properties:
+                  count: { type: integer, format: int64 }
 
   /v1/dead-letters/bulk-delete:
     post:

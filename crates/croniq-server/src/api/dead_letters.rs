@@ -25,6 +25,35 @@ pub struct ListQuery {
     pub limit: Option<u32>,
 }
 
+/// Response of `GET /v1/dead-letters/count`.
+#[derive(Serialize)]
+pub struct DeadLetterCount {
+    /// Rows matching the filter, with no page limit applied.
+    pub count: u64,
+}
+
+/// `GET /v1/dead-letters/count`
+///
+/// The list endpoint always applies a limit, so the length of its answer is
+/// the size of a page. A caller that wants to say "N pending", or to tell an
+/// operator what "discard all" is about to remove, needs the other number
+/// (issue #661).
+pub async fn handle_count(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<DeadLetterCount>, StatusCode> {
+    require_scope(&ctx, Scope::DEAD_LETTERS_READ)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let count = store
+        .count_dead_letters(q.job_key.as_deref())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(DeadLetterCount { count }))
+}
+
 /// `GET /v1/dead-letters`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,

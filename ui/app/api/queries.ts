@@ -16,6 +16,7 @@ import type {
   CreateInvitationResponse,
   CreatePatResponse,
   DeadLetter,
+  DeadLetterCount,
   Execution,
   ExecutionLogEntry,
   FailureHeatmap,
@@ -84,15 +85,26 @@ export function useAuthConfig() {
  * own rows. Polled because a dead letter appearing is exactly the kind of thing
  * an operator should not have to reload to notice.
  */
-export function useDeadLetterCount() {
+/**
+ * How many dead letters there are — the number, not the size of a page.
+ *
+ * This used to fetch a page of 100 and take its length, so the badge said
+ * "100" for a queue of any size above that, and the view built its "N pending"
+ * from a page of 50 (issue #661). `GET /v1/dead-letters/count` answers the
+ * question directly.
+ */
+export function useDeadLetterCount(jobKey?: MaybeRefOrGetter<string | undefined>) {
   const auth = useAuthStore()
   const query = useQuery({
-    queryKey: ['dead-letters', 'count'],
-    queryFn: () => apiGet<DeadLetter[]>('/v1/dead-letters', { limit: 100 }),
+    queryKey: ['dead-letters', 'count', computed(() => (jobKey ? toValue(jobKey) : undefined))],
+    queryFn: () => {
+      const key = jobKey ? toValue(jobKey) : undefined
+      return apiGet<DeadLetterCount>('/v1/dead-letters/count', key ? { job_key: key } : undefined)
+    },
     enabled: computed(() => auth.isAuthenticated),
     refetchInterval: 30_000,
   })
-  return computed(() => query.data.value?.length ?? 0)
+  return computed(() => query.data.value?.count ?? 0)
 }
 
 /**
@@ -401,7 +413,14 @@ export function useDeadLetters(jobKey?: MaybeRefOrGetter<string | undefined>) {
 export function useReplayDeadLetter() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api(`/v1/dead-letters/${id}/replay`, { method: 'POST' }),
+    // `force` overrides the server's stale-replay guard. The 409 that guard
+    // raises names the flag in its own message, and the dashboard had no way
+    // to send it — so the only route past a refusal was curl (issue #660).
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) =>
+      api(`/v1/dead-letters/${id}/replay`, {
+        method: 'POST',
+        body: { force: force ?? false },
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['dead-letters'] })
       void queryClient.invalidateQueries({ queryKey: ['executions'] })
