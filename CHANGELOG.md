@@ -87,6 +87,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The image no longer installs `ca-certificates`, and is 3.04 MB smaller
+  ([#599](https://github.com/nuetzliches/croniq/issues/599)).** Nothing in the
+  image links OpenSSL — every TLS path is rustls — but `ca-certificates`
+  Depends on `openssl`, which Depends on `libssl3`: 8.3 MB installed to deliver
+  0.39 MB of PEM. The bundle now comes from a stage of its own instead, and the
+  published image drops from 57.83 MB to 54.79 MB compressed.
+
+  The trust store itself is unchanged, and that is asserted rather than assumed:
+  the shipped file is byte-identical (same SHA-256) to a freshly apt-installed
+  Debian bookworm bundle, and CI checks it on every push to main before
+  anything is published. The obvious shortcut — copying the bundle out of the
+  Rust builder stage, which already has one — would have swapped 150 roots for
+  142, losing 21 and gaining 13, because that image carries whatever was
+  current when it was built.
+
+  What is gone is `update-ca-certificates`. To trust a private CA, use
+  `CRONIQ_PG_ROOT_CERT` (the supported route, and the only consumer of the
+  platform store is the Postgres TLS path), `SSL_CERT_FILE`, or mount your own
+  bundle over `/etc/ssl/certs/ca-certificates.crt`. See *PostgreSQL TLS* in
+  `docs/operations.md`. Outbound HTTPS for OIDC and SMTP carries the Mozilla
+  roots compiled in and is unaffected.
+
 - **The dashboard is the Vue one; the React tree is gone
   ([ADR-0004](docs/adr/0004-vue-rebuild-for-the-dashboard.md)).** The rebuild
   started in [#589](https://github.com/nuetzliches/croniq/issues/589) has taken

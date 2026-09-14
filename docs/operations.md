@@ -360,6 +360,29 @@ or Amazon RDS's `rds-ca-…` bundle. An unreadable or empty file is a hard error
 rather than a silent fallback, so a typo surfaces at boot instead of as a
 confusing handshake failure.
 
+**In the container, "the platform trust store" is one file:**
+`/etc/ssl/certs/ca-certificates.crt`, the current Debian bookworm bundle. The
+image does not install the `ca-certificates` *package* — it would pull in
+openssl and libssl3, 8.3 MB for a library nothing in the image links against,
+since every TLS path here is rustls (issue #599). The file is copied in from a
+stage that does install it, and CI asserts before publishing that what ships is
+byte-identical to a freshly apt-installed bundle.
+
+The practical consequence is that `update-ca-certificates` is not in the image.
+To trust a private CA, in order of preference:
+
+1. **`CRONIQ_PG_ROOT_CERT`** — mount the PEM and point at it. This is the
+   supported route and the only one scoped to the connection that needs it.
+2. **`SSL_CERT_FILE`** — point at a bundle of your own. Read by
+   `rustls-native-certs`, so it replaces the platform store wholesale.
+3. **Mount over `/etc/ssl/certs/ca-certificates.crt`** — same effect as 2,
+   without an environment variable. Remember that you are then pinning the
+   whole trust store to whatever you mounted, including as it ages.
+
+Nothing else in the image reads that file. Outbound HTTPS for OIDC discovery
+(reqwest) and SMTP (lettre) carry the Mozilla roots compiled in, so they are
+unaffected by any of the three.
+
 > **Breaking-ish.** A remote Postgres that does not speak TLS, or presents a
 > certificate from a CA the host does not trust, now fails to connect where it
 > previously connected in cleartext. The connection error names both escape

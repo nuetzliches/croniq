@@ -564,6 +564,40 @@ jobs:
           # architecture for layers that are bit-identical.
           cache-from: type=gha,scope=docker-${{ steps.plat.outputs.name }}
           cache-to: type=gha,mode=max,scope=docker-${{ steps.plat.outputs.name }}
+      - name: The shipped CA bundle must match an apt-installed one
+        # The runtime stage copies `/etc/ssl/certs/ca-certificates.crt` from a
+        # dedicated `ca-provider` stage rather than apt-installing
+        # `ca-certificates`, which would drag in openssl and libssl3 for a file
+        # nothing in the closure links against (#599).
+        #
+        # The tempting shortcut is to copy it out of `rust-builder`, which
+        # already has one. That silently swaps the trust store: measured on
+        # 2026-09-14 it exchanged 150 roots for 142, losing 21 and gaining 13,
+        # because `rust:1.88-bookworm` carries whatever was current when *that*
+        # image was built. The failure mode is a TLS handshake that works
+        # everywhere except one customer's Postgres — so it is asserted rather
+        # than left to a comment.
+        #
+        # One leg only: the file is architecture-independent and identical in
+        # all three variants. It runs before anything is published, which is
+        # the point at which a wrong trust store would start mattering.
+        if: matrix.variant == 'combined' && matrix.platform == 'linux/amd64'
+        run: |
+          set -euo pipefail
+          docker buildx build --target server-runtime --load \
+            --cache-from type=gha,scope=docker-${{ steps.plat.outputs.name }} \
+            -t croniq-ca-check:ci .
+          shipped=$(docker run --rm --entrypoint sha256sum croniq-ca-check:ci \
+            /etc/ssl/certs/ca-certificates.crt | cut -d' ' -f1)
+          fresh=$(docker run --rm debian:bookworm-slim sh -c \
+            'apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 && sha256sum /etc/ssl/certs/ca-certificates.crt' \
+            | cut -d' ' -f1)
+          echo "shipped: $shipped"
+          echo "fresh  : $fresh"
+          if [ "$shipped" != "$fresh" ]; then
+            echo "::error::the image's CA bundle is not a current debian:bookworm-slim one — check what the runtime stage copies it from"
+            exit 1
+          fi
       - name: Export digest
         run: |
           mkdir -p /tmp/digests

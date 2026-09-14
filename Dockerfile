@@ -95,12 +95,28 @@ COPY --from=wasm-builder \
 
 RUN npm run build
 
+# ── Stage 2b: the CA bundle, and nothing else ────────────────────────────────
+# Its own stage rather than a copy out of `rust-builder`, and the difference is
+# not cosmetic. `rust:1.88-bookworm` carries whatever `ca-certificates` was
+# current when *that image* was built: copying from there swapped 150 roots for
+# 142 -- losing 21 and gaining 13. A trust store is not a file you substitute
+# casually, and the failure mode is a TLS handshake that works everywhere
+# except one customer's Postgres.
+#
+# Same base as the runtime, same `apt-get update` at build time, so the bundle
+# is byte-for-byte what an apt-installed one would have been -- verified by
+# sha256 rather than assumed. ci.yml's docker job asserts it on every push to
+# main, before anything is published.
+FROM debian:bookworm-slim AS ca-provider
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
 # ── Stage 3: Server runtime, without the dashboard ───────────────────────────────────────────────────
 # Buildable on its own (`--target server-runtime`), and in that case buildx
 # never touches the ui-builder or wasm-builder stages above — no Node, no npm
 # tree, nothing from ui/ in this image's provenance. That separation is the
 # point of the target (#598); it is *not* about size, where the dashboard is
-# 0.37 MB of 55.92 MB, nor about build time, which the layer cache already
+# 0.37 MB of 54.79 MB, nor about build time, which the layer cache already
 # isolates. See ADR-0002.
 #
 # The combined image at the bottom of this file extends this stage rather than
@@ -110,10 +126,34 @@ RUN npm run build
 # profile runs it. Which binaries belong where is #599.
 FROM debian:bookworm-slim AS server-runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 gosu && \
+# `gosu` only. `ca-certificates` and `libssl3` used to be installed here too,
+# and both were paying for something nothing in this image uses (#599):
+#
+#   * Nothing links OpenSSL. Every TLS path in the closure is rustls --
+#     reqwest (OIDC), lettre (SMTP) and tokio-postgres-rustls alike. `ldd` on
+#     all five binaries lists only libgcc_s, libm and libc. `libssl3` arrived
+#     as a *transitive* dependency regardless (`ca-certificates` Depends:
+#     openssl Depends: libssl3), so removing it from the list above changed
+#     nothing at all -- measured, because it looked like a saving and was not.
+#   * The trust store is still needed, but only the file. It is read by
+#     `rustls-native-certs`, which reaches this build through
+#     `tokio-postgres-rustls` -- so a Postgres server presenting a private CA
+#     is the case that depends on it. reqwest and lettre carry webpki-roots
+#     compiled in and never look at the filesystem.
+#
+# So the bundle is copied from the `ca-provider` stage instead: openssl and
+# libssl3 (8.3 MB installed, 3.04 MB compressed) stay out of the runtime, and
+# 0.39 MB of PEM arrives on its own.
+#
+# What goes with it is `update-ca-certificates`. An operator adding a private
+# CA now mounts their own bundle over the path below, or points
+# `SSL_CERT_FILE` at one -- see docs/operations.md. Both work with
+# rustls-native-certs; neither needs a package manager in a runtime image.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -r croniq && useradd -r -g croniq -s /sbin/nologin croniq
+
+COPY --from=ca-provider /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Copy Rust binaries
 COPY --from=rust-builder /build/target/release/croniq-server /usr/local/bin/croniq-server
