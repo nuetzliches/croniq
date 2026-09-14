@@ -578,6 +578,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `limit` was also missing from the list endpoint's OpenAPI parameters, which
   is part of why the paging was easy to miss.
 
+- **The Runs window moves, and paging no longer stops the list
+  ([#662](https://github.com/nuetzliches/croniq/issues/662)).** Two defects in
+  the same screen, both of which made a live view quietly stop being one.
+
+  "Last hour" was computed once. A Vue `computed` tracks its reactive
+  dependencies, and the clock is not one of them — so the lower bound froze at
+  the moment the tab was opened, every 5-second refetch re-sent it, and a
+  dashboard left on a wall showed a window that grew all day. The filter now
+  carries the window as a *length* and the request builder resolves it against
+  the clock on each fetch.
+
+  "Load older" moved the polled query's cursor backwards, so after one click no
+  new run ever appeared again and a row sitting at `queued` never advanced to
+  `succeeded`. The polled query now stays on the newest page; each click
+  fetches one older page, once, and appends it. Older runs are overwhelmingly
+  finished, so not polling them costs nothing — and anything still moving is in
+  the live page, which overlaps and wins the de-duplication.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
