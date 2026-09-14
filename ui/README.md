@@ -112,3 +112,23 @@ claim about the dashboard was otherwise unfalsifiable. Run them from here with
 | `scripts/dsl-parses.mjs` | feeds the rendered DSL back through the parser |
 | `scripts/measure-scroll.mjs` | which elements actually scroll, and whether the page itself does |
 | `scripts/capture-screens.mjs` | a screenshot of every screen, signed in, on real data |
+
+## Dependency notes
+
+**`overrides.esbuild`** in `package.json` forces esbuild to `^0.28.2`.
+[GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr)
+(arbitrary file read from esbuild's *own* dev server on Windows) is patched in
+0.28.1, but `fontless` — which reaches here as `@nuxt/ui` → `@nuxt/fonts` →
+`fontless` — declares `esbuild: ^0.27.0` as a hard dependency and pins the tree
+to the vulnerable line. Vite 8 already accepts `^0.27.0 || ^0.28.0`, so the
+override moves only fontless.
+
+The exposure is low — nothing here runs esbuild's serve mode; Vite's dev server
+is Vite's own. It is overridden anyway because a standing advisory that is
+always answered with "not our code path" trains you to skim the next one.
+
+Remove the override once `@nuxt/fonts` ships a `fontless` on esbuild 0.28: the
+check is `npm ls esbuild --all` after deleting it, and `npm audit` must stay at
+zero. The range is `^0.28.2` rather than `>=0.28.2` on purpose — esbuild's 0.x
+minors carry breaking changes, and an open-ended floor would let one through
+silently.
