@@ -31,16 +31,39 @@ const LEVELS = ['debug', 'info', 'warn', 'error'] as const
 const activeLevels = ref(new Set<string>(['info', 'warn', 'error']))
 const search = ref('')
 
+/**
+ * The rows on screen, with everything they need already computed.
+ *
+ * `fields` in particular: the template called `fieldText(event)` twice per row
+ * — once to decide whether to render the span, once to fill it — so a busy
+ * console serialised every event's field map twice on every patch (issue
+ * #671). Doing it here means once per event per filter change instead.
+ */
 const filtered = computed(() => {
   const needle = search.value.trim().toLowerCase()
-  return events.value.filter((event) => {
-    if (!activeLevels.value.has(event.level)) return false
-    if (!needle) return true
-    return (
-      event.message.toLowerCase().includes(needle) ||
-      event.target.toLowerCase().includes(needle)
-    )
-  })
+  const rows = []
+  for (const event of events.value) {
+    if (!activeLevels.value.has(event.level)) continue
+    if (
+      needle &&
+      !event.message.toLowerCase().includes(needle) &&
+      !event.target.toLowerCase().includes(needle)
+    ) {
+      continue
+    }
+    rows.push({
+      event,
+      time: event.ts.slice(11, 23),
+      fields: fieldText(event),
+      gutter:
+        event.level === 'error'
+          ? 'border-error'
+          : event.level === 'warn'
+            ? 'border-warning'
+            : 'border-transparent',
+    })
+  }
+  return rows
 })
 
 function toggleLevel(level: string) {
@@ -113,7 +136,9 @@ function asText(event: LogEvent): string {
 
 async function copyAll() {
   try {
-    await navigator.clipboard.writeText(filtered.value.map(asText).join('\n'))
+    await navigator.clipboard.writeText(
+      filtered.value.map((row) => asText(row.event)).join('\n'),
+    )
     copied.value = true
     setTimeout(() => (copied.value = false), 1500)
   } catch {
@@ -287,36 +312,33 @@ const fieldText = (event: LogEvent): string =>
           "
         />
 
+        <!-- Keyed by `seq`, not by index. With an index key every arrival
+             shifts every key once the buffer is full, and Vue re-patches all
+             2000 rows to show one new line (issue #671). -->
         <div
-          v-for="(event, index) in filtered"
+          v-for="row in filtered"
           v-else
-          :key="index"
+          :key="row.event.seq"
           class="flex items-start gap-3 border-l-2 px-3 py-1 hover:bg-elevated"
-          :class="
-            event.level === 'error'
-              ? 'border-error'
-              : event.level === 'warn'
-                ? 'border-warning'
-                : 'border-transparent'
-          "
+          :class="row.gutter"
         >
           <!-- A coloured gutter as well as a level column: an error is found
                by scanning the left edge, not by reading every row. -->
           <span
             class="cq-num shrink-0 text-dimmed"
-            :title="event.ts"
-          >{{ event.ts.slice(11, 23) }}</span>
+            :title="row.event.ts"
+          >{{ row.time }}</span>
           <span
             class="w-11 shrink-0 font-medium uppercase"
-            :class="levelClass(event.level)"
-          >{{ event.level }}</span>
-          <span class="w-52 shrink-0 truncate text-muted">{{ event.target }}</span>
+            :class="levelClass(row.event.level)"
+          >{{ row.event.level }}</span>
+          <span class="w-52 shrink-0 truncate text-muted">{{ row.event.target }}</span>
           <span class="min-w-0 flex-1 break-words">
-            {{ event.message }}
+            {{ row.event.message }}
             <span
-              v-if="fieldText(event)"
+              v-if="row.fields"
               class="ml-2 text-muted"
-            >{{ fieldText(event) }}</span>
+            >{{ row.fields }}</span>
           </span>
         </div>
       </div>
