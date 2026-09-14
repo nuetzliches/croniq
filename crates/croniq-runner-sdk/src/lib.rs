@@ -60,6 +60,7 @@
 
 pub mod client;
 pub(crate) mod enrichment;
+pub mod error_chain;
 pub mod handler;
 pub mod identity;
 pub mod log_writer;
