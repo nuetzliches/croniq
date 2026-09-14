@@ -786,14 +786,23 @@ paths:
             including a machine token whose API client has been deleted.
 
 
-            The two are distinguishable, which matters to a browser client that
-            cannot inspect an `HttpOnly` cookie for itself. When nothing was
-            presented at all the body carries `{"error": "no_session"}`; when a
-            credential *was* presented and rejected, it does not. A client that
-            retries once on a rejected token — worth doing, since a parallel
-            tab may have rotated it away — can then skip the retry in the case
-            where it cannot possibly help. Additive: a client that ignores the
-            body sees the same 401 it always saw.
+            The cases are distinguishable, which matters to a browser client
+            that cannot inspect an `HttpOnly` cookie for itself. The body
+            carries `{"error": "no_session"}` whenever retrying cannot possibly
+            help, and omits it when it might:
+
+
+            | Situation | `no_session` | Why |
+            |---|---|---|
+            | nothing presented | yes | there is no credential to retry with |
+            | presented, no such token | yes | never issued here, or the database was reseeded |
+            | presented, expired | yes | the deadline has passed; asking again changes nothing |
+            | presented, revoked | **no** | almost always a rotation — a parallel tab refreshed first, and its `Set-Cookie` is what a retry picks up |
+
+
+            A client that retries once on an unmarked 401 therefore retries
+            exactly when a retry can succeed. Additive: a client that ignores
+            the body sees the same 401 it always saw.
           content:
             application/json:
               schema:
@@ -803,7 +812,8 @@ paths:
                     type: string
                     enum: [no_session]
                     description: >
-                      Present only when no refresh credential was supplied.
+                      Present when no credential was supplied, and when the one
+                      supplied is unknown or expired.
                   message: { type: string }
         "403":
           description: >

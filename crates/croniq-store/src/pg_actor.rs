@@ -542,6 +542,11 @@ impl AuthStore for PgStoreHandle {
         self.call(move |s| s.validate_refresh_token(&token_hash))
     }
 
+    fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError> {
+        let token_hash = token_hash.to_owned();
+        self.call(move |s| s.refresh_token_is_known(&token_hash))
+    }
+
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let token_hash = token_hash.to_owned();
         self.call(move |s| s.revoke_refresh_token(&token_hash, now))

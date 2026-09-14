@@ -1171,6 +1171,18 @@ impl AuthStore for SqliteStore {
             .map_err(map_err)
     }
 
+    fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(1) FROM refresh_tokens WHERE token_hash = ?1",
+                params![token_hash],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count > 0)
+    }
+
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

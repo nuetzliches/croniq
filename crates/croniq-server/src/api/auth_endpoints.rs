@@ -878,13 +878,44 @@ pub async fn handle_refresh(
     let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
 
     let token_hash = hash_api_key(&presented);
-    let token = store
+    let token = match store
         .validate_refresh_token(&token_hash)
         .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
-        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
+    {
+        Some(token) => token,
+        // Nothing usable under this hash. Two very different situations, and
+        // the client's next move differs (issue #656):
+        //
+        //   - a row exists, so this credential was ours and has been revoked.
+        //     Almost always a rotation: a parallel tab refreshed first and the
+        //     `Set-Cookie` it received has not reached this one yet. A plain
+        //     401, because the client's one-shot retry reads the new cookie
+        //     and usually succeeds.
+        //   - no row at all — a credential this server never issued, or one
+        //     whose database is gone (reseeded, restored, migrated). The retry
+        //     is guaranteed to fail, so say `no_session` and let the client
+        //     skip it, exactly as it does for a cookie-less request (#630).
+        //
+        // What this does *not* leak is worth stating: a caller learns whether
+        // a token it already holds was ever issued here. A guessed value tells
+        // them nothing they did not already know, and a stolen one is a
+        // compromise either way.
+        None => {
+            let known = store
+                .refresh_token_is_known(&token_hash)
+                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
+            return Err(if known {
+                status_err(StatusCode::UNAUTHORIZED)
+            } else {
+                no_session_response()
+            });
+        }
+    };
 
+    // Expired rather than revoked. The row is ours, but no retry can bring it
+    // back — seven days have passed — so this is the `no_session` case too.
     if Utc::now() > token.expires_at {
-        return Err(status_err(StatusCode::UNAUTHORIZED));
+        return Err(no_session_response());
     }
 
     // Revoke old token
@@ -1701,11 +1732,61 @@ mod tests {
         );
     }
 
-    /// And a credential that *was* presented and rejected must NOT carry the
-    /// marker — otherwise the client stops retrying in exactly the case the
-    /// retry exists for: a token rotated away by a parallel tab.
+    /// Put a refresh token in the store and rotate it away, the way a parallel
+    /// tab's successful refresh does.
+    fn seed_rotated_token(store: &DynStore, raw: &str) {
+        let now = Utc::now();
+        let token_hash = hash_api_key(raw);
+        store
+            .create_refresh_token(&RefreshToken {
+                token_hash: token_hash.clone(),
+                client_id: "dashboard".into(),
+                user_id: Some("u-1".into()),
+                expires_at: now + chrono::Duration::days(7),
+                revoked_at: None,
+                created_at: now,
+            })
+            .unwrap();
+        store.revoke_refresh_token(&token_hash, now).unwrap();
+    }
+
+    /// A credential this server issued and has since rotated must NOT carry
+    /// the marker — otherwise the client stops retrying in exactly the case
+    /// the retry exists for: a token rotated away by a parallel tab whose
+    /// `Set-Cookie` has not reached this one yet.
     #[tokio::test]
-    async fn refreshing_with_a_stale_credential_is_not_marked_no_session() {
+    async fn refreshing_with_a_rotated_credential_is_not_marked_no_session() {
+        let store = make_store();
+        seed_rotated_token(&store, "rotated-away-by-another-tab");
+        let state = state_with(&store);
+
+        let response = match handle_refresh(
+            State(state),
+            HeaderMap::new(),
+            Json(RefreshRequest {
+                refresh_token: Some("rotated-away-by-another-tab".into()),
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("a refresh with a revoked credential must fail"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_ne!(
+            body_json(response).await["error"],
+            "no_session",
+            "a rotated token is not the same as no token — the retry needs it"
+        );
+    }
+
+    /// A credential under a hash this server has no row for cannot be revived
+    /// by asking again: the database was reseeded, or the value was never ours.
+    /// Marking it lets the client skip a retry that is guaranteed to fail —
+    /// the cost a dead cookie used to impose on every cold load (issue #656).
+    #[tokio::test]
+    async fn refreshing_with_an_unknown_credential_is_marked_no_session() {
         let store = make_store();
         let state = state_with(&store);
 
@@ -1723,10 +1804,49 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert_ne!(
+        assert_eq!(
             body_json(response).await["error"],
             "no_session",
-            "a rejected token is not the same as no token"
+            "an unknown credential is as good as none — retrying cannot help"
+        );
+    }
+
+    /// Expired rather than revoked: the row is ours, but seven days have
+    /// passed and no retry brings it back.
+    #[tokio::test]
+    async fn refreshing_with_an_expired_credential_is_marked_no_session() {
+        let store = make_store();
+        let now = Utc::now();
+        store
+            .create_refresh_token(&RefreshToken {
+                token_hash: hash_api_key("long-expired"),
+                client_id: "dashboard".into(),
+                user_id: Some("u-1".into()),
+                expires_at: now - chrono::Duration::days(1),
+                revoked_at: None,
+                created_at: now - chrono::Duration::days(8),
+            })
+            .unwrap();
+        let state = state_with(&store);
+
+        let response = match handle_refresh(
+            State(state),
+            HeaderMap::new(),
+            Json(RefreshRequest {
+                refresh_token: Some("long-expired".into()),
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("a refresh with an expired credential must fail"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body_json(response).await["error"],
+            "no_session",
+            "an expired token cannot come back — the retry is wasted"
         );
     }
 
