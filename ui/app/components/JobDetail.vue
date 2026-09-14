@@ -16,6 +16,7 @@ import {
 import type { JobDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { renderJobDsl } from '~/lib/render-dsl'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * One job, beside the list.
@@ -522,29 +523,12 @@ const deadLetterFacts = computed(() => {
       :job="job"
     />
 
-    <UModal
+    <ConfirmModal
       v-model:open="confirmingDelete"
       title="Delete this job?"
       :description="`${jobKey} and its schedules are removed from the API store. Runs already in the history stay.`"
-    >
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            @click="confirmingDelete = false"
-          >
-            Cancel
-          </UButton>
-          <UButton
-            color="error"
-            :loading="removeJob.isPending.value"
-            @click="doDelete"
-          >
-            Delete
-          </UButton>
-        </div>
-      </template>
-    </UModal>
+      :loading="removeJob.isPending.value"
+      @confirm="doDelete"
+    />
   </aside>
 </template>

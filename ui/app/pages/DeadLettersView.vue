@@ -10,6 +10,7 @@ import {
 } from '~/api/queries'
 import type { DeadLetter } from '~/api/types'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * Dead letters — the work queue.
@@ -360,7 +361,7 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
         </table>
       </div>
 
-      <UModal
+      <ConfirmModal
         :open="confirmingBulk !== null"
         :title="confirmingBulk === 'all' ? 'Discard every dead letter?' : `Discard ${pickedRows.length} dead letter${pickedRows.length === 1 ? '' : 's'}?`"
         :description="
@@ -368,27 +369,11 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
             ? `All ${total} of them go — the whole queue, not just the ${rows.length} on screen, and including any that arrive while this dialog is open. Discarding is not replaying — the work does not run.`
             : 'Discarding is not replaying — the work does not run. The runs stay in the history.'
         "
+        confirm-label="Discard"
+        :loading="bulkDelete.isPending.value"
         @update:open="(open: boolean) => { if (!open) confirmingBulk = null }"
-      >
-        <template #footer>
-          <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              @click="confirmingBulk = null"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              color="error"
-              :loading="bulkDelete.isPending.value"
-              @click="runBulk"
-            >
-              Discard
-            </UButton>
-          </div>
-        </template>
-      </UModal>
+        @confirm="runBulk"
+      />
 
       <aside
         v-if="selected"

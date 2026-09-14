@@ -11,6 +11,7 @@ import {
 } from '~/api/queries'
 import type { Invitation, Role, User } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * Who has access.
@@ -33,6 +34,24 @@ const revokeInvitation = useRevokeInvitation()
 const removeUser = useDeleteUser()
 
 const error = ref<string | null>(null)
+
+/**
+ * Who is being removed, while the question is on screen.
+ *
+ * Holding the label as well as the id so the dialog can name the person. A
+ * confirmation that says "this user" is one people click through without
+ * reading, which defeats the point of asking (issue #667).
+ */
+const confirmRemoveUser = ref<{ id: string; label: string } | null>(null)
+
+async function doRemoveUser() {
+  const target = confirmRemoveUser.value
+  if (!target) return
+  const ok = await attempt(() => removeUser.mutateAsync(target.id))
+  // Closed on success only: a refusal leaves the dialog up, above the message
+  // explaining it.
+  if (ok) confirmRemoveUser.value = null
+}
 
 /** The accept link, shown once — with no SMTP configured it is the only copy. */
 const issuedInvite = ref<{ email: string; url: string } | null>(null)
@@ -329,11 +348,20 @@ function isSelf(row: Row): boolean {
               :aria-label="`Remove ${row.identity}`"
               title="Remove this user"
               :loading="removeUser.isPending.value"
-              @click="attempt(() => removeUser.mutateAsync(row.id))"
+              @click="confirmRemoveUser = { id: row.id, label: row.identity }"
             />
           </td>
         </tr>
       </tbody>
     </table>
+    <ConfirmModal
+      :open="confirmRemoveUser !== null"
+      title="Remove this person?"
+      :description="`${confirmRemoveUser?.label ?? ''} loses access immediately. Their tokens stop working and anything they scheduled keeps running.`"
+      confirm-label="Remove"
+      :loading="removeUser.isPending.value"
+      @update:open="(open: boolean) => { if (!open) confirmRemoveUser = null }"
+      @confirm="doRemoveUser"
+    />
   </div>
 </template>

@@ -11,6 +11,7 @@ import {
 } from '~/api/queries'
 import type { CalendarDefinition } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * One calendar, and — the part that is new — what it is actually doing.
@@ -306,7 +307,7 @@ const ruleLines = computed(() =>
       :calendar="calendar"
     />
 
-    <UModal
+    <ConfirmModal
       v-model:open="confirmingDelete"
       title="Delete this calendar?"
       :description="
@@ -314,25 +315,8 @@ const ruleLines = computed(() =>
           ? `${governed.length} schedule${governed.length === 1 ? '' : 's'} still name it. They will fail to load on the next config reload.`
           : 'Nothing references it. Existing runs are unaffected.'
       "
-    >
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            @click="confirmingDelete = false"
-          >
-            Cancel
-          </UButton>
-          <UButton
-            color="error"
-            :loading="removeCalendar.isPending.value"
-            @click="doDelete"
-          >
-            Delete
-          </UButton>
-        </div>
-      </template>
-    </UModal>
+      :loading="removeCalendar.isPending.value"
+      @confirm="doDelete"
+    />
   </aside>
 </template>
