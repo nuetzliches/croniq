@@ -2,7 +2,7 @@
 //
 // The shell owns exactly one scroll region and every list page is sized to fit
 // it, so that filters, column heads and the maintenance banner stay put while
-// the table body moves (docs/ui-visual-design.md, Durchgang 5). That is a
+// the table body moves (docs/ui-visual-design.md, pass 5). That is a
 // claim about geometry, so it gets measured rather than eyeballed: scroll the
 // deepest overflow container as far as it goes, then check that the document
 // did not move and the chrome above the list did not shift by a pixel.
