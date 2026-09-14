@@ -85,6 +85,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   yet; until there is, the tag is the contract, and the combined image — one
   digest for both halves — is the variant that cannot have the problem.
 
+- **A time window on the run list, and paging past the 200-row cap
+  ([#636](https://github.com/nuetzliches/croniq/issues/636)).**
+  `GET /v1/executions` accepts `since` and `until` as RFC3339 instants.
+  `ExecutionFilter` had carried both since it was written and the SQL applied
+  them; the HTTP handler simply never read the query parameters, so the one
+  entry point to the execution history could not express a time window at all.
+  An unparseable value is ignored rather than rejected, the way this endpoint
+  has always treated `state` and `limit`.
+
+  `until` doubles as the paging cursor. The list is ordered by `created_at`
+  descending and `until` bounds that same field inclusively, so keyset paging
+  needs no store change: ask again with `until` set to the oldest row's
+  `created_at`. The inclusive bound returns the cursor row again, which the
+  client drops by id.
+
+  Pass back the `created_at` the server gave you, verbatim. `created_at` is an
+  RFC3339 *string* in SQLite compared lexicographically, so a cursor truncated
+  to milliseconds — exactly what `Date.toISOString()` produces — sorts *below* a
+  row inside that millisecond and drops it silently. The rule is stated in the
+  handler, the client type and the OpenAPI description.
+
+  The dashboard's Runs screen carries the window in the URL as a length rather
+  than two instants (`window=1h`), so a shared link means "the last hour"
+  whenever it is opened rather than freezing a window around when it was copied.
+
+- **A command palette whose shortcuts are real
+  ([#633](https://github.com/nuetzliches/croniq/issues/633)).** Jump to any job,
+  runner, calendar or alert rule from one search field, opened from the header
+  or by keyboard. The React dashboard printed chords beside every entry — `G D`,
+  `G J`, `G E` — and implemented none of them; pressing `g` then `d` did nothing
+  on any screen. Here the chords work, which is why the palette prints them.
+
+  A two-key chord needs three things, each checked: it never takes a key from a
+  field someone is typing in, it expires after 1.2 s so a forgotten `g` cannot
+  turn an unrelated keystroke into a navigation minutes later, and its armed
+  state is visible — otherwise it is invisible state and you cannot tell a dead
+  feature from a missed keypress. The palette is mounted once in the shell, so
+  two instances can no longer be open with different search terms.
+
+- **Discard dead letters in bulk
+  ([#639](https://github.com/nuetzliches/croniq/issues/639)).** The dashboard
+  now uses `POST /v1/dead-letters/bulk-delete`, which the server has had all
+  along: an explicit `ids` list, or `all: true` optionally scoped to one
+  `job_key`.
+
+  Two paths, because they are different intents: tick rows and discard the
+  selection, or sweep the queue. The destructive control only appears once
+  something is picked — a delete button parked permanently beside a work queue
+  is one people stop reading. The selection is held by id rather than index, so
+  rows that disappear in the meantime (replayed elsewhere, swept by retention)
+  drop out of it and a later bulk action cannot name ids the server no longer
+  has. What gets reported is the count the server returns, because a bulk delete
+  that says "done" is indistinguishable from one that matched nothing.
+
 ### Changed
 
 - **The runtime image is Alpine with statically linked binaries, and half the
@@ -265,6 +319,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   `install.sh` is served from `main`, not from a release tag, so this fixes
   v0.38.0 installs as well.
+
+- **A deleted job kept firing until the next reload
+  ([#635](https://github.com/nuetzliches/croniq/issues/635),
+  [#634](https://github.com/nuetzliches/croniq/issues/634)).**
+  `DELETE /v1/jobs/{key}` cleared the definition, the trigger rows and the
+  `job_states` row from the store, and left the job in the scheduler's in-memory
+  trigger map. The scheduler went on firing it — every fire queuing an execution
+  the watchdog then cancelled as stranded, a WARN pair per tick, for as long as
+  the process lived. Measured before the fix: a job deleted at roughly 14:5x was
+  queued again at 15:09:28, 15:14:29 and 15:19:30.
+
+  The same map is the snapshot `state.triggers` exposes, so the drift reached
+  the dashboard twice over. `GET /v1/dashboard/forecast` computes from it
+  directly and counted the deleted job's fires; `GET /v1/jobs/states` *filters*
+  against it to drop rows whose job the configuration no longer defines, so the
+  filter dutifully kept reporting a deleted job as live.
+
+  The mechanism already existed and was already used: `handle_unadopt` two
+  functions below sends `SchedulerCommand::RemoveJob`, and so does every trigger
+  mutation in `schedules.rs`. Deletion was the one path that did not. Measured
+  after: the forecast reads 79 for the five demo jobs, 139 after adding a job
+  that fires every minute, and 79 again the moment it is deleted.
+
+- **A cold load no longer spends a guaranteed-useless refresh
+  ([#630](https://github.com/nuetzliches/croniq/issues/630),
+  [#621](https://github.com/nuetzliches/croniq/issues/621)).**
+  `POST /v1/auth/refresh` answered 401 both when no credential was presented and
+  when the one presented was stale, and a client has to treat those differently:
+  a stale token may have been rotated away by a parallel tab, which is worth
+  exactly one retry, while a missing one can never become present by asking
+  again. The refresh cookie is `HttpOnly`, so the page cannot look for itself.
+  Every first-ever visitor, and everyone whose seven-day refresh token had
+  expired, paid a second round trip on the path they take exactly once.
+
+  The status stays 401 — promoting the no-credential case to 400 would make a
+  normal first page load read as a malformed request in every access log. What
+  changes is that the body says which case it is: `{"error": "no_session"}` when
+  nothing was presented, nothing when a credential was presented and rejected.
+  Additive: a client that ignores the body sees the same 401 it always saw.
+
+  The dashboard skips its retry on that marker only, and is deliberately
+  tolerant — an older server answers with no body, a proxy may replace it, and
+  anything unreadable is treated as "a credential was presented" so the retry
+  survives. The cost of guessing wrong that way is one request; the other way it
+  is a session that fails to come back.
 
 ## [0.38.0] - 2026-09-08
 
