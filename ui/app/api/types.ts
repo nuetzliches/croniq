@@ -147,18 +147,26 @@ export interface BulkDeleteResponse {
   deleted: number
 }
 
+/**
+ * What `POST /v1/dead-letters/{id}/replay` answers with.
+ *
+ * Declared once. There were two interfaces of this name, and TypeScript
+ * *merges* same-named interfaces rather than rejecting them — so the type in
+ * force was the union of both and neither author's. The kind of thing only
+ * ever noticed by accident (issue #675).
+ */
 export interface ReplayResponse {
   execution_id: string
   attempt: number
   scheduled_for: string
 }
 
-/** 409 body when the stale-replay guard rejects a replay. */
 /** Response of `GET /v1/dead-letters/count`. */
 export interface DeadLetterCount {
   count: number
 }
 
+/** 409 body when the stale-replay guard rejects a replay. */
 export interface StaleReplayError {
   error: 'stale_replay'
   message: string
@@ -429,11 +437,6 @@ export interface TriggerResponse {
   queued: boolean
   /** true when the trigger coalesced to an existing execution via idempotency_key (#279). */
   deduplicated: boolean
-}
-
-export interface ReplayResponse {
-  execution_id: string
-  attempt: number
 }
 
 // ─── #140 Failure alerts ─────────────────────────────────────────

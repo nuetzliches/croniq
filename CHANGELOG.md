@@ -804,6 +804,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   same measurement. `StatusPill` gains the `delivered` state and an optional
   title, and the copies are gone.
 
+- **A silently merged interface, two dead hooks, and one auth guard instead of
+  nineteen ([#675](https://github.com/nuetzliches/croniq/issues/675)).**
+  `ReplayResponse` was declared twice in `api/types.ts` with different fields.
+  TypeScript *merges* same-named interfaces rather than rejecting them, so the
+  type in force was the union of both and neither author's — a thing only ever
+  noticed by accident. It is declared once now, and the replay mutation
+  actually uses it.
+
+  `useJob` and `useRevokeApiKey` had no callers and are gone. The dead-letter
+  view's 409 check is typed against the server's `StaleReplayError` rather than
+  a shape written inline.
+
+  Nineteen query hooks repeated `const auth = useAuthStore()` alongside
+  `enabled: computed(() => auth.isAuthenticated)`. They go through one
+  `authedAnd` helper, which is also what lets a caller add a second condition —
+  the mechanism [#670](https://github.com/nuetzliches/croniq/issues/670)
+  needed for the command palette.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
