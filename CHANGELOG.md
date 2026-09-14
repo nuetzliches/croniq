@@ -822,6 +822,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the mechanism [#670](https://github.com/nuetzliches/croniq/issues/670)
   needed for the command palette.
 
+- **The CA-bundle assertion cannot go red on a stale cache
+  ([#678](https://github.com/nuetzliches/croniq/issues/678)).** CI compares the
+  bundle in the published image against a fresh `apt-get install`, to catch the
+  runtime stage silently copying `rust:1.88-bookworm`'s trust store instead of
+  a current one. But the `ca-provider` layer was cached: keyed on the base
+  digest plus the instruction text, so it kept yesterday's `ca-certificates`
+  until `debian:bookworm-slim` itself re-digested.
+
+  Any Debian update to that package therefore failed the check on a correct
+  image, for a reason the error did not mention, and blocked publishing every
+  variant until someone busted the cache by hand. `ca-provider` is now excluded
+  from the cache on both legs. It costs one `apt-get install` of one package,
+  and it is what makes the assertion mean what it says: the bundle shipped is
+  the bundle apt would install today.
+
+- **The images declare their own health check
+  ([#679](https://github.com/nuetzliches/croniq/issues/679)).**
+  `docker-compose.yml` has probed the server since
+  [#599](https://github.com/nuetzliches/croniq/issues/599); nothing else that
+  runs these images did, so `docker run` and every orchestrator reading the
+  image's own metadata got no health signal. Both runtimes now carry a
+  `HEALTHCHECK`, and a compose file that wants different timings still
+  overrides it.
+
+  The `croniq-ui` image had the stranger gap: it serves `/healthz` and
+  documents it "for container health checks", and nothing shipped used it.
+
+  Its `/healthz` also answered with **two** `Content-Type` headers. nginx's
+  `return` sets one from `default_type` and `add_header` adds rather than
+  replaces, so the endpoint sent `application/octet-stream` and `text/plain`
+  both. `default_type text/plain` in the location is the one-line form that
+  does what the old line meant.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

@@ -217,6 +217,25 @@ ENV RUST_LOG=info
 ENV CRONIQ_DATA_DIR=/var/lib/croniq
 EXPOSE 4000 9900
 
+# Liveness, in the image rather than only in one compose file.
+#
+# docker-compose.yml has had a probe for the server since #599; nothing else
+# that runs these images did, so `docker run` and every orchestrator that reads
+# the image's own metadata got no health signal at all (#679). Declaring it
+# here means a plain `docker run` reports health, and compose's own
+# `healthcheck:` still overrides it where a deployment wants different timings.
+#
+# BusyBox wget, not bash: `/dev/tcp` is a bash builtin rather than a kernel
+# feature, and this runtime is Alpine. `127.0.0.1`, not `localhost`: the
+# container maps both 127.0.0.1 and ::1 to that name, busybox tries ::1 first,
+# and the server binds IPv4 — so the probe would fail against a server
+# answering perfectly well. Both lessons are compose's, learned the hard way;
+# this is the same probe, in the place everything can see it.
+#
+# `start-period` is generous because the first start runs migrations.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD wget -q -O - http://127.0.0.1:4000/health || exit 1
+
 # Entrypoint runs as root, fixes data-dir ownership if needed, then drops
 # privileges to the croniq user via su-exec. That covers upgrades from the
 # root-based images of v0.4.0 and earlier, and — more durably — any bind mount
@@ -248,6 +267,15 @@ FROM nginxinc/nginx-unprivileged:1.29-alpine AS ui-runtime
 COPY docker/ui/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=ui-builder /build/ui/dist /usr/share/nginx/html
 EXPOSE 8080
+
+# `/healthz` exists for this and, until now, nothing used it: no compose
+# service, no probe in the image, nothing (#679). It answers without reaching
+# through to the API deliberately — this container serves files, and its health
+# should not depend on a server it does not talk to.
+#
+# The nginx image has wget; the port is 8080 because this runs unprivileged.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q -O - http://127.0.0.1:8080/healthz || exit 1
 
 
 # ── Stage 5: Combined image (the default target) ─────────────────────────────
