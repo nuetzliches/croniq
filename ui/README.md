@@ -28,14 +28,14 @@ node ../scripts/dev-stack.mjs
 ```
 
 That starts `croniq-server` on `:4230` with a demo runner attached, and this
-dashboard on `:4232`. See the script's header for prerequisites and for the
+dashboard on `:4231`. See the script's header for prerequisites and for the
 environment variables that move the ports when something else on the machine
 holds one.
 
 This tree alone, against a server you started yourself:
 
 ```sh
-npm run dev        # :4232, proxies /v1 /health /version /metrics to :4230
+npm run dev        # :4231, proxies /v1 /health /version /metrics to :4230
 ```
 
 The proxy is what makes development same-origin, so the `HttpOnly` refresh
@@ -89,7 +89,7 @@ is how a rebuild loses hard-won behaviour.
 
 | | |
 |---|---|
-| `npm run dev` | dev server on :4232 |
+| `npm run dev` | dev server on :4231 |
 | `npm run build` | `vue-tsc --build && vite build` — the type check is part of it |
 | `npm run typecheck` | type check alone |
 | `npm run lint` | eslint |

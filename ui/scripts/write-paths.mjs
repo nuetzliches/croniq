@@ -25,7 +25,7 @@
 
 import { chromium } from "@playwright/test";
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4232}`;
+const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const problems = [];

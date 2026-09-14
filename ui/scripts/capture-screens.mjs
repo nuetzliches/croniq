@@ -26,7 +26,7 @@ import { chromium } from "@playwright/test";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const outDir = path.resolve(process.argv[2] ?? path.join(ROOT, "screens"));
-const port = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4232);
+const port = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4231);
 const base = `http://127.0.0.1:${port}`;
 
 /** Screens in the order they appear in the navigation. */

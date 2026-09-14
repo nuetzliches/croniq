@@ -36,7 +36,7 @@ if (!croniq) {
   process.exit(1);
 }
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4232}`;
+const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "croniq-dsl-"));
 
 const browser = await chromium.launch();

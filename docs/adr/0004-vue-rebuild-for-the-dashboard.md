@@ -158,9 +158,9 @@ What moved, in one change:
   `UI (build + typecheck)` and swapped its contents, because it is a required
   status check and renaming one blocks every merge until branch protection
   catches up (incident #98).
-- Port 4231 is free. The dashboard stays on 4232 rather than sliding down a
-  slot — every tool and note names that port, and renumbering a working port
-  only to close a gap is churn.
+- The dashboard moved back to **4231**, the UI slot in the 4230-4233
+  development block; 4232 is free. It only ever sat on 4232 because the tree it
+  was replacing held 4231.
 - `VITE_API_URL` and its `VITE_ALLOW_LOCALSTORAGE_REFRESH` guard are gone with
   the React tree. The rebuilt dashboard is same-origin only, which makes
   [ADR-0001](0001-same-origin-dashboard.md) hold by construction instead of by
