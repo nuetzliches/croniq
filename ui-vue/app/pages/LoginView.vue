@@ -284,9 +284,24 @@ function messageFor(caught: unknown): string {
       Purely decorative, so `aria-hidden`, and behind everything at z-0.
     -->
     <div
-      class="cq-stage-bg pointer-events-none absolute inset-0 z-0"
+      class="pointer-events-none absolute inset-0 z-0 overflow-hidden"
       aria-hidden="true"
-    />
+    >
+      <!--
+        Two drifting spotlights, under the grid.
+
+        Without them the grid is technically painted and practically invisible
+        — which is exactly how it was reported. They are what lights it: the
+        raster only reads where a spot passes behind it, so the page breathes
+        instead of sitting flat.
+
+        Different sizes, colours and periods (90s against 130s) so the two
+        never fall into step and the loop never announces itself.
+      -->
+      <div class="cq-spot cq-spot-a" />
+      <div class="cq-spot cq-spot-b" />
+      <div class="cq-stage-bg absolute inset-0" />
+    </div>
 
     <div class="relative z-10 mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-[1.1fr_minmax(22rem,26rem)]">
       <!-- The product half. Hidden on narrow screens: on a phone the only
@@ -642,6 +657,70 @@ function messageFor(caught: unknown): string {
     radial-gradient(ellipse 80% 60% at 18% 0%, oklch(0.32 0.13 285 / 0.4) 0%, oklch(0.32 0.13 285 / 0) 60%),
     radial-gradient(ellipse 60% 50% at 110% 90%, oklch(0.36 0.18 250 / 0.32) 0%, oklch(0.36 0.18 250 / 0) 55%),
     linear-gradient(180deg, oklch(0.13 0.02 265) 0%, oklch(0.1 0.015 265) 100%);
+}
+
+/*
+ * The spotlights. `screen` blending so they add light to the ground rather
+ * than sitting on it as two visible discs.
+ */
+.cq-spot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.cq-spot-a {
+  width: 700px;
+  height: 700px;
+  margin: -350px 0 0 -350px;
+  background: radial-gradient(circle, oklch(0.62 0.18 285 / 0.7) 0%, oklch(0.62 0.18 285 / 0) 100%);
+  filter: blur(120px);
+  animation: cq-spot-a 90s linear infinite;
+}
+
+.cq-spot-b {
+  width: 600px;
+  height: 600px;
+  margin: -300px 0 0 -300px;
+  background: radial-gradient(circle, oklch(0.6 0.16 230 / 0.65) 0%, oklch(0.6 0.16 230 / 0) 100%);
+  filter: blur(100px);
+  animation: cq-spot-b 130s linear infinite;
+}
+
+/* Viewport units, so one path suits a wide stage and a narrow one. */
+@keyframes cq-spot-a {
+  0% { transform: translate(-15vw, -20vh); }
+  25% { transform: translate(20vw, -15vh); }
+  50% { transform: translate(25vw, 22vh); }
+  75% { transform: translate(-10vw, 18vh); }
+  100% { transform: translate(-15vw, -20vh); }
+}
+
+@keyframes cq-spot-b {
+  0% { transform: translate(22vw, 18vh); }
+  25% { transform: translate(-18vw, 15vh); }
+  50% { transform: translate(-20vw, -18vh); }
+  75% { transform: translate(18vw, -20vh); }
+  100% { transform: translate(22vw, 18vh); }
+}
+
+/*
+ * Still, not absent. The lights are what make the grid legible, so removing
+ * them under reduced motion would take the background with them — they park
+ * at a composed position instead.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .cq-spot-a {
+    animation: none;
+    transform: translate(-12vw, -16vh);
+  }
+  .cq-spot-b {
+    animation: none;
+    transform: translate(18vw, 14vh);
+  }
 }
 
 /* The grid itself, masked so it fades out rather than ending at an edge. */

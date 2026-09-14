@@ -245,7 +245,7 @@ function ruleOf(row: Row): string {
     </div>
 
     <div class="flex min-h-0 flex-1 gap-4">
-      <div class="min-w-0 flex-1 overflow-auto rounded-lg border border-default">
+      <div class="cq-list min-w-0 flex-1">
         <AppLoading
           v-if="isPending"
           label="Loading jobs"

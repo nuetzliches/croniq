@@ -88,7 +88,7 @@ async function remove(runnerId: string) {
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-auto rounded-lg border border-default">
+    <div class="cq-list min-h-0 flex-1">
       <AppLoading
         v-if="!received"
         label="Connecting to the runner stream"

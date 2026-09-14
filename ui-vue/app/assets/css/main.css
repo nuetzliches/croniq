@@ -102,6 +102,26 @@
   }
 }
 
+/* The scroll box every list sits in.
+ *
+ * `isolation: isolate` is the load-bearing part and the reason this is a
+ * utility rather than four repeated classes. The sticky `<thead>` inside needs
+ * a z-index to sit above its own rows — but a z-index only means anything
+ * relative to a stacking context, and without one here the header was
+ * competing with the *whole page*. It won against an open dialog, which Nuxt
+ * UI positions with `z-index: auto`, and painted its column titles across the
+ * middle of a form.
+ *
+ * Isolating the container scopes the header's z-index to the table it belongs
+ * to, which is all it ever needed, and keeps every overlay in the product
+ * above it. */
+@utility cq-list {
+  isolation: isolate;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--ui-border);
+}
+
 /* One row, for every list in the product.
  *
  * There was a compact/comfortable toggle. It is gone: a density control asks
