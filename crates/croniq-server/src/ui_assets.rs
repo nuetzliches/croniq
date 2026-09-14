@@ -28,7 +28,8 @@
 //! thing standing between the console and a buffered stream.)
 
 use axum::Router;
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::Response;
 use std::path::Path;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
@@ -40,6 +41,18 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// `immutable` additionally suppresses the revalidation request a user-agent
 /// would otherwise send on a forced reload.
 pub const ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+/// `Cache-Control` for a request to `/assets/…` that finds no file.
+///
+/// A 404 is cacheable when it carries explicit freshness (RFC 9111 §3), so
+/// handing one the year above is a real hazard rather than a curiosity: during
+/// a rolling upgrade a browser holding the new `index.html` can ask an old
+/// replica for a new chunk, and cache the miss until the user clears site data.
+/// The split images make that reachable — `croniq-ui` and `croniq-server` roll
+/// independently (issue #655).
+///
+/// `no-store` rather than `no-cache`: there is nothing here worth revalidating.
+pub const MISSING_ASSET_CACHE_CONTROL: &str = "no-store";
 
 /// `Cache-Control` for the document and everything else not content-hashed.
 ///
@@ -55,11 +68,30 @@ pub const DOCUMENT_CACHE_CONTROL: &str = "no-cache";
 fn assets_router(ui_dir: &Path) -> Router {
     Router::new()
         .fallback_service(ServeDir::new(ui_dir.join("assets")))
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static(ASSET_CACHE_CONTROL),
-        ))
+        // Not `SetResponseHeaderLayer`: it cannot see the status, and this
+        // header must not be applied to a miss. See
+        // [`MISSING_ASSET_CACHE_CONTROL`].
+        .layer(axum::middleware::map_response(cache_control_by_status))
         .layer(CompressionLayer::new())
+}
+
+/// Pick the asset `Cache-Control` from the status the file service produced.
+///
+/// A year for a file that was served — 2xx, and 304, where the stored response
+/// is being confirmed and its freshness should be refreshed with it. `no-store`
+/// for everything else, which in practice is the 404 for a chunk this replica
+/// does not have.
+async fn cache_control_by_status(mut response: Response) -> Response {
+    let served = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
+    let value = if served {
+        ASSET_CACHE_CONTROL
+    } else {
+        MISSING_ASSET_CACHE_CONTROL
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
+    response
 }
 
 /// The document half: `index.html`, `/icons/*`, the web manifest, and the SPA
@@ -136,6 +168,50 @@ mod tests {
         let res = get(dir.path(), "/assets/index-abc123.js").await;
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(cache_control(&res), ASSET_CACHE_CONTROL);
+    }
+
+    /// A hashed chunk this build does not have must not be cached at all.
+    ///
+    /// The header layer used to be a `SetResponseHeaderLayer` over the whole
+    /// `ServeDir`, which cannot see the status — so the 404 came back with a
+    /// year of `immutable`. A 404 carrying explicit freshness is cacheable
+    /// (RFC 9111 section 3), and during a rolling upgrade a browser holding the
+    /// new `index.html` can ask an old replica for a new chunk. Caching that
+    /// miss for a year leaves a broken dashboard until site data is cleared
+    /// (issue #655).
+    #[tokio::test]
+    async fn a_missing_asset_is_not_cached() {
+        let dir = fixture();
+        let res = get(dir.path(), "/assets/index-doesnotexist.js").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert_eq!(cache_control(&res), MISSING_ASSET_CACHE_CONTROL);
+        assert!(
+            !cache_control(&res).contains("immutable"),
+            "a miss must never carry the immutable header"
+        );
+    }
+
+    /// The nginx image answers the same request, and it is a text file the
+    /// compiler never sees — so the two halves are asserted equal here, the
+    /// way the CSP already is in `api::hardening`.
+    #[test]
+    fn nginx_does_not_cache_a_missing_asset_either() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docker/ui/nginx.conf");
+        let conf = std::fs::read_to_string(path)
+            .expect("docker/ui/nginx.conf must exist — it is the other half of this policy");
+
+        assert!(
+            conf.contains(&format!(
+                r#"add_header Cache-Control "{MISSING_ASSET_CACHE_CONTROL}""#
+            )),
+            "docker/ui/nginx.conf must answer a missing asset with {MISSING_ASSET_CACHE_CONTROL}"
+        );
+        assert!(
+            !conf.contains(&format!(
+                r#"add_header Cache-Control "{ASSET_CACHE_CONTROL}" always"#
+            )),
+            "`always` on the asset Cache-Control extends it to the 404 — that is              the bug in #655, and nginx applies add_header to 2xx/3xx without it"
+        );
     }
 
     #[tokio::test]

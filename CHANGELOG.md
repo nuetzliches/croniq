@@ -428,6 +428,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before this parameter existed is unaffected. The dashboard's "Load older"
   sends both.
 
+- **A missing asset is no longer cached for a year
+  ([#655](https://github.com/nuetzliches/croniq/issues/655)).** Both asset
+  servers attached `public, max-age=31536000, immutable` to every response of
+  the hashed half, including the 404 for a file that is not there —
+  `SetResponseHeaderLayer` cannot see a status, and nginx's `add_header …
+  always` deliberately extends to error responses.
+
+  A 404 carrying explicit freshness is cacheable (RFC 9111 §3). During a
+  rolling upgrade a browser holding the new `index.html` can ask an old replica
+  for a new chunk, and cache that miss for a year — a dashboard broken until
+  the user clears site data. The split images from
+  [#587](https://github.com/nuetzliches/croniq/issues/587) /
+  [#598](https://github.com/nuetzliches/croniq/issues/598) are what make mixed
+  versions reachable: `croniq-ui` and `croniq-server` roll independently.
+
+  A served file still gets the year — 2xx, and 304, where the stored response
+  is being confirmed. Anything else gets `no-store`, in both the Rust server
+  and the nginx image, and a test asserts the two have not drifted the way the
+  CSP one already does.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
