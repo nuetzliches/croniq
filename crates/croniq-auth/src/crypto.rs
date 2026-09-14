@@ -26,6 +26,21 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use thiserror::Error;
 
+/// HKDF's `info`: a domain-separation label, not key material.
+///
+/// RFC 5869 §3.2 — `info` is optional, application-specific context, and is
+/// explicitly allowed to be public. It exists so that two different uses of
+/// the *same* input keying material derive unrelated keys; `-v1` is there so a
+/// future format change can derive a different key from an unchanged
+/// `CRONIQ_JWT_SECRET` without a migration.
+///
+/// CodeQL's `rust/hard-coded-cryptographic-value` reads it as a hard-coded key
+/// and reports critical. It is a false positive and worth saying so here
+/// rather than only in a dismissal nobody reading this file will see: the key
+/// is the HKDF output, and its secrecy comes entirely from the IKM below,
+/// which is the operator's JWT secret. A hard-coded `info` with a secret IKM
+/// is the construction working as designed; a hard-coded *IKM* would be the
+/// bug the rule is looking for.
 const TOTP_KEY_INFO: &[u8] = b"croniq-totp-v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -39,6 +54,11 @@ pub enum CryptoError {
 }
 
 fn derive_totp_key(jwt_secret: &str) -> Key<Aes256Gcm> {
+    // No salt (`None`). HKDF-Extract falls back to a zero salt, which RFC 5869
+    // §3.1 permits and which costs nothing here: the IKM is already
+    // high-entropy secret material rather than a password, and a salt would
+    // have to be stored somewhere the wrap format deliberately has no room
+    // for (see the module docs on why there is no key identifier on disk).
     let hk = Hkdf::<Sha256>::new(None, jwt_secret.as_bytes());
     let mut okm = [0u8; 32];
     hk.expand(TOTP_KEY_INFO, &mut okm)
