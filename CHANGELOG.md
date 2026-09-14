@@ -404,6 +404,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MCP schedule tools no longer carry their "call `reload-config` to stop
   firing" caveat, because they no longer need it.
 
+- **Execution paging can get past a tie group
+  ([#654](https://github.com/nuetzliches/croniq/issues/654)).**
+  `GET /v1/executions` takes a second cursor parameter, `until_id`, and orders
+  by `(created_at, id)` rather than `created_at` alone.
+
+  The scheduler stamps every execution queued in one tick with the same
+  `created_at` — one `now` per tick — so rows sharing a timestamp are the
+  normal case, not an edge. `until` on its own has to be an *inclusive* bound,
+  because a strict one would drop the rest of a tie group straddling a page
+  boundary. And an inclusive bound cannot get past a tie group larger than
+  `limit`: page N+1 comes back identical to page N, the cursor never advances,
+  and a client paging through history loops. 200 jobs due in the same tick was
+  enough to reach it at the dashboard's page size.
+
+  Send both halves and the bound is strict — everything below the last row
+  seen, ties broken by `id` in the same direction as the sort. The ordering now
+  has a tiebreaker too, so two calls can no longer disagree about which row is
+  oldest.
+
+  Additive: `until` alone keeps the inclusive window behaviour from
+  [#636](https://github.com/nuetzliches/croniq/issues/636), so a client written
+  before this parameter existed is unaffected. The dashboard's "Load older"
+  sends both.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

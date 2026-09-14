@@ -883,12 +883,30 @@ impl ExecutionStore for PgStore {
             idx += 1;
         }
         if let Some(until) = filter.until {
-            params.push(Box::new(until));
-            sql.push_str(&format!(" AND created_at <= ${idx}"));
-            idx += 1;
+            match filter.until_id {
+                // See the SQLite backend and issue #654: the cursor is
+                // `(created_at, id)`, and only the pair can get past a tie
+                // group larger than `limit`.
+                Some(until_id) => {
+                    params.push(Box::new(until));
+                    let ts = idx;
+                    idx += 1;
+                    params.push(Box::new(until_id));
+                    let id = idx;
+                    idx += 1;
+                    sql.push_str(&format!(
+                        " AND (created_at, id) < (${ts}::timestamptz, ${id}::uuid)"
+                    ));
+                }
+                None => {
+                    params.push(Box::new(until));
+                    sql.push_str(&format!(" AND created_at <= ${idx}"));
+                    idx += 1;
+                }
+            }
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
         let limit = filter.limit.unwrap_or(100);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" LIMIT ${idx}"));

@@ -200,6 +200,18 @@ pub struct DeadLetter {
 // ─── Query types ───
 
 /// Filter for listing executions.
+///
+/// `until` and `until_id` together form the paging cursor. The list is ordered
+/// by `(created_at DESC, id DESC)`, and a page asks for everything strictly
+/// below the last row it saw.
+///
+/// Why the second half is needed: the scheduler stamps every execution queued
+/// in one tick with the same `created_at` (one `now` per tick), so ties are the
+/// normal case rather than an edge. With `until` alone the bound has to be
+/// inclusive — a strict `<` would drop the rest of a tie group straddling the
+/// page boundary — and an inclusive bound cannot get past a tie group larger
+/// than `limit`: page N+1 comes back identical to page N and the cursor never
+/// advances (issue #654).
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionFilter {
     pub job_key: Option<String>,
@@ -207,6 +219,10 @@ pub struct ExecutionFilter {
     pub runner_id: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// Second half of the cursor. With it the `until` bound is strict and ties
+    /// are broken by `id`; without it `until` stays inclusive, which is what
+    /// clients written before #654 expect.
+    pub until_id: Option<Uuid>,
     pub limit: Option<u32>,
 }
 
