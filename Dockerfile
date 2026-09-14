@@ -1,6 +1,22 @@
 # ── Stage 1: Build Rust binaries ──────────────────────────────────────────────
 FROM rust:1.88-bookworm AS rust-builder
 
+# Statically linked against musl, because the runtime below is Alpine (#599).
+# Same target release.yml has published since #577, and the same reasoning:
+# the C in the closure (`ring`, and the bundled SQLite behind croniq-store)
+# has to be compiled by musl's cc, or a nominally-musl build ends up carrying
+# glibc headers. The *linker* is deliberately left alone -- overriding it with
+# musl-gcc yields a binary with an ELF interpreter, and static-pie is the
+# point. The build asserts that below rather than trusting it.
+#
+# Derived from `uname -m` rather than TARGETPLATFORM: buildx runs this stage
+# on a native runner per architecture (see .github/workflows/ci.yml), so the
+# build arch *is* the target arch, and there is no aarch64-musl cross
+# toolchain in apt to reach for anyway.
+RUN apt-get update && apt-get install -y --no-install-recommends musl-tools && \
+    rm -rf /var/lib/apt/lists/* && \
+    rustup target add "$(uname -m)-unknown-linux-musl"
+
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
@@ -18,13 +34,31 @@ COPY crates/ crates/
 #     PostgreSQL backend at runtime. SQLite stays the default; the feature only
 #     adds the (pure-Rust, NoTls) postgres driver, so the runtime image needs no
 #     extra system libraries.
-RUN cargo build --release \
+#
+# The readelf check at the end is not decoration: `file` reports "statically
+# linked" even for a musl binary that carries /lib/ld-musl-*.so.1 as its
+# interpreter, so it cannot tell the two apart. Such a binary would run fine
+# here -- Alpine has musl -- and fail everywhere else the runner binaries get
+# shipped to (#577). The comment lives above the RUN rather than inside it: a
+# `#` line within a line continuation is a Dockerfile footgun.
+RUN set -eux; \
+    target="$(uname -m)-unknown-linux-musl"; \
+    export "CC_$(echo "$target" | tr - _)=musl-gcc"; \
+    cargo build --release --target "$target" \
       --features croniq-server/otlp,croniq-server/smtp,croniq-server/postgres \
       --bin croniq-server \
       --bin croniq \
       --bin croniq-mcp \
       --bin croniq-demo-runner \
-      --bin croniq-shell-runner
+      --bin croniq-shell-runner; \
+    mkdir -p /out; \
+    for b in croniq-server croniq croniq-mcp croniq-demo-runner croniq-shell-runner; do \
+      bin="target/$target/release/$b"; \
+      if readelf -l "$bin" | grep -q INTERP; then \
+        echo "$b needs a dynamic loader - expected static-pie" >&2; exit 1; \
+      fi; \
+      cp "$bin" /out/; \
+    done
 
 # ── Stage 1b: Build the croniq-config-wasm bridge ────────────────────────────
 # WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
@@ -124,43 +158,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # binary set here is the full one, `croniq-demo-runner` included: dropping it
 # here would drop it from the combined image too, and docker-compose.yml's demo
 # profile runs it. Which binaries belong where is #599.
-FROM debian:bookworm-slim AS server-runtime
+FROM alpine:3.22 AS server-runtime
 
-# `gosu` only. `ca-certificates` and `libssl3` used to be installed here too,
-# and both were paying for something nothing in this image uses (#599):
+# `su-exec` is Alpine's `gosu`: same argv shape, 10 KB of C against 2 MB of
+# Go. The entrypoint calls it by name.
 #
-#   * Nothing links OpenSSL. Every TLS path in the closure is rustls --
-#     reqwest (OIDC), lettre (SMTP) and tokio-postgres-rustls alike. `ldd` on
-#     all five binaries lists only libgcc_s, libm and libc. `libssl3` arrived
-#     as a *transitive* dependency regardless (`ca-certificates` Depends:
-#     openssl Depends: libssl3), so removing it from the list above changed
-#     nothing at all -- measured, because it looked like a saving and was not.
-#   * The trust store is still needed, but only the file. It is read by
-#     `rustls-native-certs`, which reaches this build through
-#     `tokio-postgres-rustls` -- so a Postgres server presenting a private CA
-#     is the case that depends on it. reqwest and lettre carry webpki-roots
-#     compiled in and never look at the filesystem.
-#
-# So the bundle is copied from the `ca-provider` stage instead: openssl and
-# libssl3 (8.3 MB installed, 3.04 MB compressed) stay out of the runtime, and
-# 0.39 MB of PEM arrives on its own.
-#
-# What goes with it is `update-ca-certificates`. An operator adding a private
-# CA now mounts their own bundle over the path below, or points
-# `SSL_CERT_FILE` at one -- see docs/operations.md. Both work with
-# rustls-native-certs; neither needs a package manager in a runtime image.
-RUN apt-get update && apt-get install -y --no-install-recommends gosu && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd -r croniq && useradd -r -g croniq -s /sbin/nologin croniq
+# No `ca-certificates` package. Nothing in the closure links OpenSSL -- `ldd`
+# on all five binaries lists libgcc_s, libm and libc, because every TLS path
+# here is rustls (reqwest for OIDC, lettre for SMTP, tokio-postgres-rustls for
+# Postgres). The trust store is still needed, but only the file, and only by
+# `rustls-native-certs` behind tokio-postgres-rustls: a Postgres server
+# presenting a private CA is the one case that reads it.
+RUN apk add --no-cache su-exec && \
+    addgroup -S croniq && adduser -S -D -H -G croniq -s /sbin/nologin croniq
 
+# Debian's bundle, deliberately, over the one Alpine already ships.
+#
+# Alpine's `ca-certificates-bundle` carries 119 roots to Debian bookworm's
+# 150; compared by SHA-256 fingerprint, 37 certificates are in Debian and not
+# in Alpine -- among them DigiCert Global Root CA, Baltimore CyberTrust Root,
+# GlobalSign Root CA and GTS Root R2, which is to say most of what a managed
+# Postgres chains to.
+#
+# Changing the base image must not quietly also change who the product
+# trusts. Those are two decisions and only one of them was taken. Keeping the
+# bundle constant across the move means the failure mode this would otherwise
+# have -- one customer's Postgres stops verifying after an upgrade that said
+# nothing about certificates -- simply does not exist. 224 KB.
 COPY --from=ca-provider /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Copy Rust binaries
-COPY --from=rust-builder /build/target/release/croniq-server /usr/local/bin/croniq-server
-COPY --from=rust-builder /build/target/release/croniq /usr/local/bin/croniq
-COPY --from=rust-builder /build/target/release/croniq-mcp /usr/local/bin/croniq-mcp
-COPY --from=rust-builder /build/target/release/croniq-demo-runner /usr/local/bin/croniq-demo-runner
-COPY --from=rust-builder /build/target/release/croniq-shell-runner /usr/local/bin/croniq-shell-runner
+COPY --from=rust-builder /out/croniq-server /usr/local/bin/croniq-server
+COPY --from=rust-builder /out/croniq /usr/local/bin/croniq
+COPY --from=rust-builder /out/croniq-mcp /usr/local/bin/croniq-mcp
+COPY --from=rust-builder /out/croniq-demo-runner /usr/local/bin/croniq-demo-runner
+COPY --from=rust-builder /out/croniq-shell-runner /usr/local/bin/croniq-shell-runner
 
 # Copy assets
 COPY assets/ /usr/share/croniq/assets/
@@ -176,9 +208,10 @@ ENV RUST_LOG=info
 ENV CRONIQ_DATA_DIR=/var/lib/croniq
 EXPOSE 4000 9900
 
-# Entrypoint runs as root, fixes data-dir ownership if needed, then
-# drops privileges to the croniq user via gosu. This handles upgrades
-# from older images where the named volume is owned by root.
+# Entrypoint runs as root, fixes data-dir ownership if needed, then drops
+# privileges to the croniq user via su-exec. That covers upgrades from the
+# root-based images of v0.4.0 and earlier, and — more durably — any bind mount
+# owned by someone the image has never heard of.
 ENTRYPOINT ["docker-entrypoint.sh"]
 # `--data-dir` deliberately omitted — the server reads `$CRONIQ_DATA_DIR`
 # (set above) via clap's `env =` fallback, so a `docker run -e

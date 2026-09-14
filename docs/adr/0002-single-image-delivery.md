@@ -64,6 +64,37 @@ supported default for quickstart, demo and single-host deployments.
   slim the image" is the obvious next thought and the numbers do not support
   it; the levers are the base image and which binaries ship —
   [#599](https://github.com/nuetzliches/croniq/issues/599).
+
+  *Amended 2026-09-14, after pulling both levers.* The base was 52% of the
+  image and is now 12% of a smaller one. Two changes, measured rather than
+  estimated (the full table is on #599):
+
+  | | compressed |
+  |---|---:|
+  | as measured above | 57.83 MB |
+  | without the `ca-certificates` package | 54.79 MB |
+  | on `alpine:3.22` with musl binaries | 29.40 MB |
+
+  Nothing in the closure links OpenSSL, but `ca-certificates` Depends on it,
+  so the trust store now arrives as a file from a stage of its own. The base
+  moved to Alpine because `debian:bookworm-slim` is 28.26 MB compressed against
+  Alpine's 3.64 MB — and *only* the base: the musl binaries are 0.5% **larger**
+  than the glibc ones, so the linker change buys nothing on its own and is
+  simply the price of a base with no glibc.
+
+  What was not taken: `scratch` and distroless reach ~19 MB, and cannot. Not
+  for want of a shell — a distroless image fails as UID 65532 against a volume
+  it does not own, with `Permission denied` on the JWT secret. The entrypoint's
+  root → chown → drop sequence is what makes an arbitrarily-owned bind mount
+  work at all, and moving it into `croniq-server` is a redesign of first-run
+  initialisation rather than a size tweak. The 10 MB is also 10 MB of
+  debuggability: Alpine keeps a shell, and this is a self-hosted scheduler.
+
+  The trust store was held constant across the base change on purpose. Alpine
+  ships 119 roots to Debian's 150, missing DigiCert Global Root CA, Baltimore
+  CyberTrust Root and GTS Root R2 among others — most of what a managed
+  Postgres chains to. Changing the base image is one decision; changing who the
+  product trusts is another, and only the first was taken.
 - **Static-serving quality is limited to what the server implements.** As
   recorded, `ServeDir` set no `Cache-Control` and there was no compression, so
   every dashboard load revalidated every asset. That was a gap rather than a

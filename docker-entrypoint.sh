@@ -4,15 +4,24 @@ set -e
 DATA_DIR="${CRONIQ_DATA_DIR:-/var/lib/croniq}"
 
 # If we're root (first entrypoint invocation), fix data-dir ownership if
-# needed and re-exec ourselves as the croniq user via gosu. Named volumes
-# carried over from older root-based images end up owned by root; this
-# ensures the croniq user can still write the SQLite database and jwt.secret.
+# needed and re-exec ourselves as the croniq user.
+#
+# This is not only an upgrade shim for named volumes carried over from the
+# root-based images of v0.4.0 and earlier, though it is that too. It is what
+# makes *any* mount the image did not create work: a bind mount is owned by
+# whoever owns it on the host, and a container that cannot chown it cannot
+# write the SQLite database or jwt.secret. Measured while evaluating a
+# shell-less runtime (#599), which fails on exactly this and reports it as
+# `Permission denied` on the JWT secret.
+#
+# `su-exec` rather than `gosu` since the runtime moved to Alpine: same argv,
+# 10 KB of C against 2 MB of Go.
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR"
   if [ "$(stat -c '%U' "$DATA_DIR")" != "croniq" ]; then
     chown -R croniq:croniq "$DATA_DIR"
   fi
-  exec gosu croniq:croniq "$0" "$@"
+  exec su-exec croniq:croniq "$0" "$@"
 fi
 
 # Resolve credential env vars from their `<VAR>_FILE` sibling when the
