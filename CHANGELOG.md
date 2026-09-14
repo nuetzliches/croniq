@@ -715,6 +715,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   link rather than from a control on screen, it shows as a removable chip: an
   invisible filter and an empty log look identical otherwise.
 
+- **Bookmarks from the React dashboard still work
+  ([#669](https://github.com/nuetzliches/croniq/issues/669)).**
+  `/runners/:runnerId` and `/dead-letters/:id` were real pages until v0.38.0,
+  and the app emitted links to them from its entity links and its dashboard —
+  so they are in bookmarks, in alert bodies and in chat history. They landed on
+  the not-found page, which reads as "that runner is gone" rather than "that
+  page moved".
+
+  The dead-letter one keeps the row: it redirects to the queue with
+  `?selected=`, which the view now reads, so the link still opens the thing it
+  named. The runner one drops its id, because runner detail was deliberately
+  folded into the list and there is nothing left to select — arriving at the
+  fleet beats arriving at a 404.
+
+- **The scaffold verification page is gone
+  ([#672](https://github.com/nuetzliches/croniq/issues/672)).** It was routed
+  at `/scaffold` inside the authenticated shell, in production builds, and its
+  own doc comment said it would be deleted when the shell landed. The shell
+  landed several releases ago.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

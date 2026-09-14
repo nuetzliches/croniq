@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ApiError } from '~/api/client'
 import {
   useBulkDeleteDeadLetters,
@@ -21,6 +22,8 @@ import ConfirmModal from '~/components/ConfirmModal.vue'
  * or discard. Folding it into a browsing list would mean setting a filter
  * before you could see that anything was waiting.
  */
+const route = useRoute()
+
 const { data, isPending, isError, error, refetch } = useDeadLetters()
 const replay = useReplayDeadLetter()
 const remove = useDeleteDeadLetter()
@@ -36,7 +39,16 @@ const remove = useDeleteDeadLetter()
 const total = useDeadLetterCount()
 
 const rows = computed<DeadLetter[]>(() => data.value ?? [])
-const selectedId = ref<string | null>(null)
+/**
+ * Which row the detail rail is showing.
+ *
+ * Seeded from `?selected=`, which is how the redirect from the old
+ * `/dead-letters/:id` route arrives (issue #669) — and what makes a link to
+ * one dead letter shareable at all. Not written back to the URL on every
+ * click: a link should mean "this queue", not "this queue and the row I was
+ * reading".
+ */
+const selectedId = ref<string | null>((route.query.selected as string) || null)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
 
 /** What the last replay attempt said, when it said no. */
