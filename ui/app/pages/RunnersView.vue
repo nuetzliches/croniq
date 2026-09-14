@@ -4,6 +4,7 @@ import { useDeleteRunner } from '~/api/queries'
 import { useActionError } from '~/composables/useActionError'
 import { useRunnersStream } from '~/composables/useRunnersStream'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * The runner fleet.
@@ -43,8 +44,12 @@ const online = computed(() => runners.value.filter((r) => r.status === 'online')
  * server keeps its in-flight executions claimed until the lease expires and
  * they time out.
  */
+/** Which runner the confirmation is about, if any. */
+const confirming = ref<string | null>(null)
+
 async function remove(runnerId: string) {
-  await attempt(() => removeRunner.mutateAsync(runnerId))
+  const ok = await attempt(() => removeRunner.mutateAsync(runnerId))
+  if (ok) confirming.value = null
 }
 </script>
 
@@ -207,7 +212,7 @@ async function remove(runnerId: string) {
                   :aria-label="`Remove ${runner.runner_id}`"
                   title="Remove — in-flight work stays claimed until its lease expires"
                   :loading="removeRunner.isPending.value"
-                  @click="remove(runner.runner_id)"
+                  @click="confirming = runner.runner_id"
                 />
               </div>
             </td>
@@ -215,5 +220,15 @@ async function remove(runnerId: string) {
         </tbody>
       </table>
     </div>
+
+    <ConfirmModal
+      :open="confirming !== null"
+      title="Remove this runner?"
+      :description="`${confirming ?? ''} is dropped from the registry. This is not a graceful drain: anything it is running stays claimed until the lease expires and then times out. A runner that is still alive will register again on its next poll.`"
+      confirm-label="Remove"
+      :loading="removeRunner.isPending.value"
+      @update:open="(open: boolean) => { if (!open) confirming = null }"
+      @confirm="remove(confirming!)"
+    />
   </div>
 </template>

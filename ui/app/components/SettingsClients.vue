@@ -11,6 +11,7 @@ import {
 import type { ApiClient } from '~/api/types'
 import { declaringKeyVar, MANAGED_BY_ENV } from '~/lib/env-managed'
 import { formatAbsolute } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * Machine access: the clients, their scopes, and minting a key.
@@ -32,6 +33,22 @@ const deleteClient = useDeleteApiClient()
 const issueKey = useIssueClientToken()
 
 const error = ref<string | null>(null)
+
+/**
+ * Which client is being deleted, while the question is on screen.
+ *
+ * This is the most consequential delete in Settings: the client is the
+ * identity every key under it was minted against, so removing it revokes all
+ * of them at once. It had no confirmation at all (issue #667).
+ */
+const confirmDelete = ref<{ id: string; label: string } | null>(null)
+
+async function doDelete() {
+  const target = confirmDelete.value
+  if (!target) return
+  const ok = await attempt(() => deleteClient.mutateAsync(target.id))
+  if (ok) confirmDelete.value = null
+}
 const mintedKey = ref<{ client: string; key: string } | null>(null)
 
 const creating = ref(false)
@@ -278,7 +295,7 @@ function toggleActive(client: ApiClient) {
                   : 'Delete'
               "
               :loading="deleteClient.isPending.value"
-              @click="attempt(() => deleteClient.mutateAsync(client.client_id))"
+              @click="confirmDelete = { id: client.client_id, label: client.name }"
             />
           </div>
         </div>
@@ -325,5 +342,14 @@ function toggleActive(client: ApiClient) {
         </p>
       </li>
     </ul>
+
+    <ConfirmModal
+      :open="confirmDelete !== null"
+      title="Delete this API client?"
+      :description="`Every API key issued under ${confirmDelete?.label ?? 'it'} stops working immediately, and anything authenticating with one starts failing. Runs already in the history stay.`"
+      :loading="deleteClient.isPending.value"
+      @update:open="(open: boolean) => { if (!open) confirmDelete = null }"
+      @confirm="doDelete"
+    />
   </div>
 </template>

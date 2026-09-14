@@ -676,6 +676,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than reaching the DOM, and the recognised value is written back in the
   current format so a browser stops carrying the old one.
 
+- **Four destructive controls now ask first
+  ([#667](https://github.com/nuetzliches/croniq/issues/667)).** Removing a
+  user, deleting an API client, removing a runner and deleting a schedule all
+  fired straight from a click. Deleting an API client revokes every token
+  minted under it; removing a runner leaves its in-flight work claimed until
+  the lease expires. Both happened on one mis-click, with no undo and nothing
+  asked. The React dashboard confirmed the runner case and the port dropped it.
+
+  Each dialog names the consequence in concrete terms — which person, which
+  client, what happens to work already running — rather than asking a generic
+  "are you sure". A confirmation that says "this user" is one people click
+  through without reading.
+
+  The modal itself is now a component. Three screens had it copy-pasted, and
+  going from three copies to seven was not the direction to take it. ADR-0004
+  lists the React "hook returns JSX" confirm pattern among the things worth
+  leaving behind; this is the replacement that implies.
+
+  A test reads the templates and fails if a destructive mutation is ever wired
+  to a click again, or if a screen holding a delete hook has no confirmation
+  in it. Cruder than a component test, and it catches the thing that actually
+  went wrong — including in components nobody has written yet.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

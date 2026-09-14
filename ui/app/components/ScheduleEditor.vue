@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ApiError } from '~/api/client'
 import {
   useCalendars,
   useCreateSchedule,
@@ -8,6 +7,8 @@ import {
   useUpdateSchedule,
 } from '~/api/queries'
 import type { TriggerDefinition } from '~/api/types'
+import ConfirmModal from '~/components/ConfirmModal.vue'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * A job's triggers, inside the overview rather than behind a tab of their own.
@@ -31,7 +32,7 @@ const createSchedule = useCreateSchedule()
 const updateSchedule = useUpdateSchedule()
 const deleteSchedule = useDeleteSchedule()
 
-const error = ref<string | null>(null)
+const { error, attempt } = useActionError()
 /** The trigger being edited, or `'new'`, or nothing. */
 const editing = ref<string | null>(null)
 
@@ -67,17 +68,15 @@ function startEdit(trigger: TriggerDefinition) {
  */
 const orBlank = (value: string) => value.trim()
 
-async function attempt(fn: () => Promise<unknown>) {
-  error.value = null
-  try {
-    await fn()
-    editing.value = null
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    // A bad cron expression is refused here, and the server's parser message
-    // is far more useful than anything this form could guess at.
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-  }
+/**
+ * Closing the form is the caller's business, not the helper's.
+ *
+ * A bad cron expression is refused by the server, and its parser message is
+ * far more useful than anything this form could guess at — which is why
+ * `useActionError` prefers the body.
+ */
+async function saveThenClose(fn: () => Promise<unknown>) {
+  if (await attempt(fn)) editing.value = null
 }
 
 function save() {
@@ -92,7 +91,7 @@ function save() {
     calendar: orBlank(form.value.calendar),
     window: orBlank(form.value.window),
   }
-  void attempt(() =>
+  void saveThenClose(() =>
     editing.value === 'new'
       ? createSchedule.mutateAsync({ job_key: props.jobKey, ...patch })
       : updateSchedule.mutateAsync({ trigger_id: editing.value!, ...patch }),
@@ -100,13 +99,22 @@ function save() {
 }
 
 function toggleEnabled(trigger: TriggerDefinition) {
-  void attempt(() =>
+  void saveThenClose(() =>
     updateSchedule.mutateAsync({ trigger_id: trigger.trigger_id, enabled: !trigger.enabled }),
   )
 }
 
-function remove(trigger: TriggerDefinition) {
-  void attempt(() => deleteSchedule.mutateAsync(trigger.trigger_id))
+/**
+ * Which schedule is being deleted, while the question is on screen.
+ *
+ * Deleting the last schedule stops the job firing, and the row that says so is
+ * two clicks from a trash icon with no dialog behind it (issue #667).
+ */
+const confirmDelete = ref<TriggerDefinition | null>(null)
+
+async function remove(trigger: TriggerDefinition) {
+  const ok = await attempt(() => deleteSchedule.mutateAsync(trigger.trigger_id))
+  if (ok) confirmDelete.value = null
 }
 
 const pending = computed(
@@ -284,7 +292,7 @@ const pending = computed(
                 size="xs"
                 aria-label="Delete this schedule"
                 :loading="pending"
-                @click="remove(trigger)"
+                @click="confirmDelete = trigger"
               />
             </div>
           </div>
@@ -352,5 +360,14 @@ const pending = computed(
         </div>
       </li>
     </ul>
+
+    <ConfirmModal
+      :open="confirmDelete !== null"
+      title="Delete this schedule?"
+      :description="`${confirmDelete?.cron_expression ?? 'The schedule'} stops firing ${jobKey}. The job and its run history stay; if this is its only schedule, nothing will trigger it until you add another.`"
+      :loading="pending"
+      @update:open="(open: boolean) => { if (!open) confirmDelete = null }"
+      @confirm="remove(confirmDelete!)"
+    />
   </section>
 </template>
