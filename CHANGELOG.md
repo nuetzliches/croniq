@@ -596,6 +596,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   finished, so not polling them costs nothing — and anything still moving is in
   the live page, which overlaps and wins the de-duplication.
 
+- **The job detail's DSL tab cannot show another job's text
+  ([#663](https://github.com/nuetzliches/croniq/issues/663)).** The render is
+  asynchronous — the formatter is the real one from `croniq-config`, compiled
+  to wasm — and it awaited a different number of times depending on the job. A
+  job with no trigger answers without reaching the formatter; a scheduled one
+  awaits the schedule parse and the block format. So switching from a scheduled
+  job to a trigger-less one let the second render finish first and the first
+  overwrite it.
+
+  The tab would then show job A's DSL under job B's header, which is text an
+  operator copies into a Croniqfile. `CalendarRuleBuilder` had the right
+  pattern all along; `JobDetail` now uses it, and the detail pane is also keyed
+  by job so a different selection remounts rather than re-rendering in place.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

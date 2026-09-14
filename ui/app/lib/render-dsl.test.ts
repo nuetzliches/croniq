@@ -160,4 +160,35 @@ describe('renderJobDsl', () => {
     expect(result.text).toBe('')
     expect(result.notes.join(' ')).toContain('invalid job key')
   })
+
+  /**
+   * Two renders started in order can finish out of order, which is why the
+   * caller needs a generation guard (issue #663).
+   *
+   * The number of awaits depends on the job: one with no trigger answers
+   * without ever reaching the formatter, while a scheduled one awaits the
+   * schedule parse and then the block format. So selecting a scheduled job and
+   * then a trigger-less one lets the second render land first and the first
+   * overwrite it — the DSL tab showing one job's text under another's header.
+   *
+   * This asserts the hazard rather than the fix: the fix is a counter in
+   * `JobDetail.vue`, and there is no component-test harness here yet (#677).
+   * What it protects is the assumption — if `renderJobDsl` is ever made
+   * uniformly single-await, the guard stops being load-bearing, and whoever
+   * does that should see this test rather than discover it later.
+   */
+  it('can finish a later render before an earlier one', async () => {
+    const order: string[] = []
+    vi.mocked(dsl.parseSchedule).mockImplementationOnce(async () => {
+      // The scheduled job's extra hop, however brief.
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return { ok: true, schedule: { mode: 'interval', count: 15, unit: 'minutes' }, error: null }
+    })
+
+    const scheduled = renderJobDsl(job, [trigger], []).then(() => order.push('scheduled'))
+    const triggerless = renderJobDsl(job, [], []).then(() => order.push('triggerless'))
+    await Promise.all([scheduled, triggerless])
+
+    expect(order).toEqual(['triggerless', 'scheduled'])
+  })
 })
