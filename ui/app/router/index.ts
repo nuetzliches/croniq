@@ -48,11 +48,32 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/RunnersView.vue'),
         meta: { title: 'Runners' },
       },
+      /*
+       * Two routes the React tree served and this one does not.
+       *
+       * `/runners/:runnerId` and `/dead-letters/:id` were real pages until
+       * v0.38.0, and the app emitted links to them from entity links and the
+       * dashboard — so they are in bookmarks, in alert bodies and in chat
+       * history. Without these they land on the not-found page, which reads as
+       * "that runner is gone" rather than "that page moved" (issue #669).
+       *
+       * The runner one drops its id: the screen inventory folded runner detail
+       * into the list, so there is nothing to select. Better to arrive at the
+       * fleet than at a 404, and the row is on it.
+       */
+      {
+        path: 'runners/:runnerId',
+        redirect: () => ({ name: 'runners' }),
+      },
       {
         path: 'dead-letters',
         name: 'dead-letters',
         component: () => import('~/pages/DeadLettersView.vue'),
         meta: { title: 'Dead Letters' },
+      },
+      {
+        path: 'dead-letters/:id',
+        redirect: (to) => ({ name: 'dead-letters', query: { selected: String(to.params.id) } }),
       },
       {
         path: 'jobs',
@@ -126,7 +147,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('~/pages/SettingsView.vue'),
         meta: { title: 'Settings' },
       },
-      { path: 'scaffold', name: 'scaffold', component: () => import('~/pages/ScaffoldCheck.vue'), meta: { title: 'Scaffold check' } },
     ],
   },
   {
