@@ -219,6 +219,19 @@ export interface ExecutionFilters {
   /** Lower bound on `created_at`, inclusive. RFC3339. */
   since?: string
   /**
+   * Lower bound as a *length*, in milliseconds back from now.
+   *
+   * Prefer this to `since` for a rolling window. A caller that computes an
+   * instant once has frozen it: the query key holds that value, so every
+   * refetch for the rest of the session re-sends the same lower bound and
+   * "the last hour" quietly becomes "since you opened the tab" (issue #662).
+   * A length is stable in the key and resolved against the clock on each
+   * fetch, which is what makes the window move.
+   *
+   * Ignored when `since` is also set.
+   */
+  since_ms?: number
+  /**
    * Upper bound on `created_at`. RFC3339. Inclusive on its own, exclusive
    * when paired with `until_id`.
    *
@@ -253,22 +266,51 @@ export interface ExecutionFilters {
  * Polled: a run list that does not move is indistinguishable from a scheduler
  * that has stopped.
  */
+/**
+ * Build the query string for an execution list.
+ *
+ * Shared by the polled hook and the one-shot fetch below so the two cannot
+ * drift — they ask the same endpoint the same way, and only differ in how
+ * often.
+ */
+function executionQuery(active: ExecutionFilters): Record<string, string | number> {
+  const query: Record<string, string | number> = {}
+  if (active.job_key) query.job_key = active.job_key
+  if (active.state) query.state = active.state
+  if (active.runner_id) query.runner_id = active.runner_id
+  // Resolved here rather than by the caller: this runs on every fetch, so a
+  // window expressed as a length slides instead of being pinned to first
+  // render (issue #662).
+  const since =
+    active.since ??
+    (active.since_ms === undefined
+      ? undefined
+      : new Date(Date.now() - active.since_ms).toISOString())
+  if (since) query.since = since
+  if (active.until) query.until = active.until
+  if (active.until_id) query.until_id = active.until_id
+  query.limit = active.limit ?? 200
+  return query
+}
+
+/**
+ * One page of runs, fetched once and not watched.
+ *
+ * For paging backwards. An older page is a snapshot of finished work, so
+ * giving each one its own polling query would multiply the request rate by the
+ * number of times someone pressed "Load older" — and moving the *live* query's
+ * cursor backwards instead is what turned the Runs screen into a snapshot
+ * after one click (issue #662).
+ */
+export function fetchExecutions(filters: ExecutionFilters): Promise<Execution[]> {
+  return apiGet<Execution[]>('/v1/executions', executionQuery(filters))
+}
+
 export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
   const auth = useAuthStore()
   return useQuery({
     queryKey: ['executions', computed(() => toValue(filters))],
-    queryFn: () => {
-      const active = toValue(filters)
-      const query: Record<string, string | number> = {}
-      if (active.job_key) query.job_key = active.job_key
-      if (active.state) query.state = active.state
-      if (active.runner_id) query.runner_id = active.runner_id
-      if (active.since) query.since = active.since
-      if (active.until) query.until = active.until
-      if (active.until_id) query.until_id = active.until_id
-      query.limit = active.limit ?? 200
-      return apiGet<Execution[]>('/v1/executions', query)
-    },
+    queryFn: () => apiGet<Execution[]>('/v1/executions', executionQuery(toValue(filters))),
     enabled: computed(() => auth.isAuthenticated),
     refetchInterval: 5_000,
     // Keep the previous rows on screen while a filter change is in flight, so

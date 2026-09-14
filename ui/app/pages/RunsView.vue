@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useExecutions } from '~/api/queries'
+import { fetchExecutions, useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
 
@@ -49,8 +49,11 @@ const filters = computed(() => ({
  * window around when it was copied — which is almost always what the sender
  * meant.
  *
- * `since` is derived on each render for that reason; the server takes
- * instants.
+ * The length is what travels — into the URL, and into the query. Resolving it
+ * to an instant is `useExecutions`' job, on each fetch, because an instant
+ * computed here would be computed once: a `computed` depends on the window
+ * filter and not on the clock, so "the last hour" would stay pinned to the
+ * moment the tab was opened and grow all day (issue #662).
  */
 const WINDOWS = [
   { label: 'Last hour', value: '1h', ms: 3_600_000 },
@@ -58,63 +61,54 @@ const WINDOWS = [
   { label: 'Last 7 days', value: '7d', ms: 604_800_000 },
 ]
 
-const since = computed(() => {
-  const chosen = WINDOWS.find((entry) => entry.value === filters.value.window)
-  return chosen ? new Date(Date.now() - chosen.ms).toISOString() : undefined
-})
+const sinceMs = computed(
+    () => WINDOWS.find((entry) => entry.value === filters.value.window)?.ms,
+)
+
+/** How many rows a page asks for, live or older. */
+const PAGE_SIZE = 200
 
 /**
- * How far back the list has been paged, as a cursor.
+ * Older pages, oldest page last. Reset whenever a filter changes.
  *
- * Named apart from the keyboard `cursor` below deliberately — one is a row
- * index, the other an instant, and the two live in the same file.
+ * These are fetched once each and not polled, while the query below keeps
+ * polling the newest page. That split is the point: paging used to move the
+ * *live* query's `until` back, which turned the whole screen into a snapshot
+ * — after one click on "Load older" no new run ever appeared again, and a row
+ * sitting at `queued` never advanced (issue #662).
  *
- * It holds a `created_at` **the server sent**, verbatim. Reconstructing one
- * from a `Date` would truncate to milliseconds, and the server compares the
- * bound as a string at full precision — a truncated cursor sorts below a row
- * inside that instant and drops it. Losing rows quietly, not repeating them.
- *
- * Deliberately not in the URL: a link should mean "this filter", not "this
- * filter and the four pages I happened to scroll".
+ * Older runs are overwhelmingly finished, so not polling them costs nothing;
+ * anything still moving is in the live page, which overlaps these and wins the
+ * de-duplication below.
  */
-const pageCursor = ref<string | undefined>(undefined)
-/**
- * The cursor row's id, the other half of the keyset cursor.
- *
- * Without it the server's `until` bound has to stay inclusive, and an
- * inclusive bound cannot get past a group of rows sharing one `created_at`
- * that is larger than a page — which the scheduler produces whenever 200+ jobs
- * are due in the same tick (issue #654).
- */
-const pageCursorId = ref<string | undefined>(undefined)
-/** Pages already fetched, oldest page last. Reset whenever a filter changes. */
 const pages = ref<Execution[][]>([])
+/** In flight, so the button can say so and cannot be clicked twice. */
+const loadingOlder = ref(false)
 
 // A getter, not a value — see useExecutions. Passing `filters.value` here is
 // the mistake that makes the list freeze on its first filter.
+//
+// No `until` here: this is the live head of the list and it must stay that
+// way. The cursor lives in `loadOlder`, which uses it once and throws it away.
 const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   state: filters.value.state || undefined,
   job_key: filters.value.job_key || undefined,
   runner_id: filters.value.runner_id || undefined,
-  since: since.value,
-  until: pageCursor.value,
-  until_id: pageCursorId.value,
+  since_ms: sinceMs.value,
+  limit: PAGE_SIZE,
 }))
 
-const PAGE_SIZE = 200
-
 /**
- * Everything fetched so far: the pages already paged in, then the live one.
+ * Everything on screen: the live page, then the older ones beneath it.
  *
- * De-duplicated by id. The `(created_at, id)` cursor means the server no
- * longer repeats the row it points at, but a run that is still live can be
- * refetched into the live page while a copy sits in a frozen one, so the guard
- * earns its keep either way.
+ * The live page comes **first** so its copy of a row wins the de-duplication.
+ * Both halves can hold the same run — the overlap is deliberate — and the live
+ * one is the one that has been refetched.
  */
 const rows = computed<Execution[]>(() => {
   const seen = new Set<string>()
   const out: Execution[] = []
-  for (const row of [...pages.value.flat(), ...(data.value ?? [])]) {
+  for (const row of [...(data.value ?? []), ...pages.value.flat()]) {
     if (seen.has(row.id)) continue
     seen.add(row.id)
     out.push(row)
@@ -123,16 +117,43 @@ const rows = computed<Execution[]>(() => {
 })
 
 /** A full page back means there is probably more behind it. */
-const mayHaveMore = computed(() => (data.value?.length ?? 0) >= PAGE_SIZE)
+const mayHaveMore = computed(() => {
+  const last = pages.value.at(-1) ?? data.value ?? []
+  return last.length >= PAGE_SIZE
+})
 
-function loadOlder() {
-  const page = data.value ?? []
-  const oldest = page[page.length - 1]
-  if (!oldest) return
-  pages.value = [...pages.value, page]
-  // The server's own values, untouched — see the cursor note above.
-  pageCursor.value = oldest.created_at
-  pageCursorId.value = oldest.id
+/**
+ * Fetch one page older than everything on screen, once.
+ *
+ * Deliberately not a `useQuery`: an older page is a snapshot of finished work,
+ * and giving each one a polling query would multiply the request rate by the
+ * number of times someone clicked. The cursor is used here and discarded — it
+ * never reaches the live query, which is what #662 was about.
+ *
+ * The `created_at` passed back is the server's own value, verbatim.
+ * Reconstructing one from a `Date` truncates to milliseconds, and the server
+ * compares at full precision: a truncated cursor sorts below a row inside that
+ * instant and drops it. The `id` alongside it is what gets the cursor past a
+ * page-sized group of runs sharing one timestamp (issue #654).
+ */
+async function loadOlder() {
+  const oldest = rows.value.at(-1)
+  if (!oldest || loadingOlder.value) return
+  loadingOlder.value = true
+  try {
+    const page = await fetchExecutions({
+      state: filters.value.state || undefined,
+      job_key: filters.value.job_key || undefined,
+      runner_id: filters.value.runner_id || undefined,
+      since_ms: sinceMs.value,
+      until: oldest.created_at,
+      until_id: oldest.id,
+      limit: PAGE_SIZE,
+    })
+    if (page.length) pages.value = [...pages.value, page]
+  } finally {
+    loadingOlder.value = false
+  }
 }
 
 // Any change of filter starts again from the newest rows. Keeping the pages
@@ -141,8 +162,6 @@ watch(
   () => [filters.value.state, filters.value.job_key, filters.value.runner_id, filters.value.window],
   () => {
     pages.value = []
-    pageCursor.value = undefined
-    pageCursorId.value = undefined
   },
 )
 
@@ -382,12 +401,10 @@ function onKey(event: KeyboardEvent) {
           Paging back.
 
           The list was hard-capped at 200 rows, so anything older than that was
-          unreachable and a deep link to an older run found nothing. It pages
-          with `until` and `until_id` set to the oldest row's `created_at` and
-          `id` — the server's own values, verbatim, because a reconstructed
-          timestamp truncates and silently skips rows, and because the id is
-          what gets the cursor past a page-sized group of rows sharing one
-          timestamp.
+          unreachable and a deep link to an older run found nothing. Each click
+          fetches one page older than everything on screen and appends it,
+          leaving the polled query on the newest page — so the list keeps
+          updating after paging, which it did not before.
 
           At the end it says so, rather than leaving a button that returns
           nothing new.
@@ -402,7 +419,7 @@ function onKey(event: KeyboardEvent) {
             variant="subtle"
             size="xs"
             icon="i-lucide-arrow-down"
-            :loading="isPending"
+            :loading="loadingOlder"
             @click="loadOlder"
           >
             Load older
