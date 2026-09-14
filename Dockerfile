@@ -103,6 +103,15 @@ COPY ui/package.json ui/package-lock.json ./
 # never actually enforced.
 RUN npm ci || npm install
 COPY ui/ .
+# `vite.config.ts` reads the dev port block from `scripts/lib/stack.mjs`, which
+# is outside this stage's WORKDIR — the ports are declared once for the whole
+# repo (#676), and a build that cannot see that file fails type-checking with
+# "cannot find module".
+#
+# Only `scripts/lib`, not `scripts/`: the rest is developer tooling with no
+# business in an image layer, and copying it would invalidate this stage's
+# cache on every change to a script the build never runs.
+COPY scripts/lib /build/scripts/lib
 
 # The release this bundle is for, so the dashboard can tell an operator when it
 # and the server were not published together (#604). Only the split topology
