@@ -777,14 +777,12 @@ steht da noch Nachbesserung aus?
 Beim Nachsehen statt Schätzen zerfiel der Unterschied in zwei sehr ungleiche
 Hälften.
 
-### Was Dekoration war
+### Was ich für Dekoration hielt
 
-Das Terminal-Mock mit `croniq validate Croniqfile`, der Fußbereich mit
-„all systems operational", das Gitter-Muster, die Tastaturhinweise. Das ist die
-Landing-Page-Ästhetik der React-Fassung, und ihr Wegfall war eine
-Gestaltungsentscheidung, kein Versehen. Die drei Live-Kacheln (Status, Runner,
-Queue) sind geblieben, weil sie die eigentliche Frage beantworten: *läuft das
-Ding überhaupt?*
+Das Terminal-Mock, das Gitter, die rotierende Verbzeile, die grünen
+Gesundheitsfarben. Ich habe sie als Landing-Page-Ästhetik eingestuft und
+weggelassen — **und das war falsch**, in zweierlei Hinsicht: die Einschätzung
+selbst, und dass ich sie allein getroffen habe. Zurückgeholt in Durchgang 15.
 
 ### Was eine echte Lücke war
 
@@ -964,4 +962,63 @@ Die Spalte *Fired* läuft nicht streng monoton: die Liste sortiert nach
 Zeilen unterscheiden sich die beiden **199-mal** — aber nur um etwa eine
 Sekunde, und sichtbar aus der Reihe fallen **2 von 200**. Ein Artefakt im
 Sekundenbereich, das die relative Zeitangabe rundet. Kein Umbaugrund.
+
+## Durchgang 15 — die Bühne zurück
+
+Rückmeldung auf Durchgang 12: „deutlicher Rückschritt", und namentlich vier
+Dinge — die Textanimation, die grünen Gesundheitsfarben, die Konsolen-Vorschau,
+der Gitter-Hintergrund.
+
+Ich hatte genau diese in Durchgang 12 geprüft und als Dekoration abgelegt. Das
+war eine Gestaltungsentscheidung über fremdes Produkt, getroffen ohne zu
+fragen. Alle vier sind wieder da.
+
+### Vier Teile
+
+**Der Gitter-Hintergrund** ist ein Raster auf zwei Farbverläufen, radial
+maskiert, damit es zum Rand hin ausblendet statt an einer Kante zu enden.
+
+**Das dritte Wort rotiert** durch fünf Verben (`Recover`, `Replay`,
+`Diagnose`, `Audit`, `Scale`), 3,5 s je Wort. Croniq ist nicht ein Verb, und
+fünf nacheinander zu nennen sagt mehr als eins festzuschreiben.
+
+**Die Konsole** tippt einen `croniq`-Befehl, streamt die Ausgabe, hält, räumt
+ab. Jeder gezeigte Befehl ist ein echtes Unterkommando der CLI; die
+Ausgabezeilen sind illustrativ, aber nach der Verantwortung des jeweiligen
+Befehls geformt — die Regel, die eine Demo davon abhält, eine Lüge zu werden.
+Pausiert beim Überfahren, und zwar nur in der Halte-Phase (Tipp- und
+Ausgabe-Takte sind zu kurz, als dass ein Hover dort nützt).
+
+**Die Kacheln tragen Ton.** Die Unterzeile ist grün, wenn die Sache gesund
+ist, bernstein wenn nicht, und **grau solange `/health` noch nicht geantwortet
+hat** — einen unbekannten Zustand grün zu färben wäre eine Behauptung, die noch
+niemand aufgestellt hat.
+
+### Drei Dinge, die erst beim Hinsehen auffielen
+
+**Die dunkle Bühne allein reichte nicht.** Ich hatte nur den Hintergrund
+gefärbt — jedes Token darüber (`text-highlighted`, `bg-default`, die Karte)
+löst aber aus der Klasse an `<html>` auf. Ergebnis: dunkle Schrift auf dunklem
+Grund und drei weiße Kacheln. Die Seite setzt jetzt für ihre Lebensdauer
+`dark`, wie es die ausgelieferte Fassung immer schon tat.
+
+**`mode="out-in"` war die naheliegende Transition und die falsche.** Das alte
+Wort geht, bevor das neue kommt — die Zeile steht alle paar Sekunden sichtbar
+leer. Jetzt liegen beide in derselben Grid-Zelle und blenden über. Nachgemessen
+über vier Rotationen, alle 100 ms: **0 von 160 Bildern ohne Wort.**
+
+**Und der ernsteste: die Helligkeitswahl ging verloren.** Ich hatte den
+DOM-Zustand beim Mounten gesichert und ihn beim Verlassen zurückgeschrieben.
+Beim Kaltstart von `/login` läuft `onMounted` aber **vor** dem Theme-Watcher
+des Stores — gesichert wurde also ein Attribut, das noch niemand gesetzt hatte,
+und wer „hell" gewählt hatte, bekam nach dem Anmelden *nichts* zurück. Der
+Store besitzt das Theme, also stellt der Store es wieder her: `reapplyTheme()`.
+
+Ein Screenshot hätte keinen der drei gezeigt.
+
+### Reduzierte Bewegung
+
+Alles Bewegte ist unter `prefers-reduced-motion` aus — nicht schneller,
+sondern aus: kein Timer läuft, die Konsole zeigt eine **fertige** Demo statt
+eines leeren Rahmens, das Verb steht still. Geprüft.
 

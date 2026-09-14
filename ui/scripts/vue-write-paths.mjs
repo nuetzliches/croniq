@@ -763,5 +763,74 @@ await step("changing a filter starts the paging over", async () => {
   if (after >= paged) throw new Error(`filter kept ${after} rows from the previous paging`);
 });
 
+/* ─── The sign-in stage ─────────────────────────────────────────────────── */
+
+await step("the sign-in page is dark and hands the theme back", async () => {
+  // The stage is a front door, not a tool: grid, gradient, demo console and a
+  // headline, all built for a dark ground, and the shipping page renders it
+  // that way whatever the theme. Overriding someone's choice is only
+  // acceptable if it is given back.
+  const theme = () =>
+    page.evaluate(() => ({
+      cls: document.documentElement.classList.contains("dark"),
+      attr: document.documentElement.dataset.theme ?? "",
+    }));
+
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: /colour theme/i }).click();
+  await page.getByRole("menuitemcheckbox", { name: /light/i }).click();
+  await page.waitForTimeout(700);
+  if ((await theme()).attr !== "light") throw new Error("could not choose light");
+
+  await page.goto(`${base}/login`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1000);
+  const onLogin = await theme();
+  if (!onLogin.cls || onLogin.attr !== "dark") {
+    throw new Error(`the stage is not dark: ${JSON.stringify(onLogin)}`);
+  }
+
+  await page.locator('input[autocomplete="username"]').fill("admin");
+  await page.locator('input[autocomplete="current-password"]').fill("demo-admin");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/v1/auth/login") && r.request().method() === "POST"),
+    page.locator('button[type="submit"]').click(),
+  ]);
+  await page.waitForSelector("nav");
+  await page.waitForTimeout(900);
+  const after = await theme();
+  // Restoring from a DOM snapshot taken on mount loses this: on a cold load
+  // the page mounts before the ui store's theme watcher runs.
+  if (after.cls || after.attr !== "light") {
+    throw new Error(`the reader's theme was not handed back: ${JSON.stringify(after)}`);
+  }
+
+  // Put it back to the default so later runs start where they expect to.
+  await page.getByRole("button", { name: /colour theme/i }).click();
+  await page.getByRole("menuitemcheckbox", { name: /dark/i }).click();
+  await page.waitForTimeout(600);
+});
+
+await step("the headline's third word rotates without leaving a gap", async () => {
+  await page.goto(`${base}/login`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1200);
+  const seen = new Set();
+  let blank = 0;
+  // Finer than any fade, across more than one rotation.
+  for (let i = 0; i < 90; i++) {
+    const words = (await page.locator("h1 span.text-primary").allInnerTexts())
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (words.length === 0) blank += 1;
+    words.forEach((w) => seen.add(w));
+    await page.waitForTimeout(100);
+  }
+  // `mode="out-in"` was the obvious transition and leaves the line visibly
+  // empty between words, which reads as a broken render rather than motion.
+  if (blank > 0) throw new Error(`the line was empty in ${blank} of 90 samples`);
+  if (seen.size < 2) throw new Error(`the word never changed: ${[...seen].join(", ")}`);
+  console.log(`     words seen: ${[...seen].join(" ")}`);
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();

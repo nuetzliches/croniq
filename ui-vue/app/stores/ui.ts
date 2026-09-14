@@ -54,7 +54,24 @@ export const useUiStore = defineStore('ui', () => {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
 
-  return { sidebarCollapsed, theme, toggleSidebar }
+  /**
+   * Re-assert the stored theme on `<html>`.
+   *
+   * For a screen that deliberately overrides the reader's choice while it is
+   * open — the sign-in stage is dark whatever the setting — and has to hand it
+   * back on the way out.
+   *
+   * It re-applies from the store rather than restoring a snapshot the caller
+   * took, and that distinction is the whole reason this exists. Snapshotting
+   * the DOM looked equivalent and was not: on a cold load of `/login` the
+   * page's `onMounted` ran *before* this store's theme watcher, captured an
+   * attribute that was not set yet, and "restored" the reader to nothing.
+   */
+  function reapplyTheme() {
+    applyTheme(theme.value)
+  }
+
+  return { sidebarCollapsed, theme, toggleSidebar, reapplyTheme }
 })
 
 /**

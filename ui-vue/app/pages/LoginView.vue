@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiPost } from '~/api/client'
 import { useAuthConfig, useHealth, useVersion } from '~/api/queries'
@@ -11,6 +11,7 @@ import {
   type TotpSetupResponse,
 } from '~/api/types'
 import { useAuthStore } from '~/stores/auth'
+import { useUiStore } from '~/stores/ui'
 
 /**
  * Sign in.
@@ -36,6 +37,7 @@ import { useAuthStore } from '~/stores/auth'
  *   OIDC                → redirect
  */
 const auth = useAuthStore()
+const ui = useUiStore()
 const router = useRouter()
 const route = useRoute()
 const { data: config } = useAuthConfig()
@@ -102,23 +104,96 @@ const totpUpFront = computed(() => config.value?.totp.required === true)
 const codeLabel = computed(() => (useRecovery.value ? 'Recovery code' : 'Two-factor code'))
 
 /** Real numbers from the public endpoint. Nothing here is illustrative. */
-const stats = computed(() => [
-  {
-    label: 'Status',
-    value: healthFailed.value ? 'unreachable' : (health.value?.status ?? '…'),
-    tone: healthFailed.value ? 'error' : 'success',
-  },
-  {
-    label: 'Runners',
-    value: health.value ? String(health.value.runners_online) : '…',
-    sub: health.value?.runners_stale ? `${health.value.runners_stale} stale` : 'online',
-  },
-  {
-    label: 'Queued',
-    value: health.value ? String(health.value.queued) : '…',
-    sub: health.value?.queued ? 'awaiting a runner' : 'nothing waiting',
-  },
-])
+/**
+ * The third line of the headline, rotating.
+ *
+ * Croniq is not one verb, and naming five of them in turn says more about the
+ * product than a single fixed one — it was in the shipping page and the first
+ * Vue login lost it.
+ *
+ * Stopped entirely under `prefers-reduced-motion`: a word that swaps itself
+ * out is exactly the kind of movement that setting exists to refuse, and the
+ * page reads perfectly with one.
+ */
+const VERBS = ['Recover', 'Replay', 'Diagnose', 'Audit', 'Scale']
+const VERB_MS = 3500
+
+const verbIndex = ref(0)
+const prefersReducedMotion =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+if (!prefersReducedMotion) {
+  const rotate = setInterval(() => {
+    verbIndex.value = (verbIndex.value + 1) % VERBS.length
+  }, VERB_MS)
+  onScopeDispose(() => clearInterval(rotate))
+}
+
+const verb = computed(() => VERBS[verbIndex.value]!)
+
+/**
+ * The sign-in page is dark, whatever the reader's theme.
+ *
+ * It is the one surface in the product that is a front door rather than a
+ * tool: a grid on a gradient, a demo console, a headline. All of that is built
+ * for a dark ground, and the shipping page has always rendered it that way
+ * regardless of the theme setting.
+ *
+ * Setting only the stage's own background was not enough and is worth
+ * recording — every token above it (`text-highlighted`, `bg-default`, the
+ * card) resolves from the class on `<html>`, so a dark stage under light
+ * tokens produced dark-on-dark text and three white tiles.
+ *
+ * The reader's choice comes back on the way out via the store, which owns it.
+ * Snapshotting the attribute here instead looked equivalent and lost it: on a
+ * cold load this `onMounted` runs before the store's theme watcher, so the
+ * snapshot was of an attribute nobody had set yet and a reader who had chosen
+ * light was handed back nothing.
+ */
+onMounted(() => {
+  const root = document.documentElement
+  root.classList.add('dark')
+  root.dataset.theme = 'dark'
+})
+
+onUnmounted(() => ui.reapplyTheme())
+
+/**
+ * The live tiles, each carrying the tone of what it reports.
+ *
+ * The sub-line is green when the thing is healthy and amber when it is not,
+ * which is the difference between a status board and three grey numbers — and
+ * is how the shipping page read. `null` before `/health` answers: colouring an
+ * unknown state green would be a claim nothing has made yet.
+ */
+type Tone = 'success' | 'warning' | 'error' | null
+
+const stats = computed<{ label: string; value: string; sub: string; tone: Tone }[]>(() => {
+  const live = health.value
+  const stale = live?.runners_stale ?? 0
+  const dead = live?.runners_dead ?? 0
+  return [
+    {
+      label: 'Queue depth',
+      value: live ? String(live.queued) : '…',
+      sub: live?.queued ? 'awaiting a runner' : 'awaiting fire',
+      tone: live ? 'success' : null,
+    },
+    {
+      label: 'Runners',
+      value: live ? `${live.runners_online} / ${live.runners_online + stale + dead}` : '…',
+      sub: stale || dead ? `${stale} stale · ${dead} dead` : 'all healthy',
+      tone: live ? (stale || dead ? 'warning' : 'success') : null,
+    },
+    {
+      label: 'Status',
+      value: healthFailed.value ? 'unreachable' : (live?.status ?? '…'),
+      sub: healthFailed.value ? 'check /health' : live ? 'operational' : 'connecting',
+      tone: healthFailed.value ? 'error' : live ? 'success' : null,
+    },
+  ]
+})
 
 function finish(tokens: TokenResponse) {
   auth.setToken(tokens.access_token)
@@ -197,8 +272,23 @@ function messageFor(caught: unknown): string {
 </script>
 
 <template>
-  <div class="min-h-screen">
-    <div class="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-[1.1fr_minmax(22rem,26rem)]">
+  <div class="cq-stage relative min-h-screen overflow-hidden">
+    <!--
+      The stage.
+
+      A grid on a gradient, masked to fade at the edges. It is the backdrop the
+      shipping sign-in had and the first Vue one did not — and its absence is
+      most of why that page read as a form on a flat sheet rather than as the
+      front of a product.
+
+      Purely decorative, so `aria-hidden`, and behind everything at z-0.
+    -->
+    <div
+      class="cq-stage-bg pointer-events-none absolute inset-0 z-0"
+      aria-hidden="true"
+    />
+
+    <div class="relative z-10 mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-[1.1fr_minmax(22rem,26rem)]">
       <!-- The product half. Hidden on narrow screens: on a phone the only
            thing anyone came here to do is sign in. -->
       <section class="hidden lg:block">
@@ -221,7 +311,32 @@ function messageFor(caught: unknown): string {
 
         <h1 class="text-4xl leading-tight font-semibold tracking-tight text-highlighted">
           Schedule. Observe.<br>
-          <span class="text-primary">Recover.</span>
+          <!--
+            `aria-live="off"` and a fixed first word for assistive tech: a
+            headline that re-announces itself every 3.5 seconds is worse than
+            useless. The rotation is decoration on top of a sentence that
+            reads fine without it.
+          -->
+          <!--
+            The two words are stacked in one grid cell so they cross-fade.
+            `mode="out-in"` was the obvious way and it is wrong here: the old
+            word leaves before the new one arrives, so the line sits visibly
+            empty for a beat every few seconds — an aborted render rather than
+            a transition.
+          -->
+          <span class="grid">
+            <Transition
+              enter-active-class="transition duration-500"
+              leave-active-class="transition duration-500"
+              enter-from-class="opacity-0 translate-y-2"
+              leave-to-class="opacity-0 -translate-y-2"
+            >
+              <span
+                :key="verb"
+                class="col-start-1 row-start-1 justify-self-start text-primary"
+              >{{ verb }}.</span>
+            </Transition>
+          </span>
         </h1>
         <p class="mt-4 max-w-md text-toned">
           Self-hosted cron for fleets that outgrew the crontab. A typed DSL,
@@ -249,12 +364,20 @@ function messageFor(caught: unknown): string {
             </dd>
             <dd
               v-if="stat.sub"
-              class="mt-0.5 text-xs text-muted"
+              class="mt-0.5 font-mono text-xs"
+              :class="{
+                'text-success': stat.tone === 'success',
+                'text-warning': stat.tone === 'warning',
+                'text-error': stat.tone === 'error',
+                'text-muted': stat.tone === null,
+              }"
             >
               {{ stat.sub }}
             </dd>
           </div>
         </dl>
+
+        <LoginConsole class="mt-8 max-w-lg" />
 
         <p
           v-if="version"
@@ -507,3 +630,26 @@ function messageFor(caught: unknown): string {
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+ * The stage's own ground. The *tokens* above it are switched to dark in the
+ * script — see the note there; painting only this left dark text on a dark
+ * background and three white tiles.
+ */
+.cq-stage {
+  background:
+    radial-gradient(ellipse 80% 60% at 18% 0%, oklch(0.32 0.13 285 / 0.4) 0%, oklch(0.32 0.13 285 / 0) 60%),
+    radial-gradient(ellipse 60% 50% at 110% 90%, oklch(0.36 0.18 250 / 0.32) 0%, oklch(0.36 0.18 250 / 0) 55%),
+    linear-gradient(180deg, oklch(0.13 0.02 265) 0%, oklch(0.1 0.015 265) 100%);
+}
+
+/* The grid itself, masked so it fades out rather than ending at an edge. */
+.cq-stage-bg {
+  background-image:
+    linear-gradient(oklch(1 0 0 / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(ellipse 100% 80% at 50% 40%, black 30%, transparent 80%);
+}
+</style>
