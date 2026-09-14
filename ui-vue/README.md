@@ -1,35 +1,34 @@
-# Croniq UI — Vue rebuild
+# Croniq UI
 
-The dashboard being rebuilt in Vue 3, per
-[ADR-0004](../docs/adr/0004-vue-rebuild-for-the-dashboard.md). **`../ui` is
-still the dashboard that ships.** This tree replaces it only once it passes the
-acceptance gate; until then both exist and both build in CI.
+The dashboard. Vue 3, rebuilt from the React tree that used to live in `../ui`
+per [ADR-0004](../docs/adr/0004-vue-rebuild-for-the-dashboard.md); that tree was
+removed at the cutover, so this is the only one.
 
 Read [`../docs/ui-screen-inventory.md`](../docs/ui-screen-inventory.md) before
-adding a screen — it holds the agreed screen set, the build order, and the list
-of capabilities that must not be lost.
+adding a screen — it holds the agreed screen set and the list of capabilities
+that must not be lost.
 
 ## Stack
 
 Vue 3 · Nuxt UI 4 · Pinia · `@tanstack/vue-query` · `ofetch` · vue-router ·
 Vite. Same stack as `nuts-customer-portal`, which is the point: consolidating
-on one frontend stack is the reason this rebuild exists.
+on one frontend stack is the reason the rebuild happened.
 
-Nuxt UI brings its own theming, which replaces the project-owned oklch token
-system in `../ui/src/styles/`. That is why this is a rebuild and not a port.
+Nuxt UI brings its own theming, which replaced the project-owned oklch token
+system the old tree carried. That is why it was a rebuild and not a port.
 
 ## Running it
 
-Both dashboards at once, against one server, so they can be compared:
+Server, runner and dashboard together, with seeded demo data:
 
 ```sh
 node ../scripts/dev-stack.mjs
 ```
 
-That starts `croniq-server` on `:4000` with seeded demo data and a runner, the
-React tree on `:4231`, and this one on `:4232`. See the script's header for
-prerequisites and for the environment variables that move the ports when
-something else on the machine holds one.
+That starts `croniq-server` on `:4230` with a demo runner attached, and this
+dashboard on `:4232`. See the script's header for prerequisites and for the
+environment variables that move the ports when something else on the machine
+holds one.
 
 This tree alone, against a server you started yourself:
 
@@ -40,26 +39,29 @@ npm run dev        # :4232, proxies /v1 /health /version /metrics to :4230
 The proxy is what makes development same-origin, so the `HttpOnly` refresh
 cookie behaves exactly as it does in production
 ([ADR-0001](../docs/adr/0001-same-origin-dashboard.md)). There is deliberately
-no `VITE_API_URL` here — a cross-origin build downgrades refresh-token storage,
-and the React tree needs a build-time guard to stop that happening by accident.
-Rather than port the guard, this tree is same-origin only.
+no `VITE_API_URL`: a cross-origin build downgrades refresh-token storage, and
+rather than carry a build-time guard against that happening by accident, this
+tree is same-origin only.
 
 ## Layout
 
 ```
 app/
-  api/        client (ofetch + Bearer + 401-refresh), session, types
-  lib/        framework-free helpers carried over from the React tree
-  stores/     Pinia — auth
-  pages/      routed screens
-  router/     route table, grown as screens land
+  api/          client (ofetch + Bearer + 401-refresh), session, types, queries
+  lib/          framework-free helpers — SSE, the DSL renderer, the wasm bridge
+  stores/       Pinia — auth, ui
+  composables/  shared reactive behaviour
+  components/   the pieces screens are built from
+  pages/        routed screens
+  router/       the route table
+e2e/            Playwright smoke suite
+scripts/        the checking tools below
 ```
 
-`app/api/types.ts` and `app/lib/sse.ts` are carried over unchanged. They are
-framework-free by construction, and `sse.ts` in particular is the tested SSE
-core from [#585](https://github.com/nuetzliches/croniq/issues/585) — the
-runners feed and the log console both need it, and re-deriving it under a new
-reactivity model is how a rebuild loses hard-won behaviour.
+`app/lib/sse.ts` came over unchanged: it is the tested SSE core from
+[#585](https://github.com/nuetzliches/croniq/issues/585), the runners feed and
+the log console both need it, and re-deriving it under a new reactivity model
+is how a rebuild loses hard-won behaviour.
 
 ## Conventions
 
@@ -74,10 +76,12 @@ reactivity model is how a rebuild loses hard-won behaviour.
 - **Accessible names are not optional.** Every form control gets one as it is
   written; the ARIA containers are valid. This is the acceptance criterion
   [#595](https://github.com/nuetzliches/croniq/issues/595) was retargeted into,
-  after the React tree turned out to have 51 of 54 inputs with no name at all.
-- **The Playwright suite in `../ui/e2e` is the acceptance gate.** It asserts
-  routes, session behaviour, URL contracts and both SSE surfaces — nothing
-  about appearance — so it applies to this tree unchanged.
+  after the old tree turned out to have 51 of 54 inputs with no name at all.
+  `scripts/accessible-names.mjs` checks it against Chromium's own tree.
+- **Type-check with `npm run typecheck`, never `npx vue-tsc --noEmit`.** This
+  tsconfig is a solution file (`"files": []` plus references), so `--noEmit`
+  checks precisely nothing and reports success. Only `--build` descends into
+  the projects that hold the code.
 
 ## Scripts
 
@@ -88,7 +92,21 @@ reactivity model is how a rebuild loses hard-won behaviour.
 | `npm run typecheck` | type check alone |
 | `npm run lint` | eslint |
 | `npm test` | vitest |
+| `npm run test:e2e` | Playwright; brings its own stack up (`scripts/e2e-stack.mjs`) |
 
 `predev` and `prebuild` build the WASM bridge into `app/lib/wasm/` via
-`../ui/scripts/build-wasm.mjs`, which takes the destination as an argument so
-one script serves both trees.
+`scripts/build-wasm.mjs`, which takes the destination as an argument.
+
+### Checking tools
+
+Not tests and not in CI — they need a dev stack, and each exists because some
+claim about the dashboard was otherwise unfalsifiable. Run them from here with
+`node ../scripts/dev-stack.mjs` up.
+
+| | |
+|---|---|
+| `scripts/accessible-names.mjs` | every control's name, read from Chromium's AX tree over CDP |
+| `scripts/write-paths.mjs` | drives every create/edit/delete path and reports 4xx or page errors |
+| `scripts/dsl-parses.mjs` | feeds the rendered DSL back through the parser |
+| `scripts/measure-scroll.mjs` | which elements actually scroll, and whether the page itself does |
+| `scripts/capture-screens.mjs` | a screenshot of every screen, signed in, on real data |

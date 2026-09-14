@@ -51,10 +51,12 @@
 //!   [`crate::api::hardening`] allowlists for CORS — so an `Origin` comparison
 //!   against it passes precisely in the case that should fail.
 //!
-//! The gate that does work sits in the UI build: `ui/vite.config.ts` refuses
-//! to produce a `VITE_API_URL` (cross-origin) bundle unless the operator
-//! acknowledges the weaker `localStorage` mode, and such a bundle never asks
-//! for cookie delivery. Asking for a cookie from a cross-origin page is not a
+//! The gate that does work sits in the UI build, and since the Vue cutover it
+//! is stronger than a check: `ui-vue/vite.config.ts` has no `VITE_API_URL` at
+//! all, so the dashboard cannot be built cross-origin and therefore never asks
+//! for cookie delivery from a page that could not use it. (The React tree that
+//! preceded it did have the flag, behind an `assertTokenStorageAcknowledged`
+//! build guard.) Asking for a cookie from a cross-origin page is not a
 //! security problem in any case — the token goes into a cookie that page can
 //! never read *or* send, so its refreshes 401 and it falls back to signing in
 //! again. It is a misconfiguration, and it belongs to whoever hand-built the
@@ -75,8 +77,8 @@ pub const COOKIE_PATH: &str = "/v1/auth";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     /// In the JSON response body, as every release before this one did.
-    /// Non-browser clients (the CLI, curl, scripted flows) and dashboards
-    /// built cross-origin with `VITE_API_URL` stay on this path.
+    /// Non-browser clients (the CLI, curl, scripted flows, the SDKs) and any
+    /// cross-origin browser app stay on this path.
     Body,
     /// In a `Set-Cookie` header, with the body field omitted entirely.
     Cookie,

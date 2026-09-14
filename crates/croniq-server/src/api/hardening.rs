@@ -38,7 +38,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// the page is open, which makes the CSP the main thing limiting the blast
 /// radius of any future XSS.
 ///
-/// Checked against the actual Vite production build (`ui/dist`):
+/// Checked against the actual Vite production build (`ui-vue/dist`):
 ///
 /// * `script-src 'self' 'wasm-unsafe-eval'` — `index.html` contains no
 ///   inline scripts (only external module scripts + modulepreload links),
@@ -47,14 +47,15 @@ use tower_http::set_header::SetResponseHeaderLayer;
 ///   `'wasm-unsafe-eval'` (which, unlike `'unsafe-eval'`, does not re-enable
 ///   JS `eval`).
 /// * `style-src 'self' 'unsafe-inline'` — the bundle extracts all CSS into
-///   files, but React components use `style={{…}}` attributes throughout,
-///   and style *attributes* require `'unsafe-inline'`.
+///   files, but components use `:style` bindings throughout (the login
+///   stage's spotlights, the console's countdown bar, every progress
+///   meter), and style *attributes* require `'unsafe-inline'`.
 /// * `img-src 'self' data:` — icons ship as files under `/icons/`; `data:`
 ///   is a low-risk allowance for data-URI images. The TOTP QR code is
 ///   rendered as inline SVG markup (a DOM subtree, not a resource load) and
 ///   needs no directive.
-/// * `connect-src 'self'` — the SPA defaults to same-origin `fetch` (see
-///   `ui/src/api/base.ts`), which also covers the SSE streams and the
+/// * `connect-src 'self'` — the SPA is same-origin only (see
+///   `ui-vue/vite.config.ts`), which also covers the SSE streams and the
 ///   wasm-bindgen loader fetching its `.wasm` next to the JS.
 /// * `frame-ancestors 'none'` — no embedding (clickjacking); the modern
 ///   equivalent of `X-Frame-Options: DENY`, which is also set for older
@@ -62,9 +63,9 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// * `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` — nothing
 ///   uses plugins, `<base>`, or HTML form submission.
 ///
-/// Note: a dashboard built with `VITE_API_URL` pointing at a different
-/// origin is served by *that* origin's web server, whose CSP (not this one)
-/// applies to it.
+/// Note: this header only covers what *this* server serves. A browser app on
+/// another origin is served by that origin's web server, whose CSP — not this
+/// one — applies to it.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      script-src 'self' 'wasm-unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; \

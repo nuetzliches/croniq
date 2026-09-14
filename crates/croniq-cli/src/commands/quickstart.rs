@@ -81,7 +81,7 @@ pub fn quickstart(
     println!();
     println!("Start the server:");
     println!(
-        "  croniq-server --config {} --data-dir {} --ui-dir ui/dist",
+        "  croniq-server --config {} --data-dir {} --ui-dir ui-vue/dist",
         croniqfile.display(),
         data_dir.display()
     );

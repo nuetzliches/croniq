@@ -178,8 +178,10 @@ export interface TokenResponse {
   access_token: string
   /**
    * Omitted when the server delivered the refresh token as an `HttpOnly`
-   * cookie instead (issue #454) — which is the case for every same-origin
-   * dashboard build. Present only on the cross-origin `VITE_API_URL` path.
+   * cookie instead (issue #454) — which is the case for every request this
+   * dashboard makes, because it is same-origin only (see `vite.config.ts`).
+   * The field stays on the type because the server still returns it to
+   * cross-origin API clients, and the SDKs share this shape.
    */
   refresh_token?: string
   token_type: string

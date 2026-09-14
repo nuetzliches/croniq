@@ -60,17 +60,11 @@ are the deliberate gaps left for follow-up:
   through. Cheap on the SDK side; Loki/CloudWatch users get
   free filterable structured logs.
   ([crates/croniq-runner-sdk/src/handler.rs](crates/croniq-runner-sdk/src/handler.rs))
-- **URL-state for list filters** — Jobs/Runners/Executions pages filter
-  client-side; the state (selected tags, status, job-key substring) is
-  not in the URL, so links/bookmarks don't capture context. Lift filter
-  state into `useSearchParams` (`?tag=env=prod&tag=team=ops&state=failed`)
-  and add a `?selected=<id>` param so deep-linking opens a specific
-  detail panel. Would also collapse the nested-Sheet UX from the runner
-  detail (clicking an execution there → navigates to
-  `/jobs/<key>?execution=<id>` instead of stacking sheets).
-  ([ui/src/pages/JobsPage.tsx](ui/src/pages/JobsPage.tsx),
-  [ui/src/pages/RunnersPage.tsx](ui/src/pages/RunnersPage.tsx),
-  [ui/src/pages/ExecutionsPage.tsx](ui/src/pages/ExecutionsPage.tsx))
+- ~~**URL-state for list filters**~~ — **done in the Vue rebuild**
+  (ADR-0004). Filters, the selected detail and the runs time window all
+  live in the URL, and the nested-sheet stacking is gone with the screens
+  that had it. The contracts are asserted rather than assumed:
+  [ui-vue/e2e/url-state.spec.ts](ui-vue/e2e/url-state.spec.ts).
 
 ## Tags hardening
 
@@ -79,7 +73,7 @@ are the deliberate gaps left for follow-up:
   `JobConfig.tags`, plus an axum-level test for `GET /v1/tags` asserting
   count aggregation + sort order. Still open: a UI test that the Jobs /
   Runners filter chips apply AND-semantics.
-  ([ui/src/pages/JobsPage.tsx](ui/src/pages/JobsPage.tsx))
+  ([ui-vue/app/pages/JobsView.vue](ui-vue/app/pages/JobsView.vue))
 - **Tag validation rules** — tags are currently free-form strings with
   only "trim + dedupe + non-empty" enforced. Decide a policy:
   max length per tag, max tags per entity, forbidden characters
@@ -98,4 +92,4 @@ are the deliberate gaps left for follow-up:
   environment} and emits a ready-to-paste docker-compose snippet plus
   a freshly-minted scoped API key. v2 scope: full code-skeleton
   generation per language (Rust / Python / Shell-runner). Issue #93
-  Wish 2. ([ui/src/pages/RunnersPage.tsx](ui/src/pages/RunnersPage.tsx))
+  Wish 2. ([ui-vue/app/pages/RunnersView.vue](ui-vue/app/pages/RunnersView.vue))

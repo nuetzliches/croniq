@@ -7,7 +7,7 @@
 
 **Distributed cron that just works.** Single binary. SQLite default. Production-ready retries.
 
-Reliable distributed job scheduling with built-in retries, calendar-aware scheduling, a React dashboard, and an AI-native MCP server. Deploy as a single binary or Docker container — no cluster required.
+Reliable distributed job scheduling with built-in retries, calendar-aware scheduling, a Vue dashboard, and an AI-native MCP server. Deploy as a single binary or Docker container — no cluster required.
 
 Full API documentation: [`openapi.yaml`](openapi.yaml)
 
@@ -50,7 +50,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization is enforced on every endpoint: a token must carry the matching scope (e.g. `jobs:write`, `dead-letters:write`, `runners:read`) or the wildcard `admin` scope. See [Scopes](#scopes) below.
 
-**React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (admin-only, server-sent events, level filters, scroll-lock, copy + `.ndjson` download).
+**Vue dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer + one-click cancel, dead letter detail panel, and a **Live Console** that tails the server's tracing stream in real time (admin-only, server-sent events, level filters, scroll-lock, copy + `.ndjson` download).
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
@@ -164,7 +164,7 @@ croniq quickstart
 
 # Or step by step (prompts for password):
 croniq init --data-dir .data --username admin
-croniq-server --config Croniqfile --data-dir .data --ui-dir ui/dist
+croniq-server --config Croniqfile --data-dir .data --ui-dir ui-vue/dist
 ```
 
 Open **http://localhost:4000** and log in as `admin` with the password shown during init.
@@ -614,7 +614,7 @@ graph LR
     Q --> R2[Runner 2]
     Q --> R3[Runner N]
     S --> M["Metrics (:9900)"]
-    S --> UI[React Dashboard]
+    S --> UI[Vue Dashboard]
     S --> MCP[MCP Server]
 ```
 

@@ -60,6 +60,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The dashboard is the Vue one; the React tree is gone
+  ([ADR-0004](docs/adr/0004-vue-rebuild-for-the-dashboard.md)).** The rebuild
+  started in [#589](https://github.com/nuetzliches/croniq/issues/589) has taken
+  over. `ui/` is deleted — 118 files — and `ui-vue/` is the only dashboard
+  there is.
+
+  Nothing about the deployment changes. `croniq-server --ui-dir` serves a
+  static bundle and never knew what built it; the combined image, the
+  `croniq-ui` image and the nginx config are all unchanged apart from the path
+  they build from. Upgrading is a normal upgrade.
+
+  What an operator may notice:
+
+  - The **cross-origin dashboard build is gone with the tree that had it.**
+    `VITE_API_URL` and its `VITE_ALLOW_LOCALSTORAGE_REFRESH` acknowledgement do
+    not exist in the new one: it is same-origin only, which is the topology
+    [ADR-0001](docs/adr/0001-same-origin-dashboard.md) has required since
+    [#454](https://github.com/nuetzliches/croniq/issues/454). That ADR now
+    holds by construction rather than by a build-time check. If you were
+    building a cross-origin bundle with the acknowledgement flag, serve the
+    dashboard from `croniq-server` or put the `croniq-ui` container behind the
+    same hostname as the API instead.
+  - **Every form control has an accessible name**, which was
+    [#595](https://github.com/nuetzliches/croniq/issues/595): the old dashboard
+    had 51 of 54 inputs with none at all, and its `UserMenu` was a `role="menu"`
+    with no `menuitem` children. Fixing that in a tree due for deletion would
+    have been discarded markup, so it became an acceptance criterion for the
+    rebuild instead. `ui-vue/scripts/accessible-names.mjs` checks it against
+    Chromium's own accessibility tree rather than against the markup.
+  - **Screens were re-cut, not ported.** Executions, the run detail and the log
+    viewer are one *Runs* screen; the job detail went from six tabs to two;
+    calendars, alerts and settings are screens rather than dialogs. The URL
+    contracts are unchanged and asserted — `/executions` keeps its route and
+    its query parameters, so bookmarks survive.
+
+  For contributors: `npm` commands, the Playwright suite, the e2e stack and the
+  tooling scripts all live under `ui-vue/` now, and `node scripts/dev-stack.mjs`
+  starts one dev server instead of two. Port 4231 is free; the dashboard stays
+  on 4232. The `UI (build + typecheck)` CI job kept its name and swapped its
+  contents, because renaming a required check blocks merges until branch
+  protection catches up.
+
 - **The dashboard is now served with cache headers and compression
   ([#582](https://github.com/nuetzliches/croniq/issues/582)).** `--ui-dir` was
   handed to a bare `ServeDir`, which sets no `Cache-Control` and compresses
