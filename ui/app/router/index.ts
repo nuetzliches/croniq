@@ -248,6 +248,23 @@ export function installAuthWatch() {
     () => auth.status,
     (status) => {
       if (status !== 'anonymous') return
+      // Nothing has been navigated to yet.
+      //
+      // Until the first navigation finalises, `currentRoute` is
+      // `START_LOCATION`: path `/`, no name, and `meta` an empty object — so
+      // the `public` check below cannot see that the target *is* public. A
+      // bootstrap refresh answering `no_session` before the lazy chunk of
+      // `/invitations/accept?token=…` had loaded would therefore redirect to
+      // `/login`, superseding the pending navigation and taking the token with
+      // it. The invitee lands on a sign-in form with nothing to sign in with
+      // (issue #665).
+      //
+      // `beforeEach` owns this window and handles it correctly — it has `to`,
+      // which `START_LOCATION` is not. `main.ts` also defers installing this
+      // watch until `router.isReady()`, so in practice it should never see
+      // this state; the check is here because "should never" and "cannot" are
+      // different, and the failure mode is losing someone's invitation.
+      if (router.currentRoute.value.name === undefined) return
       if (router.currentRoute.value.meta.public) return
       // A deliberate sign-out navigates itself, with a full reload that drops
       // the query cache and the open streams. Racing it here is how `/login`

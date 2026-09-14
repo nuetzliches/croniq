@@ -28,8 +28,19 @@ app.use(router)
 app.use(ui)
 app.use(VueQueryPlugin, { queryClient })
 
-// After the pinia plugin is installed, so the store exists. See the comment on
-// installAuthWatch: a guard alone does not notice a session dying in place.
-installAuthWatch()
-
 app.mount('#app')
+
+// After the first navigation resolves, and after pinia so the store exists.
+//
+// The watch reads `router.currentRoute` to decide whether the page it would
+// redirect away from is public. Before the initial navigation finalises that
+// is `START_LOCATION`, whose `meta` is empty — so a bootstrap 401 arriving
+// during a cold load of `/invitations/accept?token=…` would redirect to
+// `/login` and lose the token (issue #665). `beforeEach` covers that window
+// properly, because it is handed the target route rather than having to ask
+// for it.
+//
+// `catch` rather than nothing: a failed initial navigation (a chunk that would
+// not load) still leaves a running app, and a session dying in it should still
+// be noticed.
+void router.isReady().catch(() => undefined).finally(installAuthWatch)
