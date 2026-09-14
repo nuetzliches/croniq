@@ -2113,13 +2113,14 @@ impl TriggerDefinitionStore for SqliteStore {
         let n = conn
             .execute(
                 "UPDATE trigger_definitions
-             SET cron_expression = ?2, timezone = ?3, calendar = ?4, enabled = ?5, updated_at = ?6
+             SET cron_expression = ?2, timezone = ?3, calendar = ?4, window = ?5, enabled = ?6, updated_at = ?7
              WHERE trigger_id = ?1 AND managed_by != 'dsl'",
                 params![
                     t.trigger_id,
                     t.cron_expression,
                     t.timezone,
                     t.calendar,
+                    t.window,
                     t.enabled,
                     dt_to_sql(&t.updated_at),
                 ],

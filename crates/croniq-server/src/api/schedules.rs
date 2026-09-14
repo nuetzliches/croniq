@@ -241,6 +241,15 @@ pub struct UpdateTriggerRequest {
     /// Optional calendar **name** that gates execution. Empty string
     /// clears the gate (same convention as `timezone`).
     pub calendar: Option<String>,
+    /// Daily window like `"02:00..06:00"`. Empty string clears it, same
+    /// convention as `timezone` and `calendar`.
+    ///
+    /// `CreateTriggerRequest` has always had this; update did not, so an
+    /// operator could set a window when creating a schedule and never change
+    /// it again. The field was accepted and dropped rather than refused,
+    /// which is why the dashboard reported success on an edit that did
+    /// nothing (issue #657).
+    pub window: Option<String>,
 }
 
 /// `PUT /v1/schedules/{trigger_id}`
@@ -320,6 +329,14 @@ pub async fn handle_update(
         // Same convention: empty string clears the calendar gate.
         existing.calendar = if cal.is_empty() { None } else { Some(cal) };
     }
+    if let Some(window) = req.window {
+        // And again for the daily window.
+        existing.window = if window.is_empty() {
+            None
+        } else {
+            Some(window)
+        };
+    }
     if let Some(enabled) = req.enabled {
         existing.enabled = enabled;
     }
@@ -344,27 +361,17 @@ pub async fn handle_update(
         return Err(not_found());
     }
 
-    // Push the new trigger to the live scheduler. The scheduler keys
-    // by job_key, so RemoveJob+AddJob replaces in place — matches the
-    // create-after-delete pattern callers used to fake updates. The
-    // calendar gate rides along on the rebuilt trigger (issue #393).
-    if let Some(ref tx) = state.scheduler_tx {
-        let _ = tx.send(crate::scheduler::SchedulerCommand::RemoveJob {
-            job_key: existing.job_key.clone(),
-        });
-        if existing.enabled {
-            if let Some(built) = crate::loader::trigger_from_definition(&existing, &resolved, now) {
-                let job_config = crate::loader::job_config_from_definition(&existing, None);
-                let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-                    job: Box::new(job_config),
-                    trigger: Box::new(built.trigger),
-                });
-                state.set_config_fault(&existing.job_key, built.config_fault);
-            }
-        } else {
-            // A disabled schedule can't be faulted — it isn't running at all.
-            state.set_config_fault(&existing.job_key, None);
-        }
+    // Push the new trigger to the live scheduler, through the one function
+    // that owns that (issue #653). It re-reads the job's rows and derives the
+    // command, which replaces the hand-rolled RemoveJob+AddJob that used to
+    // live here — and fixes the same `job_config_from_definition(…, None)`
+    // #653 found elsewhere: editing a schedule reset the job's `timeout` and
+    // `max_retries` to the system defaults in the scheduler, because the
+    // rebuilt config was never given the job's own row to read them from.
+    crate::api::job_sync::sync_job(&state, &existing.job_key).await;
+    if !existing.enabled {
+        // A disabled schedule can't be faulted — it isn't running at all.
+        state.set_config_fault(&existing.job_key, None);
     }
 
     Ok(Json(existing))
@@ -781,6 +788,128 @@ mod tests {
         assert_eq!(status, 400);
     }
 
+    /// `window` was in `CreateTriggerRequest` and not in the update one, so it
+    /// could be set once and never changed. serde dropped the field silently
+    /// rather than refusing it, which is why the dashboard reported success on
+    /// an edit that did nothing (issue #657).
+    #[tokio::test]
+    async fn update_schedule_sets_the_window() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        let state = make_state(vec![], Arc::clone(&store));
+
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "window": "02:00..06:00" }),
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            store.get_trigger(&id).unwrap().unwrap().window.as_deref(),
+            Some("02:00..06:00"),
+        );
+    }
+
+    /// The clear convention, which the three optional string fields share: an
+    /// empty string clears, an omitted field leaves the value alone. `null`
+    /// deserialises to `None` and so means "leave alone" — that is what the
+    /// dashboard was sending when an operator emptied a field, so clearing a
+    /// timezone or a calendar through the UI was a no-op that reported success.
+    #[tokio::test]
+    async fn an_empty_string_clears_and_an_absent_field_does_not() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        seed_calendar(&store, "biz", "include weekly weekday");
+        let state = make_state(vec![], Arc::clone(&store));
+
+        // Set all three.
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({
+                "timezone": "Europe/Vienna",
+                "calendar": "biz",
+                "window": "02:00..06:00",
+            }),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        // An unrelated edit leaves them alone.
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "cron_expression": "5m" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let kept = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(kept.timezone.as_deref(), Some("Europe/Vienna"));
+        assert_eq!(kept.calendar.as_deref(), Some("biz"));
+        assert_eq!(kept.window.as_deref(), Some("02:00..06:00"));
+
+        // Empty strings clear them.
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "timezone": "", "calendar": "", "window": "" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let cleared = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(cleared.timezone, None);
+        assert_eq!(cleared.calendar, None);
+        assert_eq!(cleared.window, None);
+    }
+
+    /// Editing a schedule rebuilt the job's scheduler config from the trigger
+    /// row alone, so the job's own `timeout` and `max_retries` were replaced by
+    /// the system defaults in the running scheduler — the same
+    /// `job_config_from_definition(…, None)` defect #653 fixed elsewhere.
+    #[tokio::test]
+    async fn editing_a_schedule_keeps_the_jobs_own_timeout() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        let now = Utc::now();
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "api:job".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: now,
+                updated_at: now,
+                timeout: Some("90s".into()),
+                max_retries: Some(7),
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+        let (state, mut sched_rx) = make_state_sched(vec![], store);
+
+        let (status, _) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "cron_expression": "5m" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        match sched_rx.try_recv().expect("AddJob") {
+            SchedulerCommand::AddJob { job, .. } => {
+                assert_eq!(job.timeout.as_deref(), Some("90s"));
+                assert_eq!(job.retry.max_attempts, 7);
+            }
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn update_schedule_calendar_sets_then_clears_fault() {
         // Strict is the default. Point the schedule at a missing calendar via
@@ -805,12 +934,21 @@ mod tests {
             state.config_faults.read().unwrap().get("api:job").is_none(),
             "resolving onto a valid calendar must clear the fault"
         );
-        // RemoveJob + AddJob were pushed; the AddJob trigger carries the gate.
-        let _ = sched_rx.try_recv().expect("RemoveJob");
+        // One AddJob, and its trigger carries the gate.
+        //
+        // This used to be RemoveJob followed by AddJob. The pair was always
+        // redundant — the scheduler stores by `job_key`, so an AddJob replaces
+        // in place (`scheduler.rs`: `self.triggers.insert(key, …)`) — and
+        // routing through `job_sync::sync_job` leaves the single command that
+        // does the work (issue #653).
         match sched_rx.try_recv().expect("AddJob") {
             SchedulerCommand::AddJob { trigger, .. } => assert!(trigger.calendar.is_some()),
             other => panic!("expected AddJob, got {other:?}"),
         }
+        assert!(
+            sched_rx.try_recv().is_err(),
+            "one command per edit, not two"
+        );
     }
 
     #[tokio::test]

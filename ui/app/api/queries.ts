@@ -632,11 +632,23 @@ export function useUnadoptJob() {
   })
 }
 
+/**
+ * Fields of a schedule that can be written.
+ *
+ * The three optional strings are deliberately not `| null`. The server reads
+ * `null` as `Option::None`, which means "leave this alone" — the same as
+ * omitting the key — and spells "clear it" as an empty string. Allowing `null`
+ * in the type is what let the editor send one for an emptied field and report
+ * success on a change that never happened (issue #657).
+ */
 export interface SchedulePatch {
   cron_expression?: string
-  timezone?: string | null
-  calendar?: string | null
-  window?: string | null
+  /** IANA zone name, or `''` to clear the override. */
+  timezone?: string
+  /** Calendar name gating execution, or `''` to clear the gate. */
+  calendar?: string
+  /** Daily window like `02:00..06:00`, or `''` to clear it. */
+  window?: string
   enabled?: boolean
 }
 

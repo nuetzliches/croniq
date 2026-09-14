@@ -475,6 +475,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wrong one — a tab that lost a rotation race would receive the clear and wipe
   its sibling's fresh cookie.
 
+- **A schedule's window can be edited, and its timezone and calendar can be
+  cleared ([#657](https://github.com/nuetzliches/croniq/issues/657)).** Three
+  layers had the same hole, which is why nobody noticed the first two:
+
+  | Layer | What was wrong |
+  |---|---|
+  | `UpdateTriggerRequest` | no `window` field — serde dropped it silently |
+  | `update_trigger` (both backends) | the `UPDATE` never named the `window` column |
+  | the dashboard | sent `null` for an emptied field |
+
+  A window could be set when a schedule was created and never changed again,
+  and emptying the timezone or calendar box reported success while the old
+  value stayed. `null` deserialises to `None`, which this API reads as "leave
+  it alone"; an empty string is how it spells "clear it". The editor now sends
+  the empty string, and `SchedulePatch` no longer admits `null` at all, so the
+  next person cannot reintroduce it without changing the type.
+
+  The `PUT /v1/schedules/{id}` schema in `openapi.yaml` listed three of its
+  five fields and no clearing convention. It lists all five now, with the
+  omitted / empty / `null` distinction spelled out.
+
+  Editing a schedule also reset the job's `timeout` and `max_retries` to the
+  system defaults in the running scheduler, the same
+  `job_config_from_definition(…, None)` defect
+  [#653](https://github.com/nuetzliches/croniq/issues/653) fixed elsewhere.
+  This path now goes through `job_sync` with the rest.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
