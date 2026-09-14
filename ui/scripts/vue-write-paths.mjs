@@ -832,5 +832,77 @@ await step("the headline's third word rotates without leaving a gap", async () =
   console.log(`     words seen: ${[...seen].join(" ")}`);
 });
 
+/* ─── Stacking, and the stage's moving parts ────────────────────────────── */
+
+await step("nothing from the page paints over an open dialog", async () => {
+  // A sticky `<thead>` needs a z-index to sit above its own rows. Without a
+  // stacking context around it that z-index competed with the whole page and
+  // won against an open dialog, painting column titles across a form.
+  await page.goto(`${base}/jobs`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1400);
+  await page.getByRole("button", { name: "New job" }).first().click();
+  await page.waitForTimeout(800);
+
+  const bleeding = await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return "no dialog";
+    const box = dialog.getBoundingClientRect();
+    // Sample a grid across the dialog: whatever paints there must belong to it.
+    for (let x = box.left + 12; x < box.right - 12; x += 40) {
+      for (let y = box.top + 12; y < box.bottom - 12; y += 40) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit && !dialog.contains(hit) && hit !== dialog) {
+          return `${hit.tagName.toLowerCase()}.${hit.className.toString().slice(0, 40)} at ${Math.round(x)},${Math.round(y)}`;
+        }
+      }
+    }
+    return null;
+  });
+  if (bleeding) throw new Error(`something outside the dialog paints inside it: ${bleeding}`);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+});
+
+await step("the console counts down while idle, and stops when read", async () => {
+  await page.goto(`${base}/login`, { waitUntil: "networkidle" });
+  const width = async () => {
+    const bar = page.locator(".cq-countdown");
+    if ((await bar.count()) === 0) return null;
+    const box = await bar.boundingBox();
+    return box ? Math.round(box.width) : null;
+  };
+  for (let i = 0; i < 120; i++) {
+    if ((await page.locator("text=idle").count()) > 0) break;
+    await page.waitForTimeout(200);
+  }
+  const a = await width();
+  await page.waitForTimeout(1500);
+  const b = await width();
+  if (a === null || b === null) throw new Error("no countdown bar while idle");
+  if (b >= a) throw new Error(`the bar did not shrink: ${a} -> ${b}`);
+
+  // Hovering to read a line must visibly stop the clock, not defer it.
+  await page.locator(".cq-console").hover();
+  const c = await width();
+  await page.waitForTimeout(1500);
+  const d = await width();
+  if (Math.abs((d ?? 0) - (c ?? 0)) > 6) throw new Error(`hover did not pause it: ${c} -> ${d}`);
+  console.log(`     countdown ${a}px -> ${b}px, then held at ${d}px`);
+});
+
+await step("the stage is lit, not merely painted", async () => {
+  // The grid alone reads as nothing; the drifting spots are what make it
+  // visible, which is how its absence was reported.
+  const spots = await page.locator(".cq-spot").count();
+  if (spots !== 2) throw new Error(`expected two spotlights, found ${spots}`);
+  const moved = await page.evaluate(async () => {
+    const spot = document.querySelector(".cq-spot-a");
+    const before = getComputedStyle(spot).transform;
+    await new Promise((r) => setTimeout(r, 1200));
+    return before !== getComputedStyle(spot).transform;
+  });
+  if (!moved) throw new Error("the spotlights are not drifting");
+});
+
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();

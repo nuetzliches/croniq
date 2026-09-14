@@ -1022,3 +1022,53 @@ Alles Bewegte ist unter `prefers-reduced-motion` aus — nicht schneller,
 sondern aus: kein Timer läuft, die Konsole zeigt eine **fertige** Demo statt
 eines leeren Rahmens, das Verb steht still. Geprüft.
 
+## Durchgang 16 — drei Nachträge
+
+Drei Rückmeldungen auf Durchgang 15, jede eine eigene Ursache.
+
+### Der Tabellenkopf malte über den Dialog
+
+Im „New job"-Dialog standen `STATUS` und `JOB` quer über dem Formular, und das
+Feld *Job key* war dahinter verschwunden.
+
+Ursache: mein `sticky top-0 z-10` am `<thead>`. Ein z-index bedeutet nur etwas
+relativ zu einem Stapelkontext — und ohne einen um die Tabelle konkurrierte
+der Kopf mit der **ganzen Seite**. Nuxt UI positioniert den Dialog mit
+`z-index: auto`, also gewinnt jede positive Zahl gegen ihn.
+
+Die Lösung ist nicht, dem Dialog eine höhere Zahl zu geben, sondern dem Kopf
+seinen Bezugsrahmen: `isolation: isolate` auf dem Scroll-Container. Damit gilt
+sein z-index nur noch innerhalb seiner Tabelle, was er immer nur gebraucht hat.
+
+Das steht jetzt als `@utility cq-list` in `main.css` und wird von allen acht
+Listen benutzt — als Utility und nicht als achtmal wiederholte Klassenkette,
+damit die Eigenschaft, auf die es ankommt, einen Ort und eine Begründung hat.
+
+Geprüft mit einem Raster über die Dialogfläche: **was dort malt, muss zum
+Dialog gehören.** Das fängt die ganze Fehlerklasse, nicht nur diesen Fall.
+
+### Der Hintergrund war gemalt und trotzdem unsichtbar
+
+Gemessen: Gitter, Verläufe und Maske waren in jedem Viewport vorhanden. Nur
+sehen konnte man sie nicht — und das ist eine faire Beschreibung, keine
+Fehlwahrnehmung.
+
+Es fehlten die **driftenden Scheinwerfer**: zwei große, weich geblurrte
+Farbflächen im `screen`-Blendmodus, 90 s und 130 s Periode, damit sie nie in
+Takt fallen. Das Raster liest sich nur dort, wo ein Licht dahinter vorbeizieht.
+Ohne sie liegt die Seite flach.
+
+Unter `prefers-reduced-motion` stehen sie **still statt zu verschwinden** — sie
+sind das, was den Hintergrund überhaupt lesbar macht, ihn wegzunehmen hieße den
+Hintergrund wegzunehmen.
+
+### Die Konsole hatte keinen Zähler
+
+Die alte Fassung zeigte im Idle-Zustand einen dünnen Balken, der abläuft. Ohne
+ihn ist die Haltephase tote Luft: die Ausgabe steht, fünf Sekunden passiert
+nichts, und nichts deutet an, dass noch etwas kommt.
+
+Er pausiert mit der Demo — wer zum Lesen mit der Maus draufgeht, hält die Uhr
+sichtbar an, statt sie stumm zu verschieben. Gemessen: 503 px → 349 px im
+Lauf, danach bei 343 px gehalten.
+

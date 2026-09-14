@@ -201,7 +201,7 @@ const statusLabel = computed(() => {
     nothing here is information the reader needs to sign in.
   -->
   <div
-    class="cq-console overflow-hidden rounded-xl border border-white/10 bg-[oklch(0.16_0.02_265)] shadow-lg"
+    class="cq-console relative overflow-hidden rounded-xl border border-white/10 bg-[oklch(0.16_0.02_265)] shadow-lg"
     aria-hidden="true"
     @mouseenter="paused = true"
     @mouseleave="paused = false"
@@ -247,10 +247,43 @@ const statusLabel = computed(() => {
         <span class="min-w-0 text-white/70">{{ line.text }}</span>
       </p>
     </div>
+
+    <!--
+      How long this one stays.
+
+      Without it the hold is dead air: the console finishes, nothing moves for
+      five seconds, and there is no sign that anything is coming. The bar makes
+      the pause legible — and it pauses with the demo, so hovering to read a
+      line visibly stops the clock rather than silently deferring it.
+    -->
+    <div
+      v-if="phase === 'hold' && !reducedMotion"
+      :key="index"
+      class="cq-countdown absolute inset-x-0 bottom-0 h-0.5"
+      :style="{ animationDuration: `${HOLD_MS}ms`, animationPlayState: paused ? 'paused' : 'running' }"
+    />
   </div>
 </template>
 
 <style scoped>
+.cq-countdown {
+  background: linear-gradient(90deg, var(--ui-primary), oklch(0.78 0.2 240));
+  transform-origin: left center;
+  animation-name: cq-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes cq-countdown {
+  from {
+    transform: scaleX(1);
+    opacity: 0.85;
+  }
+  to {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+}
+
 @keyframes cq-caret-blink {
   0%,
   45% {

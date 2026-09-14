@@ -201,7 +201,7 @@ const overriddenCount = computed(() => overrides.value.size)
 
     <div
       v-else-if="view === 'channels'"
-      class="min-h-0 flex-1 overflow-auto rounded-lg border border-default"
+      class="cq-list min-h-0 flex-1"
     >
       <AppEmpty
         v-if="channels.length === 0"
@@ -271,7 +271,7 @@ const overriddenCount = computed(() => overrides.value.size)
       v-else
       class="flex min-h-0 flex-1 gap-4"
     >
-      <div class="min-w-0 flex-1 overflow-auto rounded-lg border border-default">
+      <div class="cq-list min-w-0 flex-1">
         <AppEmpty
           v-if="rules.length === 0"
           icon="i-lucide-bell-off"

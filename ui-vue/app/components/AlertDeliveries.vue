@@ -111,7 +111,7 @@ function latency(delivery: AlertDelivery): string {
       <span class="cq-num ml-auto text-sm text-muted">{{ rows.length }} deliver{{ rows.length === 1 ? 'y' : 'ies' }}</span>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-auto rounded-lg border border-default">
+    <div class="cq-list min-h-0 flex-1">
       <AppLoading
         v-if="isPending"
         label="Loading deliveries"
