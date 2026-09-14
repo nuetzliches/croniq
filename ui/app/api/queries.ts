@@ -30,6 +30,7 @@ import type {
   PersonalAccessToken,
   ReloadSuccess,
   Role,
+  ReplayResponse,
   RunnerSummary,
   ThroughputResponse,
   TotpSetupResponse,
@@ -56,11 +57,10 @@ import { useAuthStore } from '~/stores/auth'
  * way to misuse vue-query.
  */
 export function useCurrentUser() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['users', 'me'],
     queryFn: () => apiGet<User>('/v1/users/me'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     staleTime: 60_000,
   })
 }
@@ -94,14 +94,13 @@ export function useAuthConfig() {
  * question directly.
  */
 export function useDeadLetterCount(jobKey?: MaybeRefOrGetter<string | undefined>) {
-  const auth = useAuthStore()
   const query = useQuery({
     queryKey: ['dead-letters', 'count', computed(() => (jobKey ? toValue(jobKey) : undefined))],
     queryFn: () => {
       const key = jobKey ? toValue(jobKey) : undefined
       return apiGet<DeadLetterCount>('/v1/dead-letters/count', key ? { job_key: key } : undefined)
     },
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 30_000,
   })
   return computed(() => query.data.value?.count ?? 0)
@@ -150,11 +149,10 @@ export function useVersion() {
  * every open tab without a reload.
  */
 export function useMaintenance() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['maintenance'],
     queryFn: () => apiGet<MaintenanceResponse>('/v1/maintenance'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 10_000,
   })
 }
@@ -307,11 +305,10 @@ export function fetchExecutions(filters: ExecutionFilters): Promise<Execution[]>
 }
 
 export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['executions', computed(() => toValue(filters))],
     queryFn: () => apiGet<Execution[]>('/v1/executions', executionQuery(toValue(filters))),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 5_000,
     // Keep the previous rows on screen while a filter change is in flight, so
     // the table does not blink through an empty state on every keystroke.
@@ -349,7 +346,6 @@ export function useExecutionLogs(
    */
   state?: MaybeRefOrGetter<string | undefined>,
 ) {
-  const auth = useAuthStore()
   const finished = computed(() => {
     const current = state === undefined ? undefined : toValue(state)
     return current !== undefined && TERMINAL_STATES.includes(current)
@@ -357,7 +353,7 @@ export function useExecutionLogs(
   return useQuery({
     queryKey: ['executions', 'logs', computed(() => toValue(id))],
     queryFn: () => apiGet<ExecutionLogEntry[]>(`/v1/executions/${toValue(id)}/logs`),
-    enabled: computed(() => auth.isAuthenticated && Boolean(toValue(id))),
+    enabled: authedAnd(() => Boolean(toValue(id))),
     refetchInterval: () => (finished.value ? false : 5_000),
   })
 }
@@ -393,7 +389,6 @@ export function useCancelExecution() {
  * into showing fires that have already happened.
  */
 export function useForecast(windowMinutes = 60, bucketMinutes = 5) {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['forecast', windowMinutes, bucketMinutes],
     queryFn: () =>
@@ -401,18 +396,17 @@ export function useForecast(windowMinutes = 60, bucketMinutes = 5) {
         window_minutes: windowMinutes,
         bucket_minutes: bucketMinutes,
       }),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 60_000,
   })
 }
 
 /** Per-job scheduling liveness: next fire, last fire, and whether it is late. */
 export function useJobStates() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['job-states'],
     queryFn: () => apiGet<JobScheduleState[]>('/v1/jobs/states'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 15_000,
   })
 }
@@ -440,21 +434,19 @@ export function useJobs(enabled?: MaybeRefOrGetter<boolean>) {
 }
 
 export function useThroughput(window = '24h') {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['throughput', window],
     queryFn: () => apiGet<ThroughputResponse>('/v1/executions/throughput', { window }),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 60_000,
   })
 }
 
 export function useFailureHeatmap(days = 7) {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['failure-heatmap', days],
     queryFn: () => apiGet<FailureHeatmap>('/v1/insights/failures', { days }),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 60_000,
   })
 }
@@ -474,14 +466,13 @@ export function useRunners(enabled?: MaybeRefOrGetter<boolean>) {
 }
 
 export function useDeadLetters(jobKey?: MaybeRefOrGetter<string | undefined>) {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['dead-letters', computed(() => (jobKey ? toValue(jobKey) : undefined))],
     queryFn: () => {
       const key = jobKey ? toValue(jobKey) : undefined
       return apiGet<DeadLetter[]>('/v1/dead-letters', key ? { job_key: key } : undefined)
     },
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 30_000,
   })
 }
@@ -500,7 +491,7 @@ export function useReplayDeadLetter() {
     // raises names the flag in its own message, and the dashboard had no way
     // to send it — so the only route past a refusal was curl (issue #660).
     mutationFn: ({ id, force }: { id: string; force?: boolean }) =>
-      api(`/v1/dead-letters/${id}/replay`, {
+      api<ReplayResponse>(`/v1/dead-letters/${id}/replay`, {
         method: 'POST',
         body: { force: force ?? false },
       }),
@@ -562,17 +553,6 @@ export function useDeleteRunner() {
  * is anything late" without opening a job.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-/** One job. The list is the source for the detail; this is for a deep link. */
-export function useJob(jobKey: MaybeRefOrGetter<string | undefined>) {
-  const auth = useAuthStore()
-  const key = computed(() => toValue(jobKey))
-  return useQuery({
-    queryKey: ['jobs', key],
-    queryFn: () => apiGet<JobDefinition>(`/v1/jobs/${encodeURIComponent(key.value!)}`),
-    enabled: computed(() => auth.isAuthenticated && Boolean(key.value)),
-  })
-}
-
 /**
  * Triggers, optionally for one job.
  *
@@ -595,13 +575,12 @@ export function useSchedules(
 
 /** Success rate and latency percentiles over a window, for one job. */
 export function useJobStats(jobKey: MaybeRefOrGetter<string | undefined>, days = 7) {
-  const auth = useAuthStore()
   const key = computed(() => toValue(jobKey))
   return useQuery({
     queryKey: ['job-stats', key, days],
     queryFn: () =>
       apiGet<JobStatsResponse>(`/v1/jobs/${encodeURIComponent(key.value!)}/stats`, { days }),
-    enabled: computed(() => auth.isAuthenticated && Boolean(key.value)),
+    enabled: authedAnd(() => Boolean(key.value)),
   })
 }
 
@@ -879,7 +858,6 @@ export function useAlertsConfig(enabled?: MaybeRefOrGetter<boolean>) {
  * for a list that changes a few times an hour.
  */
 export function useAlertDeliveries(filters: MaybeRefOrGetter<AlertDeliveryListQuery>) {
-  const auth = useAuthStore()
   const active = computed(() => toValue(filters))
   return useQuery({
     queryKey: ['alerts', 'deliveries', active],
@@ -893,7 +871,7 @@ export function useAlertDeliveries(filters: MaybeRefOrGetter<AlertDeliveryListQu
       query.limit = limit ?? 200
       return apiGet<AlertDelivery[]>('/v1/alerts/deliveries', query)
     },
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
     refetchInterval: 20_000,
   })
 }
@@ -983,11 +961,10 @@ export function useClearOverride() {
  * ─────────────────────────────────────────────────────────────────────────── */
 
 export function useUsers() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['users'],
     queryFn: () => apiGet<User[]>('/v1/users'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
   })
 }
 
@@ -1000,11 +977,10 @@ export function useDeleteUser() {
 }
 
 export function useInvitations() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['invitations'],
     queryFn: () => apiGet<Invitation[]>('/v1/invitations'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
   })
 }
 
@@ -1033,11 +1009,10 @@ export function useRevokeInvitation() {
 }
 
 export function usePersonalAccessTokens() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['users', 'me', 'tokens'],
     queryFn: () => apiGet<PersonalAccessToken[]>('/v1/users/me/tokens'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
   })
 }
 
@@ -1088,11 +1063,10 @@ export function useTotpDisable() {
 }
 
 export function useApiClients() {
-  const auth = useAuthStore()
   return useQuery({
     queryKey: ['api-clients'],
     queryFn: () => apiGet<ApiClient[]>('/v1/api-clients'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
   })
 }
 
@@ -1137,12 +1111,6 @@ export function useIssueClientToken() {
   })
 }
 
-export function useRevokeApiKey() {
-  return useMutation({
-    mutationFn: (keyId: string) => apiDelete(`/v1/api-keys/${encodeURIComponent(keyId)}`),
-  })
-}
-
 export interface AuditFilters {
   limit?: number
   actor_id?: string
@@ -1160,7 +1128,6 @@ export interface AuditFilters {
 
 /** Who did what. The one surface that answers it; the job detail links here. */
 export function useAuditEvents(filters: MaybeRefOrGetter<AuditFilters> = () => ({})) {
-  const auth = useAuthStore()
   const active = computed(() => toValue(filters))
   return useQuery({
     queryKey: ['audit', active],
@@ -1172,6 +1139,6 @@ export function useAuditEvents(filters: MaybeRefOrGetter<AuditFilters> = () => (
       if (active.value.action) query.action = active.value.action
       return apiGet<AuditEvent[]>('/v1/audit', query)
     },
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(),
   })
 }

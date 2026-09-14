@@ -9,7 +9,7 @@ import {
   useDeleteDeadLetter,
   useReplayDeadLetter,
 } from '~/api/queries'
-import type { DeadLetter } from '~/api/types'
+import type { DeadLetter, StaleReplayError } from '~/api/types'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 
@@ -141,8 +141,10 @@ async function doReplay(id: string, force = false) {
     await replay.mutateAsync({ id, force })
     if (selectedId.value === id) selectedId.value = null
   } catch (caught) {
+    // `StaleReplayError` is the server's own 409 shape, so the check below is
+    // against a declared contract rather than a string this file made up.
     const body =
-      caught instanceof ApiError ? (caught.body as { message?: string; error?: string }) : undefined
+      caught instanceof ApiError ? (caught.body as Partial<StaleReplayError>) : undefined
     replayError.value = body?.message ?? (caught as Error).message ?? 'Replay was refused.'
     if (body?.error === 'stale_replay') forceable.value = id
   }
