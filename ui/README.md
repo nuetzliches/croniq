@@ -115,13 +115,19 @@ claim about the dashboard was otherwise unfalsifiable. Run them from here with
 
 ## Dependency notes
 
-**`overrides.esbuild`** in `package.json` forces esbuild to `^0.28.2`.
-[GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr)
+**`overrides.fontless.esbuild`** in `package.json` forces esbuild to `^0.28.2`
+*for fontless only*. [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr)
 (arbitrary file read from esbuild's *own* dev server on Windows) is patched in
 0.28.1, but `fontless` — which reaches here as `@nuxt/ui` → `@nuxt/fonts` →
 `fontless` — declares `esbuild: ^0.27.0` as a hard dependency and pins the tree
-to the vulnerable line. Vite 8 already accepts `^0.27.0 || ^0.28.0`, so the
-override moves only fontless.
+to the vulnerable line.
+
+It is scoped rather than top-level (#681). A bare `"esbuild": "^0.28.2"` applies
+to *every* edge, vite's included — and an override replaces the spec rather than
+intersecting with it, with no ERESOLVE to say so. So when vite moves to esbuild
+0.29, a top-level override would quietly hand it 0.28 and the breakage would
+point at vite rather than at this line. The scoped form leaves every other
+package resolving normally; today they all still dedupe onto 0.28.2 anyway.
 
 The exposure is low — nothing here runs esbuild's serve mode; Vite's dev server
 is Vite's own. It is overridden anyway because a standing advisory that is
@@ -129,6 +135,6 @@ always answered with "not our code path" trains you to skim the next one.
 
 Remove the override once `@nuxt/fonts` ships a `fontless` on esbuild 0.28: the
 check is `npm ls esbuild --all` after deleting it, and `npm audit` must stay at
-zero. The range is `^0.28.2` rather than `>=0.28.2` on purpose — esbuild's 0.x
+zero. Being scoped, it can be deleted outright rather than narrowed first. The range is `^0.28.2` rather than `>=0.28.2` on purpose — esbuild's 0.x
 minors carry breaking changes, and an open-ended floor would let one through
 silently.

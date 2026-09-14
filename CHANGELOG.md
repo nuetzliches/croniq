@@ -855,6 +855,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   both. `default_type text/plain` in the location is the one-line form that
   does what the old line meant.
 
+- **The esbuild override is scoped to the package that needs it
+  ([#681](https://github.com/nuetzliches/croniq/issues/681)).** A bare
+  `"overrides": { "esbuild": … }` applies to every edge in the tree, vite's
+  included — and an override *replaces* a spec rather than intersecting with
+  it, with no ERESOLVE to say so. When vite moves to esbuild 0.29 that would
+  quietly hand it 0.28, and the breakage would point at vite rather than at
+  the override.
+
+  Only `fontless` pins the vulnerable line, so only `fontless` is overridden.
+  `npm ls esbuild --all` shows the same resolution as before — everything still
+  dedupes onto 0.28.2 — and `npm audit` stays at zero.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
