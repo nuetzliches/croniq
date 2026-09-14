@@ -395,6 +395,7 @@ function ruleOf(row: Row): string {
         :key="selectedKey"
         :job="selectedJob"
         :job-key="selectedKey"
+        :known-triggers="triggersByKey.get(selectedKey) ?? []"
         class="w-[30rem] shrink-0"
         @close="close"
       />

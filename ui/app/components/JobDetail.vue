@@ -13,7 +13,7 @@ import {
   useTriggerJob,
   useUnadoptJob,
 } from '~/api/queries'
-import type { JobDefinition } from '~/api/types'
+import type { JobDefinition, TriggerDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { renderJobDsl } from '~/lib/render-dsl'
 import ConfirmModal from '~/components/ConfirmModal.vue'
@@ -34,12 +34,28 @@ import ConfirmModal from '~/components/ConfirmModal.vue'
  * - *DSL* stayed, because it is the only place in the product that shows a job
  *   in the form it is written in.
  */
-const props = defineProps<{ job: JobDefinition | null; jobKey: string }>()
+const props = defineProps<{
+  job: JobDefinition | null
+  jobKey: string
+  /**
+   * This job's triggers, when the parent already has them.
+   *
+   * `JobsView` fetches every trigger at once and groups them, so asking the
+   * server again per opened job was a request that answered a question already
+   * on screen (issue #670). Optional, so a caller without them still works —
+   * the fallback query below is gated on that.
+   */
+  knownTriggers?: TriggerDefinition[]
+}>()
 const emit = defineEmits<{ close: [] }>()
 
 const router = useRouter()
 
-const { data: schedules } = useSchedules(() => props.jobKey)
+const { data: fetchedSchedules } = useSchedules(
+  () => props.jobKey,
+  () => props.knownTriggers === undefined,
+)
+const schedules = computed(() => props.knownTriggers ?? fetchedSchedules.value)
 const { data: calendars } = useCalendars()
 const { data: states } = useJobStates()
 const { data: stats } = useJobStats(() => props.jobKey)

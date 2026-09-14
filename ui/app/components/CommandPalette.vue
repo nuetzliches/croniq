@@ -23,12 +23,30 @@ const query = ref('')
 const cursor = ref(0)
 const input = ref<HTMLInputElement | null>(null)
 
-// Only fetched while the palette has been opened at least once — an operator
-// who never uses it pays nothing for the four lists behind it.
-const { data: jobs } = useJobs()
-const { data: runners } = useRunners()
-const { data: calendars } = useCalendars()
-const { data: alerts } = useAlertsConfig()
+/**
+ * Fetched once the palette has been opened, not before.
+ *
+ * The comment here used to claim exactly that and the code did not do it: the
+ * palette is mounted in the shell for the whole session, so all four lists
+ * were fetched on load and `/v1/runners` was re-polled every ten seconds, for
+ * an operator who might never press the key (issue #670).
+ *
+ * Latched rather than tied to `open`, so closing it does not throw the lists
+ * away and re-fetch them on the next press. The cost is paid once.
+ */
+const everOpened = ref(false)
+watch(
+  open,
+  (isOpen) => {
+    if (isOpen) everOpened.value = true
+  },
+  { immediate: true },
+)
+
+const { data: jobs } = useJobs(everOpened)
+const { data: runners } = useRunners(everOpened)
+const { data: calendars } = useCalendars(everOpened)
+const { data: alerts } = useAlertsConfig(everOpened)
 
 interface Entry {
   id: string
