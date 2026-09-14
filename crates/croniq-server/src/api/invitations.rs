@@ -34,6 +34,16 @@ use crate::api::audit;
 use crate::api::auth_middleware::require_scope;
 
 const INVITE_TOKEN_TTL: Duration = Duration::from_secs(7 * 24 * 3600); // 7 days
+
+/// Ceiling on a caller-chosen invitation lifetime.
+///
+/// An invitation token is a bearer credential that creates an account, so an
+/// unbounded lifetime is a link that stays live in someone's inbox forever.
+/// Thirty days is generous against the seven-day default and still an interval
+/// an operator can reason about. A request above it is refused rather than
+/// silently clamped — clamping would report success for a deadline the server
+/// did not honour, which is the shape of the bug this whole change is about.
+const INVITE_TOKEN_MAX_TTL_HOURS: u32 = 30 * 24;
 const INVITE_PREFIX: &str = "croniq_inv";
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
@@ -42,6 +52,15 @@ const INVITE_PREFIX: &str = "croniq_inv";
 pub struct CreateInvitationRequest {
     pub email: String,
     pub role: Role,
+    /// How long the invitation stays valid, in hours. Omitted means the
+    /// server default of seven days; the ceiling is
+    /// [`INVITE_TOKEN_MAX_TTL_HOURS`].
+    ///
+    /// The dashboard has always sent this and the server has never read it, so
+    /// the "Valid for (hours)" box did nothing and every invitation expired
+    /// after exactly seven days regardless (issue #658).
+    #[serde(default)]
+    pub expires_in_hours: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -113,7 +132,13 @@ pub async fn handle_create(
 
     let (raw_token, token_hash) = generate_token(INVITE_PREFIX);
     let now = Utc::now();
-    let expires_at = now + chrono::Duration::from_std(INVITE_TOKEN_TTL).unwrap();
+    let expires_at = match req.expires_in_hours {
+        None => now + chrono::Duration::from_std(INVITE_TOKEN_TTL).unwrap(),
+        Some(hours) if hours == 0 || hours > INVITE_TOKEN_MAX_TTL_HOURS => {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Some(hours) => now + chrono::Duration::hours(i64::from(hours)),
+    };
     let invitation_id = Uuid::new_v4().to_string();
 
     let invite = Invitation {
@@ -316,3 +341,133 @@ fn require_user_admin(ctx: &CallerContext) -> Result<(), StatusCode> {
 // helper logic above doesn't reference it directly).
 #[allow(dead_code)]
 const _: Option<CallerType> = None;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{DynStore, sqlite_store};
+    use croniq_runner::AppState;
+    use croniq_store::sqlite::SqliteStore;
+    use tokio::sync::mpsc;
+
+    fn make_store() -> DynStore {
+        let store = sqlite_store(SqliteStore::in_memory().unwrap());
+        store
+            .users_create(&User {
+                user_id: "admin-1".into(),
+                username: "admin".into(),
+                email: Some("admin@example.com".into()),
+                display_name: None,
+                role: Role::Admin,
+                is_active: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                last_login_at: None,
+            })
+            .unwrap();
+        store
+    }
+
+    fn admin_ctx() -> CallerContext {
+        CallerContext {
+            caller_type: CallerType::User,
+            caller_id: "admin-1".into(),
+            client_id: "admin-1".into(),
+            user_id: Some("admin-1".into()),
+            role: Some(Role::Admin),
+            auth_method: croniq_auth::AuthMethod::Password,
+            scopes: vec!["admin".into()],
+            token_generation: None,
+        }
+    }
+
+    fn state_with(store: &DynStore) -> Arc<ServerState> {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        ServerState::with_auth(AppState::new(), tx, None, Some(Arc::clone(store)))
+    }
+
+    async fn create(
+        store: &DynStore,
+        hours: Option<u32>,
+    ) -> Result<(StatusCode, Json<CreateInvitationResponse>), StatusCode> {
+        handle_create(
+            State(state_with(store)),
+            Extension(admin_ctx()),
+            HeaderMap::new(),
+            Json(CreateInvitationRequest {
+                email: format!("invitee-{:?}@example.com", hours),
+                role: Role::Viewer,
+                expires_in_hours: hours,
+            }),
+        )
+        .await
+    }
+
+    /// The dashboard has always sent `expires_in_hours` and the server has
+    /// never read it, so the "Valid for (hours)" box did nothing and every
+    /// invitation expired after exactly seven days (issue #658).
+    #[tokio::test]
+    async fn expires_in_hours_sets_the_deadline() {
+        let store = make_store();
+        let before = Utc::now();
+
+        let Ok((_, Json(created))) = create(&store, Some(48)).await else {
+            panic!("create should succeed");
+        };
+
+        let hours = (created.expires_at - before).num_minutes() as f64 / 60.0;
+        assert!(
+            (47.9..=48.2).contains(&hours),
+            "expected ~48 hours, got {hours}"
+        );
+    }
+
+    /// Omitting it keeps the seven-day default a caller that predates the
+    /// field relies on.
+    #[tokio::test]
+    async fn omitting_it_keeps_the_seven_day_default() {
+        let store = make_store();
+        let before = Utc::now();
+
+        let Ok((_, Json(created))) = create(&store, None).await else {
+            panic!("create should succeed");
+        };
+
+        let days = (created.expires_at - before).num_hours() as f64 / 24.0;
+        assert!((6.9..=7.1).contains(&days), "expected ~7 days, got {days}");
+    }
+
+    /// An invitation token creates an account, so an unbounded lifetime is a
+    /// live link sitting in an inbox forever. Refused rather than clamped: a
+    /// clamp would report success for a deadline the server did not honour,
+    /// which is the shape of the bug this change fixes.
+    #[tokio::test]
+    async fn a_lifetime_past_the_ceiling_is_refused() {
+        let store = make_store();
+
+        match create(&store, Some(INVITE_TOKEN_MAX_TTL_HOURS + 1)).await {
+            Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("a lifetime past the ceiling must be refused"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_ceiling_itself_is_allowed() {
+        let store = make_store();
+        assert!(
+            create(&store, Some(INVITE_TOKEN_MAX_TTL_HOURS))
+                .await
+                .is_ok(),
+            "the ceiling is inclusive"
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_hours_is_refused() {
+        let store = make_store();
+        match create(&store, Some(0)).await {
+            Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("zero hours must be refused"),
+        }
+    }
+}

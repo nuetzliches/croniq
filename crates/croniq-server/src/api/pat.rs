@@ -39,6 +39,16 @@ pub struct CreatePatRequest {
     /// Optional absolute expiry. None = never expires (revoke explicitly).
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<Utc>>,
+    /// Optional expiry as a lifetime in hours, resolved against the server's
+    /// clock. Mutually exclusive with `expires_at`; sending both is a 400.
+    ///
+    /// The dashboard has always sent this field and the server has never had
+    /// it, so every token minted from the "Expires in (hours)" box was created
+    /// with no expiry at all — a permanent credential where the operator asked
+    /// for a temporary one (issue #658). A relative lifetime is also what a
+    /// caller usually wants: it needs no agreement about clocks or timezones.
+    #[serde(default)]
+    pub expires_in_hours: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +143,15 @@ pub async fn handle_create(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    // Two ways to say the same thing, so refuse to guess which one was meant.
+    let expires_at = match (req.expires_at, req.expires_in_hours) {
+        (Some(_), Some(_)) => return Err(StatusCode::BAD_REQUEST),
+        (Some(at), None) => Some(at),
+        (None, Some(0)) => return Err(StatusCode::BAD_REQUEST),
+        (None, Some(hours)) => Some(Utc::now() + chrono::Duration::hours(i64::from(hours))),
+        (None, None) => None,
+    };
+
     let (raw_token, token_hash) = generate_token(PAT_PREFIX);
     let token_prefix: String = raw_token.chars().take(12).collect();
     let pat = PersonalAccessToken {
@@ -142,7 +161,7 @@ pub async fn handle_create(
         token_hash,
         token_prefix: token_prefix.clone(),
         scopes: granted.clone(),
-        expires_at: req.expires_at,
+        expires_at,
         revoked_at: None,
         last_used_at: None,
         created_at: Utc::now(),
@@ -298,6 +317,7 @@ mod tests {
             name: name.into(),
             scopes: scopes.map(|v| v.into_iter().map(String::from).collect()),
             expires_at: None,
+            expires_in_hours: None,
         }
     }
 
@@ -319,6 +339,117 @@ mod tests {
             last_used_at: None,
             created_at: Utc::now(),
         }
+    }
+
+    /// The dashboard has always sent `expires_in_hours` and the server has
+    /// never had the field, so serde dropped it and every token minted from
+    /// the "Expires in (hours)" box was created with `expires_at: None` — a
+    /// permanent credential where the operator asked for a temporary one
+    /// (issue #658).
+    #[tokio::test]
+    async fn expires_in_hours_sets_a_deadline() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        let before = Utc::now();
+        let Ok((_, Json(created))) = handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(CreatePatRequest {
+                name: "ci".into(),
+                scopes: None,
+                expires_at: None,
+                expires_in_hours: Some(48),
+            }),
+        )
+        .await
+        else {
+            panic!("create should succeed");
+        };
+
+        let expires_at = created.expires_at.expect("a deadline was asked for");
+        let hours = (expires_at - before).num_minutes() as f64 / 60.0;
+        assert!(
+            (47.9..=48.2).contains(&hours),
+            "expected ~48 hours, got {hours}"
+        );
+    }
+
+    /// Absolute and relative say the same thing two ways. Refuse rather than
+    /// pick one, since picking wrong is exactly the silent-deadline failure
+    /// this change is about.
+    #[tokio::test]
+    async fn sending_both_expiry_forms_is_refused() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        // `match` rather than `expect_err`: that would need `Debug` on
+        // `CreatePatResponse`, and a struct holding a live token has no
+        // business being printable (same reasoning as #630).
+        match handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(CreatePatRequest {
+                name: "ci".into(),
+                scopes: None,
+                expires_at: Some(Utc::now() + chrono::Duration::days(1)),
+                expires_in_hours: Some(48),
+            }),
+        )
+        .await
+        {
+            Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("both expiry forms together must be refused"),
+        }
+    }
+
+    /// Zero hours is not "no expiry" — it is a token that is already dead, and
+    /// almost certainly a caller bug. Omitting the field is how you ask for no
+    /// expiry.
+    #[tokio::test]
+    async fn zero_hours_is_refused() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        match handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(CreatePatRequest {
+                name: "ci".into(),
+                scopes: None,
+                expires_at: None,
+                expires_in_hours: Some(0),
+            }),
+        )
+        .await
+        {
+            Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("zero hours must be refused"),
+        }
+    }
+
+    /// Neither form still means "never expires", which is what a caller that
+    /// predates this field gets.
+    #[tokio::test]
+    async fn no_expiry_field_still_means_never() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        let Ok((_, Json(created))) = handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(create_req("ci", None)),
+        )
+        .await
+        else {
+            panic!("create should succeed");
+        };
+
+        assert_eq!(created.expires_at, None);
     }
 
     #[tokio::test]

@@ -502,6 +502,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [#653](https://github.com/nuetzliches/croniq/issues/653) fixed elsewhere.
   This path now goes through `job_sync` with the rest.
 
+- **The expiry boxes for tokens and invitations do something
+  ([#658](https://github.com/nuetzliches/croniq/issues/658)).** The dashboard
+  has always sent `expires_in_hours` when issuing a personal access token or an
+  invitation, and the server has never had the field. serde dropped it without
+  complaint, so:
+
+  - every PAT minted from the "Expires in (hours)" box was created with
+    `expires_at: None` — a **permanent credential** where the operator asked
+    for a temporary one;
+  - every invitation expired after exactly seven days, whatever "Valid for
+    (hours)" said.
+
+  Both endpoints accept `expires_in_hours` now. On `POST /v1/users/me/tokens`
+  it sits beside the existing `expires_at`, and sending both is a 400 rather
+  than a guess. On `POST /v1/invitations` it replaces the fixed seven-day
+  constant, which stays the default when the field is omitted.
+
+  Invitations get a 30-day ceiling, refused rather than clamped. An invitation
+  token creates an account, so an unbounded lifetime is a live link sitting in
+  an inbox forever — and clamping would report success for a deadline the
+  server did not honour, which is the shape of the bug being fixed.
+
+  Nothing changes for a caller that sends neither: a PAT still never expires
+  and an invitation still lasts seven days. The dashboard needed no change at
+  all beyond making its own hint text concrete — it was already sending the
+  right field.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

@@ -208,7 +208,7 @@ function isSelf(row: Row): boolean {
       </UFormField>
       <UFormField
         label="Valid for (hours)"
-        description="Empty = server default."
+        description="Empty = 7 days. 720 hours (30 days) is the ceiling."
       >
         <UInput
           v-model="inviteHours"

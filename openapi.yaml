@@ -2784,12 +2784,26 @@ paths:
                 role:
                   type: string
                   enum: [admin, operator, viewer]
+                expires_in_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 720
+                  description: >-
+                    How long the invitation stays valid. Omitted means the
+                    server default of seven days.
+
+
+                    The 30-day ceiling is refused rather than clamped: an
+                    invitation token creates an account, and reporting success
+                    for a deadline the server did not honour is worse than
+                    saying no.
       responses:
         "201":
           description: Invitation created — raw token is shown ONCE
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
+        "400": { description: "Empty email, or `expires_in_hours` of 0 or above 720." }
 
   /v1/invitations/{id}:
     delete:
@@ -2934,13 +2948,30 @@ paths:
                   type: string
                   format: date-time
                   nullable: true
+                  description: >-
+                    Absolute deadline. Mutually exclusive with
+                    `expires_in_hours`.
+                expires_in_hours:
+                  type: integer
+                  minimum: 1
+                  description: >-
+                    Lifetime in hours, resolved against the server's clock —
+                    no agreement about clocks or timezones needed. Mutually
+                    exclusive with `expires_at`.
+
+
+                    Omitting both still means the token never expires and must
+                    be revoked explicitly.
       responses:
         "201":
           description: Created — raw token shown ONCE
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreatePatResponse" }
-        "400": { description: Empty name or empty scopes }
+        "400":
+          description: >-
+            Empty name, empty scopes, both expiry forms at once, or
+            `expires_in_hours: 0`.
         "403":
           description: >-
             Requested scope outside the role's default-set or outside the
