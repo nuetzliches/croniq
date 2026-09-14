@@ -19,7 +19,10 @@ import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 const props = defineProps<{ execution: Execution | null }>()
 defineEmits<{ close: [] }>()
 
-const { data: logs, isPending: logsPending } = useExecutionLogs(() => props.execution?.id)
+const { data: logs, isPending: logsPending } = useExecutionLogs(
+  () => props.execution?.id,
+  () => props.execution?.state,
+)
 const cancel = useCancelExecution()
 const { error, attempt } = useActionError()
 

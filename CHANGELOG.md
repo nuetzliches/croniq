@@ -735,6 +735,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   own doc comment said it would be deleted when the shell landed. The shell
   landed several releases ago.
 
+- **Three screens stop asking for things nobody is looking at
+  ([#670](https://github.com/nuetzliches/croniq/issues/670)).**
+
+  The **command palette** is mounted in the shell for the whole session and
+  opened rarely. Its own comment claimed the four lists behind it were fetched
+  only once it had been opened; they were fetched on load, and `/v1/runners`
+  was re-polled every ten seconds, for an operator who might never press the
+  key. The lists are now gated on the palette having been opened — latched, so
+  closing it does not throw them away and re-fetch on the next press.
+
+  **Execution logs** were polled every five seconds regardless of the run's
+  state. Nothing more is written to the log of a completed, failed, dead or
+  cancelled run, and the detail rail sits open on exactly those while someone
+  reads the output. The interval now stops for a finished run, and keeps going
+  when the state is unknown — the safe direction to be wrong in.
+
+  **Job detail** fetched this job's triggers from the server although the list
+  beside it had already fetched every trigger and grouped them. It takes them
+  as a prop now, and falls back to its own query when a caller does not have
+  them.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

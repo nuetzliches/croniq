@@ -328,13 +328,37 @@ export function useExecutions(filters: MaybeRefOrGetter<ExecutionFilters>) {
  * the React tree does too. Inventing a fetch for it would have meant inventing
  * an endpoint.
  */
-export function useExecutionLogs(id: MaybeRefOrGetter<string | undefined>) {
+/**
+ * A run in one of these is finished, and nothing more will be written to its
+ * log. Kept next to the hook that polls it so the two cannot drift.
+ */
+const TERMINAL_STATES = ['completed', 'failed', 'dead', 'cancelled']
+
+export function useExecutionLogs(
+  id: MaybeRefOrGetter<string | undefined>,
+  /**
+   * The run's state, so a finished one stops being polled.
+   *
+   * Nothing more is written to the log of a completed, failed, dead or
+   * cancelled run, and the detail rail is left open on exactly those while
+   * someone reads the output — so the interval was asking every five seconds
+   * for an answer that could not change (issue #670).
+   *
+   * Optional: a caller that does not know the state gets the old behaviour,
+   * which is the safe direction to be wrong in.
+   */
+  state?: MaybeRefOrGetter<string | undefined>,
+) {
   const auth = useAuthStore()
+  const finished = computed(() => {
+    const current = state === undefined ? undefined : toValue(state)
+    return current !== undefined && TERMINAL_STATES.includes(current)
+  })
   return useQuery({
     queryKey: ['executions', 'logs', computed(() => toValue(id))],
     queryFn: () => apiGet<ExecutionLogEntry[]>(`/v1/executions/${toValue(id)}/logs`),
     enabled: computed(() => auth.isAuthenticated && Boolean(toValue(id))),
-    refetchInterval: 5_000,
+    refetchInterval: () => (finished.value ? false : 5_000),
   })
 }
 
@@ -393,12 +417,25 @@ export function useJobStates() {
   })
 }
 
-export function useJobs() {
+/**
+ * Whether a query should run at all: signed in, and whatever else the caller
+ * asks for.
+ *
+ * The extra condition is for components that are mounted long before anyone
+ * looks at them — the command palette is mounted for the whole session and
+ * opened rarely, and its four lists were being fetched, and one of them
+ * polled, regardless (issue #670).
+ */
+function authedAnd(extra?: MaybeRefOrGetter<boolean>) {
   const auth = useAuthStore()
+  return computed(() => auth.isAuthenticated && (extra === undefined || toValue(extra)))
+}
+
+export function useJobs(enabled?: MaybeRefOrGetter<boolean>) {
   return useQuery({
     queryKey: ['jobs'],
     queryFn: () => apiGet<JobDefinition[]>('/v1/jobs'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(enabled),
   })
 }
 
@@ -422,13 +459,17 @@ export function useFailureHeatmap(days = 7) {
   })
 }
 
-export function useRunners() {
-  const auth = useAuthStore()
+export function useRunners(enabled?: MaybeRefOrGetter<boolean>) {
+  const active = authedAnd(enabled)
   return useQuery({
     queryKey: ['runners'],
     queryFn: () => apiGet<RunnerSummary[]>('/v1/runners'),
-    enabled: computed(() => auth.isAuthenticated),
-    refetchInterval: 10_000,
+    enabled: active,
+    // Only while something is watching. This is the one polled list behind the
+    // command palette, and the palette is mounted for the whole session — so
+    // an operator who never opened it was still asking for the fleet every ten
+    // seconds, all day (issue #670).
+    refetchInterval: () => (active.value ? 10_000 : false),
   })
 }
 
@@ -539,14 +580,16 @@ export function useJob(jobKey: MaybeRefOrGetter<string | undefined>) {
  * detail changes its key by navigation, and a frozen query key would leave the
  * previous job's schedule on screen.
  */
-export function useSchedules(jobKey?: MaybeRefOrGetter<string | undefined>) {
-  const auth = useAuthStore()
+export function useSchedules(
+  jobKey?: MaybeRefOrGetter<string | undefined>,
+  enabled?: MaybeRefOrGetter<boolean>,
+) {
   const key = computed(() => (jobKey ? toValue(jobKey) : undefined))
   return useQuery({
     queryKey: ['schedules', key],
     queryFn: () =>
       apiGet<TriggerDefinition[]>('/v1/schedules', key.value ? { job_key: key.value } : undefined),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(enabled),
   })
 }
 
@@ -563,12 +606,11 @@ export function useJobStats(jobKey: MaybeRefOrGetter<string | undefined>, days =
 }
 
 /** Calendars, for the schedule editor's binding and for the calendars screen. */
-export function useCalendars() {
-  const auth = useAuthStore()
+export function useCalendars(enabled?: MaybeRefOrGetter<boolean>) {
   return useQuery({
     queryKey: ['calendars'],
     queryFn: () => apiGet<CalendarDefinition[]>('/v1/calendars'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(enabled),
   })
 }
 
@@ -820,12 +862,11 @@ export function useUnadoptCalendar() {
  * ─────────────────────────────────────────────────────────────────────────── */
 
 /** Channels, rules and any active overrides, as the server resolved them. */
-export function useAlertsConfig() {
-  const auth = useAuthStore()
+export function useAlertsConfig(enabled?: MaybeRefOrGetter<boolean>) {
   return useQuery({
     queryKey: ['alerts', 'config'],
     queryFn: () => apiGet<AlertsConfig>('/v1/alerts/config'),
-    enabled: computed(() => auth.isAuthenticated),
+    enabled: authedAnd(enabled),
   })
 }
 
