@@ -24,8 +24,9 @@
 // Not in CI: it needs the dev stack and writes to the demo database.
 
 import { chromium } from "@playwright/test";
+import { PORTS } from "../../scripts/lib/stack.mjs";
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
+const base = `http://127.0.0.1:${PORTS.ui}`;
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const problems = [];

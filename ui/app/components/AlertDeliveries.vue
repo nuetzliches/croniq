@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAlertDeliveries } from '~/api/queries'
 import type { AlertDelivery } from '~/api/types'
-import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
+import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
+import StatusPill from '~/components/StatusPill.vue'
 
 /**
  * What actually went out.
@@ -51,23 +52,20 @@ function setFilter(key: 'rule' | 'job_key' | 'state', value: string) {
  * window swallowed it deliberately. Colouring it like an error would train
  * people to ignore the colour.
  */
-function tone(state: AlertDelivery['state']) {
-  switch (state) {
-    case 'delivered':
-      return { color: 'success' as const, dot: 'bg-success' }
-    case 'failed':
-      return { color: 'error' as const, dot: 'bg-error' }
-    default:
-      return { color: 'neutral' as const, dot: 'bg-dimmed' }
-  }
-}
-
-/** How long the channel took to accept it. Only meaningful once delivered. */
+/**
+ * How long the channel took to accept it. Only meaningful once delivered.
+ *
+ * The formatting is `lib/format.ts`'s, not a second opinion: this file used to
+ * carry its own, which agreed with `formatDuration` below a second and
+ * disagreed above ten (issue #674). One table showing `12.3 s` beside another
+ * showing `12 s` for the same measurement is the kind of difference a reader
+ * has to stop and account for.
+ */
 function latency(delivery: AlertDelivery): string {
   if (!delivery.delivered_at) return '—'
   const ms = Date.parse(delivery.delivered_at) - Date.parse(delivery.fired_at)
   if (!Number.isFinite(ms) || ms < 0) return '—'
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
+  return formatDuration(ms)
 }
 </script>
 
@@ -181,20 +179,10 @@ function latency(delivery: AlertDelivery): string {
             class="cq-row border-b border-default/60"
           >
             <td class="px-[var(--cq-cell-x)]">
-              <UBadge
-                :color="tone(delivery.state).color"
-                variant="subtle"
-                size="sm"
-                class="gap-1.5 whitespace-nowrap"
+              <StatusPill
+                :state="delivery.state"
                 :title="delivery.error ?? undefined"
-              >
-                <span
-                  class="size-1.5 shrink-0 rounded-full"
-                  :class="tone(delivery.state).dot"
-                  aria-hidden="true"
-                />
-                {{ delivery.state }}
-              </UBadge>
+              />
             </td>
             <td class="max-w-[12rem] truncate px-[var(--cq-cell-x)]">
               <RouterLink

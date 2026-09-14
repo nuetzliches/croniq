@@ -18,7 +18,15 @@ import { computed } from 'vue'
  * consistent wherever it turns up instead of neutral in one place and
  * unstyled in another.
  */
-const props = defineProps<{ state: string; size?: 'sm' | 'md' }>()
+const props = defineProps<{
+  state: string
+  size?: 'sm' | 'md'
+  /**
+   * Hover text. Alert deliveries put the channel's error here — the state says
+   * a delivery failed, and this says what the channel answered.
+   */
+  title?: string
+}>()
 
 const tone = computed(() => {
   switch (props.state) {
@@ -44,6 +52,15 @@ const tone = computed(() => {
     // Not "off" — it ran out of retries and gave up, which is a fault.
     case 'exhausted':
       return { color: 'error' as const, dot: 'bg-error' }
+    // Alert delivery (GET /v1/alerts/deliveries). `delivered` is the same
+    // green as `completed` for the same reason: nothing to do here.
+    //
+    // `throttled` and `suppressed` fall through to neutral deliberately. A
+    // throttled delivery is not a failure — the rule fired and the throttle
+    // window swallowed it on purpose — and colouring it like an error would
+    // train people to ignore the colour.
+    case 'delivered':
+      return { color: 'success' as const, dot: 'bg-success' }
     default:
       return { color: 'neutral' as const, dot: 'bg-dimmed' }
   }
@@ -56,6 +73,7 @@ const tone = computed(() => {
     variant="subtle"
     :size="size ?? 'sm'"
     class="gap-1.5 whitespace-nowrap"
+    :title="title"
   >
     <span
       class="size-1.5 shrink-0 rounded-full"

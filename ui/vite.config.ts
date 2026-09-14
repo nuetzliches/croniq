@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
+import { PORTS } from '../scripts/lib/stack.mjs'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 
@@ -17,7 +18,7 @@ import ui from '@nuxt/ui/vite'
  * needs no guard. If a cross-origin build is ever wanted, it needs the guard
  * back with it, not the flag alone.
  */
-const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4230'
+const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? `http://127.0.0.1:${PORTS.api}`
 
 export default defineConfig({
   plugins: [
@@ -53,7 +54,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 4231,
+    port: PORTS.ui,
     // Refuse rather than silently move: vite's default is to take the next
     // free port, which prints a URL that nothing the dev stack advertises is
     // listening on. `dev-stack.mjs` checks the port up front for the same
