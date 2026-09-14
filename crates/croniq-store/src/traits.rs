@@ -328,6 +328,14 @@ pub trait DeadLetterStore {
 
     /// List dead letters.
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError>;
+    /// How many dead letters match, ignoring any page limit.
+    ///
+    /// [`Self::list_dead_letters`] always applies a limit, so its row count is
+    /// the size of a page and not of the queue. The dashboard was reading it as
+    /// the latter — "50 pending" on a queue of any size, and a bulk-discard
+    /// dialog that offered to remove "all 50" while the request cleared every
+    /// row there was (issue #661).
+    fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError>;
 
     /// Remove a dead letter (after retry or purge).
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError>;

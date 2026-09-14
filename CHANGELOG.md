@@ -549,6 +549,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ui/app/api/client.test.ts` is the first unit test outside `app/lib/`. Three
   of its five cases fail with the exemption removed.
 
+- **"Replay anyway" is back
+  ([#660](https://github.com/nuetzliches/croniq/issues/660)).** The server
+  refuses a replay whose logical fire time is older than the job's
+  `dead_letter { replay_max_age … }`, and its 409 ends with "Pass force:true to
+  replay anyway". The rebuilt dashboard sent no body at all, so the flag the
+  message names was unreachable from the screen that showed the message — the
+  only route past a refusal was curl. The React tree had offered the override;
+  the port dropped it.
+
+  A refusal carrying `stale_replay` now shows a second button that resends with
+  `force: true`. Any other refusal is still just reported, because any other
+  refusal is not a decision to override.
+
+- **The dead-letter view counts the queue, not the page
+  ([#661](https://github.com/nuetzliches/croniq/issues/661)).**
+  `GET /v1/dead-letters` is paged — 50 by default — and the dashboard read the
+  length of that page as the size of the queue. So a queue of 300 read as
+  "50 pending", the sidebar badge saturated at 100, and the bulk-discard dialog
+  said "All 50 of them go" while the request it was confirming cleared every
+  row there was.
+
+  `GET /v1/dead-letters/count` answers the actual number, optionally scoped to
+  one `job_key`. The header now reads "300 pending, 50 shown" when those differ,
+  and the discard-all dialog names the real figure and says plainly that it
+  means the whole queue rather than what is on screen.
+
+  `limit` was also missing from the list endpoint's OpenAPI parameters, which
+  is part of why the paging was easy to miss.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

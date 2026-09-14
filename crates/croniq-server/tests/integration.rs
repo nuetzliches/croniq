@@ -457,6 +457,64 @@ async fn bulk_delete_all_clears_dead_letter_queue() {
     );
 }
 
+/// `GET /v1/dead-letters/count` answers with the size of the queue, not the
+/// size of a page.
+///
+/// The dashboard used to count the rows the list endpoint returned, and that
+/// endpoint applies a default limit of 50 — so a queue of any size read as
+/// "50 pending", and the discard-all dialog offered to remove "all 50" while
+/// the request cleared every row there was (issue #661).
+#[tokio::test]
+async fn dead_letter_count_is_not_capped_by_the_page_limit() {
+    let store: DynStore = sqlite_store(SqliteStore::in_memory().unwrap());
+
+    // More than the list endpoint's default page of 50, and spread over two
+    // jobs so the filter has something to do.
+    for i in 0..60 {
+        let job_key = if i % 3 == 0 {
+            "reports:weekly"
+        } else {
+            "etl:nightly"
+        };
+        store
+            .add_dead_letter(&croniq_store::models::DeadLetter {
+                id: uuid::Uuid::new_v4(),
+                execution_id: uuid::Uuid::new_v4(),
+                job_key: job_key.into(),
+                fire_at: Utc::now(),
+                scheduled_for: Utc::now(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "timeout".into(),
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+
+    let listed = get_json(store_backed_router(Arc::clone(&store)), "/v1/dead-letters").await;
+    assert_eq!(
+        listed.as_array().map(Vec::len),
+        Some(50),
+        "the list endpoint is still paged — that is the whole point"
+    );
+
+    let counted = get_json(
+        store_backed_router(Arc::clone(&store)),
+        "/v1/dead-letters/count",
+    )
+    .await;
+    assert_eq!(counted["count"].as_u64(), Some(60), "resp: {counted}");
+
+    let scoped = get_json(
+        store_backed_router(Arc::clone(&store)),
+        "/v1/dead-letters/count?job_key=reports:weekly",
+    )
+    .await;
+    assert_eq!(scoped["count"].as_u64(), Some(20), "resp: {scoped}");
+}
+
 /// Capability routing: a job requiring a capability is only dispatched to
 /// runners that possess it.
 #[tokio::test]
