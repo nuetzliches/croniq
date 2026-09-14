@@ -654,6 +654,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   window correctly, because it is handed the target route rather than having to
   ask for it.
 
+- **Display preferences carried over from the React dashboard are read, not
+  misread ([#666](https://github.com/nuetzliches/croniq/issues/666)).** Both
+  dashboards were served from the same origin and so share a `localStorage`
+  namespace, and the new store deliberately kept the old keys so that an
+  operator's choices would survive the cutover. Keeping the keys was only half
+  of it — the *values* have two shapes:
+
+  | Preference | React tree wrote | This tree expected |
+  |---|---|---|
+  | theme | `auto` | `system` |
+  | sidebar | `{"state":{"collapsed":true}}` (zustand) | `collapsed` |
+
+  So a stored `auto` fell through an unchecked cast and reached the DOM as
+  `data-theme="auto"`, which matches no stylesheet: every operator who had
+  asked to follow their OS got a **light dashboard** on the morning of the
+  upgrade. And a collapsed sidebar sprang open, which is the exact thing the
+  code comment said the keys were being kept for.
+
+  Both shapes are read now, anything unrecognised falls back to the default
+  rather than reaching the DOM, and the recognised value is written back in the
+  current format so a browser stops carrying the old one.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
