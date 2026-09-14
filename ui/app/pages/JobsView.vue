@@ -385,8 +385,14 @@ function ruleOf(row: Row): string {
         </table>
       </div>
 
+      <!-- Keyed by the job, so switching selection remounts rather than
+           re-rendering in place. Belt to the generation counter's braces
+           inside the component (issue #663): a remount also resets the tab
+           state and the copy button, which is what a reader expects from a
+           different job anyway. -->
       <JobDetail
         v-if="selectedKey"
+        :key="selectedKey"
         :job="selectedJob"
         :job-key="selectedKey"
         class="w-[30rem] shrink-0"

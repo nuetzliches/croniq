@@ -80,13 +80,30 @@ const confirmingDelete = ref(false)
 const dsl = ref('')
 const dslNotes = ref<string[]>([])
 
+/**
+ * Which render is the current one.
+ *
+ * `renderJobDsl` awaits a variable number of times depending on the job — a
+ * trigger-less job returns before it ever touches the parser, while a cron job
+ * awaits the schedule parse, the block formatter and the calendar render — so
+ * a render started later can finish first. Without this counter the earlier
+ * one lands last and the tab shows job A's DSL under job B's header, which is
+ * text an operator copies into a Croniqfile (issue #663).
+ *
+ * The same pattern as `CalendarRuleBuilder`, which got it right; this file is
+ * where the lesson had not been applied.
+ */
+let generation = 0
+
 watchEffect(async () => {
+  const mine = ++generation
   if (!props.job) {
     dsl.value = ''
     dslNotes.value = []
     return
   }
   const rendered = await renderJobDsl(props.job, triggers.value, calendars.value)
+  if (mine !== generation) return
   dsl.value = rendered.text
   dslNotes.value = rendered.notes
 })
