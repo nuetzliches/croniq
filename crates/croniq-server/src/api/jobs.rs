@@ -591,6 +591,12 @@ pub async fn handle_update(
     store
         .create_job_definition(&job)
         .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
+
+    // `timeout` and `max_retries` are read by the scheduler, not by the store,
+    // so persisting them is only half the edit: until this the scheduler kept
+    // running the job with whatever config it was last handed (issue #653).
+    crate::api::job_sync::sync_job(&state, &job_key).await;
+
     Ok(Json(job))
 }
 
@@ -649,11 +655,7 @@ pub async fn handle_delete(
     //
     // `handle_unadopt` below and every trigger mutation in `schedules.rs`
     // already send this; deletion was the one path that did not.
-    if let Some(ref tx) = state.scheduler_tx {
-        let _ = tx.send(SchedulerCommand::RemoveJob {
-            job_key: job_key.clone(),
-        });
-    }
+    crate::api::job_sync::remove_job(&state, &job_key);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -683,6 +685,13 @@ pub async fn handle_activate(
     store
         .create_job_definition(&job)
         .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
+
+    // Nothing in the scheduler reads `is_active`, so the flag is implemented by
+    // putting the job back into the scheduler here and taking it out in
+    // `handle_deactivate` (issue #653). Before this, both endpoints wrote the
+    // store and the scheduler carried on unchanged.
+    crate::api::job_sync::sync_job(&state, &job_key).await;
+
     Ok(Json(job))
 }
 
@@ -711,6 +720,10 @@ pub async fn handle_deactivate(
     store
         .create_job_definition(&job)
         .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
+
+    // See `handle_activate`: this is what makes `is_active: false` stop a job.
+    crate::api::job_sync::sync_job(&state, &job_key).await;
+
     Ok(Json(job))
 }
 
@@ -1990,6 +2003,125 @@ mod tests {
                 assert_eq!(job_key, "etl:nightly");
             }
             other => panic!("expected RemoveJob, got {other:?}"),
+        }
+    }
+
+    /// A job row plus an enabled trigger, the shape every one of these tests
+    /// needs before it can watch a mutation reach the scheduler.
+    fn seed_scheduled_job(store: &DynStore, key: &str, timeout: Option<&str>) {
+        let now = Utc::now();
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: key.into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: now,
+                updated_at: now,
+                timeout: timeout.map(Into::into),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+        store
+            .create_trigger(&TriggerDefinition {
+                trigger_id: format!("t-{key}"),
+                job_key: key.into(),
+                cron_expression: Some("5m".into()),
+                timezone: None,
+                calendar: None,
+                window: None,
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+    }
+
+    /// `PUT /v1/jobs/{key}` wrote `timeout` and `max_retries` to the store and
+    /// told the scheduler nothing, so the job went on running under whatever
+    /// config the scheduler was last handed — the defaults, for anything
+    /// registered through the API (issue #653).
+    #[tokio::test]
+    async fn updating_a_job_pushes_the_new_config_to_the_scheduler() {
+        let store = make_store();
+        seed_scheduled_job(&store, "etl:nightly", Some("5m"));
+        let (state, mut rx) = make_state_keep_rx(Vec::new(), Arc::clone(&store), false);
+
+        let (status, _) = send_json(
+            server_router(Arc::clone(&state)),
+            "PUT",
+            "/v1/jobs/etl:nightly",
+            serde_json::json!({ "timeout": "90s", "max_retries": 7 }),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        match rx.try_recv().expect("no scheduler command pushed") {
+            crate::scheduler::SchedulerCommand::AddJob { job, .. } => {
+                assert_eq!(job.key, "etl:nightly");
+                assert_eq!(job.timeout.as_deref(), Some("90s"));
+                assert_eq!(job.retry.max_attempts, 7);
+            }
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
+    /// `is_active` had no reader anywhere in the scheduler, so deactivating a
+    /// job returned `is_active: false` and the job kept firing (issue #653).
+    #[tokio::test]
+    async fn deactivating_a_job_takes_it_out_of_the_scheduler() {
+        let store = make_store();
+        seed_scheduled_job(&store, "etl:nightly", None);
+        let (state, mut rx) = make_state_keep_rx(Vec::new(), Arc::clone(&store), false);
+
+        let (status, _) = body_json(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/jobs/etl:nightly/deactivate",
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        match rx.try_recv().expect("no scheduler command pushed") {
+            crate::scheduler::SchedulerCommand::RemoveJob { job_key } => {
+                assert_eq!(job_key, "etl:nightly");
+            }
+            other => panic!("expected RemoveJob, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn activating_a_job_puts_it_back_into_the_scheduler() {
+        let store = make_store();
+        seed_scheduled_job(&store, "etl:nightly", None);
+        let mut job = store.get_job_definition("etl:nightly").unwrap().unwrap();
+        job.is_active = false;
+        store.create_job_definition(&job).unwrap();
+
+        let (state, mut rx) = make_state_keep_rx(Vec::new(), Arc::clone(&store), false);
+
+        let (status, _) = body_json(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/jobs/etl:nightly/activate",
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        match rx.try_recv().expect("no scheduler command pushed") {
+            crate::scheduler::SchedulerCommand::AddJob { job, .. } => {
+                assert_eq!(job.key, "etl:nightly");
+            }
+            other => panic!("expected AddJob, got {other:?}"),
         }
     }
 

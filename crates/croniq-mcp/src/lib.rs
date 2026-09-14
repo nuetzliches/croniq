@@ -59,7 +59,7 @@
 
 pub mod tools;
 
-pub use tools::{CroniqMcp, DynStore};
+pub use tools::{CroniqMcp, DynStore, JobSync};
 
 // ─── HTTP transport (Streamable HTTP for in-process embedding) ────────────────
 
@@ -154,6 +154,12 @@ pub fn tool_requires_write(name: &str) -> Option<bool> {
 /// The `jobs` snapshot is captured at build time. Croniqfile reloads do not
 /// propagate to in-flight MCP sessions; restart `croniq-server` to refresh.
 ///
+/// `job_sync` is how a job mutated through a tool reaches the embedder's
+/// scheduler. Leave it `None` and the tools still write the store — they just
+/// cannot tell anything that a job changed, which is the gap issue #653
+/// closed: `delete_job` over `/mcp` cleared the row and the scheduler went on
+/// firing the job until the next reload.
+///
 /// `extra_allowed_hosts` is **additive** on top of rmcp's loopback-only
 /// default (`localhost`, `127.0.0.1`, `::1`) — see issue #114. `None` or an
 /// empty `Some(vec![])` keeps the v0.10.1 loopback-only behaviour intact.
@@ -162,6 +168,7 @@ pub fn streamable_http_service(
     store: Option<DynStore>,
     jobs: Vec<JobConfig>,
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
+    job_sync: Option<Arc<dyn JobSync>>,
     extra_allowed_hosts: Option<Vec<String>>,
 ) -> StreamableHttpService<CroniqMcp, LocalSessionManager> {
     let factory = move || {
@@ -173,6 +180,9 @@ pub fn streamable_http_service(
         };
         if let Some(ref t) = triggers {
             server = server.with_triggers(Arc::clone(t));
+        }
+        if let Some(ref s) = job_sync {
+            server = server.with_job_sync(Arc::clone(s));
         }
         Ok::<_, std::io::Error>(server)
     };
