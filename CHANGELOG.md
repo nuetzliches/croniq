@@ -633,6 +633,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   carrying a blank message rendered an empty alert. The composable checks for
   blank rather than for nullish.
 
+- **An invitation link no longer loses its token on a cold load
+  ([#665](https://github.com/nuetzliches/croniq/issues/665)).** The reactive
+  auth watch decides where it is by reading `router.currentRoute`, and until
+  the first navigation finalises that is `START_LOCATION` — path `/`, no name,
+  `meta` an empty object. So during a cold load it could not see that the page
+  being navigated *to* was public.
+
+  A bootstrap refresh answering `no_session` in that window redirected to
+  `/login` and superseded the pending navigation. For
+  `/invitations/accept?token=…` and `/password-reset/confirm?token=…` that
+  takes the token with it: the invitee lands on a sign-in form with nothing to
+  sign in with. The visitor has no session by definition in exactly those two
+  cases, and the window opens whenever the refresh round trip beats the lazy
+  chunk — so it is intermittent, which makes it a support ticket rather than a
+  bug report.
+
+  The watch is now installed after `router.isReady()`, and ignores a
+  `START_LOCATION` it should no longer see. `beforeEach` always handled this
+  window correctly, because it is handed the target route rather than having to
+  ask for it.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
