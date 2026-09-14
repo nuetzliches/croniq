@@ -57,7 +57,16 @@ services:
       # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       # OTEL_SERVICE_NAME: croniq
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
+      # BusyBox wget, not bash. `/dev/tcp` is a bash builtin rather than a
+      # kernel feature, and the runtime image is Alpine since #599 — so the
+      # old probe would report every container unhealthy forever.
+      #
+      # `127.0.0.1`, not `localhost`. The container's /etc/hosts maps both
+      # 127.0.0.1 and ::1 to that name, busybox wget tries ::1 first, and the
+      # server binds IPv4 — so the probe failed with "connection refused"
+      # against a server that was answering perfectly well. Naming the family
+      # is the fix; it also makes the probe say what it means.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:4000/health"]
       interval: 5s
       timeout: 3s
       retries: 10

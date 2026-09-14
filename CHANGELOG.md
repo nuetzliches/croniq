@@ -87,6 +87,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The runtime image is Alpine with statically linked binaries, and half the
+  size ([#599](https://github.com/nuetzliches/croniq/issues/599)).** The
+  published combined image goes from **57.83 MB to 29.40 MB compressed** — a
+  49% cut, on top of the `ca-certificates` change below.
+
+  The base was the weight: `debian:bookworm-slim` is 28.26 MB compressed
+  against Alpine's 3.64 MB. The binaries are now built for
+  `*-unknown-linux-musl` and are statically linked (static-pie, asserted at
+  build time), which is what a base with no glibc requires — and nothing more:
+  the musl binaries are 0.5% *larger* than the glibc ones, so the linker change
+  buys nothing by itself.
+
+  **The trust store is unchanged.** Alpine ships 119 roots to Debian's 150;
+  37 certificates are in Debian and not Alpine, including DigiCert Global Root
+  CA, Baltimore CyberTrust Root, GlobalSign Root CA and GTS Root R2 — most of
+  what a managed Postgres chains to. Changing the base image is one decision
+  and changing who the product trusts is another, so the Debian bundle is
+  carried across and CI still asserts its hash.
+
+  What an operator may notice:
+
+  - **`/bin/sh` in the container is BusyBox ash, not dash**, and there is no
+    bash. `croniq-shell-runner` has always invoked `sh` rather than bash, so
+    job execution is unaffected; an interactive `docker exec` session is
+    BusyBox.
+  - **`gosu` is now `su-exec`** — same argv, 10 KB of C rather than 2 MB of Go.
+    Only `docker-entrypoint.sh` calls it.
+  - **The compose healthcheck changed** from `bash` + `/dev/tcp` (a bash
+    builtin, absent on Alpine) to BusyBox `wget` against `127.0.0.1`. Pinning
+    the address matters: the container maps both `127.0.0.1` and `::1` to
+    `localhost`, wget tries `::1` first, and the server binds IPv4 — so the
+    obvious spelling reported a healthy server as unreachable.
+
+  Not taken: `scratch` and distroless reach ~19 MB but cannot run this image.
+  A distroless container fails as UID 65532 against a volume it does not own —
+  `Permission denied` on the JWT secret — because the entrypoint's root →
+  chown → drop sequence is what makes an arbitrarily-owned mount work at all.
+  That is a redesign of first-run initialisation, not a size tweak, and it
+  would cost the shell that makes a self-hosted scheduler debuggable.
+
 - **The image no longer installs `ca-certificates`, and is 3.04 MB smaller
   ([#599](https://github.com/nuetzliches/croniq/issues/599)).** Nothing in the
   image links OpenSSL — every TLS path is rustls — but `ca-certificates`

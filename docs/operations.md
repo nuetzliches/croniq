@@ -361,12 +361,19 @@ rather than a silent fallback, so a typo surfaces at boot instead of as a
 confusing handshake failure.
 
 **In the container, "the platform trust store" is one file:**
-`/etc/ssl/certs/ca-certificates.crt`, the current Debian bookworm bundle. The
-image does not install the `ca-certificates` *package* — it would pull in
-openssl and libssl3, 8.3 MB for a library nothing in the image links against,
-since every TLS path here is rustls (issue #599). The file is copied in from a
-stage that does install it, and CI asserts before publishing that what ships is
-byte-identical to a freshly apt-installed bundle.
+`/etc/ssl/certs/ca-certificates.crt`, the current Debian bookworm bundle — 150
+roots. The image installs no certificate package at all: `ca-certificates` on
+Debian pulls in openssl and libssl3, 8.3 MB for a library nothing here links
+against, since every TLS path is rustls (issue #599).
+
+The runtime is Alpine, which ships a bundle of its own, and the image
+deliberately replaces it. Alpine's carries 119 roots to Debian's 150; 37
+certificates are in Debian and not in Alpine, among them DigiCert Global Root
+CA, Baltimore CyberTrust Root, GlobalSign Root CA and GTS Root R2 — which is to
+say most of what a managed Postgres chains to. Moving the base image was not
+also a decision to change who the product trusts, so the bundle was held
+constant across the move. CI asserts before publishing that what ships is
+byte-identical to a freshly apt-installed Debian bundle.
 
 The practical consequence is that `update-ca-certificates` is not in the image.
 To trust a private CA, in order of preference:
