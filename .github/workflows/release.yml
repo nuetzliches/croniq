@@ -303,6 +303,13 @@ jobs:
             org.opencontainers.image.licenses=MIT OR Apache-2.0
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+          # Stamps the dashboard bundle so it can warn when it and the
+          # server were not published together (#604). The same value the
+          # Cargo.toml sync above puts into CARGO_PKG_VERSION, which is what
+          # `GET /version` reports — that equality is the whole guard, so the
+          # two must keep coming from this one `steps.version` output.
+          build-args: |
+            CRONIQ_VERSION=${{ steps.version.outputs.version }}
           # Push by digest only — no tag yet. docker-merge below creates the
           # manifest list under :latest, :<version>, :<tag> once both arches
           # are uploaded.

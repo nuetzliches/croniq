@@ -70,6 +70,18 @@ COPY ui/package.json ui/package-lock.json ./
 RUN npm ci || npm install
 COPY ui/ .
 
+# The release this bundle is for, so the dashboard can tell an operator when it
+# and the server were not published together (#604). Only the split topology
+# can skew — the combined image is one digest — but the stamp is the same for
+# all three targets because they come out of this one stage.
+#
+# Defaults to `dev`, which the dashboard reads as "not stamped, say nothing".
+# A plain `docker build .` with no `--build-arg` must not produce a bundle
+# claiming a version, and it must not nag either; the release workflow passes
+# the tag.
+ARG CRONIQ_VERSION=dev
+ENV VITE_APP_VERSION=$CRONIQ_VERSION
+
 # Drop the pre-built WASM bridge into ui/app/lib/wasm/ so the prebuild
 # hook (build-wasm.mjs) sees fresh artefacts and skips the wasm-pack
 # step. Without this the prebuild hook fails because wasm-pack isn't

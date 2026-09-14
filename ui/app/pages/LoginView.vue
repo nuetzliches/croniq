@@ -3,6 +3,7 @@ import { computed, onMounted, onScopeDispose, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiPost } from '~/api/client'
 import { useAuthConfig, useHealth, useVersion } from '~/api/queries'
+import { UI_VERSION, versionSkew } from '~/lib/build-version'
 import {
   isEnrollmentRequired,
   isMfaRequired,
@@ -43,6 +44,14 @@ const route = useRoute()
 const { data: config } = useAuthConfig()
 const { data: health, isError: healthFailed } = useHealth()
 const { data: version } = useVersion()
+
+/**
+ * A version mismatch is announced in the shell (`VersionSkewBanner`), which is
+ * no use at all if the mismatch is what is stopping you signing in. One line
+ * here rather than a second banner: this page is deliberately quiet, and an
+ * operator who cannot get past it needs the two numbers, not a paragraph.
+ */
+const skew = computed(() => versionSkew(UI_VERSION, version.value?.version))
 
 type Step = 'credentials' | 'totp' | 'enrol'
 
@@ -399,6 +408,12 @@ function messageFor(caught: unknown): string {
           class="mt-6 font-mono text-xs text-dimmed"
         >
           build {{ version.git_sha }} · {{ new Date(version.build_time).toISOString().slice(0, 10) }}
+        </p>
+        <p
+          v-if="skew"
+          class="mt-1 font-mono text-xs text-warning"
+        >
+          dashboard v{{ skew.ui }} · server v{{ skew.server }} — versions do not match
         </p>
       </section>
 

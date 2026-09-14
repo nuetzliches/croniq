@@ -261,8 +261,26 @@ endpoints its server may not have; the failure is a scattering of 404s rather
 than a clear message.
 
 The combined image cannot have this problem — one digest, both halves — which
-is one of the reasons it stays the default. There is not yet a runtime guard
-against a mismatch; until there is, the tag is the contract.
+is one of the reasons it stays the default.
+
+The dashboard also **tells you** when the two do not match. Each
+released bundle is stamped with its version at build time and compares that
+against `GET /version` on load; a mismatch raises a dismissible banner naming
+both, and a line on the sign-in page in case the mismatch is what is stopping
+you signing in.
+
+It is a warning, not a refusal. A mismatched pair is usually still mostly
+functional, and locking you out of your own dashboard over a version string
+would be worse than the skew. Dismissing it is remembered for *that pair only*
+— change either half into a different mismatch and it comes back.
+
+Two things it deliberately does not do. It says nothing when either side's
+version is unknown, so a dashboard built from source and a pre-`/version`
+server both stay quiet rather than crying wolf. And it compares exactly rather
+than by major or minor: all three images ship under one tag from one run, so
+any difference at all means they were pinned apart by hand, and treating a
+patch difference as fine would invent a compatibility promise this project has
+not made.
 
 #### What the dashboard container serves
 

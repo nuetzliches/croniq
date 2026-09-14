@@ -413,9 +413,11 @@ async function signOut() {
       <main
         class="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-default bg-default p-5 shadow-sm"
       >
-        <!-- Above the routed view, not inside it: maintenance pauses dispatch
-             everywhere, so it has to be visible wherever you happen to be —
-             and `shrink-0` so it stays visible rather than scrolling away. -->
+        <!-- Above the routed view, not inside it: both of these are true
+             wherever you happen to be — maintenance pauses dispatch
+             everywhere, and a version mismatch affects every screen — and
+             `shrink-0` keeps them visible rather than scrolling away. -->
+        <VersionSkewBanner class="mb-5 shrink-0" />
         <MaintenanceBanner class="mb-5 shrink-0" />
 
         <!--
