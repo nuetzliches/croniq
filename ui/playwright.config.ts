@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { PORTS } from '../scripts/lib/stack.mjs'
 
 /**
  * End-to-end smoke suite (issue #586).
@@ -12,7 +13,10 @@ import { defineConfig, devices } from '@playwright/test'
  * is off in CI and on locally, where re-seeding a database for every `--watch`
  * iteration would be the slowest part of the loop.
  */
-const PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233)
+// From the stack this config starts, rather than a second copy of the
+// same expression — the two could disagree, and the failure would be a
+// suite waiting on a port nothing is listening on (issue #676).
+const PORT = PORTS.e2e
 const BASE_URL = `http://127.0.0.1:${PORT}`
 
 export default defineConfig({

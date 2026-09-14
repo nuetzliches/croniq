@@ -18,8 +18,9 @@
 // needs the dev stack and real data.
 
 import { chromium } from "@playwright/test";
+import { PORTS } from "../../scripts/lib/stack.mjs";
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
+const base = `http://127.0.0.1:${PORTS.ui}`;
 
 const browser = await chromium.launch();
 // The viewport is a parameter because the interesting case is the short one:

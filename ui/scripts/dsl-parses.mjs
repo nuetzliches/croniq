@@ -18,6 +18,7 @@
 // formatter, and the formatter itself parses its own output in Rust.
 
 import { spawnSync } from "node:child_process";
+import { PORTS } from "../../scripts/lib/stack.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,7 +37,7 @@ if (!croniq) {
   process.exit(1);
 }
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
+const base = `http://127.0.0.1:${PORTS.ui}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "croniq-dsl-"));
 
 const browser = await chromium.launch();

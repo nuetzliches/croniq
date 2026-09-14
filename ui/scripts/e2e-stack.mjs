@@ -14,24 +14,31 @@
 // already built by this point, and the seeding this does is exactly what
 // docker-entrypoint.sh does — `croniq init` with a fixed admin and API key.
 //
-// Node rather than a shell script for the reason build-wasm.mjs gives: npm
-// runs scripts through cmd.exe on Windows, where `bash` resolves to the WSL
-// shim and fails without a configured distro.
+// The machinery this shares with the dev stack — binary resolution, seeding,
+// prefixed spawning, killing descendants rather than children — lives in
+// scripts/lib/stack.mjs (issue #673). What stays here is what makes this the
+// *e2e* stack: a throwaway data directory, a built bundle rather than a dev
+// server, and a runner configured never to fail.
 
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+import {
+  PORTS,
+  ROOT,
+  assertPortFree,
+  bin,
+  createSupervisor,
+  seed,
+} from "../../scripts/lib/stack.mjs";
 
 /**
  * Where the suite expects the server: 4233, the last slot in croniq's
  * 4230-4233 development block. Deliberately not the dev stack's own port —
  * running the suite must not require stopping what you were looking at.
  */
-export const E2E_PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233);
+export const E2E_PORT = PORTS.e2e;
 
 /** The dashboard build the server serves. */
 const UI_DIST = path.join(ROOT, "ui", "dist");
@@ -40,29 +47,6 @@ const UI_DIST = path.join(ROOT, "ui", "dist");
 export const E2E_USER = "admin";
 export const E2E_PASSWORD = "demo-admin";
 const E2E_API_KEY = "croniq_e2e_local_suite_key_not_for_production_use";
-
-const exe = process.platform === "win32" ? ".exe" : "";
-
-/**
- * Resolve a built binary.
- *
- * `CRONIQ_BIN_DIR` wins so CI can point at a release build or a downloaded
- * artefact without this script knowing how it got there.
- */
-function bin(name) {
-  const dir = process.env.CRONIQ_BIN_DIR ?? path.join(ROOT, "target", "debug");
-  const file = path.join(dir, `${name}${exe}`);
-  if (!fs.existsSync(file)) {
-    throw new Error(
-      `missing ${file}\n` +
-        `Build it first:\n` +
-        `  cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \\\n` +
-        `    --bin croniq --bin croniq-server --bin croniq-demo-runner\n` +
-        `Or point CRONIQ_BIN_DIR at a directory that has it.`,
-    );
-  }
-  return file;
-}
 
 /**
  * A fresh data directory per run.
@@ -77,81 +61,27 @@ function freshDataDir() {
   return dir;
 }
 
-function seed(dataDir) {
-  const res = spawnSync(
-    bin("croniq"),
-    [
-      "init",
-      "--data-dir",
-      dataDir,
-      "--username",
-      E2E_USER,
-      "--password",
-      E2E_PASSWORD,
-      "--api-key",
-      E2E_API_KEY,
-    ],
-    { encoding: "utf8" },
-  );
-  if (res.status !== 0) {
-    throw new Error(`croniq init failed (${res.status}):\n${res.stdout}\n${res.stderr}`);
-  }
-}
-
-const children = [];
-
-function spawnChild(label, file, args, env) {
-  const child = spawn(file, args, {
-    env: { ...process.env, ...env },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  // Prefix the output so a failing run shows which process complained.
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk) => {
-      for (const line of chunk.split("\n")) {
-        if (line.trim()) process.stderr.write(`[${label}] ${line}\n`);
-      }
-    });
-  }
-  child.on("exit", (code, signal) => {
-    if (!shuttingDown) {
-      process.stderr.write(`[${label}] exited early: code=${code} signal=${signal}\n`);
-      shutdown(1);
-    }
-  });
-  children.push(child);
-  return child;
-}
-
-let shuttingDown = false;
-function shutdown(code = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  for (const child of children) child.kill();
-  process.exit(code);
-}
-
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => shutdown(0));
-
 // A missing bundle would otherwise surface as every test failing on a blank
 // page, which reads as a broken dashboard rather than a missing build step.
 if (!fs.existsSync(path.join(UI_DIST, "index.html"))) {
   console.error(
-    `no built dashboard at ${UI_DIST}
-` +
-      `Build it first:
-` +
-      `  npm --prefix ui run build`,
+    `no built dashboard at ${UI_DIST}\n` + `Build it first:\n` + `  npm --prefix ui run build`,
   );
   process.exit(1);
 }
 console.log(`[e2e] serving the dashboard from ${UI_DIST}`);
 
-const dataDir = freshDataDir();
-seed(dataDir);
+// The dev stack has had this check since a clash cost an afternoon; the e2e
+// stack never got it, so the same clash surfaced as a Playwright timeout with
+// no cause attached (issue #673).
+await assertPortFree(E2E_PORT, "e2e server", "CRONIQ_E2E_PORT");
 
-spawnChild(
+const dataDir = freshDataDir();
+seed(dataDir, { user: E2E_USER, password: E2E_PASSWORD, apiKey: E2E_API_KEY });
+
+const { run } = createSupervisor("e2e");
+
+run(
   "server",
   bin("croniq-server"),
   [
@@ -168,27 +98,31 @@ spawnChild(
     UI_DIST,
   ],
   {
-    CRONIQ_DATA_DIR: dataDir,
-    // Demo mode seeds nothing here (init already ran) but does relax the
-    // dashboard's first-run affordances the demo profile assumes. It also
-    // refuses to bind a non-loopback address, which is why the listen above
-    // is explicitly 127.0.0.1 rather than :PORT.
-    CRONIQ_DEMO_MODE: "1",
-    // `info`, not `warn`: the console page tails this feed, and a suite that
-    // only ever sees an empty console cannot tell a working stream from a
-    // broken one.
-    RUST_LOG: process.env.RUST_LOG ?? "info",
+    env: {
+      CRONIQ_DATA_DIR: dataDir,
+      // Demo mode seeds nothing here (init already ran) but does relax the
+      // dashboard's first-run affordances the demo profile assumes. It also
+      // refuses to bind a non-loopback address, which is why the listen above
+      // is explicitly 127.0.0.1 rather than :PORT.
+      CRONIQ_DEMO_MODE: "1",
+      // `info`, not `warn`: the console page tails this feed, and a suite that
+      // only ever sees an empty console cannot tell a working stream from a
+      // broken one.
+      RUST_LOG: process.env.RUST_LOG ?? "info",
+    },
   },
 );
 
-spawnChild("runner", bin("croniq-demo-runner"), [], {
-  CRONIQ_SERVER_URL: `http://127.0.0.1:${E2E_PORT}`,
-  CRONIQ_API_KEY: E2E_API_KEY,
-  // No failures: dead-letter and retry behaviour deserve their own
-  // deterministic fixtures rather than a coin flip that makes unrelated
-  // assertions flaky.
-  RUNNER_FAIL_RATE: "0",
-  RUNNER_MAX_INFLIGHT: "4",
-  RUNNER_TAGS: "env=e2e,role=worker",
-  RUST_LOG: process.env.RUST_LOG ?? "warn",
+run("runner", bin("croniq-demo-runner"), [], {
+  env: {
+    CRONIQ_SERVER_URL: `http://127.0.0.1:${E2E_PORT}`,
+    CRONIQ_API_KEY: E2E_API_KEY,
+    // No failures: dead-letter and retry behaviour deserve their own
+    // deterministic fixtures rather than a coin flip that makes unrelated
+    // assertions flaky.
+    RUNNER_FAIL_RATE: "0",
+    RUNNER_MAX_INFLIGHT: "4",
+    RUNNER_TAGS: "env=e2e,role=worker",
+    RUST_LOG: process.env.RUST_LOG ?? "warn",
+  },
 });

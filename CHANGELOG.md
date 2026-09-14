@@ -777,6 +777,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The exported NDJSON is unchanged: the sequence number is ours and does not go
   in it.
 
+- **The dev and e2e stacks share their machinery, and the dev ports are
+  spelled once** ([#673](https://github.com/nuetzliches/croniq/issues/673),
+  [#676](https://github.com/nuetzliches/croniq/issues/676)). The two scripts
+  bring up the same three processes for different reasons and had drifted into
+  two copies of the same ninety lines — binary resolution, `croniq init`
+  seeding, prefixed spawning, shutdown.
+
+  The copies were not merely wasteful, they were asymmetric: `killTree` and
+  `assertPortFree` were written for the dev stack after two specific failures
+  and the e2e stack never got either, so a port clash that produces one clear
+  line locally produced a Playwright timeout in CI with no cause attached.
+  Both now use `scripts/lib/stack.mjs`; what stays in each script is what makes
+  it that stack.
+
+  The 4230-4233 block was written out in nine files, so moving one port meant
+  finding all nine — and `playwright.config.ts` repeated the e2e stack's own
+  expression rather than importing it, which could silently disagree. One
+  `PORTS` export now, environment overrides applied with it.
+
+- **`AlertDeliveries` uses the shared pill and duration formatter
+  ([#674](https://github.com/nuetzliches/croniq/issues/674)).** It carried its
+  own copy of `StatusPill`'s tone mapping and markup, and its own duration
+  formatting that agreed with `formatDuration` below a second and disagreed
+  above ten — one table showing `12.3 s` beside another showing `12 s` for the
+  same measurement. `StatusPill` gains the `delivered` state and an optional
+  title, and the copies are gone.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
