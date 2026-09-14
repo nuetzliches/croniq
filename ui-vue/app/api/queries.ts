@@ -8,6 +8,7 @@ import type {
   AlertsConfig,
   ApiClient,
   AuditEvent,
+  BulkDeleteResponse,
   AuthConfigResponse,
   CalendarDefinition,
   CreateApiKeyResponse,
@@ -394,6 +395,32 @@ export function useReplayDeadLetter() {
       void queryClient.invalidateQueries({ queryKey: ['dead-letters'] })
       void queryClient.invalidateQueries({ queryKey: ['executions'] })
     },
+  })
+}
+
+/**
+ * Discard many at once.
+ *
+ * `ids` wins over `all` on the server, so the two are exposed as one call with
+ * the precedence made explicit at the call site rather than hidden here.
+ * `all` may be narrowed to one `job_key` — which is the case that matters:
+ * "clear out this one broken job" is a far commoner intent than "empty the
+ * whole queue", and the narrower call is the safer default to reach for.
+ *
+ * The response says how many rows went, and the caller reports it. A bulk
+ * delete that answers "done" is indistinguishable from one that matched
+ * nothing.
+ */
+export function useBulkDeleteDeadLetters() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { ids?: string[]; all?: boolean; job_key?: string }) =>
+      apiPost<BulkDeleteResponse>('/v1/dead-letters/bulk-delete', {
+        ids: body.ids ?? [],
+        all: body.all ?? false,
+        job_key: body.job_key ?? null,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dead-letters'] }),
   })
 }
 

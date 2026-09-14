@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ApiError } from '~/api/client'
-import { useDeadLetters, useDeleteDeadLetter, useReplayDeadLetter } from '~/api/queries'
+import {
+  useBulkDeleteDeadLetters,
+  useDeadLetters,
+  useDeleteDeadLetter,
+  useReplayDeadLetter,
+} from '~/api/queries'
 import type { DeadLetter } from '~/api/types'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
 
@@ -24,6 +29,70 @@ const selected = computed(() => rows.value.find((row) => row.id === selectedId.v
 
 /** What the last replay attempt said, when it said no. */
 const replayError = ref<string | null>(null)
+/** And what a bulk action did, which is a number worth reporting. */
+const bulkNotice = ref<string | null>(null)
+
+const bulkDelete = useBulkDeleteDeadLetters()
+
+/**
+ * Which rows are picked for a bulk action.
+ *
+ * A queue of things waiting for a decision needs a way to make the same
+ * decision about several at once — the shipping dashboard had it and this
+ * screen did not, which is the one gap that was left against the capability
+ * list in `docs/ui-screen-inventory.md`.
+ *
+ * Held by id rather than by index, so a row arriving or leaving under the
+ * selection cannot silently move it onto a different dead letter.
+ */
+const picked = ref(new Set<string>())
+
+const pickedRows = computed(() => rows.value.filter((row) => picked.value.has(row.id)))
+const allPicked = computed(() => rows.value.length > 0 && pickedRows.value.length === rows.value.length)
+
+function togglePick(id: string) {
+  const next = new Set(picked.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  picked.value = next
+}
+
+function toggleAll() {
+  picked.value = allPicked.value ? new Set() : new Set(rows.value.map((row) => row.id))
+}
+
+// Rows that have gone — replayed by someone else, swept by retention — must
+// not stay picked, or a later bulk action would name ids the server no longer
+// has.
+watch(rows, (next) => {
+  const live = new Set(next.map((row) => row.id))
+  const surviving = [...picked.value].filter((id) => live.has(id))
+  if (surviving.length !== picked.value.size) picked.value = new Set(surviving)
+})
+
+const confirmingBulk = ref<'picked' | 'all' | null>(null)
+
+async function runBulk() {
+  const intent = confirmingBulk.value
+  if (!intent) return
+  replayError.value = null
+  bulkNotice.value = null
+  try {
+    const result = await bulkDelete.mutateAsync(
+      intent === 'picked' ? { ids: pickedRows.value.map((row) => row.id) } : { all: true },
+    )
+    // The count, not a bare "done": a bulk delete that matched nothing looks
+    // exactly like one that worked.
+    bulkNotice.value = `Discarded ${result.deleted} dead letter${result.deleted === 1 ? '' : 's'}.`
+    picked.value = new Set()
+    selectedId.value = null
+  } catch (caught) {
+    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
+    replayError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+  } finally {
+    confirmingBulk.value = null
+  }
+}
 
 /**
  * Replay can be refused, and the refusal is a decision rather than a fault:
@@ -52,12 +121,60 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
 
 <template>
   <div class="flex h-full min-h-0 flex-col gap-4">
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <p class="text-sm text-muted">
         Runs that exhausted their retries. Each one is waiting for a decision.
       </p>
-      <span class="cq-num ml-auto text-sm text-muted">{{ rows.length }} pending</span>
+
+      <div class="ml-auto flex items-center gap-2">
+        <!-- Only once something is picked. A destructive control sitting
+             permanently beside a work queue is one an operator eventually
+             stops reading. -->
+        <template v-if="pickedRows.length">
+          <span class="cq-num text-sm text-muted">{{ pickedRows.length }} selected</span>
+          <UButton
+            icon="i-lucide-trash-2"
+            color="error"
+            variant="subtle"
+            size="sm"
+            :loading="bulkDelete.isPending.value"
+            @click="confirmingBulk = 'picked'"
+          >
+            Discard selected
+          </UButton>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            @click="picked = new Set()"
+          >
+            Clear
+          </UButton>
+        </template>
+        <UButton
+          v-else-if="rows.length"
+          icon="i-lucide-trash-2"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          @click="confirmingBulk = 'all'"
+        >
+          Discard all
+        </UButton>
+        <span class="cq-num text-sm text-muted">{{ rows.length }} pending</span>
+      </div>
     </div>
+
+    <UAlert
+      v-if="bulkNotice"
+      color="info"
+      variant="subtle"
+      icon="i-lucide-info"
+      :description="bulkNotice"
+      role="status"
+      close
+      @update:open="bulkNotice = null"
+    />
 
     <UAlert
       v-if="replayError"
@@ -95,6 +212,14 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
         >
           <thead class="sticky top-0 z-10 bg-default">
             <tr class="border-b border-default">
+              <th class="w-10 px-[var(--cq-cell-x)] py-[var(--cq-cell-y)]">
+                <UCheckbox
+                  :model-value="allPicked"
+                  :indeterminate="pickedRows.length > 0 && !allPicked"
+                  aria-label="Select every dead letter"
+                  @update:model-value="toggleAll"
+                />
+              </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-left">
                 Job
               </th>
@@ -124,6 +249,18 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
               ]"
               @click="selectedId = row.id"
             >
+              <!-- `@click.stop`: picking a row for a bulk action is a
+                   different intent from opening it, and the two share a row. -->
+              <td
+                class="px-[var(--cq-cell-x)]"
+                @click.stop
+              >
+                <UCheckbox
+                  :model-value="picked.has(row.id)"
+                  :aria-label="`Select the dead letter for ${row.job_key}`"
+                  @update:model-value="togglePick(row.id)"
+                />
+              </td>
               <td class="max-w-[16rem] truncate px-[var(--cq-cell-x)] font-mono text-primary">
                 {{ row.job_key }}
               </td>
@@ -173,6 +310,36 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
           </tbody>
         </table>
       </div>
+
+      <UModal
+        :open="confirmingBulk !== null"
+        :title="confirmingBulk === 'all' ? 'Discard every dead letter?' : `Discard ${pickedRows.length} dead letter${pickedRows.length === 1 ? '' : 's'}?`"
+        :description="
+          confirmingBulk === 'all'
+            ? `All ${rows.length} of them go, including any that arrived while this dialog was open. Discarding is not replaying — the work does not run.`
+            : 'Discarding is not replaying — the work does not run. The runs stay in the history.'
+        "
+        @update:open="(open: boolean) => { if (!open) confirmingBulk = null }"
+      >
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              @click="confirmingBulk = null"
+            >
+              Cancel
+            </UButton>
+            <UButton
+              color="error"
+              :loading="bulkDelete.isPending.value"
+              @click="runBulk"
+            >
+              Discard
+            </UButton>
+          </div>
+        </template>
+      </UModal>
 
       <aside
         v-if="selected"
