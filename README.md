@@ -164,7 +164,7 @@ croniq quickstart
 
 # Or step by step (prompts for password):
 croniq init --data-dir .data --username admin
-croniq-server --config Croniqfile --data-dir .data --ui-dir ui-vue/dist
+croniq-server --config Croniqfile --data-dir .data --ui-dir ui/dist
 ```
 
 Open **http://localhost:4000** and log in as `admin` with the password shown during init.

@@ -7,7 +7,7 @@
 // deepest overflow container as far as it goes, then check that the document
 // did not move and the chrome above the list did not shift by a pixel.
 //
-// Usage (with `node scripts/dev-stack.mjs` running, from ui-vue/):
+// Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/measure-scroll.mjs
 //   CRONIQ_VIEWPORT_H=520 node scripts/measure-scroll.mjs
 //

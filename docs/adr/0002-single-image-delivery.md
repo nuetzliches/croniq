@@ -15,7 +15,7 @@ data on first load.
 The dashboard is a static Vite bundle. `croniq-server` takes a `--ui-dir` and
 serves it with `ServeDir` plus an `index.html` fallback, on the same listener
 as the API and the MCP transport. The published image builds the bundle in a
-Node stage and copies `ui-vue/dist` into the runtime image.
+Node stage and copies `ui/dist` into the runtime image.
 
 ## Decision
 
@@ -75,7 +75,7 @@ supported default for quickstart, demo and single-host deployments.
 
 ## Enforced by
 
-- `Dockerfile` — the `ui-builder` stage and the `COPY --from=ui-builder /build/ui-vue/dist /usr/share/croniq/ui`
+- `Dockerfile` — the `ui-builder` stage and the `COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui`
 - `crates/croniq-server/src/main.rs` — `--ui-dir`, `ServeDir` + `ServeFile` fallback
 - `docker-compose.yml` — the single-service quickstart
 - `README.md` — the quickstart instructions

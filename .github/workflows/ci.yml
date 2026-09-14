@@ -279,7 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ui-vue
+        working-directory: ui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The build's `prebuild` hook (`node scripts/build-wasm.mjs`) produces
@@ -304,7 +304,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui-vue/package-lock.json
+          cache-dependency-path: ui/package-lock.json
       - run: npm ci
       - name: Audit production dependencies
         # Fails on high/critical advisories in the production dependency
@@ -365,9 +365,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui-vue/package-lock.json
+          cache-dependency-path: ui/package-lock.json
       - run: npm ci
-        working-directory: ui-vue
+        working-directory: ui
       # Debug build: the suite exercises HTTP behaviour, not throughput, and a
       # release build costs several minutes for nothing here.
       - name: Build croniq binaries
@@ -378,18 +378,18 @@ jobs:
       # in place, same as the `ui` job.
       - name: Build the dashboard
         run: npm run build
-        working-directory: ui-vue
+        working-directory: ui
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
-        working-directory: ui-vue
+        working-directory: ui
       - name: Run the smoke suite
         run: npm run test:e2e
-        working-directory: ui-vue
+        working-directory: ui
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-report
-          path: ui-vue/playwright-report/
+          path: ui/playwright-report/
           retention-days: 7
 
   spec:

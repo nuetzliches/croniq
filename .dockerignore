@@ -1,5 +1,5 @@
 .git
 .claude
 target/
-ui-vue/node_modules/
-ui-vue/dist/
+ui/node_modules/
+ui/dist/

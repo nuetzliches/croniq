@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 //
 // Build the croniq-config-wasm bridge and copy the artefacts into
-// ui-vue/app/lib/wasm/. Idempotent: skips the build if the wasm output is
+// ui/app/lib/wasm/. Idempotent: skips the build if the wasm output is
 // already newer than every Rust source file.
 //
 // Node instead of bash so the npm hooks work from any shell: on Windows
 // npm runs scripts through cmd.exe, where `bash` resolves to the WSL
 // shim in System32 and fails without a configured distro.
 //
-// Why no `wasm-pack build --out-dir ../../ui-vue/app/lib/wasm`?
+// Why no `wasm-pack build --out-dir ../app/lib/wasm`?
 //   wasm-pack rewrites the entire out dir on every run, including the
 //   `.gitignore` and `package.json` it drops in. Copying lets us keep
-//   the rest of `ui-vue/app/lib/` clean and gives us a single place to
+//   the rest of `ui/app/lib/` clean and gives us a single place to
 //   delete if the bridge is ever ripped out.
 
 import { spawnSync } from "node:child_process";
@@ -24,7 +24,7 @@ const CRATE_DIR = path.join(ROOT, "crates", "croniq-config-wasm");
 const OUT_PKG = path.join(CRATE_DIR, "pkg");
 // Destination, repo-relative, overridable by the first argument. Gitignored
 // build output — CI rebuilds it, which is why nothing here is committed.
-const UI_DEST = path.join(ROOT, ...(process.argv[2] ?? "ui-vue/app/lib/wasm").split("/"));
+const UI_DEST = path.join(ROOT, ...(process.argv[2] ?? "ui/app/lib/wasm").split("/"));
 
 function mtimeOrNull(file) {
   try {

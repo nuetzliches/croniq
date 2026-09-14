@@ -15,7 +15,7 @@
 // the product's form controls behind a click, because a screen that is clean
 // until you open one is not clean.
 //
-// Usage (with `node scripts/dev-stack.mjs` running, from ui-vue/):
+// Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/accessible-names.mjs            # or a port, to point elsewhere
 //
 // Not in CI: it needs the dev stack. A checking tool, like capture-screens.mjs

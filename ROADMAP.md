@@ -64,7 +64,7 @@ are the deliberate gaps left for follow-up:
   (ADR-0004). Filters, the selected detail and the runs time window all
   live in the URL, and the nested-sheet stacking is gone with the screens
   that had it. The contracts are asserted rather than assumed:
-  [ui-vue/e2e/url-state.spec.ts](ui-vue/e2e/url-state.spec.ts).
+  [ui/e2e/url-state.spec.ts](ui/e2e/url-state.spec.ts).
 
 ## Tags hardening
 
@@ -73,7 +73,7 @@ are the deliberate gaps left for follow-up:
   `JobConfig.tags`, plus an axum-level test for `GET /v1/tags` asserting
   count aggregation + sort order. Still open: a UI test that the Jobs /
   Runners filter chips apply AND-semantics.
-  ([ui-vue/app/pages/JobsView.vue](ui-vue/app/pages/JobsView.vue))
+  ([ui/app/pages/JobsView.vue](ui/app/pages/JobsView.vue))
 - **Tag validation rules** — tags are currently free-form strings with
   only "trim + dedupe + non-empty" enforced. Decide a policy:
   max length per tag, max tags per entity, forbidden characters
@@ -92,4 +92,4 @@ are the deliberate gaps left for follow-up:
   environment} and emits a ready-to-paste docker-compose snippet plus
   a freshly-minted scoped API key. v2 scope: full code-skeleton
   generation per language (Rust / Python / Shell-runner). Issue #93
-  Wish 2. ([ui-vue/app/pages/RunnersView.vue](ui-vue/app/pages/RunnersView.vue))
+  Wish 2. ([ui/app/pages/RunnersView.vue](ui/app/pages/RunnersView.vue))

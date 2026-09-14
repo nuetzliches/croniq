@@ -20,7 +20,7 @@ ausgelieferten Dashboards; er muss dessen Niveau erreichen.
 Ich hatte das React-Dashboard bis jetzt nur im Quelltext gelesen. Das ist keine
 Grundlage für „kein Rückschritt", also habe ich es aufgenommen und angesehen —
 alle elf Screens, angemeldet, mit den Demo-Daten des Dev-Stacks.
-`ui-vue/scripts/capture-screens.mjs` macht das reproduzierbar. (Das Skript nahm
+`ui/scripts/capture-screens.mjs` macht das reproduzierbar. (Das Skript nahm
 damals einen Baum-Parameter; seit dem Cutover gibt es nur noch einen.)
 
 ### Was es gut macht — die Liste, hinter die nicht zurückgefallen werden darf
@@ -145,7 +145,7 @@ sieben Screens steckt.
 | 5 | Jobs, danach der Rest | — |
 
 Nach jedem Durchgang: Aufnahmen beider Bäume nebeneinander
-(`node ui-vue/scripts/capture-screens.mjs …`), damit „kein Rückschritt"
+(`node ui/scripts/capture-screens.mjs …`), damit „kein Rückschritt"
 eine Feststellung bleibt und keine Behauptung wird.
 
 ---
@@ -159,7 +159,7 @@ nicht aktiv**. `@theme` statt `@theme static` ließ Tailwind die gesamte
 Farb-Ramp wegoptimieren, sodass jedes `bg-primary` transparent auflöste. Alle
 Verhaltensprüfungen blieben grün.
 
-`ui-vue/app/lib/theme.test.ts` schließt die billige Hälfte dieser Lücke. Die
+`ui/app/lib/theme.test.ts` schließt die billige Hälfte dieser Lücke. Die
 teure Hälfte — ob es *gut aussieht* — schließt kein Test, sondern Hinsehen.
 Deshalb das Aufnahme-Skript.
 
@@ -404,7 +404,7 @@ Tabellenzeilen ohnehin ein Minimum, kein Fixwert — genau dafür.
 
 ### Geprüft
 
-`ui-vue/scripts/write-paths.mjs` fährt zwölf Schreibpfade gegen den Dev-Stack:
+`ui/scripts/write-paths.mjs` fährt zwölf Schreibpfade gegen den Dev-Stack:
 anlegen, Schedule anhängen, deaktivieren/aktivieren, triggern, pausieren/
 fortsetzen, bearbeiten, DSL rendern, adoptieren, löschen. Alle zwölf grün, und
 die Ablehnung der Adoption kommt im Wortlaut des Servers an:
@@ -488,7 +488,7 @@ Schedule-Editor.
 Fassung des Prüfskripts lief über das DOM und fiel auf `textContent` zurück,
 wenn sie keinen Namen berechnen konnte. Ergebnis: „alles sauber" — während der
 echte Baum „Show popup" ansagte. Ein nachsichtiger Prüfer ist schlechter als
-keiner, er bescheinigt den Fehler. `ui-vue/scripts/accessible-names.mjs` liest
+keiner, er bescheinigt den Fehler. `ui/scripts/accessible-names.mjs` liest
 jetzt Chromiums eigenen Baum über CDP (`Accessibility.getFullAXTree`).
 
 Stand danach: **0 unbenannte Bedienelemente** auf allen gebauten Vue-Screens,
@@ -552,7 +552,7 @@ sagt das, statt etwas Ähnliches zu zeigen.
 
 ### Geprüft, nicht behauptet
 
-`ui-vue/scripts/dsl-parses.mjs` liest, was das laufende Dashboard auf den Schirm
+`ui/scripts/dsl-parses.mjs` liest, was das laufende Dashboard auf den Schirm
 schreibt, und gibt es derselben Binary, die ein Operator hätte:
 
 ```
@@ -570,7 +570,7 @@ Hinweise die Wahrheit sagen) und zwei neue Schritte in `vue-write-paths.mjs`.
 keine Job-Zeilen und gab trotzdem „every rendered block parses" aus. Eine leere
 Prüfmenge ist jetzt ein Fehler, kein Erfolg.
 
-**Und `npx vue-tsc --noEmit` prüft in `ui-vue/` gar nichts.** `tsconfig.json`
+**Und `npx vue-tsc --noEmit` prüft in `ui/` gar nichts.** `tsconfig.json`
 hat `"files": []` und nur `references`; ohne `--build` folgt TypeScript denen
 nicht. Ein `const x: number = "str"` geht durch. Deshalb fiel ein fehlender
 Export in `croniq-dsl.ts` erst im Browser auf, nachdem „typecheck grün"

@@ -63,8 +63,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The dashboard is the Vue one; the React tree is gone
   ([ADR-0004](docs/adr/0004-vue-rebuild-for-the-dashboard.md)).** The rebuild
   started in [#589](https://github.com/nuetzliches/croniq/issues/589) has taken
-  over. `ui/` is deleted — 118 files — and `ui-vue/` is the only dashboard
-  there is.
+  over. The React tree is deleted — 118 files — and the rebuild, which grew up
+  beside it in `ui-vue/`, has moved into `ui/`. There is one dashboard and the
+  directory holding it no longer names a framework.
 
   Nothing about the deployment changes. `croniq-server --ui-dir` serves a
   static bundle and never knew what built it; the combined image, the
@@ -87,7 +88,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     had 51 of 54 inputs with none at all, and its `UserMenu` was a `role="menu"`
     with no `menuitem` children. Fixing that in a tree due for deletion would
     have been discarded markup, so it became an acceptance criterion for the
-    rebuild instead. `ui-vue/scripts/accessible-names.mjs` checks it against
+    rebuild instead. `ui/scripts/accessible-names.mjs` checks it against
     Chromium's own accessibility tree rather than against the markup.
   - **Screens were re-cut, not ported.** Executions, the run detail and the log
     viewer are one *Runs* screen; the job detail went from six tabs to two;
@@ -96,11 +97,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     its query parameters, so bookmarks survive.
 
   For contributors: `npm` commands, the Playwright suite, the e2e stack and the
-  tooling scripts all live under `ui-vue/` now, and `node scripts/dev-stack.mjs`
-  starts one dev server instead of two. Port 4231 is free; the dashboard stays
-  on 4232. The `UI (build + typecheck)` CI job kept its name and swapped its
+  tooling scripts all live under `ui/`, and `node scripts/dev-stack.mjs` starts
+  one dev server instead of two. Port 4231 is free; the dashboard stays on
+  4232. The `UI (build + typecheck)` CI job kept its name and swapped its
   contents, because renaming a required check blocks merges until branch
   protection catches up.
+
+  One trap worth naming: `ui/` is the same path it always was, holding
+  something else. Anything written before this release that points into `ui/`
+  — an issue, a review, `docs/ui-architecture-decision.md` — means the React
+  tree. Those documents were deliberately left alone; they are records of when
+  that was true.
 
 - **The dashboard is now served with cache headers and compression
   ([#582](https://github.com/nuetzliches/croniq/issues/582)).** `--ui-dir` was

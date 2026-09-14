@@ -34,7 +34,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 export const E2E_PORT = Number(process.env.CRONIQ_E2E_PORT ?? 4233);
 
 /** The dashboard build the server serves. */
-const UI_DIST = path.join(ROOT, "ui-vue", "dist");
+const UI_DIST = path.join(ROOT, "ui", "dist");
 
 /** Fixed demo credentials. Public by design; see docker-compose.yml. */
 export const E2E_USER = "admin";
@@ -142,7 +142,7 @@ if (!fs.existsSync(path.join(UI_DIST, "index.html"))) {
 ` +
       `Build it first:
 ` +
-      `  npm --prefix ui-vue run build`,
+      `  npm --prefix ui run build`,
   );
   process.exit(1);
 }

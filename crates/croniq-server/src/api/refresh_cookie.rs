@@ -52,7 +52,7 @@
 //!   against it passes precisely in the case that should fail.
 //!
 //! The gate that does work sits in the UI build, and since the Vue cutover it
-//! is stronger than a check: `ui-vue/vite.config.ts` has no `VITE_API_URL` at
+//! is stronger than a check: `ui/vite.config.ts` has no `VITE_API_URL` at
 //! all, so the dashboard cannot be built cross-origin and therefore never asks
 //! for cookie delivery from a page that could not use it. (The React tree that
 //! preceded it did have the flag, behind an `assertTokenStorageAcknowledged`
