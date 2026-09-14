@@ -529,6 +529,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   all beyond making its own hint text concrete — it was already sending the
   right field.
 
+- **A mistyped password costs one lockout attempt again, not two
+  ([#659](https://github.com/nuetzliches/croniq/issues/659)).** The React
+  client exempted `/v1/auth/*` from its refresh-and-retry path, because a 401
+  there is an *answer* rather than an expired access token. The Vue port lost
+  the exemption, so a 401 from `POST /v1/auth/login` fired a refresh and then
+  replayed the login.
+
+  For an anonymous visitor that is one dead refresh per failed attempt. For a
+  signed-in operator it is worse: they hold a valid refresh cookie, so the
+  refresh succeeds and the replay lands, and the server counts the wrong
+  password twice — lockout after three attempts instead of five. Reaching that
+  state takes only a bookmark, since `/login` is a public route.
+
+  The exemption is back, and `/login` now sends an already-authenticated
+  visitor to the dashboard instead of showing them a form that has nothing to
+  offer.
+
+  `ui/app/api/client.test.ts` is the first unit test outside `app/lib/`. Three
+  of its five cases fail with the exemption removed.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
