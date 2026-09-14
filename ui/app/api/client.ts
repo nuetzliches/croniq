@@ -46,6 +46,24 @@ const base = ofetch.create({
 })
 
 /**
+ * Endpoints where a 401 is an *answer*, not an expired access token.
+ *
+ * `/v1/auth/*` is the sign-in surface. A wrong password answers 401, and
+ * refreshing-and-retrying there would fire a pointless refresh and then replay
+ * the login — double-counting it against `failed_attempts` and the per-IP
+ * throttle, so five wrong passwords would lock the account after three
+ * attempts. None of these endpoints authenticate with an access token anyway.
+ *
+ * The React client had this and the Vue port lost it (issue #659). Worst for a
+ * signed-in operator who opens `/login` — a public route that does not redirect
+ * them away — and mistypes: they hold a valid refresh cookie, so the refresh
+ * succeeds and the replay lands.
+ */
+function isAuthEndpoint(path: string): boolean {
+  return path.startsWith('/v1/auth/')
+}
+
+/**
  * Perform a request, refreshing once on a 401.
  *
  * The retry is here rather than in `ofetch`'s own `retry` option because the
@@ -59,7 +77,7 @@ export async function api<T>(path: string, options: FetchOptions = {}): Promise<
     return (await base<T>(path, options as never)) as T
   } catch (error) {
     const status = (error as { response?: { status?: number } }).response?.status
-    if (status !== 401) {
+    if (status !== 401 || isAuthEndpoint(path)) {
       throw new ApiError(
         status ?? 0,
         messageFor(status ?? 0, (error as { data?: unknown }).data),

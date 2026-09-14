@@ -177,6 +177,20 @@ export const router = createRouter({
  * which is the most disruptive regression this dashboard can ship.
  */
 router.beforeEach(async (to) => {
+  // An operator who is already signed in has no business on the sign-in form.
+  // Landing there is easy — a bookmark, a stale tab, the back button — and the
+  // form would happily take a password and post it, which is how a mistyped one
+  // used to cost two lockout attempts instead of one (issue #659).
+  //
+  // The token is not read here: `status` is, so a page reloaded mid-bootstrap
+  // waits for the refresh to resolve rather than flashing the form.
+  if (to.name === 'login') {
+    const auth = useAuthStore()
+    if (auth.status === 'unknown') await untilResolved()
+    if (auth.isAuthenticated) return { name: 'dashboard' }
+    return true
+  }
+
   if (to.meta.public) return true
 
   const auth = useAuthStore()
