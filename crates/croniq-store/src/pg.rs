@@ -1707,6 +1707,18 @@ impl AuthStore for PgStore {
         }))
     }
 
+    fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let row = db
+            .query_one(
+                "SELECT COUNT(1) FROM refresh_tokens WHERE token_hash = $1",
+                &[&token_hash],
+            )
+            .map_err(map_err)?;
+        let count: i64 = row.get(0);
+        Ok(count > 0)
+    }
+
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let mut db = self.client.lock().unwrap();
         db.execute(

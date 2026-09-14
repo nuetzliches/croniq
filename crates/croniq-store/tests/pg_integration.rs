@@ -314,6 +314,22 @@ fn auth_refresh_tokens(store: &PgStore, s: &str, user_id: &str) {
     assert!(store.validate_refresh_token(&token_hash).unwrap().is_some());
     store.revoke_refresh_token(&token_hash, ts()).unwrap();
     assert!(store.validate_refresh_token(&token_hash).unwrap().is_none());
+
+    // Revoking must leave the row behind, because `handle_refresh` tells a
+    // rotated credential from one this server never issued by asking whether a
+    // row exists at all (issue #656). If revocation deleted instead, every
+    // rotated token would read as unknown and the cross-tab retry would stop
+    // happening.
+    assert!(
+        store.refresh_token_is_known(&token_hash).unwrap(),
+        "a revoked token is still known"
+    );
+    assert!(
+        !store
+            .refresh_token_is_known(&format!("never-issued-{s}"))
+            .unwrap(),
+        "a hash with no row is not known"
+    );
 }
 
 fn auth_invitations(store: &PgStore, s: &str, user_id: &str) {

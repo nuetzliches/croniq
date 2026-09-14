@@ -423,6 +423,20 @@ pub trait AuthStore {
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError>;
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+    /// Whether a row exists for this hash *at all* — revoked and expired
+    /// included, where [`Self::validate_refresh_token`] returns `None`.
+    ///
+    /// The difference is what lets `POST /v1/auth/refresh` tell a credential
+    /// this server never issued from one it issued and has since rotated
+    /// (issue #656). Only the second is worth a client retry, and only the
+    /// first should be told "you have no session".
+    ///
+    /// Rows are never deleted — `revoke_refresh_token` sets `revoked_at` and
+    /// leaves them — so "no row" really does mean "not ours". A retention pass
+    /// over this table would have to keep revoked rows for at least as long as
+    /// a cross-tab rotation race can last, or the retry it protects stops
+    /// happening.
+    fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError>;
 
     // Users — identity decoupled from auth method. Migration 011 backfills
     // existing password_credentials rows into users with role=admin; new

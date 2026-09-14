@@ -448,6 +448,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the nginx image, and a test asserts the two have not drifted the way the
   CSP one already does.
 
+- **A dead refresh cookie no longer costs two round trips on every load
+  ([#656](https://github.com/nuetzliches/croniq/issues/656)).**
+  [#630](https://github.com/nuetzliches/croniq/issues/630) let a client skip
+  its retry when no credential was presented at all. A credential that *was*
+  presented and rejected still got a bare 401 — and a browser whose cookie died
+  server-side (database reseeded, restored from a backup, sessions revoked)
+  presents one on every visit, so it paid the rejected refresh plus the retry
+  every time until someone logged in again.
+
+  The two rejected cases are not the same thing, and the store can tell them
+  apart because revoking a refresh token sets `revoked_at` and leaves the row:
+
+  | Situation | `no_session` | Why |
+  |---|---|---|
+  | nothing presented | yes | there is no credential to retry with |
+  | presented, no such row | yes | never issued here, or the database is gone |
+  | presented, expired | yes | the deadline passed; asking again changes nothing |
+  | presented, revoked | no | almost always a rotation, and the retry is what picks up the new cookie |
+
+  So the client now retries exactly when a retry can succeed. The cross-tab
+  race [#630](https://github.com/nuetzliches/croniq/issues/630) protects is
+  untouched: a tab that lost a rotation still sees an unmarked 401.
+
+  Clearing the cookie on rejection would have been the obvious fix and is the
+  wrong one — a tab that lost a rotation race would receive the clear and wipe
+  its sibling's fresh cookie.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

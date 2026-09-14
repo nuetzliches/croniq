@@ -202,6 +202,7 @@ impl AuthStore for FaultStore {
         upsert_credentials(cred: &PasswordCredential) -> ();
         create_refresh_token(token: &RefreshToken) -> ();
         validate_refresh_token(token_hash: &str) -> Option<RefreshToken>;
+        refresh_token_is_known(token_hash: &str) -> bool;
         revoke_refresh_token(token_hash: &str, now: DateTime<Utc>) -> ();
         users_create(user: &User) -> ();
         users_get_by_id(user_id: &str) -> Option<User>;
