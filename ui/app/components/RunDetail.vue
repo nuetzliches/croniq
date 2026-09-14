@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useCancelExecution, useExecutionLogs } from '~/api/queries'
 import type { Execution } from '~/api/types'
+import { useActionError } from '~/composables/useActionError'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 
 /**
@@ -20,6 +21,18 @@ defineEmits<{ close: [] }>()
 
 const { data: logs, isPending: logsPending } = useExecutionLogs(() => props.execution?.id)
 const cancel = useCancelExecution()
+const { error, attempt } = useActionError()
+
+/**
+ * `mutate` swallows a rejection entirely — it never rejects, and this mutation
+ * defines no `onError` — so a cancel that the server refused looked exactly
+ * like one it accepted: the button stopped spinning and the run carried on
+ * (issue #664). A 409 here is common and meaningful: the run finished between
+ * the list refresh and the click.
+ */
+function doCancel(id: string) {
+  void attempt(() => cancel.mutateAsync(id))
+}
 
 /** Only a run that has not finished can be asked to stop. */
 const cancellable = computed(() =>
@@ -156,6 +169,18 @@ const facts = computed(() => {
           </div>
         </div>
 
+        <UAlert
+          v-if="error"
+          class="mt-4"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-alert-triangle"
+          :description="error"
+          role="alert"
+          close
+          @update:open="error = null"
+        />
+
         <UButton
           v-if="cancellable"
           color="error"
@@ -163,7 +188,7 @@ const facts = computed(() => {
           icon="i-lucide-square"
           class="mt-4"
           :loading="cancel.isPending.value"
-          @click="cancel.mutate(execution.id)"
+          @click="doCancel(execution.id)"
         >
           Cancel run
         </UButton>
