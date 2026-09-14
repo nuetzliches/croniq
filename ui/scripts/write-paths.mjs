@@ -21,7 +21,11 @@
 // Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/write-paths.mjs
 //
-// Not in CI: it needs the dev stack and writes to the demo database.
+// Not in CI: it needs the dev stack and writes to the demo database. It does
+// exit non-zero when something fails, though (#677) — it used to log `FAIL`
+// and exit 0, so a `&&` chain or a watching script read every run as a pass,
+// and the only thing standing between a broken write path and nobody noticing
+// was whether a person read the output.
 
 import { chromium } from "@playwright/test";
 import { PORTS } from "../../scripts/lib/stack.mjs";
@@ -35,12 +39,20 @@ page.on("response", (r) => {
   if (r.status() >= 400) problems.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`);
 });
 
+/**
+ * Steps that failed, in order. Named rather than counted: the last line of the
+ * run should say which write path broke, not how many did.
+ */
+const failures = [];
+
 const step = async (name, fn) => {
   try {
     await fn();
     console.log(`ok   ${name}`);
   } catch (e) {
-    console.log(`FAIL ${name}: ${String(e).split("\n")[0]}`);
+    const detail = String(e).split("\n")[0];
+    console.log(`FAIL ${name}: ${detail}`);
+    failures.push(`${name}: ${detail}`);
   }
 };
 
@@ -1064,3 +1076,16 @@ await step("the stage is lit, not merely painted", async () => {
 
 console.log(problems.length ? `\nconsole noise:\n  ${problems.join("\n  ")}` : "\nno console errors");
 await browser.close();
+
+// A failed step and a 4xx are both failures. `problems` collects every
+// response at 400 or above and every page error, and the run continues past
+// them deliberately — one broken screen should not hide the state of the next
+// twenty — but the exit code has to say what happened.
+if (failures.length || problems.length) {
+  console.error(
+    `\n${failures.length} failed step(s), ${problems.length} console problem(s).`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log("\nevery write path completed");
+}

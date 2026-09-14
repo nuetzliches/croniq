@@ -867,6 +867,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `npm ls esbuild --all` shows the same resolution as before — everything still
   dedupes onto 0.28.2 — and `npm audit` stays at zero.
 
+- **The write paths have a test, and the walker that checked them can fail
+  ([#677](https://github.com/nuetzliches/croniq/issues/677)).** The Playwright
+  suite covered reading — auth, navigation, URL state, the live streams — and
+  nothing that changes anything. The only coverage of a write was
+  `ui/scripts/write-paths.mjs`, which logs `FAIL` and exited 0, so a run that
+  broke every mutation still looked like a pass to anything but a person
+  reading the output. It is not in CI either.
+
+  Four of the defects fixed in this release — a schedule window silently
+  dropped, missing confirmations, mutations that failed in silence, a
+  force-replay with no route to it — were in code no test exercised.
+
+  `ui/e2e/mutations.spec.ts` covers create, edit and delete of a job, that the
+  delete asks first and that cancelling means cancelled, and that a refusal is
+  visible with the server's own wording. And `write-paths.mjs` sets a non-zero
+  exit code when a step fails or a request comes back 4xx.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
