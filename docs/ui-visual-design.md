@@ -1072,3 +1072,47 @@ Er pausiert mit der Demo — wer zum Lesen mit der Maus draufgeht, hält die Uhr
 sichtbar an, statt sie stumm zu verschieben. Gemessen: 503 px → 349 px im
 Lauf, danach bei 343 px gehalten.
 
+## Durchgang 17 — Massenlöschung, die letzte Lücke im Scope-Guard
+
+Beim Durchgehen der Fähigkeitsliste blieb genau eine Zeile ohne Ort:
+*„Dead Letters: … Einzel- und **Massenlöschung**"*. Der Server kann es
+(`POST /v1/dead-letters/bulk-delete`: entweder eine `ids`-Liste oder
+`all: true`, optional auf einen `job_key` eingegrenzt), die React-Fassung
+konnte es, meine nicht.
+
+Zwei Wege, weil sie verschiedene Absichten sind: Zeilen ankreuzen und
+„Discard selected", oder „Discard all". Der destruktive Knopf erscheint erst,
+wenn etwas ausgewählt ist — ein Löschknopf, der dauerhaft neben einer
+Arbeitsliste steht, ist einer, den man irgendwann nicht mehr liest.
+
+Die Auswahl hängt an `id`, nicht am Index, und Zeilen, die verschwinden
+(anderswo wiedervorgelegt, von der Retention geräumt), fallen aus ihr heraus —
+sonst nennt eine spätere Massenaktion IDs, die es nicht mehr gibt.
+
+Gemeldet wird die **Zahl**, die der Server zurückgibt. Eine Massenlöschung, die
+„erledigt" sagt, sieht genauso aus wie eine, die nichts getroffen hat.
+
+Der Operator-Hinweis aus derselben Zeile war übrigens schon da: der Server
+backt ihn serverseitig in `dead_reason` ein (`"{reason} — {hint}"`), das Detail
+zeigt ihn also mit.
+
+### Dreimal dieselbe Lehre, an einem Nachmittag
+
+Der Prüfschritt ist dreimal gekippt, jedes Mal an **meiner Annahme über lebende
+Daten**, nie am Produkt:
+
+1. Er löschte erst die ganze Warteschlange — und nahm damit dem *nächsten* Lauf
+   seine Grundlage. Genau die Ordnungsabhängigkeit, die ich zwei Durchgänge
+   vorher bei den Einladungen kritisiert hatte.
+2. Die Konsolenprüfung verlangte nach dem Leeren eine leere Liste. Bei einem
+   Server, der gerade redet, treffen im selben Moment neue Zeilen ein — die
+   Behauptung war über die Last, nicht über das Verhalten.
+3. Und die Massenlöschung verlangte, dass die Tabelle um genau zwei schrumpft.
+   Bei 100 % Fehlerrate kamen während des Löschens zwei neue herein.
+
+Alle drei prüfen jetzt, was das Feature verspricht (die Serverantwort, dass die
+Auswahl leer ist, dass das Gelöschte weg ist) statt einer Zahl, die von der
+Fehlerrate des Demos abhängt. Und wo die Grundlage fehlt, **sagt der Schritt
+das laut**, statt grün zu haken: ein übersprungener Test über einer leeren
+Tabelle wäre das schlechtere Ergebnis.
+
