@@ -4,13 +4,13 @@ target/
 
 # Node / UI
 node_modules/
-ui/dist/
+ui-vue/dist/
 
-# WASM bridge — built by `ui/scripts/build-wasm.mjs` (or vite dev/prebuild
-# hooks) into the wasm crate's `pkg/`, then copied into ui/src/lib/wasm/
-# (UI build) and site/wasm/ (Pages deploy + local generator preview).
+# WASM bridge — built by `ui-vue/scripts/build-wasm.mjs` (or the vite
+# dev/prebuild hooks) into the wasm crate's `pkg/`, then copied into
+# ui-vue/app/lib/wasm/ (dashboard build) and site/wasm/ (Pages deploy and the
+# local generator preview).
 crates/croniq-config-wasm/pkg/
-ui/src/lib/wasm/
 site/wasm/
 
 # Claude Code

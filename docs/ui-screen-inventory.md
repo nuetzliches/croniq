@@ -6,8 +6,8 @@ des React-Baums, keine Annahmen.
 
 **Stack (entschieden):** der `nuts-customer-portal`-Stack — Vue 3 + Nuxt UI 4 +
 Pinia + `@tanstack/vue-query` + `ofetch` + vue-router. Damit ersetzt Nuxt UIs
-Theming das projekteigene oklch-Token-System aus `ui/src/styles/`; das ist
-Absicht und der Grund, warum das hier ein Neubau und kein Port ist.
+Theming das projekteigene oklch-Token-System des React-Baums; das ist Absicht
+und der Grund, warum das hier ein Neubau und kein Port ist.
 
 **Zuschnitt (entschieden):** Screens werden neu gedacht und vereinfacht, nicht
 1:1 übernommen.
@@ -70,7 +70,7 @@ Executions-Block im Runner-Detail. Die Job-Seite zeigt stattdessen eine
 Statuszeile („letzte 5 Läufe", Sparkline) und verlinkt in die gefilterte Liste.
 
 **Route bleibt `/executions`.** Ein Rename auf `/runs` wäre hübscher und bricht
-Bookmarks und die URL-Verträge, die `ui/e2e/url-state.spec.ts` prüft — ohne
+Bookmarks und die URL-Verträge, die `ui-vue/e2e/url-state.spec.ts` prüft — ohne
 Gegenwert.
 
 ### 2. Job-Detail: von sechs Tabs auf zwei

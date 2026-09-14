@@ -46,7 +46,7 @@ jobs:
         # Every package-lock.json in the repo. `npm audit` works from the
         # lockfile alone — no install step needed, so this is cheap.
         dir:
-          - ui
+          - ui-vue
           - sdks/typescript
           - sdks/conformance/bindings/typescript
     steps:

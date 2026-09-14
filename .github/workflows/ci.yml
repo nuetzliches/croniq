@@ -271,18 +271,21 @@ jobs:
           fi
 
   ui:
+    # The dashboard. One tree since the cutover (ADR-0004); this job kept its
+    # name through it on purpose — it is a required check, and renaming a
+    # required job blocks every merge until branch protection catches up
+    # (incident #98). The contents swapped, the name did not.
     name: UI (build + typecheck)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ui
+        working-directory: ui-vue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The UI build needs the wasm bridge from `crates/croniq-config-wasm`.
-      # We install the toolchain + wasm-pack here rather than splitting it
-      # into a separate matrix job so `npm run build`'s `prebuild` hook
-      # (`node scripts/build-wasm.mjs`) can produce `ui/src/lib/wasm/`
-      # in-place without needing an artefact upload step.
+      # The build's `prebuild` hook (`node scripts/build-wasm.mjs`) produces
+      # the wasm bridge from `crates/croniq-config-wasm` in place, so the Rust
+      # toolchain has to be here rather than in a separate job feeding an
+      # artefact across.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
@@ -301,8 +304,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: npm ci || npm install
+          cache-dependency-path: ui-vue/package-lock.json
+      - run: npm ci
       - name: Audit production dependencies
         # Fails on high/critical advisories in the production dependency
         # tree (#430 — a high-severity nanoid advisory sat unnoticed here).
@@ -310,67 +313,24 @@ jobs:
         # security-audit.yml run covers the npm trees on a schedule too.
         run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
-      - run: npx tsc --noEmit
       - run: npm run test
+      # `npm run build` is `vue-tsc --build && vite build`, so the type check
+      # is part of it and cannot be skipped by building alone. Note that
+      # `npx vue-tsc --noEmit` would check *nothing* here — this tsconfig is a
+      # solution file (`"files": []` plus references), so only `--build`
+      # descends into the projects that hold the code.
       - run: npm run build
       - name: Check wasm bundle size budget
         # Soft 250 KB gzipped ceiling — we ship at ~70 KB today, so this
         # only fires if a future change accidentally pulls a heavy dep
         # (chrono-tz, regex, etc.) back into the wasm path.
         run: |
-          size=$(gzip -9c src/lib/wasm/croniq_config_wasm_bg.wasm | wc -c)
+          size=$(gzip -9c app/lib/wasm/croniq_config_wasm_bg.wasm | wc -c)
           echo "WASM bridge: $size bytes gzipped"
           if [ "$size" -gt 256000 ]; then
             echo "::error::WASM bundle exceeds 250 KB gzipped budget ($size bytes)"
             exit 1
           fi
-
-  ui-vue:
-    # The Vue rebuild (ADR-0004). Not a required check: it ships nothing yet,
-    # and gating merges on a tree that is still being scaffolded would block
-    # work on the dashboard that is actually in production. It exists so the
-    # new tree cannot rot silently while the React one is still the product.
-    #
-    # Note the job name differs from `UI (build + typecheck)`, which is a
-    # required check. At cutover the two swap contents, not names — renaming a
-    # required job blocks every merge until branch protection catches up
-    # (incident #98).
-    name: UI-Vue (build + typecheck)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ui-vue
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Same reason as the `ui` job: the build's prebuild hook produces the
-      # wasm bridge in place, so the toolchain has to be here.
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          # Shares the `wasm` scope with the `ui` job on purpose: both build
-          # the identical crate, and a separate scope would compile it twice.
-          workspaces: ". -> target"
-          shared-key: wasm
-      - name: Install wasm-pack
-        run: |
-          if ! command -v wasm-pack >/dev/null 2>&1; then
-            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-          fi
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ui-vue/package-lock.json
-      - run: npm ci
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
-      - run: npm run lint
-      - run: npm run test
-      # `npm run build` is `vue-tsc --build && vite build`, so the type check
-      # is part of it and cannot be skipped by building alone.
-      - run: npm run build
 
   e2e:
     # Browser-level smoke suite (#586). Deliberately NOT a required check yet:
@@ -405,9 +365,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: npm ci
-        working-directory: ui
+          cache-dependency-path: ui-vue/package-lock.json
       - run: npm ci
         working-directory: ui-vue
       # Debug build: the suite exercises HTTP behaviour, not throughput, and a
@@ -416,34 +374,22 @@ jobs:
         run: |
           cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \
             --bin croniq --bin croniq-server --bin croniq-demo-runner
-      # Both bundles the suite navigates. `prebuild` produces the wasm bridge
-      # in-place in each tree, same as the `ui` and `ui-vue` jobs.
-      - name: Build the React dashboard
-        run: npm run build
-        working-directory: ui
-      - name: Build the Vue dashboard
+      # The bundle the suite navigates. `prebuild` produces the wasm bridge
+      # in place, same as the `ui` job.
+      - name: Build the dashboard
         run: npm run build
         working-directory: ui-vue
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
-        working-directory: ui
-      # Two runs, one per dashboard. ADR-0004 names this suite the acceptance
-      # gate for the Vue rebuild, and until #620 it only ever ran against the
-      # tree being replaced. The React run stays until the cutover removes that
-      # tree: it is what ships today, and it costs about ten seconds.
-      - name: Run the smoke suite against the Vue dashboard
+        working-directory: ui-vue
+      - name: Run the smoke suite
         run: npm run test:e2e
-        working-directory: ui
-      - name: Run the smoke suite against the React dashboard
-        run: npm run test:e2e
-        working-directory: ui
-        env:
-          CRONIQ_E2E_TREE: react
+        working-directory: ui-vue
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-report
-          path: ui/playwright-report/
+          path: ui-vue/playwright-report/
           retention-days: 7
 
   spec:

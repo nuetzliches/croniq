@@ -58,19 +58,19 @@ COPY crates/ crates/
 RUN cd crates/croniq-config-wasm \
     && wasm-pack build --target web --release --out-dir pkg
 
-# ── Stage 2: Build React UI ──────────────────────────────────────────────────
+# ── Stage 2: Build the dashboard ─────────────────────────────────────────────
 FROM node:24-bookworm-slim AS ui-builder
 
-WORKDIR /build/ui
-COPY ui/package.json ui/package-lock.json ./
+WORKDIR /build/ui-vue
+COPY ui-vue/package.json ui-vue/package-lock.json ./
 # `npm ci` enforces the lockfile; fall back to `npm install` only when the
 # lockfile is out of sync (e.g. mid-bump). The previous `--frozen-lockfile`
 # flag is a yarn/pnpm option — npm silently ignores it, so the lockfile was
 # never actually enforced.
 RUN npm ci || npm install
-COPY ui/ .
+COPY ui-vue/ .
 
-# Drop the pre-built WASM bridge into ui/src/lib/wasm/ so the prebuild
+# Drop the pre-built WASM bridge into ui-vue/app/lib/wasm/ so the prebuild
 # hook (build-wasm.mjs) sees fresh artefacts and skips the wasm-pack
 # step. Without this the prebuild hook fails because wasm-pack isn't
 # installed in node:bookworm-slim.
@@ -79,14 +79,14 @@ COPY --from=wasm-builder \
     /build/crates/croniq-config-wasm/pkg/croniq_config_wasm.d.ts \
     /build/crates/croniq-config-wasm/pkg/croniq_config_wasm_bg.wasm \
     /build/crates/croniq-config-wasm/pkg/croniq_config_wasm_bg.wasm.d.ts \
-    src/lib/wasm/
+    app/lib/wasm/
 
 RUN npm run build
 
 # ── Stage 3: Server runtime, without the dashboard ───────────────────────────────────────────────────
 # Buildable on its own (`--target server-runtime`), and in that case buildx
 # never touches the ui-builder or wasm-builder stages above — no Node, no npm
-# tree, nothing from ui/ in this image's provenance. That separation is the
+# tree, nothing from ui-vue/ in this image's provenance. That separation is the
 # point of the target (#598); it is *not* about size, where the dashboard is
 # 0.37 MB of 55.92 MB, nor about build time, which the layer cache already
 # isolates. See ADR-0002.
@@ -152,7 +152,7 @@ CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000"]
 # runs as UID 101 and listens on 8080, so no capability is needed to bind.
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS ui-runtime
 COPY docker/ui/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=ui-builder /build/ui/dist /usr/share/nginx/html
+COPY --from=ui-builder /build/ui-vue/dist /usr/share/nginx/html
 EXPOSE 8080
 
 
@@ -163,5 +163,5 @@ EXPOSE 8080
 # is an option for deployments that already run a reverse proxy — not a
 # replacement.
 FROM server-runtime AS combined
-COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui
+COPY --from=ui-builder /build/ui-vue/dist /usr/share/croniq/ui
 CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]

@@ -2,12 +2,12 @@
 
 ## Core Expectations
 
-1. **Target Stack** — Rust (latest stable edition). The shipping dashboard is
-   React + TypeScript and stays so until cutover, but it is being rebuilt in
-   Vue 3 with a new design
+1. **Target Stack** — Rust (latest stable edition). The dashboard is Vue 3 +
+   TypeScript under `ui-vue/`
    ([ADR-0004](docs/adr/0004-vue-rebuild-for-the-dashboard.md), superseding
-   [ADR-0003](docs/adr/0003-react-for-the-dashboard.md)). Fixes to a screen
-   that already exists in the Vue tree go there first.
+   [ADR-0003](docs/adr/0003-react-for-the-dashboard.md)). The React tree it
+   replaced is gone; anything under `ui/` in an older document, issue or
+   review is history, not a path.
 2. **Language** — Documentation, commits, and code comments in English
 3. **Dependencies** — MIT-compatible licenses only. Use latest stable versions.
 4. **Code Style** — `cargo clippy` clean, `cargo fmt` formatted
@@ -23,8 +23,8 @@
 - `croniq-shell-runner` is the generic runner that executes `runner shell { … }` / `runner exec { … }` jobs as subprocesses
 - `croniq-store` holds persistence traits + SQLite/Postgres implementations
 - `croniq-auth` handles JWT, API keys, password auth
-- UI is a React SPA under `ui/`, served by `croniq-server --ui-dir` from the
-  same origin as the API ([ADR-0001](docs/adr/0001-same-origin-dashboard.md),
+- UI is a Vue 3 SPA under `ui-vue/`, served by `croniq-server --ui-dir` from
+  the same origin as the API ([ADR-0001](docs/adr/0001-same-origin-dashboard.md),
   [ADR-0002](docs/adr/0002-single-image-delivery.md))
 
 ## Architecture decisions

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 //
-// Start everything needed to compare the two dashboards side by side:
+// Start everything needed to work on the dashboard:
 //
 //   croniq-server   http://127.0.0.1:4230   API, seeded demo data, one runner
-//   ui   (React)    http://127.0.0.1:4231   the shipping dashboard
-//   ui-vue (Vue)    http://127.0.0.1:4232   the rebuild (ADR-0004)
+//   ui-vue          http://127.0.0.1:4232   the dashboard
 //
 // 4230-4233 is croniq's development block, deliberately contiguous and
 // deliberately not 4000. The server's *product* default stays 4000 -- it is
@@ -12,25 +11,28 @@
 // but the dev stack running there too meant `docker compose up` and this
 // script could not coexist. They can now.
 //
-// Both dev servers proxy /v1, /health, /version and /metrics to :4000, so each
-// is same-origin with the API and gets the refresh cookie exactly as
-// production does (ADR-0001). Two tabs, one server, one database — whatever
-// you do in one is visible in the other.
+// 4231 is free: it held the React dashboard until the cutover removed it. The
+// dashboard keeps 4232 rather than sliding down a slot, because every tool in
+// ui-vue/scripts/ and every note in docs/ names that port, and renumbering a
+// working port only to close a gap is churn.
+//
+// The dev server proxies /v1, /health, /version and /metrics to the API, so it
+// is same-origin with it and gets the refresh cookie exactly as production
+// does (ADR-0001).
 //
 // Usage:
-//   node scripts/dev-stack.mjs           everything
-//   node scripts/dev-stack.mjs --no-vue  server + React only
-//   node scripts/dev-stack.mjs --no-ui   server + Vue only
-//   node scripts/dev-stack.mjs --api     server only (use your own dev server)
+//   node scripts/dev-stack.mjs           API, runner and dashboard
+//   node scripts/dev-stack.mjs --api     API and runner only — bring your own
+//                                        dev server, or point a build at it
 //
-// Ports default to 4230 / 4231 / 4232 and are overridable when something else
-// on the machine already holds one:
-//   CRONIQ_DEV_PORT, CRONIQ_DEV_UI_PORT, CRONIQ_DEV_VUE_PORT
+// Ports default to 4230 / 4232 and are overridable when something else on the
+// machine already holds one:
+//   CRONIQ_DEV_PORT, CRONIQ_DEV_UI_PORT
 //
 // Prerequisites, once:
 //   cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \
 //     --bin croniq --bin croniq-server --bin croniq-demo-runner
-//   (cd ui && npm ci) && (cd ui-vue && npm ci)
+//   (cd ui-vue && npm ci)
 //
 // Deliberately not docker compose: HMR through a bind mount on Windows is
 // slow and the point of this script is the edit-reload loop.
@@ -49,13 +51,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exe = process.platform === "win32" ? ".exe" : "";
 
 const args = new Set(process.argv.slice(2));
-const apiOnly = args.has("--api");
-const withReact = !apiOnly && !args.has("--no-ui");
-const withVue = !apiOnly && !args.has("--no-vue");
+const withUi = !args.has("--api");
 
 const PORT = Number(process.env.CRONIQ_DEV_PORT ?? 4230);
-const REACT_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4231);
-const VUE_PORT = Number(process.env.CRONIQ_DEV_VUE_PORT ?? 4232);
+const UI_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4232);
 const USER = "admin";
 const PASSWORD = "demo-admin";
 const API_KEY = "croniq_dev_stack_key_not_for_production_use";
@@ -136,11 +135,11 @@ let shuttingDown = false;
 /**
  * Kill a child *and its descendants*.
  *
- * `child.kill()` is not enough for the dev servers: npm on Windows is a `.cmd`
+ * `child.kill()` is not enough for the dev server: npm on Windows is a `.cmd`
  * shim, so the direct child is the shim and vite is its grandchild. Killing
- * the shim leaves vite holding its port, and the next run of this script finds
- * the port occupied and silently moves to another one — which is how you end up
- * comparing two dashboards on the wrong URLs.
+ * the shim leaves vite holding its port, and the next run of this script then
+ * refuses to start — or, before `assertPortFree` existed, silently moved to
+ * another port and printed a URL nothing was listening on.
  */
 function killTree(child) {
   if (!child.pid) return;
@@ -184,8 +183,7 @@ function run(label, file, argv, options = {}) {
 }
 
 await assertPortFree(PORT, "API", "CRONIQ_DEV_PORT");
-if (withReact) await assertPortFree(REACT_PORT, "React dev server", "CRONIQ_DEV_UI_PORT");
-if (withVue) await assertPortFree(VUE_PORT, "Vue dev server", "CRONIQ_DEV_VUE_PORT");
+if (withUi) await assertPortFree(UI_PORT, "dev server", "CRONIQ_DEV_UI_PORT");
 
 const dir = dataDir();
 
@@ -228,18 +226,10 @@ run("runner", bin("croniq-demo-runner"), [], {
 // connection, and `assertPortFree`, which probes 127.0.0.1, cannot see a vite
 // already holding the port on `::1`. Pinning the family makes the printed URL
 // true and the pre-flight check meaningful.
-const npmEnv = { CRONIQ_API_ORIGIN: `http://127.0.0.1:${PORT}` };
-if (withReact) {
-  run("react", "npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(REACT_PORT)], {
-    cwd: path.join(ROOT, "ui"),
-    env: npmEnv,
-    shell: true,
-  });
-}
-if (withVue) {
-  run("vue", "npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(VUE_PORT)], {
+if (withUi) {
+  run("ui", "npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(UI_PORT)], {
     cwd: path.join(ROOT, "ui-vue"),
-    env: npmEnv,
+    env: { CRONIQ_API_ORIGIN: `http://127.0.0.1:${PORT}` },
     shell: true,
   });
 }
@@ -247,9 +237,8 @@ if (withVue) {
 console.log(
   [
     "",
-    `[dev] API      http://127.0.0.1:${PORT}   (${USER} / ${PASSWORD})`,
-    withReact ? `[dev] React    http://127.0.0.1:${REACT_PORT}` : null,
-    withVue ? `[dev] Vue      http://127.0.0.1:${VUE_PORT}` : null,
+    `[dev] API        http://127.0.0.1:${PORT}   (${USER} / ${PASSWORD})`,
+    withUi ? `[dev] Dashboard  http://127.0.0.1:${UI_PORT}` : null,
     "[dev] Ctrl-C stops everything.",
     "",
   ]

@@ -4,19 +4,18 @@ import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 
 /**
- * The Vue dashboard (ADR-0004). Lives beside `ui/` rather than replacing it:
- * React ships until this passes the acceptance gate, and both dev servers run
- * at once so the two can be compared — see `scripts/dev-stack.mjs`.
+ * The dashboard (ADR-0004). Port 4232, in croniq's 4230-4233 development
+ * block — see `scripts/dev-stack.mjs`.
  *
- * Port 4232, in croniq's 4230-4233 development block; `ui/` holds 4231.
- *
- * There is deliberately no `VITE_API_URL` escape hatch here, unlike the React
- * tree. That flag exists there for cross-origin builds and needs a guard to
- * stop it silently downgrading refresh-token storage (ADR-0001). Rather than
- * port the guard, this build is same-origin only: `croniq-server --ui-dir` and
- * the `croniq-ui` container both serve it same-origin, which is the supported
- * topology. If a cross-origin build is ever needed, it needs the guard back
- * with it, not the flag alone.
+ * There is deliberately no `VITE_API_URL` escape hatch. The dashboard this one
+ * replaced had one, for cross-origin builds, and it needed a build-time guard
+ * (`assertTokenStorageAcknowledged`) to stop it silently downgrading
+ * refresh-token storage from an `HttpOnly` cookie to `localStorage`
+ * (ADR-0001). Rather than port the flag and the guard, this build is
+ * same-origin only: `croniq-server --ui-dir` and the `croniq-ui` container
+ * both serve it same-origin, which is the supported topology. An absent flag
+ * needs no guard. If a cross-origin build is ever wanted, it needs the guard
+ * back with it, not the flag alone.
  */
 const API_ORIGIN = process.env.CRONIQ_API_ORIGIN ?? 'http://localhost:4230'
 

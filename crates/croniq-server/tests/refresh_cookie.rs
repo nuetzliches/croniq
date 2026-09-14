@@ -414,7 +414,7 @@ async fn a_foreign_origin_asking_for_a_cookie_gets_one_and_no_body_token() {
     // same-origin deployment look foreign, and in a real cross-origin setup
     // `app_url` *is* the dashboard's origin, so the comparison passes exactly
     // when it should fail. See the `refresh_cookie` module docs; the gate that
-    // works is `ui/vite.config.ts` refusing to build such a bundle.
+    // works is that the dashboard has no cross-origin build at all.
     //
     // What matters for security is that this path leaks nothing: the token goes
     // into a cookie scoped to *this* origin, which the foreign page can neither

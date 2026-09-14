@@ -32,6 +32,14 @@ A cross-origin dashboard remains buildable, but only as an acknowledged trade:
 `VITE_API_URL` without `VITE_ALLOW_LOCALSTORAGE_REFRESH=1` fails the build with
 an explanation rather than silently producing a `localStorage` bundle.
 
+*Amended 2026-09-14, at the Vue cutover.* The escape hatch is gone, not
+loosened. The rebuilt dashboard has no `VITE_API_URL` at all, so there is no
+cross-origin build to guard and no `localStorage` path to acknowledge. The
+constraint this ADR records is unchanged and now holds by construction rather
+than by a check. Should a cross-origin dashboard ever be wanted, it needs the
+guard designed back in *with* the flag — reintroducing the flag alone would
+undo this ADR silently.
+
 ## Alternatives considered
 
 - **Keep both tokens in `localStorage`, shorten the refresh lifetime.** Reduces
@@ -76,13 +84,13 @@ an explanation rather than silently producing a `localStorage` bundle.
 - `crates/croniq-server/src/api/refresh_cookie.rs` — cookie name, attributes, delivery mode
 - `crates/croniq-server/src/api/auth_endpoints.rs` — login/refresh/logout paths that choose body vs. cookie
 - `crates/croniq-server/src/api/hardening.rs` — `CONTENT_SECURITY_POLICY` (`connect-src 'self'`), origin-locked CORS, no `Allow-Credentials`
-- `ui/vite.config.ts` — `assertTokenStorageAcknowledged`, the build guard
-- `ui/src/api/base.ts` — same-origin default (`""` base URL)
+- `ui-vue/vite.config.ts` — no API-base setting exists; the dashboard is
+  same-origin by construction (it was `assertTokenStorageAcknowledged` in the
+  React tree, until the cutover removed the flag it guarded)
 - `docs/operations.md` → "Where the dashboard keeps its tokens"
 
 ## What this ADR does not say
 
 It does not say the dashboard must be served *by `croniq-server`*. Same origin
 is the constraint; a reverse proxy that unifies two containers under one origin
-satisfies it. It also does not forbid a cross-origin build — it makes one an
-explicit, acknowledged choice.
+satisfies it — which is what the `croniq-ui` image is for.

@@ -15,7 +15,7 @@ data on first load.
 The dashboard is a static Vite bundle. `croniq-server` takes a `--ui-dir` and
 serves it with `ServeDir` plus an `index.html` fallback, on the same listener
 as the API and the MCP transport. The published image builds the bundle in a
-Node stage and copies `ui/dist` into the runtime image.
+Node stage and copies `ui-vue/dist` into the runtime image.
 
 ## Decision
 
@@ -44,8 +44,8 @@ supported default for quickstart, demo and single-host deployments.
   release build, `wasm-pack`, and the npm install, per platform.~~
   **Corrected 2026-09-09 — this was wrong.** The buildx cache
   (`type=gha, mode=max, scope=docker-<platform>`) keeps the `rust-builder`
-  stage across runs, and a change under `ui/` invalidates only `COPY ui/` and
-  what follows it. Measured across six consecutive `main` builds: a UI-only
+  stage across runs, and a change under the dashboard tree invalidates only
+  its `COPY` and what follows it. Measured across six consecutive `main` builds: a UI-only
   change costs **72–99 s**, a change under `crates/` costs **433 s**, and a
   docs-only change 21 s. The claim was written from the Dockerfile's structure
   rather than from a build, and the structure does not decide this.
@@ -57,7 +57,10 @@ supported default for quickstart, demo and single-host deployments.
 - **The dashboard is not what makes the image big.** Published amd64 image,
   compressed layers: 55.92 MB total, of which the base (26.92 MB) and its
   `apt` layer (4.28 MB) are 56%, the five binaries are 24.3 MB, and
-  `ui/dist` is **0.37 MB — 0.66%**. Recorded because "split the UI out to
+  the dashboard bundle is **0.37 MB — 0.66%**. (Measured 2026-09-09 against
+  the React bundle; the Vue one that replaced it is the same order of
+  magnitude and does not change the conclusion.) Recorded because "split the
+  UI out to
   slim the image" is the obvious next thought and the numbers do not support
   it; the levers are the base image and which binaries ship —
   [#599](https://github.com/nuetzliches/croniq/issues/599).
@@ -72,7 +75,7 @@ supported default for quickstart, demo and single-host deployments.
 
 ## Enforced by
 
-- `Dockerfile` — the `ui-builder` stage and the `COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui`
+- `Dockerfile` — the `ui-builder` stage and the `COPY --from=ui-builder /build/ui-vue/dist /usr/share/croniq/ui`
 - `crates/croniq-server/src/main.rs` — `--ui-dir`, `ServeDir` + `ServeFile` fallback
 - `docker-compose.yml` — the single-service quickstart
 - `README.md` — the quickstart instructions

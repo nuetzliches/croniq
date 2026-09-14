@@ -56,9 +56,11 @@ authentication is Bearer-header only. (The refresh cookie introduced by #454 is
 cross-origin request either; see *Where the dashboard keeps its tokens*.)
 Consequences worth knowing:
 
-- A dashboard built with `VITE_API_URL` pointing at a server on a different
-  origin needs that server to have `app_url` set to the dashboard's URL, or
-  browser calls will be blocked.
+- Any browser app on a different origin — a custom UI, a status page, an
+  embedded panel — needs this server's `app_url` set to that origin, or its
+  calls will be blocked. The croniq dashboard itself is never in this
+  position: it is same-origin only.
+
 - Non-browser clients (runners, the CLI, curl, SDKs) are unaffected — CORS
   is a browser-side read gate, not authentication.
 - `server.app_url` is boot-only (see *Reload vs. restart*): changing it
@@ -77,8 +79,8 @@ Every response — API, dashboard, and `/mcp` — carries:
 
 The CSP is scoped to what the dashboard bundle actually needs: `default-src
 'self'`, `script-src 'self' 'wasm-unsafe-eval'` (the schedule builder runs
-the DSL parser as WebAssembly), `style-src 'self' 'unsafe-inline'` (React
-style attributes), `img-src 'self' data:`, `connect-src 'self'`,
+the DSL parser as WebAssembly), `style-src 'self' 'unsafe-inline'` (style
+attributes), `img-src 'self' data:`, `connect-src 'self'`,
 `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'self'`,
 `form-action 'self'`. The exact value and per-directive rationale live in
 [`hardening.rs`](../crates/croniq-server/src/api/hardening.rs).
@@ -137,25 +139,26 @@ Consequences worth knowing:
   request (`"refresh_cookie": true`), and a cookie-sourced refresh is the only
   thing that omits the body field.
 
-#### Cross-origin dashboards (`VITE_API_URL`)
+#### Cross-origin dashboards
 
 A `SameSite=Strict` cookie cannot reach a dashboard served from a different
-origin than the API, so such a build has to keep the refresh token in
-`localStorage` — with exactly the exposure described above. Because that is a
-trade rather than a default, `ui/vite.config.ts` refuses to build a
-`VITE_API_URL` bundle unless it is acknowledged:
+origin than the API, so such a build would have to keep the refresh token in
+`localStorage` — with exactly the exposure described above.
 
-```
-VITE_API_URL=https://api.example.com \
-VITE_ALLOW_LOCALSTORAGE_REFRESH=1 \
-npm run build
-```
+**There is no such build.** The dashboard has no API-base setting: it always
+talks to its own origin (`ui-vue/vite.config.ts`). Serve it from
+`croniq-server --ui-dir`, or from the `croniq-ui` container behind a proxy
+that routes `/v1` to the API on the same hostname — see below. Both are
+same-origin and both get the cookie.
 
-Without the second variable the build fails with an explanation. If you can
-serve the dashboard from croniq-server itself instead, that is the stronger
-option and needs no flags at all. (Local development is unaffected: `npm run
-dev` proxies `/v1` through the Vite dev server, so the browser sees a single
-origin and gets the cookie.)
+Earlier releases shipped a `VITE_API_URL` escape hatch guarded by a
+`VITE_ALLOW_LOCALSTORAGE_REFRESH` acknowledgement. The Vue rebuild dropped the
+flag rather than carry the guard: an option that always wants talking out of is
+better removed than defended. If you genuinely need a cross-origin dashboard,
+open an issue — it needs the guard designed back in with it, not the flag alone.
+
+(Local development is unaffected: `npm run dev` proxies `/v1` through the Vite
+dev server, so the browser sees a single origin and gets the cookie.)
 
 ### Running the dashboard in its own container
 
