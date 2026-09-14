@@ -282,6 +282,20 @@ const deadLetterFacts = computed(() => {
           >
             Runs
           </UButton>
+          <!-- The other half of the inventory's decision: the per-job Audit
+               tab was dropped in favour of "a link into the audit list,
+               filtered by entity", and until now neither half existed, so this
+               job's change history had no route from the dashboard at all
+               (issue #668). -->
+          <UButton
+            :to="`/settings/audit?target=job&entity=${encodeURIComponent(jobKey)}`"
+            icon="i-lucide-history"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+          >
+            History
+          </UButton>
 
           <div class="ml-auto flex items-center gap-1.5">
             <!-- Adoption is the DSL/API boundary, and it is the one control

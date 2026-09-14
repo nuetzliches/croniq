@@ -1106,6 +1106,14 @@ export interface AuditFilters {
   limit?: number
   actor_id?: string
   target_type?: string
+  /**
+   * One entity's history — the id of the job, calendar or rule.
+   *
+   * `/v1/audit` has taken this since it was written; the dashboard never sent
+   * it, which is why "who changed this job's timeout" had no answer on any
+   * screen (issue #668).
+   */
+  target_id?: string
   action?: string
 }
 
@@ -1119,6 +1127,7 @@ export function useAuditEvents(filters: MaybeRefOrGetter<AuditFilters> = () => (
       const query: Record<string, string | number> = { limit: active.value.limit ?? 200 }
       if (active.value.actor_id) query.actor_id = active.value.actor_id
       if (active.value.target_type) query.target_type = active.value.target_type
+      if (active.value.target_id) query.target_id = active.value.target_id
       if (active.value.action) query.action = active.value.action
       return apiGet<AuditEvent[]>('/v1/audit', query)
     },

@@ -23,12 +23,19 @@ const router = useRouter()
 const filters = computed(() => ({
   actor_id: (route.query.actor as string) || '',
   target_type: (route.query.target as string) || '',
+  // The entity filter. `docs/ui-screen-inventory.md` decided the per-job Audit
+  // tab would be replaced by "a link into the audit list, filtered by entity",
+  // and neither half was built — so the history of one job was unreachable
+  // from the dashboard even though `/v1/audit` has always taken the parameter
+  // (issue #668).
+  target_id: (route.query.entity as string) || '',
   action: (route.query.action as string) || '',
 }))
 
 const { data, isPending, isError, error, refetch } = useAuditEvents(() => ({
   actor_id: filters.value.actor_id || undefined,
   target_type: filters.value.target_type || undefined,
+  target_id: filters.value.target_id || undefined,
   action: filters.value.action || undefined,
 }))
 
@@ -49,10 +56,15 @@ function actorName(actorId: string): string {
 }
 
 const hasFilters = computed(() =>
-  Boolean(filters.value.actor_id || filters.value.target_type || filters.value.action),
+  Boolean(
+    filters.value.actor_id ||
+      filters.value.target_type ||
+      filters.value.target_id ||
+      filters.value.action,
+  ),
 )
 
-function setFilter(key: 'actor' | 'target' | 'action', value: string) {
+function setFilter(key: 'actor' | 'target' | 'entity' | 'action', value: string) {
   const query = { ...route.query }
   if (value) query[key] = value
   else delete query[key]
@@ -128,6 +140,26 @@ function diffTitle(diff: string | null): string | undefined {
         class="w-48"
         @update:model-value="(value: string) => setFilter('actor', value)"
       />
+      <!-- The entity filter arrives by link rather than from a control here,
+           so it needs to be visible and removable — an unexplained empty list
+           is what an invisible filter looks like. -->
+      <UBadge
+        v-if="filters.target_id"
+        color="primary"
+        variant="subtle"
+        class="gap-1.5 font-mono"
+      >
+        {{ filters.target_id }}
+        <UButton
+          icon="i-lucide-x"
+          variant="link"
+          color="primary"
+          size="xs"
+          class="p-0"
+          aria-label="Stop filtering by this entity"
+          @click="setFilter('entity', '')"
+        />
+      </UBadge>
       <UButton
         v-if="hasFilters"
         variant="ghost"

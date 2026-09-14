@@ -148,6 +148,18 @@ const ruleLines = computed(() =>
           >
             Edit
           </UButton>
+          <!-- "linked from both contexts", per the screen inventory — a
+               calendar's history matters for the same reason a job's does
+               (issue #668). -->
+          <UButton
+            :to="`/settings/audit?target=calendar&entity=${encodeURIComponent(calendarId)}`"
+            icon="i-lucide-history"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+          >
+            History
+          </UButton>
           <div class="ml-auto flex items-center gap-1.5">
             <UButton
               v-if="dslManaged"

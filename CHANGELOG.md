@@ -699,6 +699,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in it. Cruder than a component test, and it catches the thing that actually
   went wrong — including in components nobody has written yet.
 
+- **One job's change history is reachable again
+  ([#668](https://github.com/nuetzliches/croniq/issues/668)).** The screen
+  inventory dropped the per-job Audit tab in favour of "a link into the audit
+  list, filtered by entity". Neither half was built: the audit screen read
+  three filters out of the URL and `target_id` was not among them, and nothing
+  linked to it.
+
+  So "who changed this job's timeout, and when" was one click in the React
+  dashboard and unreachable in this one — even though `GET /v1/audit` has taken
+  the parameter since it was written, and the OpenAPI spec documents it.
+
+  Job detail and calendar detail each carry a **History** button now, and the
+  audit screen reads the entity from the URL. Because that filter arrives by
+  link rather than from a control on screen, it shows as a removable chip: an
+  invisible filter and an empty log look identical otherwise.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
