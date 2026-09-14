@@ -687,9 +687,16 @@ fn trigger_definitions(store: &PgStore, s: &str) {
     // api-managed trigger is updatable → true.
     let mut updated = got.clone();
     updated.enabled = false;
+    // `window` was missing from the UPDATE statement, so it could be set at
+    // create time and never changed again (issue #657). It is also a SQL
+    // keyword, which is why every statement that names it quotes it — an
+    // unquoted one is a syntax error here, and only this test would catch it.
+    updated.window = Some("02:00..06:00".into());
     updated.updated_at = ts();
     assert!(store.update_trigger(&updated).unwrap());
-    assert!(!store.get_trigger(&trigger_id).unwrap().unwrap().enabled);
+    let after = store.get_trigger(&trigger_id).unwrap().unwrap();
+    assert!(!after.enabled);
+    assert_eq!(after.window.as_deref(), Some("02:00..06:00"));
 
     // A dsl-managed trigger must refuse the update → false.
     let dsl_id = format!("trig-dsl-{s}");

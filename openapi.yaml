@@ -1104,9 +1104,23 @@ paths:
     put:
       summary: Update an API-managed trigger
       description: |
-        Patch the editable fields of an API-managed schedule. Omitted
-        fields are preserved. Returns 409 for DSL-managed triggers
-        (Croniqfile owns those), 404 if the trigger_id is unknown.
+        Patch the editable fields of an API-managed schedule. Returns 409 for
+        DSL-managed triggers (Croniqfile owns those), 404 if the trigger_id is
+        unknown.
+
+        Three states, and the difference matters:
+
+        | Sent | Effect |
+        |---|---|
+        | field omitted | left as it is |
+        | empty string | cleared |
+        | `null` | left as it is — the same as omitting it |
+
+        `null` and "omitted" are the same because both deserialise to `None`.
+        A client that means "clear this" must send `""`; sending `null` reports
+        success and changes nothing.
+
+        `job_key`, `managed_by` and the timestamps are not editable here.
       parameters:
         - name: trigger_id
           in: path
@@ -1120,7 +1134,17 @@ paths:
               type: object
               properties:
                 cron_expression: { type: string }
-                timezone: { type: string }
+                timezone:
+                  type: string
+                  description: IANA zone name. Empty string clears the override.
+                calendar:
+                  type: string
+                  description: Calendar name gating execution. Empty string clears the gate.
+                window:
+                  type: string
+                  description: >
+                    Daily window such as `02:00..06:00`. Empty string clears it.
+                  example: "02:00..06:00"
                 enabled: { type: boolean }
       responses:
         "200":

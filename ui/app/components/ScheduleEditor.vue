@@ -57,7 +57,15 @@ function startEdit(trigger: TriggerDefinition) {
   editing.value = trigger.trigger_id
 }
 
-const orNull = (value: string) => (value.trim() ? value.trim() : null)
+/**
+ * Empty means "clear this field", and the server spells that as an empty
+ * string — `null` reads as "leave it alone" (serde `Option::None`), so sending
+ * one on an edit silently kept the old value while the form reported success
+ * (issue #657).
+ *
+ * Create and update take the same convention, so this one helper covers both.
+ */
+const orBlank = (value: string) => value.trim()
 
 async function attempt(fn: () => Promise<unknown>) {
   error.value = null
@@ -80,9 +88,9 @@ function save() {
   }
   const patch = {
     cron_expression: rule,
-    timezone: orNull(form.value.timezone),
-    calendar: orNull(form.value.calendar),
-    window: orNull(form.value.window),
+    timezone: orBlank(form.value.timezone),
+    calendar: orBlank(form.value.calendar),
+    window: orBlank(form.value.window),
   }
   void attempt(() =>
     editing.value === 'new'
