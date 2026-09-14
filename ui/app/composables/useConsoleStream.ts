@@ -20,6 +20,18 @@ export interface LogEvent {
   target: string
   message: string
   fields: Record<string, unknown>
+  /**
+   * A monotonic number assigned on arrival, so a row can be keyed by identity.
+   *
+   * The events themselves carry nothing unique — two log lines in the same
+   * millisecond from the same target with the same message are indisting-
+   * uishable, and rightly so. Keying the list by array index instead meant
+   * every arrival shifted every key once the buffer was full, and Vue
+   * re-patched all 2000 rows for one new line (issue #671).
+   *
+   * Not part of the wire format: assigned here, never sent.
+   */
+  seq: number
 }
 
 /**
@@ -35,6 +47,9 @@ export const MAX_BUFFER = 2000
 export function useConsoleStream() {
   const auth = useAuthStore()
 
+  /** Next `seq`. Wraps at no point worth worrying about. */
+  let nextSeq = 0
+
   const events = shallowRef<LogEvent[]>([])
   const connected = ref(false)
   /** 403: not an admin. A settled answer, not a blip — say so and stop. */
@@ -49,23 +64,52 @@ export function useConsoleStream() {
   const pending = shallowRef<LogEvent[]>([])
   const pendingCount = computed(() => pending.value.length)
 
-  function push(event: LogEvent) {
+  /**
+   * Arrivals not yet handed to the view.
+   *
+   * A busy server sends events far faster than a screen can usefully show
+   * them, and the previous version copied the whole 2000-element buffer per
+   * event and re-assigned it — so the render cost scaled with traffic rather
+   * than with the refresh rate (issue #671). Now arrivals accumulate here and
+   * the buffer is rebuilt once per animation frame, which is as often as
+   * anyone can see.
+   */
+  let batch: LogEvent[] = []
+  let frame: number | null = null
+
+  /** Drop the oldest until it fits, counting what went. */
+  function trim(list: LogEvent[]): LogEvent[] {
+    if (list.length <= MAX_BUFFER) return list
+    dropped.value += list.length - MAX_BUFFER
+    return list.slice(list.length - MAX_BUFFER)
+  }
+
+  function flush() {
+    frame = null
+    if (batch.length === 0) return
+    const arrived = batch
+    batch = []
     if (paused.value) {
-      const next = [...pending.value, event]
-      if (next.length > MAX_BUFFER) {
-        dropped.value += next.length - MAX_BUFFER
-        next.splice(0, next.length - MAX_BUFFER)
-      }
-      pending.value = next
+      pending.value = trim([...pending.value, ...arrived])
       return
     }
-    const next =
-      events.value.length >= MAX_BUFFER
-        ? events.value.slice(-(MAX_BUFFER - 1))
-        : events.value.slice()
-    if (events.value.length >= MAX_BUFFER) dropped.value += 1
-    next.push(event)
-    events.value = next
+    events.value = trim([...events.value, ...arrived])
+  }
+
+  function schedule() {
+    if (frame !== null) return
+    // `requestAnimationFrame` where there is one. In a test environment
+    // without a document there is not, and a microtask is the right stand-in:
+    // still a batch, just a smaller one.
+    frame =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(flush)
+        : (queueMicrotask(flush), 1)
+  }
+
+  function push(event: LogEvent) {
+    batch.push({ ...event, seq: nextSeq++ })
+    schedule()
   }
 
   const stop = createSseStream({

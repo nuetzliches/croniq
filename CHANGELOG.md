@@ -756,6 +756,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as a prop now, and falls back to its own query when a caller does not have
   them.
 
+- **The console stops re-rendering itself on every log line
+  ([#671](https://github.com/nuetzliches/croniq/issues/671)).** Three things
+  made a live tail cost far more than it needed to, all of them worst on
+  exactly the busy server you would open it for:
+
+  - rows were keyed by array index, so once the 2000-event buffer was full
+    every arrival shifted every key and Vue re-patched all 2000 rows to show
+    one new line;
+  - each arrival copied the whole buffer and re-assigned it, so the render rate
+    followed the server's traffic rather than the screen's refresh rate;
+  - the template called the field serialiser twice per row — once to decide
+    whether to render the span, once to fill it.
+
+  Events now carry a sequence number assigned on arrival, which is what keys
+  the rows; the events themselves carry nothing unique, and rightly so.
+  Arrivals are batched per animation frame. And the field text is computed once
+  per row alongside the filter.
+
+  The exported NDJSON is unchanged: the sequence number is ours and does not go
+  in it.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
