@@ -884,6 +884,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   visible with the server's own wording. And `write-paths.mjs` sets a non-zero
   exit code when a step fails or a request comes back 4xx.
 
+- **CI caches the Playwright browser
+  ([#680](https://github.com/nuetzliches/croniq/issues/680)).** The e2e job
+  downloaded a ~130 MB browser on every run: 20 seconds of its 113, spent
+  fetching a file that had not changed. It is keyed on the resolved Playwright
+  version rather than the lockfile hash, because almost no dependency bump
+  changes the browser. `install-deps` still runs on a hit — those are system
+  libraries outside the cached directory, and apt work rather than a download.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
