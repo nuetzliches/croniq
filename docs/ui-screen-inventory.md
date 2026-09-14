@@ -1,259 +1,259 @@
-# Phase 0: Screen-Inventar für den Vue-Neubau
+# Phase 0: screen inventory for the Vue rebuild
 
-Stand: 2026-09-10. Ergebnis der Design-Phase aus
-[ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md). Grundlage: Code-Analyse
-des React-Baums, keine Annahmen.
+As of 2026-09-10. Result of the design phase from
+[ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md). Basis: code analysis
+of the React tree, no assumptions.
 
-**Stack (entschieden):** der `nuts-customer-portal`-Stack — Vue 3 + Nuxt UI 4 +
-Pinia + `@tanstack/vue-query` + `ofetch` + vue-router. Damit ersetzt Nuxt UIs
-Theming das projekteigene oklch-Token-System des React-Baums; das ist Absicht
-und der Grund, warum das hier ein Neubau und kein Port ist.
+**Stack (decided):** the `nuts-customer-portal` stack — Vue 3 + Nuxt UI 4 +
+Pinia + `@tanstack/vue-query` + `ofetch` + vue-router. With it, Nuxt UI's
+theming replaces the project-owned oklch token system of the React tree; that is
+deliberate and the reason this is a rebuild and not a port.
 
-**Zuschnitt (entschieden):** Screens werden neu gedacht und vereinfacht, nicht
-1:1 übernommen.
-
----
-
-## Korrektur an ADR-0004
-
-ADR-0004s Scope-Guard sagt: *„Die Screen-Liste ist bei den heutigen zehn Routen
-eingefroren."* Das war als Schutz gegen Scope-**Wachstum** gemeint, ist aber zu
-wörtlich formuliert — Zusammenlegen ist das Gegenteil davon.
-
-Präzisierung: eingefroren ist die Menge der **Fähigkeiten**, nicht die Menge
-der Routen. Der Zuschnitt ist offen; jede heute erreichbare Aktion und jede
-heute sichtbare Information muss im neuen Zuschnitt einen Ort haben. Die Liste
-unter *Was nicht verloren gehen darf* ist die verbindliche Fassung davon.
+**Cut (decided):** screens are thought through again and simplified, not
+carried over 1:1.
 
 ---
 
-## Befund: eine Sache wird vierfach gebaut
+## Correction to ADR-0004
 
-`useExecutions` läuft auf **vier von zehn Screens**:
+ADR-0004's scope guard says: *"The screen list is frozen at the ten routes
+that exist today."* That was meant as protection against scope **growth**, but it
+is worded too literally — merging is the opposite of that.
 
-| Ort | Was | Belege |
+More precisely: what is frozen is the set of **capabilities**, not the set of
+routes. The cut is open; every action reachable today and every piece of
+information visible today must have a place in the new cut. The list
+under *What must not be lost* is the binding version of that.
+
+---
+
+## Finding: one thing is built four times
+
+`useExecutions` runs on **four of ten screens**:
+
+| Place | What | Evidence |
 |---|---|---|
-| `JobsPage` → Tab *Overview* | Executions-Tabelle, 12 Zeilen, 5 Spalten | `JobsPage.tsx:966–997` |
-| `JobsPage` → Tab *Executions* | dieselbe Tabelle, alle Zeilen, + `attempt`, `error` | `JobsPage.tsx:1181–1218` |
-| `ExecutionsPage` | dieselbe Liste, global, mit Filtern | `?job_key=` |
-| `RunnersPage` → Detail | dieselbe Liste, `runner_id`-gefiltert, `limit: 50` | `RunnersPage.tsx:195` |
+| `JobsPage` → tab *Overview* | executions table, 12 rows, 5 columns | `JobsPage.tsx:966–997` |
+| `JobsPage` → tab *Executions* | the same table, all rows, + `attempt`, `error` | `JobsPage.tsx:1181–1218` |
+| `ExecutionsPage` | the same list, global, with filters | `?job_key=` |
+| `RunnersPage` → detail | the same list, filtered by `runner_id`, `limit: 50` | `RunnersPage.tsx:195` |
 
-Die beiden Job-Tabs rendern denselben Query mit identischem Zellen-Markup —
+The two job tabs render the same query with identical cell markup —
 `ExecutionLink`, `StatusPill`, `RunnerLink`, `formatRelative`, `durationFmt` —
-und unterscheiden sich in zwei Spalten und einem `slice(0, 12)`. Der
-*Executions*-Tab verlinkt am Kopf zusätzlich nach `/executions?job_key=…`, also
-auf eine dritte Darstellung derselben Daten.
+and differ in two columns and one `slice(0, 12)`. The
+*Executions* tab additionally links from its header to `/executions?job_key=…`, that is,
+to a third rendering of the same data.
 
-Dasselbe Muster, kleiner:
+The same pattern, smaller:
 
-- `useAuditEvents` — in `JobsPage` (Tab *Audit*) und in `settings/AuditTab`.
-- `useAlertDeliveries` — in `JobsPage` (Tab *Alerts*) und in `AlertsPage`.
+- `useAuditEvents` — in `JobsPage` (tab *Audit*) and in `settings/AuditTab`.
+- `useAlertDeliveries` — in `JobsPage` (tab *Alerts*) and in `AlertsPage`.
 
-Das ist kein Zufall, sondern ein Muster: **eine Detailseite baut eine globale
-Seite nach, gefiltert.** Drei der sechs Job-Tabs existieren nur deshalb.
+That is not a coincidence but a pattern: **a detail page rebuilds a global
+page, filtered.** Three of the six job tabs exist only for that reason.
 
 ---
 
-## Vorschlag: ein Ort pro Konzept
+## Proposal: one place per concept
 
-Leitregel — *eine Liste pro Konzept; Detailseiten verlinken gefiltert hinein,
-statt sie nachzubauen.*
+Guiding rule — *one list per concept; detail pages link into it filtered,
+instead of rebuilding it.*
 
-### 1. Runs: die eine Ausführungsansicht
+### 1. Runs: the one execution view
 
-`/executions` wird die einzige Stelle, an der Ausführungen als Liste
-erscheinen. Filter: Job, Runner, Status, Zeitraum — alle in der URL, wie heute
-schon für `state` und `job_key`.
+`/executions` becomes the only place where executions appear as a list.
+Filters: job, runner, status, time range — all in the URL, as is already the case
+today for `state` and `job_key`.
 
-Damit entfallen: der Overview-Tab-Ausschnitt, der Executions-Tab und der
-Executions-Block im Runner-Detail. Die Job-Seite zeigt stattdessen eine
-Statuszeile („letzte 5 Läufe", Sparkline) und verlinkt in die gefilterte Liste.
+That drops: the overview tab's excerpt, the executions tab and the
+executions block in the runner detail. The job page instead shows a
+status line ("last 5 runs", sparkline) and links into the filtered list.
 
-**Route bleibt `/executions`.** Ein Rename auf `/runs` wäre hübscher und bricht
-Bookmarks und die URL-Verträge, die `ui/e2e/url-state.spec.ts` prüft — ohne
-Gegenwert.
+**The route stays `/executions`.** A rename to `/runs` would be prettier and would break
+bookmarks and the URL contracts that `ui/e2e/url-state.spec.ts` asserts — with no
+return.
 
-### 2. Job-Detail: von sechs Tabs auf zwei
+### 2. Job detail: from six tabs to two
 
-| heute | künftig |
+| today | in future |
 |---|---|
-| Overview | **Übersicht** — Definition, Policy, Status, letzte Läufe als Zusammenfassung |
-| Executions | entfällt → Link in die Runs-Liste |
-| Schedule | in *Übersicht* integriert (Trigger sind Teil der Definition) |
-| DSL | **DSL** — bleibt eigen, ist eine andere Repräsentation desselben |
-| Alerts | entfällt → Link in die Alerts-Liste, `job_key`-gefiltert |
-| Audit | entfällt → Link in die Audit-Liste, entity-gefiltert |
+| Overview | **Overview** — definition, policy, status, recent runs as a summary |
+| Executions | dropped → link into the runs list |
+| Schedule | integrated into *Overview* (triggers are part of the definition) |
+| DSL | **DSL** — stays on its own, it is a different representation of the same thing |
+| Alerts | dropped → link into the alerts list, filtered by `job_key` |
+| Audit | dropped → link into the audit list, filtered by entity |
 
-### 3. Audit: ein Ort
+### 3. Audit: one place
 
-Heute in Settings *und* als Job-Tab. Künftig eine Ansicht mit Entity-Filter,
-aus beiden Kontexten verlinkt. Ob sie unter Settings bleibt oder eigenständig
-wird, hängt an der Navigationsfrage unten.
+Today in settings *and* as a job tab. In future one view with an entity filter,
+linked from both contexts. Whether it stays under settings or becomes
+standalone depends on the navigation question below.
 
-### 4. Alerts: Konfiguration und Zustellungen trennen
+### 4. Alerts: separate configuration and deliveries
 
-`AlertsPage` mischt heute beides — Regel-/Kanal-Konfiguration mit Overrides
-(Snooze, Throttle, Disable) und die Zustellhistorie. Das sind zwei Dinge: eine
-Einstellung und ein Protokoll. Vorschlag: Konfiguration zu den übrigen
-Einstellungen, Zustellungen als filterbare Liste neben den Runs.
-
----
-
-## Was nicht verloren gehen darf
-
-Die verbindliche Fassung des Scope-Guards. Jede Zeile ist heute erreichbar und
-braucht im neuen Zuschnitt einen Ort — nicht notwendig denselben.
-
-**Jobs:** anlegen, bearbeiten, löschen, aktivieren/deaktivieren, manuell
-triggern, adoptieren/freigeben (DSL-verwaltet vs. API-verwaltet), Tags,
-Dead-Letter-Policy, Timeout, Retries, Forecast (nächste Feuerzeitpunkte),
-Job-Statistiken, Schedule-Verwaltung inkl. Kalenderbindung, DSL-Ansicht.
-
-**Runs:** Liste mit Filtern (Job, Status, Runner), Detail mit Logs, Abbrechen,
-Attempt und Fehlertext, Verlinkung zu Job und Runner.
-
-**Dead Letters:** Liste, Detail, Replay (inkl. Stale-Guard), Einzel- und
-Massenlöschung, Retention/Ablauf, Operator-Hinweis.
-
-**Runners:** Live-Liste über SSE, Tags, Filter, Detail mit zugehörigen Läufen,
-Entfernen.
-
-**Kalender:** CRUD, Regel-Builder, Adoption.
-
-**Alerts:** Regel- und Kanalkonfiguration, Overrides (Snooze, Throttle,
-Disable, Clear), Zustellhistorie.
-
-**Konsole:** Live-Tail des Server-Tracings, Level-Filter, Suche, Pause,
-Kopieren, NDJSON-Export. Admin-only.
-
-**Settings:** Profil inkl. TOTP-Enrolment und PATs, Benutzer und Einladungen,
-API-Clients und Token, Audit-Log.
-
-**Querschnitt:** Login inkl. MFA und OIDC **sowie Passwort-Wiederherstellung
-(Anforderung *und* Zielseite) und Einladungsannahme** — diese drei fehlten in
-der ersten Fassung dieser Liste, und die beiden Zielseiten fehlten sogar im
-ausgelieferten Dashboard: der Server verschickt `…/password-reset/confirm` und
-`…/invitations/accept`, und keiner der Bäume bediente die Routen (Durchgang 12).
-Theme-Umschaltung, Sidebar-Zustand,
-Command-Palette, Dead-Letter-Zähler in der Topbar, und der Wartungsmodus in
-**beiden** Hälften — der Banner für alle, die Steuerung (manuell an/aus,
-geplantes Fenster, Notiz) admin-only in der Topbar. Die erste Fassung dieser
-Liste nannte nur den Banner; die Steuerung fehlte und wäre damit still unter den
-Tisch gefallen.
+`AlertsPage` today mixes both — rule/channel configuration with overrides
+(snooze, throttle, disable) and the delivery history. Those are two things: a
+setting and a log. Proposal: configuration with the rest of the
+settings, deliveries as a filterable list next to the runs.
 
 ---
 
-## Entschieden (2026-09-10)
+## What must not be lost
 
-Alle vier offenen Fragen beantwortet.
+The binding version of the scope guard. Every line is reachable today and
+needs a place in the new cut — not necessarily the same one.
 
-**Dead Letters bleiben ein eigener Screen.** Technisch wäre der Filter möglich
-— `ExecutionState::Dead` existiert und `/v1/executions?state=dead` funktioniert
-heute schon. Ausschlaggebend war die Rolle, nicht die Technik: Dead Letters
-sind die einzige Fläche im Produkt, die eine To-do-Liste ist. Eine Arbeitsliste
-in eine Browsing-Liste zu mischen macht die Arbeit unsichtbar — man müsste den
-Filter erst setzen, um zu sehen, dass etwas ansteht. Das Topbar-Badge behält
-sein Ziel; das Run-Detail eines toten Laufs verlinkt hierher.
+**Jobs:** create, edit, delete, enable/disable, trigger
+manually, adopt/release (DSL-managed vs. API-managed), tags,
+dead-letter policy, timeout, retries, forecast (next fire times),
+job statistics, schedule management including calendar binding, DSL view.
 
-**Dashboard wird Statusboard plus Fehler-Auszug.** Zahlen, Durchsatz, Heatmap,
-dazu ein schmaler Auszug ausschließlich der letzten Fehlschläge mit Link in die
-gefilterte Runs-Liste. Kein allgemeiner „letzte Läufe"-Block — der wäre das
-vierte Rendering derselben Tabelle. Der Auszug ist bewusst eine andere
-Darstellung (kompakt, nur Fehler), kein verkleinerter Klon.
+**Runs:** list with filters (job, status, runner), detail with logs, cancel,
+attempt and error text, links to job and runner.
 
-**Kalender bleiben in der Hauptnavigation.** Sie hängen fachlich an Jobs, nicht
-an der Serververwaltung, und der Regel-Builder ist zu groß für einen
-Settings-Tab.
+**Dead Letters:** list, detail, replay (including the stale guard), single and
+bulk deletion, retention/expiry, operator hint.
 
-**Konsole bleibt ein eigener Screen**, rollenbasiert eingeblendet wie heute.
-Server-Tracing und Lauf-Logs heißen beide „Logs" und sind verschiedene Dinge;
-zusammenzulegen erzeugt genau die Verwechslung, die beim Debuggen stört.
+**Runners:** live list over SSE, tags, filters, detail with the runs that belong to it,
+removal.
 
-## Resultierender Zuschnitt
+**Calendars:** CRUD, rule builder, adoption.
+
+**Alerts:** rule and channel configuration, overrides (snooze, throttle,
+disable, clear), delivery history.
+
+**Console:** live tail of the server tracing, level filter, search, pause,
+copy, NDJSON export. Admin-only.
+
+**Settings:** profile including TOTP enrolment and PATs, users and invitations,
+API clients and tokens, audit log.
+
+**Cross-cutting:** login including MFA and OIDC **as well as password recovery
+(the request *and* the landing page) and invitation acceptance** — these three were missing in
+the first version of this list, and the two landing pages were even missing from the
+shipping dashboard: the server sends out `…/password-reset/confirm` and
+`…/invitations/accept`, and neither tree served the routes (pass 12).
+Theme switching, sidebar state,
+command palette, the dead-letter counter in the topbar, and maintenance mode in
+**both** halves — the banner for everyone, the controls (manual on/off,
+scheduled window, note) admin-only in the topbar. The first version of this
+list named only the banner; the controls were missing and would thereby have quietly been
+dropped.
+
+---
+
+## Decided (2026-09-10)
+
+All four open questions answered.
+
+**Dead Letters stay their own screen.** Technically the filter would be possible
+— `ExecutionState::Dead` exists and `/v1/executions?state=dead` already works
+today. What settled it was the role, not the technology: dead letters
+are the only surface in the product that is a to-do list. Mixing a work list
+into a browsing list makes the work invisible — you would have to set the
+filter first to see that something is pending. The topbar badge keeps
+its target; the run detail of a dead run links here.
+
+**The dashboard becomes a status board plus a failure excerpt.** Numbers, throughput, heatmap,
+plus a narrow excerpt of only the most recent failures with a link into the
+filtered runs list. No general "recent runs" block — that would be the
+fourth rendering of the same table. The excerpt is deliberately a different
+representation (compact, failures only), not a shrunken clone.
+
+**Calendars stay in the main navigation.** They belong to jobs in domain terms, not
+to server administration, and the rule builder is too big for a
+settings tab.
+
+**The console stays its own screen**, shown by role as it is today.
+Server tracing and run logs are both called "logs" and are different things;
+merging them produces exactly the confusion that gets in the way when debugging.
+
+## Resulting cut
 
 ```
-Betrieb    Dashboard   Runs   Runner   Dead Letters
-Konfig     Jobs        Kalender   Alerts
-System     Konsole (admin)   Einstellungen
+Operations      Dashboard   Runs   Runners   Dead Letters
+Configuration   Jobs        Calendars   Alerts
+System          Console (admin)   Settings
 ```
 
-| Route | Inhalt |
+| Route | Content |
 |---|---|
-| `/` | Statusboard + Fehler-Auszug |
-| `/executions`, `/executions/:id` | die eine Lauf-Liste; Filter job/runner/state/zeit in der URL |
-| `/runners` | Live-Liste + Detail **ohne** Executions-Block |
-| `/dead-letters` | Arbeitsliste: Replay, Löschen, Massenaktion, Retention |
-| `/jobs`, `/jobs/:key` | Master/Detail, **zwei** Tabs (Übersicht inkl. Schedule, DSL) |
-| `/calendars` | CRUD + Regel-Builder |
-| `/alerts` | Regeln, Kanäle, Overrides |
-| `/console` | Live-Tail, admin-only |
-| `/settings` | Profil, Benutzer, API-Clients, Audit |
-| `/login` | inkl. MFA und OIDC |
+| `/` | status board + failure excerpt |
+| `/executions`, `/executions/:id` | the one run list; job/runner/state/time filters in the URL |
+| `/runners` | live list + detail **without** an executions block |
+| `/dead-letters` | work list: replay, delete, bulk action, retention |
+| `/jobs`, `/jobs/:key` | master/detail, **two** tabs (overview including schedule, DSL) |
+| `/calendars` | CRUD + rule builder |
+| `/alerts` | rules, channels, overrides |
+| `/console` | live tail, admin-only |
+| `/settings` | profile, users, API clients, audit |
+| `/login` | including MFA and OIDC |
 
-**Es sind weiterhin zehn Routen.** Der Gewinn liegt nicht in der Anzahl der
-Screens, sondern im entfallenen Inhalt: Job-Detail von sechs auf zwei Tabs,
-Executions-Block im Runner-Detail weg, Audit und Alert-Zustellungen mit je
-einem Ort statt zwei, Dashboard ohne allgemeine Lauf-Liste. Vier Renderings der
-Executions-Tabelle werden eins.
+**It is still ten routes.** The gain is not in the number of
+screens but in the content that was dropped: job detail from six to two tabs,
+the executions block in the runner detail gone, audit and alert deliveries with one
+place each instead of two, the dashboard without a general run list. Four renderings of the
+executions table become one.
 
-## Entschieden (2026-09-11): Alerts
+## Decided (2026-09-11): alerts
 
-Die letzte offene Frage — bleibt die Zustellhistorie beim Regelwerk oder wird
-sie eine filterbare Liste neben den Runs? — ist beim Bau des Screens
-beantwortet worden, und zwar mit **keiner der beiden Fassungen, wie gestellt**.
+The last open question — does the delivery history stay with the rules or does
+it become a filterable list next to the runs? — was answered while building the screen,
+and with **neither of the two versions as posed**.
 
-Der Einwand aus der Bestandsaufnahme war, dass die React-Seite zwei Dinge
-*vermischt*: Konfiguration und Protokoll, flach auf einer Seite. Die Antwort
-auf Vermischung ist aber nicht Trennung auf verschiedene Screens, sondern
-Struktur. Die Fragen laufen quer über die Grenze: man schnoozt eine Regel
-*wegen* dem, was das Protokoll zeigt, und man liest das Protokoll, um
-herauszufinden, welche Regel gepiept hat. Zwei Screens setzen einen
-Navigationsschritt zwischen Frage und Antwort.
+The objection from the stocktake was that the React page *mixes* two things:
+configuration and log, flat on one page. But the answer
+to mixing is not separation onto different screens, but
+structure. The questions run across the boundary: you snooze a rule
+*because of* what the log shows, and you read the log to
+find out which rule went off. Two screens put a
+navigation step between question and answer.
 
-Also **ein Screen, drei Ansichten**, jede eine saubere Liste einer Sache, alle
-drei adressierbar:
+So **one screen, three views**, each a clean list of one thing, all
+three addressable:
 
-| Route | Inhalt |
+| Route | Content |
 |---|---|
-| `/alerts` | die Regeln, mit ihren Overrides |
-| `/alerts/rules/:name` | eine Regel: Konfiguration, Override, ihre Zustellungen |
-| `/alerts/channels` | wohin zugestellt wird, und welche Regel welchen Kanal nutzt |
-| `/alerts/deliveries` | was tatsächlich rausging, filterbar (Regel, Job, Status) |
+| `/alerts` | the rules, with their overrides |
+| `/alerts/rules/:name` | one rule: configuration, override, its deliveries |
+| `/alerts/channels` | where deliveries go, and which rule uses which channel |
+| `/alerts/deliveries` | what actually went out, filterable (rule, job, status) |
 
-**Zustellungen bleiben aus `/executions` heraus**, aus demselben Grund, aus dem
-Dead Letters einen eigenen Screen behalten haben: ein Job-Lauf und eine
-Alert-Zustellung sind verschiedene Dinge, die zufällig dieselbe Form haben. Sie
-zusammenzulegen hieße, dass „200 Läufe" zweierlei bedeutet.
+**Deliveries stay out of `/executions`**, for the same reason that
+dead letters kept their own screen: a job run and an
+alert delivery are different things that happen to have the same shape. Merging
+them would mean "200 runs" means two different things.
 
-Zwei Dinge, die der Kanal-Blick sichtbar macht und die vorher stumm waren: ein
-Kanal, den keine Regel nutzt (`unused`), und eine Regel, die einen Kanal nennt,
-den es nicht gibt — der Compiler behält die Referenz wörtlich und warnt erst
-zur Feuerzeit, die Regel sieht also konfiguriert aus und stellt nirgends zu.
+Two things the channel view makes visible that were mute before: a
+channel that no rule uses (`unused`), and a rule that names a channel
+that does not exist — the compiler keeps the reference verbatim and warns only
+at fire time, so the rule looks configured and delivers nowhere.
 
-## Reihenfolge für den Aufbau
+## Build order
 
-Der Zuschnitt steht; als Nächstes das Gerüst. Reihenfolge nach Abhängigkeit,
-nicht nach Größe:
+The cut is settled; the scaffold is next. Order by dependency,
+not by size:
 
-1. **Scaffold + Daten-Layer** — Vite/Vue-Projekt, Nuxt UI 4, Pinia-Stores mit
-   identischen localStorage-Keys, vue-query über `ofetch`, Dev-Proxy und die
-   WASM-Hooks unverändert übernommen.
-2. **Shell + Auth** — Navigation nach obigem Zuschnitt, Router-Guard *plus*
-   Watch auf `isAuthenticated` (Vue-Guards feuern nur bei Navigation), Login
-   inkl. MFA.
-3. **Runs-Liste** — der Screen, den drei andere ersetzt. Zuerst, weil Job- und
-   Runner-Detail auf ihn verlinken statt ihn nachzubauen.
-4. **Dashboard, Runner, Dead Letters** — bauen auf denselben Listen-Bausteinen.
-5. **Jobs** — der dickste Screen, profitiert am meisten von fertigen
-   Bausteinen. ✓ (Durchgang 6 in `ui-visual-design.md`)
-6. **Kalender** ✓ (Durchgang 7), **Alerts** ✓ (Durchgang 9),
-   **Settings** ✓ (Durchgang 10), **Konsole** ✓ (Durchgang 11).
+1. **Scaffold + data layer** — Vite/Vue project, Nuxt UI 4, Pinia stores with
+   identical localStorage keys, vue-query over `ofetch`, dev proxy and the
+   WASM hooks carried over unchanged.
+2. **Shell + auth** — navigation per the cut above, router guard *plus*
+   a watch on `isAuthenticated` (Vue guards only fire on navigation), login
+   including MFA.
+3. **Runs list** — the screen that replaces three others. First, because job and
+   runner detail link into it instead of rebuilding it.
+4. **Dashboard, runners, dead letters** — they build on the same list building blocks.
+5. **Jobs** — the thickest screen, benefits most from finished
+   building blocks. ✓ (pass 6 in `ui-visual-design.md`)
+6. **Calendars** ✓ (pass 7), **alerts** ✓ (pass 9),
+   **settings** ✓ (pass 10), **console** ✓ (pass 11).
 
-**Die Reihenfolge ist abgearbeitet.** Jede Route des Zuschnitts oben ist
-gebaut; der `NotBuiltYet`-Platzhalter ist entfernt. Offen bleibt das
-Abnahmekriterium selbst — siehe unten.
+**The order has been worked through.** Every route of the cut above is
+built; the `NotBuiltYet` placeholder is removed. What remains open is the
+acceptance criterion itself — see below.
 
-Abnahmekriterium pro Schritt bleibt die Playwright-Suite
-([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), Scope-Guard 2). Sie
-prüft Routen, Session, URL-Verträge und beide SSE-Flächen — nichts davon
-Optik.
+The acceptance criterion per step remains the Playwright suite
+([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md), scope guard 2). It
+asserts routes, session, URL contracts and both SSE surfaces — none of it
+appearance.

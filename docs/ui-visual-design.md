@@ -1,511 +1,510 @@
-# Visuelle Gestaltung — Bestandsaufnahme und Richtung
+# Visual design — stocktake and direction
 
-Stand: 2026-09-10.
+As of 2026-09-10.
 
-Dieses Dokument existiert, weil es gefehlt hat.
-[ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md) hielt fest, die
-Design-Phase liefere „das Design-System, die Komponenten-Bibliothek und das
-Screen-Inventar". Geliefert wurden Bibliothek (Nuxt UI 4) und Inventar
-([`ui-screen-inventory.md`](ui-screen-inventory.md)). **Das Design selbst hat
-nie jemand entschieden** — und weil es auf keiner Liste stand, sah die Lücke
-nach „kommt noch" aus statt nach „dafür ist niemand zuständig".
+This document exists because it was missing.
+[ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md) recorded that the
+design phase would deliver "the design system, the component library and the
+screen inventory". What was delivered was the library (Nuxt UI 4) and the inventory
+([`ui-screen-inventory.md`](ui-screen-inventory.md)). **The design itself was
+never decided by anyone** — and because it was on no list, the gap looked
+like "still to come" rather than "nobody is responsible for this".
 
-Der Vue-Baum ist **kein Prototyp**. ADR-0004 macht ihn zum Ersatz des
-ausgelieferten Dashboards; er muss dessen Niveau erreichen.
-
----
-
-## Bestandsaufnahme
-
-Ich hatte das React-Dashboard bis jetzt nur im Quelltext gelesen. Das ist keine
-Grundlage für „kein Rückschritt", also habe ich es aufgenommen und angesehen —
-alle elf Screens, angemeldet, mit den Demo-Daten des Dev-Stacks.
-`ui/scripts/capture-screens.mjs` macht das reproduzierbar. (Das Skript nahm
-damals einen Baum-Parameter; seit dem Cutover gibt es nur noch einen.)
-
-### Was es gut macht — die Liste, hinter die nicht zurückgefallen werden darf
-
-1. **Cards-Chrome auf Farbverlauf-Grund.** Sidebar, Topbar und Inhalt sind
-   abgerundete Karten mit Außenabstand auf einem violett-nach-blau laufenden
-   Grund. Das ist eigenständig und sieht nicht nach Bootstrap-Admin aus.
-2. **Eine eigene KPI-Sprache.** Versale Mikro-Beschriftung mit Sperrung, große
-   Zahl, erklärende Unterzeile, eingebettete Sparkline. Konsequent auf
-   Dashboard und Job-Detail.
-3. **Tag-Chips mit Zähler** (`env=demo 5`, `kind=ops 2`) als Filterleiste.
-4. **Job-Zeilen tragen ihre Historie.** Jede Zeile in der Job-Liste zeigt eine
-   Balken-Sparkline der letzten Läufe plus Erfolgsquote. Sehr viel Information
-   auf sehr wenig Fläche.
-5. **Definitionslisten als Detail-Schiene** — Beschriftung links, Wert rechts,
-   monospace wo es Werte sind. Hervorragend zu überfliegen.
-6. **Die Konsole.** Dunkles Terminal-Panel im hellen Chrome, Zeitstempel /
-   Level / Target / Nachricht in Spalten, strukturierte Felder gedimmt
-   angehängt, Level-Chips mit Farbpunkt. Der stärkste Screen.
-7. **Login als Produktseite.** Schlagzeile („Schedule. Observe. Recover."),
-   Positionierungstext, **echte Live-Kennzahlen aus dem öffentlichen
-   `/health`** und ein animiertes Terminal. Man sieht vor dem Anmelden, dass
-   der Server lebt.
-8. **Command-Palette** (Ctrl K) in der Topbar.
-9. Status-Pillen, monospace IDs als Links, relative Zeiten, rechtsbündige
-   Dauern.
-
-### Wo es schwach ist
-
-1. **Master/Detail wird uniform angewandt, auch wo es nichts zu zeigen gibt.**
-   Auf *Executions* steht das Detail-Panel leer und beansprucht ~60 % der
-   Fläche; auf *Runners* mit einem Runner sind es ~85 %. Der Farbverlauf
-   dominiert dann eine Fläche, die er nicht rahmt, sondern füllt.
-2. **Die Executions-Liste ist die unwirtschaftlichste Fläche der App.**
-   Jede Ausführung ist eine dreizeilige Karte (~88 px) — sichtbar sind sieben.
-   Als Tabelle wären es fünfundzwanzig. Und weil es keine Spalten gibt, kann
-   man Dauern nicht untereinander vergleichen. Ausgerechnet dieser Screen wird
-   laut Inventar die *eine* Ausführungsansicht.
-3. **Natives `<select>`** als Statusfilter — unstilisiert, bricht mit allem
-   anderen auf der Seite.
-4. **Spalten brechen um.** „29m ago" läuft im Job-Detail auf zwei Zeilen, in
-   jeder Zeile. Die Dichte ist gewollt, aber nicht zu Ende gerechnet.
-5. **Die Detail-Schiene wird unten abgeschnitten**, ohne dass etwas darauf
-   hinweist, dass unterhalb noch Inhalt liegt.
-
-Zusammengefasst: **starke Informationsgestaltung, schwache Layout-Robustheit.**
-Das ist eine gute Ausgangslage — das Schwierige ist da, das Fehlende ist
-handwerklich.
+The Vue tree is **not a prototype**. ADR-0004 makes it the replacement for the
+shipping dashboard; it has to reach that dashboard's level.
 
 ---
 
-## Übernommen, nicht entschieden
+## Stocktake
 
-Die Produktidentität existiert und wird nicht neu erfunden, solange niemand das
-Gegenteil beschließt:
+Until now I had only read the React dashboard in source. That is no
+basis for "no regression", so I captured it and looked at it —
+all eleven screens, signed in, with the demo data of the dev stack.
+`ui/scripts/capture-screens.mjs` makes that reproducible. (The script took
+a tree parameter back then; since the cutover there is only one.)
 
-- **Marke:** das Orbit-Zeichen aus `public/icons/mark-mono.svg`, portiert als
+### What it does well — the list nothing may fall short of
+
+1. **Card chrome on a gradient ground.** Sidebar, topbar and content are
+   rounded cards with an outer margin on a ground running from violet to
+   blue. That is distinctive and does not look like a Bootstrap admin.
+2. **A KPI language of its own.** An uppercase micro-label with letter spacing, a large
+   number, an explanatory subline, an embedded sparkline. Applied consistently on the
+   dashboard and the job detail.
+3. **Tag chips with counters** (`env=demo 5`, `kind=ops 2`) as a filter bar.
+4. **Job rows carry their history.** Every row in the job list shows a
+   bar sparkline of the recent runs plus a success rate. A great deal of information
+   in very little space.
+5. **Definition lists as the detail rail** — label on the left, value on the right,
+   monospace where they are values. Excellent to skim.
+6. **The console.** A dark terminal panel inside the light chrome, timestamp /
+   level / target / message in columns, structured fields dimmed and
+   appended, level chips with a colour dot. The strongest screen.
+7. **Login as a product page.** A headline ("Schedule. Observe. Recover."),
+   positioning copy, **real live metrics from the public
+   `/health`** and an animated terminal. You can see before signing in that
+   the server is alive.
+8. **A command palette** (Ctrl K) in the topbar.
+9. Status pills, monospace IDs as links, relative times, right-aligned
+   durations.
+
+### Where it is weak
+
+1. **Master/detail is applied uniformly, even where there is nothing to show.**
+   On *Executions* the detail panel stands empty and claims ~60% of the
+   area; on *Runners* with one runner it is ~85%. The gradient then
+   dominates an area it does not frame but fills.
+2. **The executions list is the least economical surface in the app.**
+   Every execution is a three-line card (~88 px) — seven are visible.
+   As a table it would be twenty-five. And because there are no columns, you
+   cannot compare durations against each other. Of all screens, this one becomes
+   the *one* execution view per the inventory.
+3. **A native `<select>`** as the status filter — unstyled, breaks with everything
+   else on the page.
+4. **Columns wrap.** "29m ago" runs onto two lines in the job detail, in
+   every row. The density is intended, but not worked out to the end.
+5. **The detail rail is cut off at the bottom**, with nothing indicating
+   that there is more content below.
+
+In summary: **strong information design, weak layout robustness.**
+That is a good starting position — the hard part is there, what is missing is
+craft.
+
+---
+
+## Carried over, not decided
+
+The product identity exists and is not reinvented as long as nobody decides
+otherwise:
+
+- **Mark:** the orbit sign from `public/icons/mark-mono.svg`, ported as
   `app/components/BrandMark.vue`.
-- **Markenfarbe:** `#6A54DF` als Ramp mit 500 auf dem Markenwert.
-- **Icon-Satz:** vollständig übernommen, inklusive Manifest.
+- **Brand colour:** `#6A54DF` as a ramp with 500 on the brand value.
+- **Icon set:** carried over in full, including the manifest.
 
 ---
 
-## Richtung
+## Direction
 
-### Behalten
+### Keep
 
-Cards-Chrome samt Grund, die KPI-Sprache, die Tag-Chips, die Historie in
-Listenzeilen, die Definitionslisten, die Konsole als dunkles Terminal, und den
-Login als Produktseite mit echten Kennzahlen.
+The card chrome including its ground, the KPI language, the tag chips, the history in
+list rows, the definition lists, the console as a dark terminal, and the
+login as a product page with real metrics.
 
-### Ändern
+### Change
 
-- **Listen sind Listen.** Master/Detail nur, wo das Detail auch gebraucht wird.
-  Runs wird eine echte Tabelle mit Spalten; das Detail öffnet als Seitenpanel
-  oder eigene Route, statt dauerhaft zwei Drittel der Fläche leer zu belegen.
-- **Eine Dichte, festgelegt an einer Stelle.** Die Tabelle im Job-Detail hat
-  die richtige Dichte; sie wird der Maßstab, inklusive Spaltenbreiten, die
-  nicht umbrechen.
-- **Leerzustände verdienen ihre Fläche.** Ein Symbol plus zwei Zeilen in einem
-  60-%-Panel ist kein Leerzustand, sondern eine Lücke mit Beschriftung.
-- **Filter sind Komponenten**, keine nativen Steuerelemente.
+- **Lists are lists.** Master/detail only where the detail is actually needed.
+  Runs becomes a real table with columns; the detail opens as a side panel
+  or its own route, instead of permanently occupying two thirds of the area empty.
+- **One density, fixed in one place.** The table in the job detail has
+  the right density; it becomes the benchmark, including column widths that
+  do not wrap.
+- **Empty states earn their area.** A symbol plus two lines in a
+  60% panel is not an empty state but a gap with a label.
+- **Filters are components**, not native controls.
 
-### Neue Impulse
+### New impulses
 
-Der Punkt, den ich beim Ansehen am stärksten vermisst habe:
+The point I missed most while looking at it:
 
-**Croniq zeigt überall die Vergangenheit und nirgends die Zukunft.** Es ist ein
-Scheduler — das Interessanteste ist, was *gleich* passiert. „NEXT FIRE in 33s"
-existiert genau einmal, im Detail eines einzelnen Jobs. Eine kompakte
-Vorschau-Schiene („was feuert in der nächsten Stunde") wäre echter neuer Wert
-und nutzt Daten, die der Server über `/v1/jobs/states` und den Forecast bereits
-liefert.
+**Croniq shows the past everywhere and the future nowhere.** It is a
+scheduler — the most interesting thing is what happens *next*. "NEXT FIRE in 33s"
+exists exactly once, in the detail of a single job. A compact
+preview rail ("what fires in the next hour") would be real new value
+and uses data the server already delivers via `/v1/jobs/states` and the forecast.
 
-Weitere Kandidaten, schwächer begründet:
+Further candidates, more weakly argued:
 
-- **Die Failure-Heatmap zur Hauptantwort machen.** Sie beantwortet „ist etwas
-  kaputt" besser als jede Zahl, ist aber klein, unbeschriftet und steht unten
-  rechts.
-- **Tastatur zuerst.** Ctrl K gibt es; `j`/`k` in Listen und Enter zum Öffnen
-  passen zu einem Betriebswerkzeug und kosten wenig.
-- **Dichte-Umschalter** (kompakt/komfortabel). Betreiber sind sich hier
-  uneinig, und die Entscheidung muss nicht global fallen.
-- **Dunkelmodus gleichwertig.** Heute ist die App hell mit einer dunklen
-  Konsole. Für ein Werkzeug, in dem Leute Stunden verbringen, ist das eine
-  offene Frage, keine Antwort.
+- **Make the failure heatmap the main answer.** It answers "is something
+  broken" better than any number, but is small, unlabelled and sits at the bottom
+  right.
+- **Keyboard first.** Ctrl K exists; `j`/`k` in lists and Enter to open
+  suit an operations tool and cost little.
+- **A density switch** (compact/comfortable). Operators disagree here,
+  and the decision does not have to be taken globally.
+- **Dark mode as an equal.** Today the app is light with a dark
+  console. For a tool in which people spend hours, that is an
+  open question, not an answer.
 
 ---
 
-## Vorgehen
+## Approach
 
-In Durchgängen, mit Haltepunkten — nicht in einem Rutsch. Genau das
-Nacheinander gibt Gelegenheit, gegenzusteuern, bevor eine Entscheidung in
-sieben Screens steckt.
+In passes, with stopping points — not in one go. It is precisely that
+sequence that gives an opportunity to correct course before a decision is baked into
+seven screens.
 
-| # | Inhalt | Ergebnis, an dem man es beurteilen kann |
+| # | Content | Result you can judge it by |
 |---|---|---|
-| 1 | Bestandsaufnahme und Richtung | dieses Dokument |
-| 2 ✓ | Fundament: Chrome, Grund, Dichte, Typografie, Zustände (leer/lädt/Fehler) | Shell und Login sehen aus wie das Produkt |
-| 3 ✓ | Runs als erster echter Screen | die Richtung ist an der schwierigsten Liste bewiesen |
-| 4 ✓ | Dashboard, Runners, Dead Letters | die Bausteine tragen |
-| 5 | Jobs, danach der Rest | — |
+| 1 | Stocktake and direction | this document |
+| 2 ✓ | Foundation: chrome, ground, density, typography, states (empty/loading/error) | shell and login look like the product |
+| 3 ✓ | Runs as the first real screen | the direction is proven on the hardest list |
+| 4 ✓ | Dashboard, runners, dead letters | the building blocks hold |
+| 5 | Jobs, then the rest | — |
 
-Nach jedem Durchgang: Aufnahmen beider Bäume nebeneinander
-(`node ui/scripts/capture-screens.mjs …`), damit „kein Rückschritt"
-eine Feststellung bleibt und keine Behauptung wird.
-
----
-
-## Nachtrag: was das Testnetz nicht sieht
-
-Die Playwright-Suite prüft Routen, Session, URL-Verträge und SSE — nichts davon
-Optik. Das ist Absicht ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md),
-Scope-Guard 2), hatte aber eine Konsequenz: das Theme war eine Zeit lang **gar
-nicht aktiv**. `@theme` statt `@theme static` ließ Tailwind die gesamte
-Farb-Ramp wegoptimieren, sodass jedes `bg-primary` transparent auflöste. Alle
-Verhaltensprüfungen blieben grün.
-
-`ui/app/lib/theme.test.ts` schließt die billige Hälfte dieser Lücke. Die
-teure Hälfte — ob es *gut aussieht* — schließt kein Test, sondern Hinsehen.
-Deshalb das Aufnahme-Skript.
+After every pass: captures of both trees side by side
+(`node ui/scripts/capture-screens.mjs …`), so that "no regression"
+stays a finding and does not become a claim.
 
 ---
 
-## Durchgang 2 — was entschieden wurde
+## Postscript: what the test net does not see
 
-**Grund.** Getönt, nicht weiß, mit zwei schwachen Radialverläufen in
-gegenüberliegenden Ecken. Der erste Versuch war 9 % Marke auf Weiß und damit
-unsichtbar; die Ursache lag aber tiefer als die Deckkraft — bei weißem Grund
-*und* weißen Karten gibt es nichts, worüber die Karten schweben könnten. Jetzt
-ist der Grund getönt und die Karten sind opak.
+The Playwright suite asserts routes, session, URL contracts and SSE — none of it
+appearance. That is deliberate ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md),
+scope guard 2), but it had a consequence: for a while the theme was **not
+active at all**. `@theme` instead of `@theme static` let Tailwind optimise the entire
+colour ramp away, so that every `bg-primary` resolved to transparent. All
+behavioural checks stayed green.
 
-**Dunkel ist gleichwertig.** Nicht die invertierte Helligkeit, sondern ein
-eigener Grund aus denselben zwei Ankern mit anderen Gewichten. Das React-Baum
-ist hell mit eingebetteter dunkler Konsole; für ein Werkzeug, das den ganzen
-Tag offen ist, war das die Frage wert.
-
-**Dichte an einer Stelle.** `--cq-row-h` (2,375 rem), `--cq-cell-x`, `--cq-cell-y`
-und die Utilities `cq-label` / `cq-num`. Die Maße stammen aus der Tabelle im
-Job-Detail des React-Baums, die als einzige die richtige Dichte hat. `cq-num`
-setzt `tabular-nums` *und* `white-space: nowrap` — letzteres gegen genau den
-Defekt, den das Audit fand: „29m ago" auf zwei Zeilen in jeder Zeile.
-
-**Zustände.** `AppEmpty`, `AppLoading`, `AppError`. Zwei Entscheidungen darin,
-die über Kosmetik hinausgehen: `AppEmpty` hat einen `action`-Slot, weil ein
-Leerzustand, der nur Leere meldet, den einen Moment verschenkt, in dem jemand
-sicher nach einem nächsten Schritt sucht. Und `AppError` bietet „Try again"
-**nicht** bei 403 und 404 an — eine Schaltfläche, die eine abschließende
-Antwort zu wiederholen verspricht, erzieht dazu, sie sinnlos zu drücken.
-Serverseitige Fehlermeldungen bleiben erhalten; Croniqs API sagt Nützliches,
-und das durch ein freundliches Allgemeines zu ersetzen macht das eigene Backend
-schwerer zu betreiben.
-
-**Login als Produktseite.** Schlagzeile, Positionierung und drei Kacheln mit
-echten Zahlen aus dem öffentlichen `/health`, plus Build-Zeile. Übernommen,
-weil die erste Frage bei selbst gehosteter Software „läuft das überhaupt" ist
-und diese Seite sie beantworten kann, bevor man Zugangsdaten hat.
-
-**Nicht übernommen:** das simulierte Terminal, das einen Befehl tippt, den
-niemand ausführt. Es ist charmant und unecht, und die ehrliche Fassung
-derselben Idee — der tatsächliche Serverzustand — steht bereits daneben.
-
-### Offen geblieben
-
-- ~~Dichte-Umschalter~~ und ~~Tastatur~~ — beides in Durchgang 3 gelandet.
-- **Command-Palette.** Der React-Baum hat sie, dieser noch nicht.
-- **Die Vorschau-Schiene** („was feuert als Nächstes") aus den neuen Impulsen —
-  gehört zum Dashboard, also Durchgang 4.
+`ui/app/lib/theme.test.ts` closes the cheap half of that gap. The
+expensive half — whether it *looks good* — is closed by no test, but by looking.
+Hence the capture script.
 
 ---
 
-## Durchgang 3 — Runs
+## Pass 2 — what was decided
 
-Der Screen, der drei ersetzt, und im React-Baum der schwächste war. Gemessen
-statt behauptet:
+**Ground.** Tinted, not white, with two weak radial gradients in
+opposite corners. The first attempt was 9% brand on white and therefore
+invisible; but the cause lay deeper than the opacity — with a white ground
+*and* white cards there is nothing for the cards to float above. Now
+the ground is tinted and the cards are opaque.
+
+**Dark is an equal.** Not inverted lightness, but a
+ground of its own from the same two anchors with different weights. The React tree
+is light with an embedded dark console; for a tool that is open all
+day, that was worth the question.
+
+**Density in one place.** `--cq-row-h` (2.375 rem), `--cq-cell-x`, `--cq-cell-y`
+and the utilities `cq-label` / `cq-num`. The measurements come from the table in the
+job detail of the React tree, which is the only one with the right density. `cq-num`
+sets `tabular-nums` *and* `white-space: nowrap` — the latter against exactly the
+defect the audit found: "29m ago" on two lines in every row.
+
+**States.** `AppEmpty`, `AppLoading`, `AppError`. Two decisions in them
+that go beyond cosmetics: `AppEmpty` has an `action` slot, because an
+empty state that only reports emptiness wastes the one moment in which someone
+is certainly looking for a next step. And `AppError` does **not** offer "Try again"
+on 403 and 404 — a button that promises to repeat a final
+answer trains people to press it pointlessly.
+Server-side error messages are preserved; croniq's API says useful things,
+and replacing that with a friendly generic makes your own backend
+harder to operate.
+
+**Login as a product page.** Headline, positioning and three tiles with
+real numbers from the public `/health`, plus a build line. Carried over,
+because the first question with self-hosted software is "is this even running"
+and this page can answer it before you have credentials.
+
+**Not carried over:** the simulated terminal that types a command
+nobody runs. It is charming and inauthentic, and the honest version
+of the same idea — the actual server state — is already standing next to it.
+
+### Left open
+
+- ~~Density switch~~ and ~~keyboard~~ — both landed in pass 3.
+- **Command palette.** The React tree has one, this one does not yet.
+- **The preview rail** ("what fires next") from the new impulses —
+  belongs to the dashboard, so pass 4.
+
+---
+
+## Pass 3 — Runs
+
+The screen that replaces three, and the weakest one in the React tree. Measured
+instead of claimed:
 
 | | React | Vue |
 |---|---|---|
-| Zeilenhöhe | ~88 px (dreizeilige Karten) | **38 px**, alle 200 identisch |
-| Sichtbare Läufe | 7 | ~20 **mit geöffnetem Detail** |
-| Spalten | keine | State, Job, Run, Runner, Fired, Duration |
-| Detail-Panel leer | belegt ~60 % | wird gar nicht erst gerendert |
-| Statusfilter | natives `<select>` | `USelectMenu` |
+| Row height | ~88 px (three-line cards) | **38 px**, all 200 identical |
+| Visible runs | 7 | ~20 **with the detail open** |
+| Columns | none | State, Job, Run, Runner, Fired, Duration |
+| Empty detail panel | occupies ~60% | is not rendered at all |
+| Status filter | native `<select>` | `USelectMenu` |
 
-**Das Detail ersetzt die Liste nicht, es steht daneben.** `/executions/:id`
-rendert dieselbe Komponente — der Link bleibt teilbar, die Liste behält Scroll
-und Filter. Verifiziert: nach dem Zeilenklick steht die URL auf
-`/executions/<id>?state=completed`, das Panel ist da, die Tabelle auch.
+**The detail does not replace the list, it stands beside it.** `/executions/:id`
+renders the same component — the link stays shareable, the list keeps its scroll
+and filters. Verified: after clicking a row the URL reads
+`/executions/<id>?state=completed`, the panel is there and so is the table.
 
-**Die Reaktivitätsfalle.** `useExecutions` nimmt einen *Getter*, keinen Wert.
-Das ist das im Migrationsplan meistgenannte Risiko: mit einem einfachen Objekt
-frieren Query-Key und Anfrage auf dem ersten Render ein, die Seite rendert neu
-und zeigt stillschweigend die alten Zeilen. `toValue` in `queryKey` *und*
-`queryFn` ist, was die Abfrage erneut laufen lässt.
+**The reactivity trap.** `useExecutions` takes a *getter*, not a value.
+That is the risk named most often in the migration plan: with a plain object
+the query key and the request freeze on the first render, the page re-renders
+and silently shows the old rows. `toValue` in `queryKey` *and*
+`queryFn` is what makes the query run again.
 
-**Ein neuer Impuls eingelöst:** Tastaturnavigation (`j`/`k`, Enter, Escape —
-und sie stiehlt keine Tasten aus Eingabefeldern). Sie brauchte eine Liste, um
-sinnvoll zu sein.
+**One new impulse redeemed:** keyboard navigation (`j`/`k`, Enter, Escape —
+and it steals no keys from input fields). It needed a list to be
+useful.
 
-> **Nachtrag (Durchgang 5).** Hier stand ein zweiter Impuls: ein
-> Dichte-Umschalter unter `croniq_density`. Der ist wieder draußen — die
-> Begründung steht unten.
+> **Postscript (pass 5).** A second impulse stood here: a
+> density switch under `croniq_density`. It is out again — the
+> reasoning is below.
 
 
-**Ein Befund beim Ansehen:** die Run-Spalte brach mit dem Attempt-Marker `#2`
-auf zwei Zeilen um — genau die Fehlerklasse, gegen die `cq-num` gebaut wurde,
-nur hatte ich das Utility auf dieser Zelle vergessen. Jetzt sind alle 200
-Zeilen exakt 38 px.
+**One finding from looking:** the Run column wrapped onto two lines with the
+attempt marker `#2` — exactly the class of defect `cq-num` was built against,
+except that I had forgotten the utility on that cell. Now all 200
+rows are exactly 38 px.
 
-### Noch offen an diesem Screen
+### Still open on this screen
 
-- ~~**Zeitfenster-Filter.**~~ ✓ Durchgang 14 — und der Server konnte es
-  *doch nicht* ganz: `ExecutionFilter` trug `since`/`until` von Anfang an, der
-  HTTP-Handler las die Parameter nur nie.
-- ~~**Nachladen.**~~ ✓ Durchgang 14.
-- **Verlinkung** von Job und Runner in die jeweiligen Screens, sobald es sie
-  gibt.
+- ~~**Time-window filter.**~~ ✓ Pass 14 — and the server *could not* quite
+  do it after all: `ExecutionFilter` carried `since`/`until` from the start, the
+  HTTP handler just never read the parameters.
+- ~~**Loading more.**~~ ✓ Pass 14.
+- **Links** from job and runner into their respective screens, once they
+  exist.
 
 ---
 
-## Durchgang 4 — Dashboard, Runners, Dead Letters
+## Pass 4 — dashboard, runners, dead letters
 
-**Die Vorschau-Schiene ist da, und sie kostete keine Server-Arbeit.**
-`/v1/dashboard/forecast` existiert seit jeher — das React-Dashboard ruft ihn nur
-nie auf, allein die Jobs-Seite tut es. Der schärfste Audit-Befund („zeigt
-überall die Vergangenheit, nirgends die Zukunft") war also eine fehlende
-Abfrage, keine fehlenden Daten.
+**The preview rail is there, and it cost no server work.**
+`/v1/dashboard/forecast` has always existed — the React dashboard just never
+calls it, only the jobs page does. The sharpest audit finding ("shows the past
+everywhere, the future nowhere") was therefore a missing
+query, not missing data.
 
-Die Schiene nutzt zwei Quellen, absichtlich: `jobs/states` liefert den exakten
-nächsten Feuerzeitpunkt je Job — das, was ein Betreiber liest —, der Forecast
-die Form der nächsten Stunde in Buckets, also „und dann wird es voll". Eine
-Liste allein verbirgt die Last, ein Histogramm allein die Namen. Überfällige
-Jobs stehen darüber und nicht mittendrin: sie sind nicht „demnächst", sie sind
-zu spät.
+The rail uses two sources, deliberately: `jobs/states` delivers the exact
+next fire time per job — what an operator reads — and the forecast
+gives the shape of the next hour in buckets, that is, "and then it gets busy". A
+list alone hides the load, a histogram alone hides the names. Overdue
+jobs stand above it and not in the middle of it: they are not "coming up", they are
+late.
 
-**Dashboard** wie im Inventar beschlossen — Statusboard plus *ausschließlich*
-Fehlschläge, keine allgemeine Lauf-Liste. Die wäre das vierte Rendering
-derselben Tabelle gewesen. Die Failure-Heatmap ist aus der unteren rechten Ecke
-nach oben gewandert und hat Wochentags- und Stundenbeschriftung bekommen; sie
-beantwortet „ist etwas kaputt" besser als jede Zahl daneben.
+**The dashboard** as decided in the inventory — a status board plus *only*
+failures, no general run list. That would have been the fourth rendering
+of the same table. The failure heatmap has moved up from the bottom right corner
+and got weekday and hour labels; it
+answers "is something broken" better than any number next to it.
 
-**Runners** verliert das Master/Detail. Mit einem Runner waren im React-Baum
-~85 % der Fläche ein leeres Panel. Alles, was das Detail zeigte, ist entweder
-ein Feld, das in die Zeile passt, oder eine Lauf-Liste — und Läufe leben jetzt
-an einem Ort, also verlinkt die Zeile dorthin. Der SSE-Kern aus #585 bekommt
-hier seinen ersten Verbraucher, mit `shallowRef` für die Zeilen: jeder Frame
-ersetzt das ganze Array.
+**Runners** loses its master/detail. With one runner, ~85% of the area in the
+React tree was an empty panel. Everything the detail showed is either
+a field that fits in the row or a run list — and runs now live
+in one place, so the row links there. The SSE core from #585 gets
+its first consumer here, with `shallowRef` for the rows: every frame
+replaces the whole array.
 
-**Dead Letters** behält den eigenen Screen, wie entschieden. Neu gegenüber der
-React-Fassung: eine abgelehnte Wiedervorlage zeigt die Begründung des Servers.
-Der Stale-Replay-Guard lehnt ab, wenn der logische Feuerzeitpunkt älter ist als
-die Policy erlaubt — das ist eine Entscheidung, kein Fehler, und „Replay
-failed" verschweigt sie.
+**Dead Letters** keeps its own screen, as decided. New compared with the
+React version: a rejected replay shows the server's reasoning.
+The stale-replay guard rejects when the logical fire time is older than
+the policy allows — that is a decision, not an error, and "Replay
+failed" conceals it.
 
-### Beim Ansehen gefunden
+### Found by looking
 
-Das Durchsatz-Diagramm war leer, obwohl „186 runs" danebenstand: Prozenthöhen
-in einem Zwischen-`div` ohne definierte Höhe lösen zu null auf. Sichtbar nur
-durch Hinsehen — kein Test hätte das gemeldet.
+The throughput chart was empty even though "186 runs" stood next to it: percentage heights
+in an intermediate `div` without a defined height resolve to zero. Visible only
+by looking — no test would have reported it.
 
-## Durchgang 5 — Dichte und Scrollverhalten
+## Pass 5 — density and scroll behaviour
 
-Zwei Korrekturen an bereits Gebautem, beide aus dem Betrachten heraus.
+Two corrections to things already built, both out of looking at them.
 
-### Der Dichte-Umschalter ist wieder draußen
+### The density switch is out again
 
-Er war in Durchgang 3 als „neuer Impuls" eingezogen, und das war die falsche
-Einordnung. Ein Dichte-Regler gibt dem Lesenden ein Problem zurück, das das
-Design hätte lösen sollen — und er verdoppelt die Arbeit dauerhaft: jede
-künftige Tabelle muss in zwei Dichten richtig aussehen, sonst ist eine davon
-die schlechtere. `comfortable` gewinnt, weil diese Zeilen eine Status-Pille und
-monospaced Ids tragen; beides braucht den Durchschuss.
+It moved in during pass 3 as a "new impulse", and that was the wrong
+classification. A density control hands the reader back a problem that the
+design should have solved — and it doubles the work permanently: every
+future table has to look right at two densities, otherwise one of them is
+the worse one. `comfortable` wins because these rows carry a status pill and
+monospaced ids; both need the leading.
 
-Die Zeilenhöhe steht jetzt als `@utility cq-row` in `main.css` statt als
-Konstante in drei Views. Das war vorher dreimal derselbe Kommentar — ein
-verlässliches Zeichen, dass die Entscheidung eine Ebene zu tief lag.
+The row height now lives as `@utility cq-row` in `main.css` instead of as a
+constant in three views. It was previously the same comment three times over — a
+reliable sign that the decision sat one level too low.
 
-Der Schlüssel `croniq_density` wird nicht mehr gelesen und nicht mehr
-geschrieben; ein Rest im `localStorage` eines Entwicklerbrowsers ist folgenlos.
+The key `croniq_density` is no longer read and no longer
+written; a leftover in the `localStorage` of a developer's browser has no consequence.
 
-### Es scrollt die Liste, nicht die Seite
+### The list scrolls, not the page
 
-Filter, Spaltenköpfe und der Wartungsbanner wanderten beim Scrollen mit nach
-oben. Die Ursache ist dieselbe Klasse wie das leere Durchsatz-Diagramm aus
-Durchgang 4, nur andersherum: die Shell war `min-h-screen`. Eine
-*Mindest*höhe ist keine definite Höhe, also löste `h-full` in jeder Listenseite
-zu `auto` auf, ihr `overflow-auto`-Container wuchs mit dem Inhalt statt zu
-scrollen — und was dann scrollte, war das Dokument.
+Filters, column headers and the maintenance banner travelled up along with the scroll.
+The cause is the same class as the empty throughput chart from
+pass 4, just the other way round: the shell was `min-h-screen`. A
+*minimum* height is not a definite height, so `h-full` in every list page
+resolved to `auto`, its `overflow-auto` container grew with the content instead of
+scrolling — and what then scrolled was the document.
 
-Die Kette, damit es trägt:
+The chain that makes it hold:
 
-| Ebene | vorher | jetzt |
+| Level | before | now |
 | --- | --- | --- |
-| Shell-Wurzel | `min-h-screen` | `h-screen overflow-hidden` |
-| `<main>` | `overflow-y-auto`, Block | `flex flex-col min-h-0 overflow-hidden` |
-| Wartungsbanner | scrollt mit | `shrink-0`, steht |
-| Scrollbereich | — | ein `min-h-0 flex-1 overflow-y-auto` um `<RouterView>` |
+| Shell root | `min-h-screen` | `h-screen overflow-hidden` |
+| `<main>` | `overflow-y-auto`, block | `flex flex-col min-h-0 overflow-hidden` |
+| Maintenance banner | scrolls along | `shrink-0`, stays put |
+| Scroll area | — | a `min-h-0 flex-1 overflow-y-auto` around `<RouterView>` |
 
-Dieser eine Bereich bedient beide Seitenformen, und das ist der Grund, ihn in
-der Shell zu haben statt in jeder Seite: eine dokumentförmige Seite (das
-Dashboard) ist höher als die Box und scrollt darin; eine listenförmige Seite
-setzt `h-full`, ist damit exakt die Box, nichts läuft über, und das einzige,
-was sich bewegt, ist der Tabellenkörper in seinem eigenen Rahmen. Sidebar,
-Kopfzeile und die Filterleiste über der Liste stehen in beiden Fällen.
+That one area serves both page shapes, and that is the reason to have it in
+the shell instead of in every page: a document-shaped page (the
+dashboard) is taller than the box and scrolls inside it; a list-shaped page
+sets `h-full`, is thereby exactly the box, nothing overflows, and the only thing
+that moves is the table body in its own frame. Sidebar,
+header and the filter bar above the list stay put in both cases.
 
-## Durchgang 6 — Jobs
+## Pass 6 — Jobs
 
-Der dickste Screen, und der, an dem die Bestandsaufnahme am deutlichsten war:
-sechs Tabs, zwei davon dieselbe Executions-Tabelle mit unterschiedlichem
-Zeilenlimit.
+The thickest screen, and the one on which the stocktake was clearest:
+six tabs, two of them the same executions table with a different
+row limit.
 
-### Sechs Tabs auf zwei
+### Six tabs down to two
 
-| Tab | wohin |
+| Tab | where to |
 | --- | --- |
-| Overview | bleibt — und nimmt *Schedule* auf |
-| Executions | entfällt; Kopfzeile verlinkt `/executions?job_key=…` |
-| Schedule | in die Übersicht; es sind vier Felder |
-| DSL | bleibt |
+| Overview | stays — and takes in *Schedule* |
+| Executions | dropped; the header links to `/executions?job_key=…` |
+| Schedule | into the overview; it is four fields |
+| DSL | stays |
 | Alerts | `/alerts` |
-| Audit | Audit-Log in den Einstellungen |
+| Audit | audit log in the settings |
 
-*Schedule* in die Übersicht zu holen war die Entscheidung mit dem größten
-Effekt: die Regel eines Jobs ist das Erste, was jemand wissen will, der einen
-Job öffnet. Sie einen Klick entfernt zu halten machte die Übersicht zu einer
-Feldliste, in der genau das Wichtige fehlte.
+Pulling *Schedule* into the overview was the decision with the largest
+effect: a job's rule is the first thing someone wants to know who opens a
+job. Keeping it one click away turned the overview into a
+field list that was missing exactly the important thing.
 
-### Die Liste beantwortet jetzt die Frage, für die man sie öffnete
+### The list now answers the question you opened it for
 
-Die React-Liste war eine Spalte Namen. „Wann läuft das nächste Mal" und „ist
-etwas zu spät" beantwortete man, indem man Jobs einzeln aufmachte. Drei
-Endpunkte hatten die Antwort und wurden hier nie zusammengeführt:
-`/v1/jobs` (Definition), `/v1/jobs/states` (nächster/letzter Lauf, `overdue`,
-Lebenszyklus) und `/v1/schedules` (die Regeln). Die neue Liste joint sie und
-sortiert überfällige nach oben.
+The React list was one column of names. "When does this run next" and "is
+something late" were answered by opening jobs one at a time. Three
+endpoints had the answer and were never joined here:
+`/v1/jobs` (definition), `/v1/jobs/states` (next/last run, `overdue`,
+lifecycle) and `/v1/schedules` (the rules). The new list joins them and
+sorts overdue ones to the top.
 
-Neu gegenüber der React-Fassung ist außerdem, dass *Quelle* eine Spalte ist:
-Croniqfile-verwaltet oder API-verwaltet. Vorher war das eine Eigenschaft, die
-man erst bemerkte, wenn ein Button ausgegraut war.
+Also new compared with the React version is that *source* is a column:
+Croniqfile-managed or API-managed. Previously that was a property you
+only noticed when a button was greyed out.
 
-### Drei Befunde beim Hinsehen
+### Three findings from looking
 
-**Die Tag-Chips tragen nicht.** Aus der Runner-Liste übernommen, wo eine Flotte
-eine Handvoll Tags hat. Jobs sind nach Team, Umgebung *und* Art getaggt — schon
-die Demo hat sieben, und die Reihe schob Zähler und Primäraktion aus der
-Werkzeugleiste. Jetzt ein Menü, dessen Breite nicht von der Tag-Anzahl abhängt.
+**The tag chips do not hold up.** Carried over from the runner list, where a fleet
+has a handful of tags. Jobs are tagged by team, environment *and* kind — even
+the demo has seven, and the row pushed the counter and the primary action out of the
+toolbar. Now a menu whose width does not depend on the number of tags.
 
-**„just now" ist in einer Zukunftsspalte die falsche Zeitform.**
-`formatRelative` sagt das innerhalb seiner Fünf-Sekunden-Schwelle, und in der
-Spalte *Next fire* liest es sich als Vergangenheit. Dort steht jetzt „due now".
+**"just now" is the wrong tense in a future column.**
+`formatRelative` says that within its five-second threshold, and in the
+*Next fire* column it reads as the past. It now says "due now" there.
 
-**Spalten, die neben dem offenen Detail nicht passen, werden weggelassen statt
-abgeschnitten.** Mit geöffnetem Detail war die Tabelle rechts hart beschnitten
-— der Container scrollt zwar horizontal, aber ohne sichtbaren Hinweis. *Last
-fire*, *Fires* und *Source* verschwinden jetzt, solange ein Job offen ist.
+**Columns that do not fit next to the open detail are omitted rather than
+cut off.** With the detail open the table was hard-clipped on the right
+— the container does scroll horizontally, but with no visible cue. *Last
+fire*, *Fires* and *Source* now disappear while a job is open.
 
-Und eine Korrektur an der eigenen Dichte-Entscheidung aus Durchgang 5: die
-Job-Zeile ist die einzige zweizeilige im Produkt (Key über Beschreibung) und
-bekommt mit 49 px die Höhe, die zwei Zeilen brauchen. `cq-row` ist für
-Tabellenzeilen ohnehin ein Minimum, kein Fixwert — genau dafür.
+And a correction to my own density decision from pass 5: the
+job row is the only two-line row in the product (key above description) and
+gets, at 49 px, the height two lines need. `cq-row` is a minimum for
+table rows anyway, not a fixed value — for exactly this.
 
-### Geprüft
+### Checked
 
-`ui/scripts/write-paths.mjs` fährt zwölf Schreibpfade gegen den Dev-Stack:
-anlegen, Schedule anhängen, deaktivieren/aktivieren, triggern, pausieren/
-fortsetzen, bearbeiten, DSL rendern, adoptieren, löschen. Alle zwölf grün, und
-die Ablehnung der Adoption kommt im Wortlaut des Servers an:
+`ui/scripts/write-paths.mjs` drives twelve write paths against the dev stack:
+create, attach a schedule, disable/enable, trigger, pause/
+resume, edit, render DSL, adopt, delete. All twelve green, and
+the rejection of the adoption arrives in the server's own wording:
 
 > DSL adoption is disabled — set `policy { dsl_adopt_on_mutate true }` in the
 > Croniqfile to enable
 
-Dazu zehn Unit-Tests für `renderDsl`.
+Plus ten unit tests for `renderDsl`.
 
-### Noch offen an diesem Screen
+### Still open on this screen
 
-- **Der Vue-Baum hat keine e2e-Suite.** Das Abnahmekriterium aus ADR-0004 ist
-  die Playwright-Suite, die aber gegen das *gebaute* React-Dashboard auf 4233
-  läuft. Bis der Vue-Baum dort ein eigenes Projekt hat, ist
-  `vue-write-paths.mjs` ein Notbehelf und heißt in seinem Kopf auch so.
-- **Zwei `401` beim Kaltstart.** Nicht aus dieser Arbeit, aber hier gemessen:
-  `runRefresh` wiederholt einmal, weil ein anderer Tab den Refresh-Token
-  rotiert haben könnte. Beim allerersten Besuch gibt es gar kein Cookie, und
-  der Wiederholungsversuch ist garantiert vergeblich. Server und Client
-  unterscheiden „kein Cookie präsentiert" und „Cookie abgelehnt" beide nicht —
-  der Kommentar im Handler nennt das sogar ausdrücklich als Absicht. Eigener
-  Vorgang.
-- **Kalender-Auswahl im Schedule-Editor** listet Namen, aber es gibt noch
-  keinen Kalender-Screen, auf dem man einen anlegen könnte (Durchgang 7).
+- **The Vue tree has no e2e suite.** The acceptance criterion from ADR-0004 is
+  the Playwright suite, but that runs against the *built* React dashboard on 4233.
+  Until the Vue tree has a project of its own there,
+  `vue-write-paths.mjs` is a stopgap and says so in its header.
+- **Two `401`s on a cold start.** Not from this work, but measured here:
+  `runRefresh` retries once, because another tab might have rotated the refresh
+  token. On the very first visit there is no cookie at all, and
+  the retry is guaranteed to be futile. Neither server nor client
+  distinguishes "no cookie presented" from "cookie rejected" —
+  the comment in the handler even names that explicitly as intent. A separate
+  matter.
+- **The calendar picker in the schedule editor** lists names, but there is still
+  no calendar screen on which one could be created (pass 7).
 
-## Durchgang 7 — Kalender
+## Pass 7 — Calendars
 
-Schritt 6 der Aufbaureihenfolge, angefangen beim Kalender-Screen, weil der
-Schedule-Editor aus Durchgang 6 bereits Kalendernamen anbietet und es bis jetzt
-keinen Ort gab, an dem man einen anlegt.
+Step 6 of the build order, started with the calendar screen, because the
+schedule editor from pass 6 already offers calendar names and until now
+there was no place to create one.
 
-### Was der Screen jetzt beantwortet
+### What the screen now answers
 
-Die React-Fassung zeigte Name, Zone und den Regeltext. Damit ist die eine
-Frage, für die man einen Kalender öffnet — *tut das Gate, was ich meine?* —
-nirgends im Produkt beantwortet: man schrieb Regeln und erfuhr es später, von
-einem Job, der lief oder nicht lief.
+The React version showed the name, the zone and the rule text. With that, the one
+question you open a calendar for — *does the gate do what I mean?* —
+is answered nowhere in the product: you wrote rules and found out later, from
+a job that ran or did not run.
 
-Es gibt keinen Endpunkt, der einen Kalender über einen Zeitraum auswertet, und
-nichts im Client darf die Semantik raten — die DSL gehört der Rust-Seite, eine
-zweite Implementierung wäre irgendwann falsch. Aber der Server *wendet* das
-Gate an und sagt das auch: `/v1/schedules` nennt pro Schedule den Kalender,
-`/v1/jobs/states` liefert `next_fire_at` **durch** das Gate gerechnet und
-`suppressed_by` benennt das Gate, wenn es einen Job gerade festhält.
+There is no endpoint that evaluates a calendar over a time range, and
+nothing in the client may guess the semantics — the DSL belongs to the Rust side, a
+second implementation would be wrong eventually. But the server does *apply* the
+gate and says so too: `/v1/schedules` names the calendar per schedule,
+`/v1/jobs/states` delivers `next_fire_at` computed **through** the gate, and
+`suppressed_by` names the gate when it is currently holding a job back.
 
-Das Detail joint beides: welche Jobs dieser Kalender steuert, wann jeder als
-Nächstes feuert und welche er in diesem Moment festhält. Empirisch statt
-behauptet — und ohne eine Zeile Server.
+The detail joins both: which jobs this calendar governs, when each one fires
+next and which ones it is holding back at this moment. Empirical instead of
+claimed — and without a line of server code.
 
-In der Liste ist die neue Spalte *Used by*. Ein Kalender, den niemand
-referenziert, ist nicht kaputt, er tut nur nichts — und dieser Zustand war
-vorher von einem funktionierenden nicht zu unterscheiden. Jetzt steht dort
+In the list the new column is *Used by*. A calendar nobody
+references is not broken, it just does nothing — and that state was
+previously indistinguishable from a working one. Now it says
 `unused`.
 
-### Der Builder kann jetzt auch bearbeiten
+### The builder can now edit too
 
-Die React-Fassung fiel beim Bearbeiten auf das rohe Textfeld zurück, mit der
-Begründung, gespeicherte DSL zurück in die typisierte Form zu parsen sei
-„best-effort". `parseCalendarRules` meldet aber, ob es geklappt hat. Also: erst
-versuchen, bei sauberem Parse den Builder zeigen, sonst den gespeicherten Text.
-Bearbeiten ist der häufige Fall; ihn per Default in die Notluke zu schicken hat
-den Builder zu einem Anlege-Feature gemacht.
+The React version fell back to the raw text field when editing, on the
+grounds that parsing saved DSL back into the typed form was
+"best-effort". But `parseCalendarRules` reports whether it worked. So: try
+first, show the builder on a clean parse, otherwise the saved text.
+Editing is the common case; sending it to the escape hatch by default turned
+the builder into a create-only feature.
 
-Verifiziert als Rundreise: `include weekly weekday / exclude annual 12-25`
-gespeichert, wieder geöffnet, identisch zurückformatiert.
+Verified as a round trip: `include weekly weekday / exclude annual 12-25`
+saved, reopened, formatted back identically.
 
-### Drei Fehler beim Prüfen
+### Three bugs found while checking
 
-**`structuredClone` sprengte den Builder.** Die Startregeln kommen über
-`serde_wasm_bindgen` aus dem wasm zurück, und diese Objekte sind nicht
-strukturiert klonbar — der Klon warf, und der Render ging mit. Jetzt eine
-Feld-für-Feld-Kopie der drei Felder, die der Typ hat.
+**`structuredClone` blew up the builder.** The initial rules come back out of the
+wasm via `serde_wasm_bindgen`, and those objects are not structured-cloneable
+— the clone threw, and the render went down with it. Now a
+field-by-field copy of the three fields the type has.
 
-**`USelectMenu` heißt für einen Screenreader „Show popup".** Nuxt UI rendert
-ein Select als Button und setzt dieses `aria-label` selbst; es gewinnt gegen
-das Label der `UFormField` darüber. Jedes Select auf der Seite hätte identisch
-angesagt — der Mechanismus statt der Wahl. Betroffen war der Kalender-Picker im
-Schedule-Editor.
+**`USelectMenu` is called "Show popup" by a screen reader.** Nuxt UI renders
+a select as a button and sets that `aria-label` itself; it beats
+the label of the `UFormField` above it. Every select on the page would have been
+announced identically — the mechanism instead of the choice. Affected was the calendar picker in the
+schedule editor.
 
-**Und ein eigener Messfehler, der wichtiger ist als die beiden.** Die erste
-Fassung des Prüfskripts lief über das DOM und fiel auf `textContent` zurück,
-wenn sie keinen Namen berechnen konnte. Ergebnis: „alles sauber" — während der
-echte Baum „Show popup" ansagte. Ein nachsichtiger Prüfer ist schlechter als
-keiner, er bescheinigt den Fehler. `ui/scripts/accessible-names.mjs` liest
-jetzt Chromiums eigenen Baum über CDP (`Accessibility.getFullAXTree`).
+**And a measurement error of my own, which matters more than the other two.** The first
+version of the check script went over the DOM and fell back to `textContent`
+when it could not compute a name. Result: "all clean" — while the
+real tree announced "Show popup". A lenient checker is worse than
+none, it certifies the defect. `ui/scripts/accessible-names.mjs` now reads
+Chromium's own tree over CDP (`Accessibility.getFullAXTree`).
 
-Stand danach: **0 unbenannte Bedienelemente** auf allen gebauten Vue-Screens,
-Dialoge geöffnet. Zum Vergleich zählte #595 im React-Dashboard 51 von 54.
+State afterwards: **0 unnamed controls** across all built Vue screens,
+dialogs opened. For comparison, #595 counted 51 of 54 in the React dashboard.
 
-### Noch offen
+### Still open
 
-- Der Schedule-Editor wird vom Namensprüfer nur erreicht, wenn ein
-  API-verwalteter Job existiert; sonst sagt er das, statt „sauber" zu melden.
-- **Der DSL-Tab am Job emittiert Text, der nicht parst** — erledigt, siehe
-  Durchgang 8.
+- The schedule editor is only reached by the name checker if an
+  API-managed job exists; otherwise it says so instead of reporting "clean".
+- **The DSL tab on the job emits text that does not parse** — done, see
+  pass 8.
 
-## Durchgang 8 — der DSL-Tab, der nicht parste
+## Pass 8 — the DSL tab that did not parse
 
-Aus dem React-Baum treu mitportiert, als „die einzige Stelle im Produkt, die
-einen Job in der Form zeigt, in der er geschrieben wird" dokumentiert — und
-falsch. Was der Tab ausgab:
+Faithfully ported over from the React tree, documented as "the only place in the product
+that shows a job in the form it is written in" — and
+wrong. What the tab emitted:
 
 ```
 job "demo:report" {
@@ -514,8 +513,8 @@ job "demo:report" {
 }
 ```
 
-Die echte Grammatik kennt kein `=`, quotet den Job-Key nicht und schreibt Tags
-als blanke Liste. Gegen croniqs eigenen Lexer:
+The real grammar has no `=`, does not quote the job key and writes tags
+as a bare list. Against croniq's own lexer:
 
 ```
 × unexpected character '='
@@ -524,36 +523,36 @@ als blanke Liste. Gegen croniqs eigenen Lexer:
    ·               ┬
 ```
 
-Zeile 2. Wer den Text in ein Croniqfile kopierte, bekam einen Parse-Fehler.
+Line 2. Anyone who copied the text into a Croniqfile got a parse error.
 
-### Nichts wird mehr von Hand zusammengesetzt
+### Nothing is assembled by hand any more
 
-`formatJobBlock` und `formatCalendarBlock` kommen aus `croniq-config`, nach
-wasm kompiliert — derselben Crate, mit der der Server ein Croniqfile lädt. Und
-die Rust-Seite **parst ihre eigene Ausgabe**, bevor sie sie zurückgibt, und
-formatiert sie kanonisch neu. Was zurückkommt, parst per Konstruktion.
+`formatJobBlock` and `formatCalendarBlock` come from `croniq-config`, compiled
+to wasm — the same crate the server loads a Croniqfile with. And
+the Rust side **parses its own output** before returning it, and
+reformats it canonically. What comes back parses by construction.
 
-Das ist genau das Argument, mit dem in Durchgang 7 der Kalender-Builder gebaut
-wurde. Dieser Tab ist, was passiert, wenn man es nicht anwendet.
+That is exactly the argument the calendar builder was built with in pass 7.
+This tab is what happens when you do not apply it.
 
-### Was die API nicht weiß, wird gesagt statt geraten
+### What the API does not know is stated, not guessed
 
-Der gespeicherte Job trägt `max_retries` — eine Zahl, keine Strategie. Die DSL
-braucht eine (`retry exponential { … }`). Also schreibt der Block *keinen*
-Retry-Block und sagt daneben, warum:
+The saved job carries `max_retries` — a number, not a strategy. The DSL
+needs one (`retry exponential { … }`). So the block writes *no*
+retry block and says next to it why:
 
 > The job retries 3 times, but the API does not record which backoff strategy,
 > so no retry block is written — it would have to invent one.
 
-Dasselbe für eine Regel, die die DSL gar nicht kennt. Die API akzeptiert
-`*/7 * * * *`; die Croniqfile-Grammatik kennt Intervalle, täglich, Wochentage
-und monatlich — kein rohes Cron. So ein Job ist nicht darstellbar, und der Tab
-sagt das, statt etwas Ähnliches zu zeigen.
+The same for a rule the DSL does not know at all. The API accepts
+`*/7 * * * *`; the Croniqfile grammar knows intervals, daily, weekdays
+and monthly — no raw cron. Such a job is not representable, and the tab
+says so instead of showing something similar.
 
-### Geprüft, nicht behauptet
+### Checked, not claimed
 
-`ui/scripts/dsl-parses.mjs` liest, was das laufende Dashboard auf den Schirm
-schreibt, und gibt es derselben Binary, die ein Operator hätte:
+`ui/scripts/dsl-parses.mjs` reads what the running dashboard writes to the
+screen and hands it to the same binary an operator would have:
 
 ```
 checking 6 job block(s)
@@ -561,242 +560,241 @@ ok   demo:heartbeat … ok   demo:reload-probe
 every rendered block parses
 ```
 
-Dazu zehn Unit-Tests um den Formatter herum (welche Felder ankommen, ob die
-Hinweise die Wahrheit sagen) und zwei neue Schritte in `vue-write-paths.mjs`.
+Plus ten unit tests around the formatter (which fields arrive, whether the
+notes tell the truth) and two new steps in `vue-write-paths.mjs`.
 
-### Zwei Messfehler auf dem Weg
+### Two measurement errors along the way
 
-**Ein Skript, das nichts prüfte, meldete „bestanden".** `dsl-parses.mjs` fand
-keine Job-Zeilen und gab trotzdem „every rendered block parses" aus. Eine leere
-Prüfmenge ist jetzt ein Fehler, kein Erfolg.
+**A script that checked nothing reported "passed".** `dsl-parses.mjs` found
+no job rows and printed "every rendered block parses" anyway. An empty
+check set is now an error, not a success.
 
-**Und `npx vue-tsc --noEmit` prüft in `ui/` gar nichts.** `tsconfig.json`
-hat `"files": []` und nur `references`; ohne `--build` folgt TypeScript denen
-nicht. Ein `const x: number = "str"` geht durch. Deshalb fiel ein fehlender
-Export in `croniq-dsl.ts` erst im Browser auf, nachdem „typecheck grün"
-gemeldet war. Das Projekt-Skript `npm run typecheck` ruft `vue-tsc --build`
-auf und findet ihn — CI war die ganze Zeit in Ordnung, der Handaufruf war das
-Loch.
+**And `npx vue-tsc --noEmit` checks nothing at all in `ui/`.** `tsconfig.json`
+has `"files": []` and only `references`; without `--build` TypeScript does not follow
+them. A `const x: number = "str"` passes. That is why a missing
+export in `croniq-dsl.ts` only showed up in the browser, after "typecheck green" had been
+reported. The project script `npm run typecheck` calls `vue-tsc --build`
+and finds it — CI was fine the whole time, the hand-run invocation was the
+hole.
 
-## Durchgang 9 — Alerts
+## Pass 9 — Alerts
 
-Die letzte offene Frage aus dem Inventar, beim Bauen beantwortet. Die
-Entscheidung samt Begründung steht in `ui-screen-inventory.md`; kurz: **ein
-Screen, drei Ansichten** (Regeln, Kanäle, Zustellungen), statt Konfiguration
-und Protokoll auf zwei Screens zu trennen. Der Einwand der Bestandsaufnahme
-war *Vermischung*, und deren Gegenteil ist Struktur, nicht Entfernung — man
-schnoozt eine Regel wegen dem, was das Protokoll zeigt.
+The last open question from the inventory, answered while building. The
+decision and its reasoning are in `ui-screen-inventory.md`; in short: **one
+screen, three views** (rules, channels, deliveries), instead of splitting configuration
+and log across two screens. The stocktake's objection
+was *mixing*, and the opposite of that is structure, not distance — you
+snooze a rule because of what the log shows.
 
-### Was sichtbar wird, das vorher stumm war
+### What becomes visible that was mute before
 
-**Ein Kanal, den keine Regel nutzt.** Steht jetzt als `unused` in der
-Kanal-Liste — dieselbe Klasse Befund wie beim unbenutzten Kalender.
+**A channel no rule uses.** It now shows as `unused` in the
+channel list — the same class of finding as the unused calendar.
 
-**Eine Regel, die einen Kanal nennt, den es nicht gibt.** Der Compiler behält
-die Referenz wörtlich und warnt erst zur Feuerzeit. Die Regel sieht also
-konfiguriert aus und stellt nirgends zu — im Produkt bisher ein stiller
-Ausfall, hier in Liste und Detail markiert.
+**A rule that names a channel that does not exist.** The compiler keeps
+the reference verbatim and warns only at fire time. So the rule looks
+configured and delivers nowhere — in the product until now a silent
+failure, here flagged in the list and the detail.
 
-**Eine Regel, die nicht tut, was die Datei sagt.** Overrides (Snooze, Throttle,
-Disable) stehen in der Zeile, und in der Kopfleiste zählt ein Warnhinweis, wie
-viele Regeln gerade übersteuert sind. Der Unterschied zwischen „nichts ist
-kaputt" und „nichts wird gemeldet" ist die wichtigste Aussage dieses Screens.
+**A rule that does not do what the file says.** Overrides (snooze, throttle,
+disable) stand in the row, and in the header bar a warning counts how
+many rules are currently overridden. The difference between "nothing is
+broken" and "nothing is being reported" is the most important statement this screen makes.
 
-**Jede Zustellung verlinkt in beide Richtungen** — auf den Lauf, der sie
-ausgelöst hat, und auf die Regel, die sie geschickt hat. Die React-Fassung
-nannte beides und verlinkte nichts, obwohl „welcher Lauf war das?" die erste
-Frage nach einem Alarm ist.
+**Every delivery links in both directions** — to the run that
+triggered it and to the rule that sent it. The React version
+named both and linked neither, even though "which run was that?" is the first
+question after an alert.
 
-### Die Notiz ist Pflicht, und das ist gut so
+### The note is mandatory, and that is a good thing
 
-Der Server verlangt bei jedem Override eine Begründung. Das Formular hält sich
-daran, statt sie mit einem Platzhalter zu füllen: eine Regel, die aus einem
-unerklärten Grund still ist, ist schlimmer als eine laute.
+The server requires a reason on every override. The form respects
+that instead of filling it with a placeholder: a rule that is silent for an
+unexplained reason is worse than a loud one.
 
-### Der Demo zeigte das Feature nicht
+### The demo did not show the feature
 
-`Croniqfile.demo` hatte keinen `alerts { }`-Block. Der Demo lässt absichtlich
-Läufe fehlschlagen (`RUNNER_FAIL_RATE`) und meldete das nirgends — der
-Alerts-Screen wäre leer geblieben, und damit unprüfbar. Jetzt ein Kanal
-(`shell "echo …"`, folgenlos) und eine Regel auf `demo:*`. Damit zeigt der
-Demo die Alarmierung so, wie die Jobs den Scheduler zeigen.
+`Croniqfile.demo` had no `alerts { }` block. The demo deliberately lets
+runs fail (`RUNNER_FAIL_RATE`) and reported that nowhere — the
+alerts screen would have stayed empty, and therefore uncheckable. Now there is a channel
+(`shell "echo …"`, without consequence) and a rule on `demo:*`. With that the
+demo shows alerting the way the jobs show the scheduler.
 
-`alerts { }` ist Boot-only — ein Reload meldet es als `pending_restart`, statt
-es anzuwenden (siehe `operations.md`). Der Dev-Stack musste dafür neu starten.
+`alerts { }` is boot-only — a reload reports it as `pending_restart`, instead of
+applying it (see `operations.md`). The dev stack had to restart for it.
 
-Verifiziert bis in den Log: `alerts.delivered rule=demo-failures
-channel=demo-log job_key=demo:heartbeat`, und die Zeile steht im Screen.
+Verified all the way into the log: `alerts.delivered rule=demo-failures
+channel=demo-log job_key=demo:heartbeat`, and the row is in the screen.
 
-### Nebenbei: die Version sah aus wie ein Button
+### In passing: the version looked like a button
 
-Gemeldet. Sie war ein `UBadge` auf `h-8` — gefüllte Box, gleiche Höhe wie die
-Icon-Buttons daneben, also in einer Reihe von Bedienelementen der vierte
-Button, der auf einen Klick nichts tut. Die Version ist eine Tatsache über den
-Server, keine Handlung, und soll hier oben das am wenigsten klickbare Element
-sein. Jetzt schlichter Text; sha, Bauzeit und Umgebung stehen im `title`.
+Reported. It was a `UBadge` at `h-8` — a filled box, the same height as the
+icon buttons next to it, so in a row of controls the fourth
+button, one that does nothing on a click. The version is a fact about the
+server, not an action, and should be the least clickable element up here.
+Now plain text; sha, build time and environment are in the `title`.
 
-## Durchgang 10 — Settings
+## Pass 10 — Settings
 
-Vier Ansichten auf einem Screen, adressiert über Pfadsegmente statt `?tab=` —
-der React-Baum nutzte einen Query-Parameter, der Rest dieses Baums nutzt
-Pfadsegmente für genau diese Form (siehe Alerts). Ein Idiom.
+Four views on one screen, addressed via path segments instead of `?tab=` —
+the React tree used a query parameter, the rest of this tree uses
+path segments for exactly this shape (see alerts). One idiom.
 
-### Zwei Tabellen werden eine
+### Two tables become one
 
-*Users* und *Invitations* standen im React-Baum als zwei Tabellen
-untereinander. Es sind zwei Antworten auf **eine** Frage — eine Einladung ist
-jemand, der Zugang bekommen hat und noch nicht angekommen ist — und getrennt
-musste man „wer kann sich an diesem Server anmelden" aus zwei Listen mit
-verschiedenen Spalten im Kopf zusammensetzen. Jetzt eine Liste mit einem
-Status.
+*Users* and *Invitations* stood in the React tree as two tables
+one below the other. They are two answers to **one** question — an invitation is
+someone who has been granted access and has not arrived yet — and separated,
+you had to assemble "who can sign in to this server" from two lists with
+different columns in your head. Now one list with a status.
 
-Was dabei zu entscheiden war: welche Einladungen gehören auf eine Liste, die
-„wer hat Zugang" heißt?
+What had to be decided along the way: which invitations belong on a list that is
+called "who has access"?
 
-- **Angenommen** → ist jetzt ein Benutzer, wäre doppelt gezählt.
-- **Widerrufen** → eine bereits getroffene und ausgeführte Entscheidung. Die
-  Zeile ist Rauschen, das sich für immer ansammelt; ins Audit-Log gehört sie,
-  nicht hierher.
-- **Abgelaufen** → bleibt. Und genau darin liegt der Unterschied: eine
-  abgelaufene Einladung ist keine erledigte Sache, sondern jemand, der immer
-  noch wartet. „Warum hat sie sich nie angemeldet" wird hier beantwortet, und
-  die Antwort ist, sie erneut einzuladen.
+- **Accepted** → is now a user, would be counted twice.
+- **Revoked** → a decision already taken and carried out. The
+  row is noise that accumulates forever; it belongs in the audit log,
+  not here.
+- **Expired** → stays. And that is exactly where the difference lies: an
+  expired invitation is not a settled matter but someone who is still
+  waiting. "Why did she never sign in" is answered here, and
+  the answer is to invite her again.
 
-### Ein Bauteil für alles, was man nur einmal sieht
+### One component for everything you only see once
 
-API-Keys, Personal Access Tokens, Einladungslinks und TOTP-Wiederherstellungs­codes
-teilen eine Eigenschaft, die die umgebende Oberfläche immer wieder vergisst:
-**dieser Render ist die einzige Kopie.** Im React-Baum war jedes davon eigenes
-Markup — und die Wiederherstellungscodes waren das eine, das durchfiel: die
-Checkbox bat den Nutzer zu bestätigen, dass er Codes gespeichert hat, die nie
-gerendert wurden.
+API keys, personal access tokens, invitation links and TOTP recovery codes
+share a property the surrounding interface keeps forgetting:
+**this render is the only copy.** In the React tree each of them was its own
+markup — and the recovery codes were the one that fell through: the
+checkbox asked the operator to confirm that they had saved codes that were never
+rendered.
 
-Jetzt `SecretOnce`, ein Bauteil, und es lässt sich absichtlich nicht aus
-Versehen wegklicken: „Done" bleibt deaktiviert, bis kopiert oder ausdrücklich
-bestätigt wurde. Der Schreibpfad-Test prüft genau das.
+Now `SecretOnce`, one component, and it deliberately cannot be clicked
+away by accident: "Done" stays disabled until it has been copied or explicitly
+confirmed. The write-path test asserts exactly that.
 
-### Scopes bekommen Presets
+### Scopes get presets
 
-Das React-Formular waren zwanzig Checkboxen und sonst nichts — dort gehen
-Credentials schief: niemand überlegt sich zwanzig Booleans, also kreuzt man
-`admin` an oder ungefähr die richtigen und merkt es später. Drei Presets
-benennen, was Leute tatsächlich ausdrücken wollen; die vollständige Liste
-bleibt darunter. `Runner` ist das, das sich lohnt: die Pull-Protokoll-Scopes
-plus Registrierung und Heartbeat von Hand falsch zu setzen ergibt einen Runner,
-der sich verbindet und dann still keine Arbeit annimmt.
+The React form was twenty checkboxes and nothing else — that is where
+credentials go wrong: nobody thinks through twenty booleans, so you tick
+`admin`, or roughly the right ones, and notice later. Three presets
+name what people actually want to express; the full list
+stays below them. `Runner` is the one that pays off: setting the pull-protocol scopes
+plus registration and heartbeat wrong by hand yields a runner
+that connects and then silently takes no work.
 
-### Das Audit-Log sagt jetzt wer, nicht welche UUID
+### The audit log now says who, not which UUID
 
-Die „Who"-Spalte zeigte Actor-IDs. Eine Spalte UUIDs beantwortet „wer hat was
-getan" mit „irgendwer hat was getan". Die Benutzerliste ist auf diesem Screen
-ohnehin geladen, also löst die ID zu einem Namen auf — mit Kurz-ID als
-Rückfall für einen Actor, der kein Benutzer mehr ist, also genau dem Fall, in
-dem das Log am meisten zählt. Zeilen verlinken außerdem auf das, was sie
-verändert haben.
+The "Who" column showed actor IDs. A column of UUIDs answers "who did what"
+with "somebody did something". The user list is loaded on this screen
+anyway, so the ID resolves to a name — with a short ID as the
+fallback for an actor who is no longer a user, which is exactly the case in
+which the log counts most. Rows also link to what they
+changed.
 
-### Zwei Befunde aus dem Prüfen
+### Two findings from checking
 
-**Ein Zweig, den nichts je erreichen konnte.** Die Token-Tabelle hatte eine
-Darstellung für widerrufene Tokens. `GET /v1/users/me/tokens` liefert nach
-einem Widerruf schlicht `[]` — kein Grabstein. Der Zweig war toter Code; der
-Filter bleibt (falls ein Server das je ändert, wäre „als gültig rendern" der
-schlimmere Fehler), die zweite Sektion ist weg. Der Test prüft jetzt das
-Verschwinden.
+**A branch nothing could ever reach.** The token table had a
+rendering for revoked tokens. `GET /v1/users/me/tokens` simply returns `[]` after
+a revocation — no tombstone. The branch was dead code; the
+filter stays (if a server ever changes that, "render as valid" would be the
+worse bug), the second section is gone. The test now asserts the
+disappearance.
 
-**Und ein Testfehler, der fast als Produktfehler durchging.** Zwei Zeilen für
-dieselbe Einladung sahen aus, als würden widerrufene Einladungen hängen
-bleiben. Der Blick in die Antwort des Servers zeigte drei Einladungen: eine
-widerrufen (korrekt ausgefiltert) und **zwei offene**, aus zwei Testläufen, die
-vor dem Aufräumen abgebrochen waren. Das Produkt war in Ordnung, der Test
-hinterließ Müll. Er räumt jetzt vorher auf.
+**And a test bug that nearly passed as a product bug.** Two rows for
+the same invitation looked as though revoked invitations were sticking
+around. A look at the server's response showed three invitations: one
+revoked (correctly filtered out) and **two open** ones, from two test runs that
+had aborted before their cleanup. The product was fine, the test
+left rubbish behind. It now cleans up beforehand.
 
-### Admin-Ableitung in einer Composable
+### The admin derivation in a composable
 
-`isAdmin` stand in der Shell und wäre in den Settings ein zweites Mal
-entstanden — mit einem subtilen Default: **`true`, wenn es keinen
-Benutzerdatensatz gibt.** Das ist kein Durchwinken, sondern der Fall
-API-Key-Session: `GET /v1/users/me` löst nur für Passwort-, OIDC- und
-PAT-Sessions auf, und die Autorität einer Key-Session kommt aus ihren Scopes,
-die der Server bei jedem Request durchsetzt. Kurz genug zum Abtippen und subtil
-genug, um es falsch abzutippen — also `useIsAdmin()`, einmal, mit der
-Begründung daneben.
+`isAdmin` sat in the shell and would have come into being a second time in the
+settings — with a subtle default: **`true` when there is no
+user record.** That is not waving things through, but the case of an
+API-key session: `GET /v1/users/me` only resolves for password, OIDC and
+PAT sessions, and a key session's authority comes from its scopes,
+which the server enforces on every request. Short enough to retype and subtle
+enough to retype wrongly — so `useIsAdmin()`, once, with the
+reasoning beside it.
 
-## Durchgang 11 — Konsole, und das Ende der Aufbaureihenfolge
+## Pass 11 — the console, and the end of the build order
 
-Der letzte Screen aus `ui-screen-inventory.md`, und der zweite Verbraucher des
-SSE-Kerns aus #585. Genau dafür wurde der Kern extrahiert: Runner-Stream und
-Konsole unterscheiden sich in fast allem, was man sieht, und in nichts, was
-leicht falsch geht — Frame-Zusammenbau über Chunk-Grenzen, der 401-Refresh, das
-Reconnect-Backoff.
+The last screen from `ui-screen-inventory.md`, and the second consumer of the
+SSE core from #585. That is exactly why the core was extracted: the runner stream and the
+console differ in almost everything you see, and in nothing that
+easily goes wrong — frame assembly across chunk boundaries, the 401 refresh, the
+reconnect backoff.
 
-### Was ein Tail verschweigt, sagt er jetzt
+### What a tail conceals, it now says
 
-Die React-Fassung pufferte still, während sie pausiert war, und warf die
-ältesten Ereignisse still weg, wenn ihr Puffer volllief. Eine Konsole, von der
-man wegsieht, sagte danach nichts über die Lücke. Beides wird jetzt gezählt und
-angezeigt: der *Resume*-Knopf trägt die Zahl der wartenden Ereignisse, und über
-der Liste steht, wie viele hinten herausgefallen sind.
+The React version buffered silently while it was paused, and discarded the
+oldest events silently when its buffer filled up. A console you look
+away from said nothing afterwards about the gap. Both are now counted and
+shown: the *Resume* button carries the number of waiting events, and above
+the list it says how many fell out of the back.
 
-### Zwei Sachen, die das Lesen erleichtern
+### Two things that make reading easier
 
-**Ein farbiger Rand links** bei `warn` und `error`, zusätzlich zur
-Level-Spalte: einen Fehler findet man, indem man die linke Kante überfliegt,
-nicht indem man jede Zeile liest.
+**A coloured border on the left** for `warn` and `error`, in addition to the
+level column: you find an error by skimming the left edge,
+not by reading every row.
 
-**Das Mitlaufen hört auf, wenn man hochscrollt**, und ein *Follow*-Knopf
-erscheint. Etwas zu lesen, während sich die Ansicht alle paar hundert
-Millisekunden nach unten reißt, ist das Ärgerlichste, was ein Live-Tail kann.
+**Following stops when you scroll up**, and a *Follow* button
+appears. Reading something while the view yanks itself downwards every few hundred
+milliseconds is the most annoying thing a live tail can do.
 
-### Ein Fehlalarm, nachgeprüft statt geglaubt
+### A false alarm, verified rather than believed
 
-Im Log standen `WARN … no job config for completion — job not in DSL or store`
-für `smoke:calendar-user`, einen Job, den ich Minuten vorher gelöscht hatte.
-Das sah nach einem echten Fehler aus: gelöschter Job, Trigger feuert weiter.
+The log carried `WARN … no job config for completion — job not in DSL or store`
+for `smoke:calendar-user`, a job I had deleted minutes earlier.
+That looked like a real bug: job deleted, trigger keeps firing.
 
-Nachgesehen statt gemeldet: `/v1/schedules` gegen `/v1/jobs` gejoint ergibt
-**null verwaiste Trigger**. Die Warnungen stammten aus Ausführungen, die vor
-dem Löschen in der Warteschlange standen und danach fertig wurden — korrektes
-Verhalten, und die Warnung ist genau die richtige.
+Looked into instead of reported: `/v1/schedules` joined against `/v1/jobs` yields
+**zero orphaned triggers**. The warnings came from executions that were queued before
+the deletion and finished afterwards — correct
+behaviour, and the warning is exactly the right one.
 
-### Der Platzhalter ist in Rente
+### The placeholder is retired
 
-Bis hierher rendern nicht gebaute Routen ein `NotBuiltYet`, das den
-Aufbauschritt nennt, zu dem sie gehören — damit die Shell begehbar blieb und
-niemand eine Lücke für fertig hielt. Mit der letzten Lücke ist er weg. Eine
-Route, die es nicht gibt, ist ab jetzt ein Fehler, keine Notiz.
+Up to this point, routes that were not built rendered a `NotBuiltYet` naming the
+build step they belong to — so that the shell stayed walkable and
+nobody mistook a gap for finished work. With the last gap it is gone. A
+route that does not exist is from now on an error, not a note.
 
-**Damit ist die Aufbaureihenfolge aus dem Inventar abgearbeitet.** Was bleibt,
-steht unter „Noch offen" — allen voran, dass der Vue-Baum weiterhin kein
-eigenes Playwright-Projekt hat (#620) und das Abnahmekriterium aus ADR-0004
-deshalb noch das React-Dashboard misst.
+**With that the build order from the inventory has been worked through.** What remains
+is under "Still open" — first of all that the Vue tree still has no
+Playwright project of its own (#620) and that the acceptance criterion from ADR-0004
+therefore still measures the React dashboard.
 
-## Durchgang 12 — die Login-Seite, und was hinter ihr fehlte
+## Pass 12 — the login page, and what was missing behind it
 
-Rückmeldung: die neue Login-Seite wirkt gegenüber der alten stark reduziert —
-steht da noch Nachbesserung aus?
+Feedback: the new login page seems heavily stripped down compared with the old one —
+is more work still outstanding there?
 
-Beim Nachsehen statt Schätzen zerfiel der Unterschied in zwei sehr ungleiche
-Hälften.
+On looking rather than guessing, the difference fell into two very unequal
+halves.
 
-### Was ich für Dekoration hielt
+### What I took for decoration
 
-Das Terminal-Mock, das Gitter, die rotierende Verbzeile, die grünen
-Gesundheitsfarben. Ich habe sie als Landing-Page-Ästhetik eingestuft und
-weggelassen — **und das war falsch**, in zweierlei Hinsicht: die Einschätzung
-selbst, und dass ich sie allein getroffen habe. Zurückgeholt in Durchgang 15.
+The terminal mock, the grid, the rotating verb line, the green
+health colours. I classified them as landing-page aesthetics and left them
+out — **and that was wrong**, in two respects: the judgement
+itself, and that I made it alone. Brought back in pass 15.
 
-### Was eine echte Lücke war
+### What was a real gap
 
-**Es gab keinen Weg zurück ins Konto.** „Forgot your password?" fehlte —
-`POST /v1/auth/password-reset/request` existiert am Server seit jeher, die
-React-Fassung bot es an, die neue nicht. Wer sein Passwort vergisst, brauchte
-einen Administrator und eine Shell.
+**There was no way back into the account.** "Forgot your password?" was missing —
+`POST /v1/auth/password-reset/request` has always existed on the server, the
+React version offered it, the new one did not. Anyone who forgets their password needed
+an administrator and a shell.
 
-Und dann, beim Prüfen dieses einen Punktes, **das Größere**:
+And then, while checking that one point, **the bigger thing**:
 
-### Zwei Links, die nirgends hinführten
+### Two links that led nowhere
 
-Der Server baut sie selbst:
+The server builds them itself:
 
 ```rust
 // api/password_reset.rs
@@ -805,315 +803,314 @@ let confirm_url = format!("{base}/password-reset/confirm?token={raw_token}");
 let accept_url = format!("{base}/invitations/accept?token={raw_token}");
 ```
 
-**Keiner der beiden Bäume hatte eine Route dafür.** Eine Passwort-Anforderung
-funktionierte, die Mail ging raus, der Link öffnete die Not-Found-Seite. Wer
-eingeladen wurde, kam überhaupt nicht herein — der Settings-Screen zeigt dem
-Administrator brav einen Link zum Weitergeben, und dieser Link war eine
-Sackgasse.
+**Neither of the two trees had a route for them.** A password request
+worked, the mail went out, the link opened the not-found page. Anyone who
+was invited could not get in at all — the settings screen dutifully shows the
+administrator a link to pass on, and that link was a dead
+end.
 
-Der Ablauf war halb gebaut und sah von der Seite, die ein Betreiber testet,
-vollständig aus: man lädt jemanden ein, bekommt einen Link, die Bestätigung
-erscheint. Dass er ins Leere führt, merkt nur der Eingeladene.
+The flow was half built and looked complete from the side an operator tests:
+you invite somebody, get a link, the confirmation appears.
+That it leads nowhere is noticed only by the invitee.
 
-Beide Seiten gibt es jetzt, öffentlich (wer sie öffnet, hat noch keine
-Session). Nachgewiesen als vollständige Kette: einladen → Link folgen → Konto
-anlegen → **anmelden** → aufräumen.
+Both pages now exist, public (whoever opens them has no
+session yet). Demonstrated as a complete chain: invite → follow the link → create
+the account → **sign in** → clean up.
 
-### Passwortregeln vor dem Roundtrip
+### Password rules before the round trip
 
-`croniq_auth::password` ist die Instanz und lehnt mit 400 ab. Die Grenzen
-stehen jetzt zusätzlich in `lib/password.ts` — nicht als zweite
-Implementierung, sondern damit ein Formular „mindestens acht Zeichen" sagen
-kann, *bevor* es fragt. Die interessante Grenze ist die obere: bcrypt ignoriert
-alles über 72 **Byte**, eine längere Passphrase würde also stillschweigend
-abgeschnitten. Drei Tests, einer davon mit Emoji — vier Byte pro Zeichen ist
-genau der Fall, den eine Zeichenzählung falsch macht.
+`croniq_auth::password` is the authority and rejects with 400. The limits
+now additionally live in `lib/password.ts` — not as a second
+implementation, but so a form can say "at least eight characters"
+*before* it asks. The interesting limit is the upper one: bcrypt ignores
+everything beyond 72 **bytes**, so a longer passphrase would be silently
+truncated. Three tests, one of them with an emoji — four bytes per character is
+exactly the case a character count gets wrong.
 
-### Und ein Auffangsatz auf dem häufigsten Pfad
+### And a catch-all sentence on the most common path
 
-Die erste Fassung behandelte `410` und `404` eigens und ließ den Rest in „The
-server refused that." laufen. Ein **unbekanntes** Token antwortet aber `401` —
-also fiel der wahrscheinlichste Fehler überhaupt in den Auffangsatz. Jetzt ist
-jeder Zweig beider Handler aus dem Rust-Code abgelesen und benannt, und der
-Test verlangt, dass die Meldung eine *Abhilfe* nennt, nicht bloß eine
-Ablehnung.
+The first version handled `410` and `404` specially and let the rest run into "The
+server refused that." But an **unknown** token answers `401` —
+so the single most likely error fell into the catch-all. Now
+every branch of both handlers has been read off the Rust code and named, and the
+test requires the message to name a *remedy*, not merely a
+rejection.
 
-### Nebenbei
+### In passing
 
-„Sign in to `127.0.0.1:4232`" steht wieder da. Wer Staging und Produktion in
-zwei Tabs offen hat, kann sie aus der Karte sonst nicht unterscheiden — und
-Produktionszugangsdaten ins Staging zu tippen ist ein Fehler, den die Seite
-schlicht verhindern kann. Die React-Fassung hatte das richtig.
+"Sign in to `127.0.0.1:4232`" is back. Anyone with staging and production in
+two tabs open otherwise cannot tell them apart from the card — and
+typing production credentials into staging is a mistake the page can simply
+prevent. The React version had that right.
 
-## Durchgang 13 — Command-Palette, und ein Geisterjob
+## Pass 13 — the command palette, and a ghost job
 
-Die Palette stand in der Fähigkeitsliste und fehlte — also keine Kür, sondern
-eine Lücke gegen den Scope-Guard.
+The palette was on the capability list and was missing — so not a nice-to-have, but
+a gap against the scope guard.
 
-### Kürzel, die es nicht gab
+### Shortcuts that did not exist
 
-Die React-Palette druckte neben jedem Eintrag ein Kürzel: `G D`, `G J`, `G E`.
-**Nichts implementierte sie.** `g` dann `d` tat auf keinem Screen irgendetwas.
-Ein Hinweis, der lügt, ist schlechter als keiner — also portiert die neue
-Fassung ihn nicht, sondern macht ihn wahr: `useGoToShortcuts` setzt die Akkorde
-um, und die Palette druckt sie, *weil* sie funktionieren.
+The React palette printed a shortcut next to every entry: `G D`, `G J`, `G E`.
+**Nothing implemented them.** `g` then `d` did nothing on any screen.
+A hint that lies is worse than none — so the new version does not port it
+but makes it true: `useGoToShortcuts` implements the chords,
+and the palette prints them *because* they work.
 
-Drei Dinge, die ein Zwei-Tasten-Akkord braucht und die der Test einzeln prüft:
-er stiehlt keine Taste aus einem Eingabefeld, er läuft nach 1,2 s ab (ein
-vergessenes `g` darf nicht Minuten später die nächste Taste in eine Navigation
-verwandeln), und dass er scharf ist, ist sichtbar — sonst ist es unsichtbarer
-Zustand.
+Three things a two-key chord needs, each asserted separately by the test:
+it steals no key from an input field, it expires after 1.2 s (a
+forgotten `g` must not turn the next key into a navigation minutes later),
+and the fact that it is armed is visible — otherwise it is invisible
+state.
 
-Dazu ein **sichtbarer Auslöser** in der Kopfzeile mit aufgedrucktem Kürzel.
-Eine Palette, die nur über eine Tastenkombination erreichbar ist, von der
-niemand erzählt hat, ist für die meisten schlicht nicht da.
+Plus a **visible trigger** in the header with the shortcut printed on it.
+A palette reachable only through a key combination nobody has been told
+about is, for most people, simply not there.
 
-Gesucht wird außerdem in Kalendern und Alert-Regeln, die es inzwischen als
-Screens gibt.
+The search also covers calendars and alert rules, which now exist as
+screens.
 
-### Und dabei: ein Job, den es nicht mehr gibt, stand in „Next hour"
+### And along the way: a job that no longer exists stood in "Next hour"
 
-Aufgefallen am Screenshot der Palette — im Dashboard dahinter standen
-`smoke:calendar-user` und `smoke:vue-jobs`, beide gelöscht.
+Noticed on the screenshot of the palette — in the dashboard behind it stood
+`smoke:calendar-user` and `smoke:vue-jobs`, both deleted.
 
-`GET /v1/jobs/states` **überlebt den Job**, und das ist Absicht. Der Server
-sagt es beim Start:
+`GET /v1/jobs/states` **outlives the job**, and that is deliberate. The server
+says so at startup:
 
 > job_states rows exist for jobs this configuration does not define. They are
 > kept (a job may be temporarily absent) and no longer produce metrics.
 
-Ein Job, der kurz aus dem Croniqfile fliegt und zurückkommt, soll seine
-Historie nicht verlieren (#470). Eine State-Zeile ist damit **kein Beleg, dass
-der Job existiert** — und genau so hat die Leiste sie gelesen. Die Job-Liste
-hatte den Fehler nie, weil sie aus `/v1/jobs` baut und den State dazujoint; die
-Leiste baute aus dem State und joint nichts.
+A job that briefly drops out of the Croniqfile and comes back should not lose its
+history (#470). A state row is therefore **no evidence that
+the job exists** — and that is exactly how the rail read it. The job list
+never had the bug, because it builds from `/v1/jobs` and joins the state onto it; the
+rail built from the state and joins nothing.
 
-Jetzt filtert sie auf Jobs, die es gibt — und zeigt vor dem Eintreffen der
-Job-Liste lieber nichts als kurz Gelöschtes.
+Now it filters to jobs that exist — and before the job list arrives it shows
+nothing rather than briefly showing deleted ones.
 
-### Ein größerer Fund, der daraus fiel — und eine Korrektur an mir
+### A bigger find that fell out of it — and a correction to myself
 
-Beim Nachrechnen passte die Zahl nicht: „99 fires" bei fünf Jobs, gerechnet
-79. `/v1/dashboard/forecast` liest `state.triggers` — die **In-Memory**-
-Registry, nicht den Store.
+When recomputing, the number did not fit: "99 fires" for five jobs, calculated as
+79. `/v1/dashboard/forecast` reads `state.triggers` — the **in-memory**
+registry, not the store.
 
-Und die driftet: `DELETE /v1/jobs/{key}` räumt Definition, Trigger-Zeilen und
-`job_states` im Store, entfernt den Job aber **nicht aus der laufenden
-Registry**. Der Scheduler feuert ihn weiter, der Watchdog storniert jede
-Ausführung als „stranded", und das läuft bis zum nächsten Reload oder Neustart.
-Belegt im Log: `smoke:calendar-user` wurde um 15:19:30 eingereiht — Minuten
-nach dem Löschen.
+And that drifts: `DELETE /v1/jobs/{key}` clears the definition, the trigger rows and
+`job_states` in the store, but does **not remove the job from the running
+registry**. The scheduler keeps firing it, the watchdog cancels every
+execution as "stranded", and that runs until the next reload or restart.
+Evidenced in the log: `smoke:calendar-user` was enqueued at 15:19:30 — minutes
+after the deletion.
 
-**Das widerlegt meinen Freispruch aus Durchgang 11.** Dort hatte ich genau
-dieses Symptom gesehen, `/v1/schedules` gegen `/v1/jobs` gejoint, „null
-verwaiste Trigger" gemessen und es als Fehlalarm abgelegt. Ich hatte die
-falsche Tabelle geprüft: Store-Trigger und Jobs sind konsistent — die Registry,
-die Scheduler und Forecast tatsächlich benutzen, ist es nicht. Eigener Vorgang.
+**That refutes my acquittal from pass 11.** There I had seen exactly
+this symptom, joined `/v1/schedules` against `/v1/jobs`, measured "zero
+orphaned triggers" and filed it as a false alarm. I had checked the
+wrong table: store triggers and jobs are consistent — the registry
+that the scheduler and the forecast actually use is not. A separate matter.
 
-## Durchgang 14 — Zeitfenster und Nachladen
+## Pass 14 — time windows and loading more
 
-Die zwei letzten Punkte vom Runs-Screen, und der erste war nicht das, was
-dort stand.
+The last two points from the Runs screen, and the first was not what
+it said there.
 
-### „Der Server kann es, die Oberfläche nicht" stimmte nur halb
+### "The server can do it, the interface cannot" was only half true
 
-`ExecutionFilter` trägt `since` und `until` seit jeher, und das SQL wendet
-beide an. Der **HTTP-Handler las die Query-Parameter nie** — der einzige
-Zugang zur Lauf-Historie konnte also gar kein Zeitfenster ausdrücken. Dieselbe
-Klasse wie der ungenutzte Forecast: die Fähigkeit war da und niemand rief sie.
+`ExecutionFilter` has always carried `since` and `until`, and the SQL applies
+both. The **HTTP handler never read the query parameters** — so the only
+access to the run history could not express a time window at all. The same
+class as the unused forecast: the capability was there and nobody called it.
 
-Ein unlesbarer Wert wird ignoriert statt abgelehnt, wie dieser Endpunkt es mit
-`state` und `limit` immer schon hält — eine 400 wäre ein neuer Fehlermodus für
-Aufrufer, die heute eine sinnvolle Liste bekommen.
+An unreadable value is ignored rather than rejected, as this endpoint has always
+done with `state` and `limit` — a 400 would be a new failure mode for
+callers who today get a sensible list.
 
-### `until` ist zugleich der Cursor
+### `until` is also the cursor
 
-Die Liste ist nach `created_at` absteigend sortiert, und `until` begrenzt
-dasselbe Feld inklusiv. Damit ist Keyset-Paging ohne Store-Änderung möglich:
-nochmal anfragen mit `until` = `created_at` der ältesten Zeile.
+The list is sorted by `created_at` descending, and `until` bounds
+the same field inclusively. That makes keyset paging possible without a store change:
+request again with `until` = the `created_at` of the oldest row.
 
-**Die Präzision ist dabei der springende Punkt**, und der Test hält ihn fest.
-`created_at` liegt als RFC3339-*String* in SQLite und wird lexikografisch
-verglichen. Ein auf Millisekunden gekürzter Cursor — genau das, was
-`Date.toISOString()` liefert — sortiert **unter** einer Zeile innerhalb
-derselben Millisekunde (`+` ist 0x2B, `4` ist 0x34) und lässt sie herausfallen.
+**Precision is the crux here**, and the test pins it down.
+`created_at` sits in SQLite as an RFC3339 *string* and is compared
+lexicographically. A cursor truncated to milliseconds — exactly what
+`Date.toISOString()` delivers — sorts **below** a row within
+the same millisecond (`+` is 0x2B, `4` is 0x34) and lets it drop out.
 
-Das ist die verlierende Richtung: gekürzt würden Zeilen **still übersprungen**,
-nicht wiederholt. Meine erste Annahme war das Gegenteil, der Test hat sie
-widerlegt. Die Regel steht jetzt im Handler, im Typ und in der OpenAPI-Spec:
-**den `created_at`-Wert unverändert zurückgeben, den der Server geliefert hat.
-Niemals rekonstruieren.**
+That is the losing direction: truncated, rows would be **silently skipped**,
+not repeated. My first assumption was the opposite; the test refuted it.
+The rule now stands in the handler, in the type and in the OpenAPI spec:
+**return the `created_at` value unchanged, the one the server delivered.
+Never reconstruct it.**
 
-Die inklusive Grenze liefert die Cursor-Zeile noch einmal mit; der Client wirft
-sie über die `id` weg. Belegt am laufenden Stack: 200 Zeilen, nach *Load older*
-**399** — zweimal 200 minus die eine Überlappung.
+The inclusive bound returns the cursor row once more; the client discards
+it by `id`. Evidenced on the running stack: 200 rows, after *Load older*
+**399** — twice 200 minus the one overlap.
 
-### Das Fenster ist eine Länge, keine zwei Zeitpunkte
+### The window is a length, not two points in time
 
-„Die letzte Stunde" ist die Frage, die Leute haben; zwei Datumsfelder lassen
-sie dafür rechnen. In der URL steht `window=1h`, nicht zwei Instanzen — ein
-geteilter Link bedeutet dann „die letzte Stunde" *wann immer er geöffnet wird*
-statt ein Fenster um den Moment des Kopierens einzufrieren. Das ist fast immer,
-was der Absender meinte.
+"The last hour" is the question people have; two date fields make them
+do arithmetic for it. The URL carries `window=1h`, not two instants — a
+shared link then means "the last hour" *whenever it is opened*
+instead of freezing a window around the moment of copying. That is almost always
+what the sender meant.
 
-### Eine Beobachtung, die nach Fehler aussah und keiner war
+### An observation that looked like a bug and was not one
 
-Die Spalte *Fired* läuft nicht streng monoton: die Liste sortiert nach
-`created_at`, angezeigt wird `fire_at`. Nachgemessen, statt umzubauen: auf 200
-Zeilen unterscheiden sich die beiden **199-mal** — aber nur um etwa eine
-Sekunde, und sichtbar aus der Reihe fallen **2 von 200**. Ein Artefakt im
-Sekundenbereich, das die relative Zeitangabe rundet. Kein Umbaugrund.
+The *Fired* column is not strictly monotonic: the list sorts by
+`created_at`, what is displayed is `fire_at`. Measured instead of rebuilt: over 200
+rows the two differ **199 times** — but only by about a
+second, and **2 of 200** visibly fall out of order. An artefact in the
+seconds range that the relative time rounds away. No reason to rebuild.
 
-## Durchgang 15 — die Bühne zurück
+## Pass 15 — the stage restored
 
-Rückmeldung auf Durchgang 12: „deutlicher Rückschritt", und namentlich vier
-Dinge — die Textanimation, die grünen Gesundheitsfarben, die Konsolen-Vorschau,
-der Gitter-Hintergrund.
+Feedback on pass 12: "a clear regression", and four
+things by name — the text animation, the green health colours, the console preview,
+the grid background.
 
-Ich hatte genau diese in Durchgang 12 geprüft und als Dekoration abgelegt. Das
-war eine Gestaltungsentscheidung über fremdes Produkt, getroffen ohne zu
-fragen. Alle vier sind wieder da.
+I had checked exactly those in pass 12 and filed them as decoration. That
+was a design decision about somebody else's product, taken without
+asking. All four are back.
 
-### Vier Teile
+### Four parts
 
-**Der Gitter-Hintergrund** ist ein Raster auf zwei Farbverläufen, radial
-maskiert, damit es zum Rand hin ausblendet statt an einer Kante zu enden.
+**The grid background** is a raster over two gradients, radially
+masked so that it fades out towards the edge instead of ending at an edge.
 
-**Das dritte Wort rotiert** durch fünf Verben (`Recover`, `Replay`,
-`Diagnose`, `Audit`, `Scale`), 3,5 s je Wort. Croniq ist nicht ein Verb, und
-fünf nacheinander zu nennen sagt mehr als eins festzuschreiben.
+**The third word rotates** through five verbs (`Recover`, `Replay`,
+`Diagnose`, `Audit`, `Scale`), 3.5 s per word. Croniq is not one verb, and
+naming five in succession says more than fixing one.
 
-**Die Konsole** tippt einen `croniq`-Befehl, streamt die Ausgabe, hält, räumt
-ab. Jeder gezeigte Befehl ist ein echtes Unterkommando der CLI; die
-Ausgabezeilen sind illustrativ, aber nach der Verantwortung des jeweiligen
-Befehls geformt — die Regel, die eine Demo davon abhält, eine Lüge zu werden.
-Pausiert beim Überfahren, und zwar nur in der Halte-Phase (Tipp- und
-Ausgabe-Takte sind zu kurz, als dass ein Hover dort nützt).
+**The console** types a `croniq` command, streams the output, holds, clears.
+Every command shown is a real subcommand of the CLI; the
+output lines are illustrative but shaped by the responsibility of the respective
+command — the rule that keeps a demo from becoming a lie.
+It pauses on hover, and only during the hold phase (the typing and
+output beats are too short for a hover to be useful there).
 
-**Die Kacheln tragen Ton.** Die Unterzeile ist grün, wenn die Sache gesund
-ist, bernstein wenn nicht, und **grau solange `/health` noch nicht geantwortet
-hat** — einen unbekannten Zustand grün zu färben wäre eine Behauptung, die noch
-niemand aufgestellt hat.
+**The tiles carry tone.** The subline is green when the thing is
+healthy, amber when it is not, and **grey as long as `/health` has not answered
+yet** — colouring an unknown state green would be a claim nobody has
+made yet.
 
-### Drei Dinge, die erst beim Hinsehen auffielen
+### Three things that only showed up on looking
 
-**Die dunkle Bühne allein reichte nicht.** Ich hatte nur den Hintergrund
-gefärbt — jedes Token darüber (`text-highlighted`, `bg-default`, die Karte)
-löst aber aus der Klasse an `<html>` auf. Ergebnis: dunkle Schrift auf dunklem
-Grund und drei weiße Kacheln. Die Seite setzt jetzt für ihre Lebensdauer
-`dark`, wie es die ausgelieferte Fassung immer schon tat.
+**The dark stage alone was not enough.** I had only coloured the
+background — but every token above it (`text-highlighted`, `bg-default`, the card)
+resolves from the class on `<html>`. Result: dark text on a dark
+ground and three white tiles. The page now sets `dark` for its lifetime,
+as the shipping version always did.
 
-**`mode="out-in"` war die naheliegende Transition und die falsche.** Das alte
-Wort geht, bevor das neue kommt — die Zeile steht alle paar Sekunden sichtbar
-leer. Jetzt liegen beide in derselben Grid-Zelle und blenden über. Nachgemessen
-über vier Rotationen, alle 100 ms: **0 von 160 Bildern ohne Wort.**
+**`mode="out-in"` was the obvious transition and the wrong one.** The old
+word leaves before the new one arrives — the line stands visibly
+empty every few seconds. Now both sit in the same grid cell and cross-fade. Measured
+over four rotations, every 100 ms: **0 of 160 frames without a word.**
 
-**Und der ernsteste: die Helligkeitswahl ging verloren.** Ich hatte den
-DOM-Zustand beim Mounten gesichert und ihn beim Verlassen zurückgeschrieben.
-Beim Kaltstart von `/login` läuft `onMounted` aber **vor** dem Theme-Watcher
-des Stores — gesichert wurde also ein Attribut, das noch niemand gesetzt hatte,
-und wer „hell" gewählt hatte, bekam nach dem Anmelden *nichts* zurück. Der
-Store besitzt das Theme, also stellt der Store es wieder her: `reapplyTheme()`.
+**And the most serious one: the lightness choice was lost.** I had saved the
+DOM state on mount and written it back on leaving.
+But on a cold start of `/login`, `onMounted` runs **before** the store's theme
+watcher — so what was saved was an attribute nobody had set yet,
+and anyone who had chosen "light" got *nothing* back after signing in. The
+store owns the theme, so the store restores it: `reapplyTheme()`.
 
-Ein Screenshot hätte keinen der drei gezeigt.
+A screenshot would have shown none of the three.
 
-### Reduzierte Bewegung
+### Reduced motion
 
-Alles Bewegte ist unter `prefers-reduced-motion` aus — nicht schneller,
-sondern aus: kein Timer läuft, die Konsole zeigt eine **fertige** Demo statt
-eines leeren Rahmens, das Verb steht still. Geprüft.
+Everything that moves is off under `prefers-reduced-motion` — not faster,
+but off: no timer runs, the console shows a **finished** demo instead of
+an empty frame, the verb stands still. Checked.
 
-## Durchgang 16 — drei Nachträge
+## Pass 16 — three postscripts
 
-Drei Rückmeldungen auf Durchgang 15, jede eine eigene Ursache.
+Three pieces of feedback on pass 15, each with a cause of its own.
 
-### Der Tabellenkopf malte über den Dialog
+### The table header painted over the dialog
 
-Im „New job"-Dialog standen `STATUS` und `JOB` quer über dem Formular, und das
-Feld *Job key* war dahinter verschwunden.
+In the "New job" dialog, `STATUS` and `JOB` stood across the form, and the
+field *Job key* had disappeared behind them.
 
-Ursache: mein `sticky top-0 z-10` am `<thead>`. Ein z-index bedeutet nur etwas
-relativ zu einem Stapelkontext — und ohne einen um die Tabelle konkurrierte
-der Kopf mit der **ganzen Seite**. Nuxt UI positioniert den Dialog mit
-`z-index: auto`, also gewinnt jede positive Zahl gegen ihn.
+Cause: my `sticky top-0 z-10` on the `<thead>`. A z-index only means something
+relative to a stacking context — and without one around the table the
+header competed with the **whole page**. Nuxt UI positions the dialog with
+`z-index: auto`, so any positive number beats it.
 
-Die Lösung ist nicht, dem Dialog eine höhere Zahl zu geben, sondern dem Kopf
-seinen Bezugsrahmen: `isolation: isolate` auf dem Scroll-Container. Damit gilt
-sein z-index nur noch innerhalb seiner Tabelle, was er immer nur gebraucht hat.
+The fix is not to give the dialog a higher number, but to give the header
+its frame of reference: `isolation: isolate` on the scroll container. With that,
+its z-index only applies within its own table, which is all it ever needed.
 
-Das steht jetzt als `@utility cq-list` in `main.css` und wird von allen acht
-Listen benutzt — als Utility und nicht als achtmal wiederholte Klassenkette,
-damit die Eigenschaft, auf die es ankommt, einen Ort und eine Begründung hat.
+That now lives as `@utility cq-list` in `main.css` and is used by all eight
+lists — as a utility and not as a class chain repeated eight times,
+so that the property that matters has one place and one reason.
 
-Geprüft mit einem Raster über die Dialogfläche: **was dort malt, muss zum
-Dialog gehören.** Das fängt die ganze Fehlerklasse, nicht nur diesen Fall.
+Checked with a raster over the dialog area: **whatever paints there must belong to the
+dialog.** That catches the whole class of defect, not just this case.
 
-### Der Hintergrund war gemalt und trotzdem unsichtbar
+### The background was painted and still invisible
 
-Gemessen: Gitter, Verläufe und Maske waren in jedem Viewport vorhanden. Nur
-sehen konnte man sie nicht — und das ist eine faire Beschreibung, keine
-Fehlwahrnehmung.
+Measured: the grid, the gradients and the mask were present in every viewport. You
+just could not see them — and that is a fair description, not a
+misperception.
 
-Es fehlten die **driftenden Scheinwerfer**: zwei große, weich geblurrte
-Farbflächen im `screen`-Blendmodus, 90 s und 130 s Periode, damit sie nie in
-Takt fallen. Das Raster liest sich nur dort, wo ein Licht dahinter vorbeizieht.
-Ohne sie liegt die Seite flach.
+What was missing were the **drifting spotlights**: two large, softly blurred
+colour fields in the `screen` blend mode, with 90 s and 130 s periods so they never fall
+into step. The raster only reads where a light passes behind it.
+Without them the page lies flat.
 
-Unter `prefers-reduced-motion` stehen sie **still statt zu verschwinden** — sie
-sind das, was den Hintergrund überhaupt lesbar macht, ihn wegzunehmen hieße den
-Hintergrund wegzunehmen.
+Under `prefers-reduced-motion` they **stand still instead of disappearing** — they
+are what makes the background legible at all, and taking them away would mean taking the
+background away.
 
-### Die Konsole hatte keinen Zähler
+### The console had no counter
 
-Die alte Fassung zeigte im Idle-Zustand einen dünnen Balken, der abläuft. Ohne
-ihn ist die Haltephase tote Luft: die Ausgabe steht, fünf Sekunden passiert
-nichts, und nichts deutet an, dass noch etwas kommt.
+The old version showed a thin bar running down in the idle state. Without
+it the hold phase is dead air: the output stands, nothing happens for five seconds,
+and nothing indicates that more is coming.
 
-Er pausiert mit der Demo — wer zum Lesen mit der Maus draufgeht, hält die Uhr
-sichtbar an, statt sie stumm zu verschieben. Gemessen: 503 px → 349 px im
-Lauf, danach bei 343 px gehalten.
+It pauses with the demo — anyone who hovers to read visibly stops the
+clock instead of silently shifting it. Measured: 503 px → 349 px while
+running, then held at 343 px.
 
-## Durchgang 17 — Massenlöschung, die letzte Lücke im Scope-Guard
+## Pass 17 — bulk deletion, the last gap in the scope guard
 
-Beim Durchgehen der Fähigkeitsliste blieb genau eine Zeile ohne Ort:
-*„Dead Letters: … Einzel- und **Massenlöschung**"*. Der Server kann es
-(`POST /v1/dead-letters/bulk-delete`: entweder eine `ids`-Liste oder
-`all: true`, optional auf einen `job_key` eingegrenzt), die React-Fassung
-konnte es, meine nicht.
+Going through the capability list, exactly one line was left without a place:
+*"Dead Letters: … single and **bulk deletion**"*. The server can do it
+(`POST /v1/dead-letters/bulk-delete`: either an `ids` list or
+`all: true`, optionally narrowed to a `job_key`), the React version
+could do it, mine could not.
 
-Zwei Wege, weil sie verschiedene Absichten sind: Zeilen ankreuzen und
-„Discard selected", oder „Discard all". Der destruktive Knopf erscheint erst,
-wenn etwas ausgewählt ist — ein Löschknopf, der dauerhaft neben einer
-Arbeitsliste steht, ist einer, den man irgendwann nicht mehr liest.
+Two paths, because they are different intentions: tick rows and
+"Discard selected", or "Discard all". The destructive button only appears
+once something is selected — a delete button that permanently stands next to a
+work list is one you eventually stop reading.
 
-Die Auswahl hängt an `id`, nicht am Index, und Zeilen, die verschwinden
-(anderswo wiedervorgelegt, von der Retention geräumt), fallen aus ihr heraus —
-sonst nennt eine spätere Massenaktion IDs, die es nicht mehr gibt.
+The selection hangs on `id`, not on the index, and rows that disappear
+(replayed elsewhere, cleared by retention) drop out of it —
+otherwise a later bulk action names IDs that no longer exist.
 
-Gemeldet wird die **Zahl**, die der Server zurückgibt. Eine Massenlöschung, die
-„erledigt" sagt, sieht genauso aus wie eine, die nichts getroffen hat.
+What is reported is the **number** the server returns. A bulk deletion that
+says "done" looks exactly like one that hit nothing.
 
-Der Operator-Hinweis aus derselben Zeile war übrigens schon da: der Server
-backt ihn serverseitig in `dead_reason` ein (`"{reason} — {hint}"`), das Detail
-zeigt ihn also mit.
+The operator hint from the same line was already there, incidentally: the server
+bakes it into `dead_reason` server-side (`"{reason} — {hint}"`), so the detail
+shows it along with the rest.
 
-### Dreimal dieselbe Lehre, an einem Nachmittag
+### The same lesson three times, in one afternoon
 
-Der Prüfschritt ist dreimal gekippt, jedes Mal an **meiner Annahme über lebende
-Daten**, nie am Produkt:
+The check step fell over three times, every time on **my assumption about live
+data**, never on the product:
 
-1. Er löschte erst die ganze Warteschlange — und nahm damit dem *nächsten* Lauf
-   seine Grundlage. Genau die Ordnungsabhängigkeit, die ich zwei Durchgänge
-   vorher bei den Einladungen kritisiert hatte.
-2. Die Konsolenprüfung verlangte nach dem Leeren eine leere Liste. Bei einem
-   Server, der gerade redet, treffen im selben Moment neue Zeilen ein — die
-   Behauptung war über die Last, nicht über das Verhalten.
-3. Und die Massenlöschung verlangte, dass die Tabelle um genau zwei schrumpft.
-   Bei 100 % Fehlerrate kamen während des Löschens zwei neue herein.
+1. It first deleted the whole queue — and thereby took the *next* run's
+   basis away. Exactly the order dependency I had criticised two passes
+   earlier with the invitations.
+2. The console check required an empty list after clearing. With a
+   server that is talking, new rows arrive at the same moment — the
+   assertion was about the load, not about the behaviour.
+3. And the bulk deletion required the table to shrink by exactly two.
+   At a 100% failure rate, two new ones came in while the deletion was running.
 
-Alle drei prüfen jetzt, was das Feature verspricht (die Serverantwort, dass die
-Auswahl leer ist, dass das Gelöschte weg ist) statt einer Zahl, die von der
-Fehlerrate des Demos abhängt. Und wo die Grundlage fehlt, **sagt der Schritt
-das laut**, statt grün zu haken: ein übersprungener Test über einer leeren
-Tabelle wäre das schlechtere Ergebnis.
-
+All three now assert what the feature promises (the server response, that the
+selection is empty, that the deleted items are gone) instead of a number that depends on the
+failure rate of the demo. And where the basis is missing, **the step says so
+out loud** instead of ticking green: a skipped test over an empty
+table would be the worse outcome.

@@ -75,8 +75,8 @@ component at a time.
      frozen at the ten routes the React dashboard serves today", which was too
      literal — the screens are being deliberately re-cut and merged, and
      merging is the opposite of scope growth. What is frozen is the set of
-     capabilities, enumerated in `docs/ui-screen-inventory.md` under *Was nicht
-     verloren gehen darf*; the arrangement is open.
+     capabilities, enumerated in `docs/ui-screen-inventory.md` under *What must
+     not be lost*; the arrangement is open.
   2. **The acceptance gate is the Playwright suite** (`ui/e2e/`, #586). It
      asserts routes, the login and refresh-cookie session behaviour, the URL
      contracts, both SSE surfaces, and preference persistence — all of it
