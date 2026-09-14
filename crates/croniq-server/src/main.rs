@@ -562,6 +562,7 @@ async fn main() -> Result<()> {
                 loaded.runtime.policy.strict_calendars,
             );
             let mut api_count = 0;
+            let mut inactive_count = 0;
             for def in &api_triggers {
                 if def.managed_by == "dsl" || !def.enabled {
                     continue;
@@ -569,8 +570,22 @@ async fn main() -> Result<()> {
                 if triggers.contains_key(&def.job_key) {
                     continue;
                 } // Croniqfile takes precedence
+
+                // The job's own row, for two reasons (issue #653). It carries
+                // `is_active`, which nothing in the scheduler reads — so a job
+                // deactivated through the API came back firing after a restart.
+                // And it carries `timeout`, `max_retries` and the dead-letter
+                // settings, which `job_config_from_definition` fills from the
+                // system defaults when handed `None`: every API-registered job
+                // silently reverted to a 5m timeout and 3 retries on restart.
+                let job_def = store.get_job_definition(&def.job_key).unwrap_or_default();
+                if job_def.as_ref().is_some_and(|j| !j.is_active) {
+                    inactive_count += 1;
+                    continue;
+                }
+
                 if let Some(built) = trigger_from_definition(def, &resolved, now) {
-                    let job_config = job_config_from_definition(def, None);
+                    let job_config = job_config_from_definition(def, job_def.as_ref());
                     jobs.push(job_config);
                     triggers.insert(def.job_key.clone(), built.trigger);
                     if let Some(reason) = built.config_fault {
@@ -585,6 +600,12 @@ async fn main() -> Result<()> {
             }
             if api_count > 0 {
                 tracing::info!(api_count, "API-registered jobs restored from database");
+            }
+            if inactive_count > 0 {
+                tracing::info!(
+                    inactive_count,
+                    "API-registered jobs left out of the scheduler — marked inactive"
+                );
             }
         }
     }

@@ -81,6 +81,26 @@ type InheritedDispatch = (HashMap<String, String>, Vec<String>, Vec<String>, Str
 /// neither the caller nor the job config declares one (issue #551).
 const DEFAULT_FIRE_TIMEOUT: &str = "5m";
 
+/// Notified after a tool has written a store-managed job, so the embedding
+/// host can mirror the change into whatever is actually doing the scheduling.
+///
+/// This crate writes the store and stops there. `croniq-server` runs a
+/// scheduler over an in-memory trigger map, and a store write does not reach
+/// it — which is how `delete_job` over `/mcp` left a deleted job firing until
+/// the next reload, the same defect #634 found on the HTTP side (issue #653).
+/// The trait is the seam: `croniq-mcp` cannot name `SchedulerCommand` (the
+/// dependency runs the other way), so it says *what happened* and the embedder
+/// decides what that means.
+///
+/// Implementations must not block — these are called from tool dispatch and the
+/// tool's answer does not depend on the sync landing.
+pub trait JobSync: Send + Sync {
+    /// The job's definition or trigger rows were written. Re-read them.
+    fn job_changed(&self, job_key: &str);
+    /// The job's definition was deleted.
+    fn job_removed(&self, job_key: &str);
+}
+
 #[derive(Clone)]
 pub struct CroniqMcp {
     pub state: Arc<AppState>,
@@ -95,6 +115,10 @@ pub struct CroniqMcp {
     pub triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
     /// Whether mutation tools are enabled (`--mutations` flag).
     pub mutations_enabled: bool,
+    /// Where job mutations are reported so the host can update its scheduler.
+    /// `None` when the host has no scheduler to update (the stdio binary), in
+    /// which case a mutation reaches the scheduler at the next reload.
+    pub job_sync: Option<Arc<dyn JobSync>>,
     #[allow(dead_code)]
     tool_router: ToolRouter<CroniqMcp>,
 }
@@ -549,6 +573,7 @@ impl CroniqMcp {
             jobs: HashMap::new(),
             triggers: None,
             mutations_enabled: false,
+            job_sync: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -567,6 +592,7 @@ impl CroniqMcp {
             jobs,
             triggers: None,
             mutations_enabled,
+            job_sync: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -581,6 +607,7 @@ impl CroniqMcp {
             jobs: HashMap::new(),
             triggers: None,
             mutations_enabled: true,
+            job_sync: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -595,7 +622,34 @@ impl CroniqMcp {
         self
     }
 
+    /// Attach the hook that reports job mutations to the embedding host's
+    /// scheduler (issue #653). Without it the tools still write the store, and
+    /// the change reaches the scheduler at the next reload.
+    pub fn with_job_sync(mut self, job_sync: Arc<dyn JobSync>) -> Self {
+        self.job_sync = Some(job_sync);
+        self
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// Report a written job to the host so it can update its scheduler.
+    ///
+    /// Every mutating tool below calls one of these. Writing the store and
+    /// stopping there is what left a job deleted over `/mcp` firing until the
+    /// next reload (issue #653) — the HTTP side had the same hole and closed
+    /// it in #635.
+    fn notify_changed(&self, job_key: &str) {
+        if let Some(ref sync) = self.job_sync {
+            sync.job_changed(job_key);
+        }
+    }
+
+    /// Report a job whose definition is gone.
+    fn notify_removed(&self, job_key: &str) {
+        if let Some(ref sync) = self.job_sync {
+            sync.job_removed(job_key);
+        }
+    }
 
     /// Resolve what a manually fired execution inherits from its job config:
     /// the DSL-compiled metadata (so `__runner_exec` reaches the shell runner,
@@ -1180,6 +1234,7 @@ impl CroniqMcp {
         store
             .create_job_definition(&job)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.notify_changed(&p.job_key);
 
         Ok(format!("Updated job '{}'.", p.job_key))
     }
@@ -1636,6 +1691,7 @@ impl CroniqMcp {
         store
             .create_job_definition(&job)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.notify_changed(&job.job_key);
         serde_json::to_string_pretty(&job)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
@@ -1663,6 +1719,7 @@ impl CroniqMcp {
         store
             .delete_job_definition(&p.job_key)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.notify_removed(&p.job_key);
         Ok(format!("Job '{}' deleted.", p.job_key))
     }
 
@@ -1780,15 +1837,16 @@ impl CroniqMcp {
         store
             .create_trigger(&trigger)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.notify_changed(&trigger.job_key);
         serde_json::to_string_pretty(&trigger)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
-    /// Patch fields of an existing store-managed schedule. **Note**: the
-    /// change is persisted but the live scheduler isn't reloaded — restart
-    /// or call `POST /v1/admin/reload-config`.
+    /// Patch fields of an existing store-managed schedule. The live scheduler
+    /// is updated through [`JobSync`] when the host wired one up (issue #653);
+    /// without one the change lands at the next reload.
     #[tool(
-        description = "Patch a store-managed schedule's cron, timezone, calendar, or enabled flag. DSL-managed (`dsl:` prefix or `managed_by == \"dsl\"`) schedules are refused. Empty timezone/calendar string clears the field. Becomes active after server restart or `POST /v1/admin/reload-config`. Requires --mutations and --data-dir."
+        description = "Patch a store-managed schedule's cron, timezone, calendar, or enabled flag. DSL-managed (`dsl:` prefix or `managed_by == \"dsl\"`) schedules are refused. Empty timezone/calendar string clears the field. Takes effect immediately when served in-process by croniq-server. Requires --mutations and --data-dir."
     )]
     async fn update_schedule(
         &self,
@@ -1845,14 +1903,16 @@ impl CroniqMcp {
                 None,
             ));
         }
+        self.notify_changed(&existing.job_key);
         serde_json::to_string_pretty(&existing)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
-    /// Delete a store-managed schedule. **Note**: the live scheduler isn't
-    /// reloaded — the trigger keeps firing until restart or reload.
+    /// Delete a store-managed schedule. The live scheduler is updated through
+    /// [`JobSync`] when the host wired one up (issue #653); without one the
+    /// trigger keeps firing until restart or reload.
     #[tool(
-        description = "Delete a store-managed schedule. DSL-managed (`dsl:` prefix) schedules are refused. Live scheduler is not reloaded — call `POST /v1/admin/reload-config` to stop firing immediately. Requires --mutations and --data-dir."
+        description = "Delete a store-managed schedule. DSL-managed (`dsl:` prefix) schedules are refused. Stops firing immediately when served in-process by croniq-server. Requires --mutations and --data-dir."
     )]
     async fn delete_schedule(
         &self,
@@ -1869,9 +1929,21 @@ impl CroniqMcp {
             ));
         }
 
+        // Read before deleting: the job this trigger belonged to has to be
+        // re-synced afterwards, and once the row is gone there is nothing left
+        // to name it.
+        let job_key = store
+            .get_trigger(&p.trigger_id)
+            .ok()
+            .flatten()
+            .map(|t| t.job_key);
+
         store
             .delete_trigger(&p.trigger_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if let Some(job_key) = job_key {
+            self.notify_changed(&job_key);
+        }
         Ok(format!("Schedule '{}' deleted.", p.trigger_id))
     }
 
@@ -1964,6 +2036,7 @@ impl CroniqMcp {
         store
             .create_job_definition(&job)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        self.notify_changed(job_key);
         serde_json::to_string_pretty(&job)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
@@ -2024,6 +2097,214 @@ mod tests {
         use croniq_store::sqlite::SqliteStore;
         let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
         CroniqMcp::new_with_store(AppState::new(), store, vec![], true)
+    }
+
+    /// Records what a tool reported, so a test can assert the store write was
+    /// accompanied by a notification (issue #653).
+    #[derive(Default)]
+    struct RecordingSync {
+        calls: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl RecordingSync {
+        fn calls(&self) -> Vec<(String, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl JobSync for RecordingSync {
+        fn job_changed(&self, job_key: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("changed".into(), job_key.into()));
+        }
+        fn job_removed(&self, job_key: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("removed".into(), job_key.into()));
+        }
+    }
+
+    fn make_server_recording() -> (CroniqMcp, Arc<RecordingSync>) {
+        let sync = Arc::new(RecordingSync::default());
+        let server =
+            make_server_with_mutations().with_job_sync(Arc::clone(&sync) as Arc<dyn JobSync>);
+        (server, sync)
+    }
+
+    fn seed_job(server: &CroniqMcp, key: &str) {
+        let now = Utc::now();
+        server
+            .store
+            .as_ref()
+            .unwrap()
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: key.into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: now,
+                updated_at: now,
+                timeout: None,
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_job_reports_the_removal() {
+        // The #653 defect: the row went, the scheduler was told nothing, and
+        // the deleted job kept firing until the next reload — #634 over MCP.
+        let (server, sync) = make_server_recording();
+        seed_job(&server, "etl:nightly");
+
+        server
+            .delete_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sync.calls(),
+            vec![("removed".to_string(), "etl:nightly".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn activate_and_deactivate_report_the_change() {
+        let (server, sync) = make_server_recording();
+        seed_job(&server, "etl:nightly");
+
+        server
+            .deactivate_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+        server
+            .activate_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sync.calls(),
+            vec![
+                ("changed".to_string(), "etl:nightly".to_string()),
+                ("changed".to_string(), "etl:nightly".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_job_reports_the_change() {
+        let (server, sync) = make_server_recording();
+        seed_job(&server, "etl:nightly");
+
+        server
+            .update_job(Parameters(UpdateJobParams {
+                job_key: "etl:nightly".into(),
+                description: None,
+                timeout: Some("90s".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sync.calls(),
+            vec![("changed".to_string(), "etl:nightly".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn schedule_tools_report_the_job_they_touched() {
+        // The schedule tools said so in their own descriptions: "the live
+        // scheduler isn't reloaded". With a JobSync wired up they no longer
+        // need that caveat.
+        let (server, sync) = make_server_recording();
+        seed_job(&server, "etl:nightly");
+
+        let created = server
+            .create_schedule(Parameters(CreateScheduleParams {
+                job_key: "etl:nightly".into(),
+                cron_expression: Some("5m".into()),
+                timezone: None,
+                calendar: None,
+                window: None,
+                enabled: true,
+            }))
+            .await
+            .unwrap();
+        let trigger_id = serde_json::from_str::<serde_json::Value>(&created).unwrap()["trigger_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        server
+            .update_schedule(Parameters(UpdateScheduleParams {
+                trigger_id: trigger_id.clone(),
+                cron_expression: Some("10m".into()),
+                timezone: None,
+                calendar: None,
+                enabled: None,
+            }))
+            .await
+            .unwrap();
+
+        server
+            .delete_schedule(Parameters(DeleteScheduleParams { trigger_id }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sync.calls(),
+            vec![
+                ("changed".to_string(), "etl:nightly".to_string()),
+                ("changed".to_string(), "etl:nightly".to_string()),
+                ("changed".to_string(), "etl:nightly".to_string()),
+            ],
+            "create, update and delete of a schedule each re-sync the job"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_without_a_job_sync_still_writes_the_store() {
+        // The stdio binary has no scheduler to tell. The tools must not
+        // depend on the hook being there.
+        let server = make_server_with_mutations();
+        seed_job(&server, "etl:nightly");
+
+        server
+            .delete_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .get_job_definition("etl:nightly")
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// Like [`make_server_with_mutations`], but with the given DSL jobs in
@@ -2339,6 +2620,7 @@ mod tests {
             jobs: HashMap::new(),
             triggers: None,
             mutations_enabled: true,
+            job_sync: None,
             tool_router: CroniqMcp::tool_router(),
         };
         let err = server

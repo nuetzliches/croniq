@@ -365,6 +365,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   survives. The cost of guessing wrong that way is one request; the other way it
   is a session that fails to come back.
 
+- **Job edits reach the running scheduler, not just the store
+  ([#653](https://github.com/nuetzliches/croniq/issues/653)).**
+  [#635](https://github.com/nuetzliches/croniq/issues/635) fixed
+  `DELETE /v1/jobs/{key}` by pushing one `RemoveJob` at the scheduler. Every
+  other path that mutates a job had the same gap and kept it:
+
+  | Path | Wrote | Scheduler heard |
+  |---|---|---|
+  | `PUT /v1/jobs/{key}` | `timeout`, `max_retries` | nothing |
+  | `POST /v1/jobs/{key}/activate` \| `/deactivate` | `is_active` | nothing |
+  | MCP `delete_job` | the deletion | nothing |
+  | MCP `create_job`, `update_job`, `activate_job`, `deactivate_job` | the row | nothing |
+  | MCP `create_schedule`, `update_schedule`, `delete_schedule` | the trigger | nothing |
+
+  So a job deleted over `/mcp` reproduced #634 exactly — row gone, job still
+  firing — and a timeout changed through the API went on running at the old
+  one. `is_active` was worse than stale: nothing in the scheduler has ever read
+  it, so `deactivate` returned `is_active: false` on a job that kept firing,
+  and a restart did not help because the boot restore never loaded the job's
+  own row.
+
+  The command now comes from one place. `api::job_sync::sync_job` reads the
+  job's rows back out of the store and derives the command from them, so a
+  caller says "this job changed" rather than guessing which command its edit
+  implies. Taking the job out of the scheduler *is* how `is_active: false` is
+  implemented.
+
+  The MCP tools reach it through a `JobSync` trait: `croniq-mcp` cannot name
+  `SchedulerCommand` — it does not depend on `croniq-server` — so it reports
+  what happened and the embedder decides what that means. The stdio binary
+  passes no hook and behaves as before.
+
+  Two things fixed on the way. The boot restore built every API-registered
+  job's config with no `JobDefinition` at all, so `timeout`, `max_retries` and
+  the dead-letter settings silently reverted to the system defaults on every
+  restart; it now loads the row and skips jobs marked inactive. And the three
+  MCP schedule tools no longer carry their "call `reload-config` to stop
+  firing" caveat, because they no longer need it.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

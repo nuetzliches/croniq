@@ -13,6 +13,7 @@ pub mod execution_logs;
 pub mod executions;
 pub mod hardening;
 pub mod invitations;
+pub mod job_sync;
 pub mod jobs;
 pub mod login_throttle;
 pub mod maintenance;

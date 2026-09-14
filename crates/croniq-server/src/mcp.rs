@@ -63,7 +63,21 @@ pub fn mcp_router(
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
     extra_allowed_hosts: Option<Vec<String>>,
 ) -> Router {
-    let svc = streamable_http_service(runner, store, jobs, triggers, extra_allowed_hosts);
+    // The tools write the store; this is how that reaches the scheduler the
+    // server is running (issue #653). Without it `delete_job` over `/mcp`
+    // reproduced #634 exactly: the row gone, the job still firing.
+    let job_sync: Arc<dyn croniq_mcp::JobSync> = Arc::new(
+        crate::api::job_sync::SchedulerJobSync::new(Arc::clone(&state)),
+    );
+
+    let svc = streamable_http_service(
+        runner,
+        store,
+        jobs,
+        triggers,
+        Some(job_sync),
+        extra_allowed_hosts,
+    );
 
     // route_layer applies in reverse order — `require_auth` runs first
     // (injects CallerContext), then `require_mcp_read`, then
