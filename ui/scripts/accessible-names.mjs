@@ -23,7 +23,7 @@
 
 import { chromium } from "@playwright/test";
 
-const port = process.argv[2] ?? process.env.CRONIQ_DEV_UI_PORT ?? 4232;
+const port = process.argv[2] ?? process.env.CRONIQ_DEV_UI_PORT ?? 4231;
 const base = `http://127.0.0.1:${port}`;
 
 /** Roles worth naming: things a person operates. */

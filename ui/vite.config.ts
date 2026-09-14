@@ -4,8 +4,8 @@ import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 
 /**
- * The dashboard (ADR-0004). Port 4232, in croniq's 4230-4233 development
- * block — see `scripts/dev-stack.mjs`.
+ * The dashboard (ADR-0004). Port 4231, the UI slot in croniq's 4230-4233
+ * development block — see `../scripts/dev-stack.mjs`.
  *
  * There is deliberately no `VITE_API_URL` escape hatch. The dashboard this one
  * replaced had one, for cross-origin builds, and it needed a build-time guard
@@ -53,13 +53,15 @@ export default defineConfig({
     },
   },
   server: {
-    port: 4232,
-    // See ui/vite.config.ts: a silent move to another port makes the
-    // side-by-side comparison compare the wrong things.
+    port: 4231,
+    // Refuse rather than silently move: vite's default is to take the next
+    // free port, which prints a URL that nothing the dev stack advertises is
+    // listening on. `dev-stack.mjs` checks the port up front for the same
+    // reason and answers with the variable to set.
     strictPort: true,
-    // Same paths the React tree proxies. This is what makes `npm run dev`
-    // same-origin, so the refresh cookie works in development exactly as it
-    // does in production (ADR-0001).
+    // Proxying these is what makes `npm run dev` same-origin, so the refresh
+    // cookie works in development exactly as it does in production
+    // (ADR-0001).
     proxy: {
       '/v1': API_ORIGIN,
       '/health': API_ORIGIN,

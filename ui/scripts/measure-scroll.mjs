@@ -19,7 +19,7 @@
 
 import { chromium } from "@playwright/test";
 
-const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4232}`;
+const base = `http://127.0.0.1:${process.env.CRONIQ_DEV_UI_PORT ?? 4231}`;
 
 const browser = await chromium.launch();
 // The viewport is a parameter because the interesting case is the short one:

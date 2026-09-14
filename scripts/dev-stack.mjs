@@ -3,7 +3,7 @@
 // Start everything needed to work on the dashboard:
 //
 //   croniq-server   http://127.0.0.1:4230   API, seeded demo data, one runner
-//   dashboard       http://127.0.0.1:4232   the Vue SPA in ui/
+//   dashboard       http://127.0.0.1:4231   the Vue SPA in ui/
 //
 // 4230-4233 is croniq's development block, deliberately contiguous and
 // deliberately not 4000. The server's *product* default stays 4000 -- it is
@@ -11,10 +11,9 @@
 // but the dev stack running there too meant `docker compose up` and this
 // script could not coexist. They can now.
 //
-// 4231 is free: it held the React dashboard until the cutover removed it. The
-// dashboard keeps 4232 rather than sliding down a slot, because every tool in
-// ui/scripts/ and every note in docs/ names that port, and renumbering a
-// working port only to close a gap is churn.
+// 4232 is free. The dashboard sat there while it was being rebuilt beside the
+// React one, which held 4231; with one dashboard left, the UI slot in the
+// block is where it belongs.
 //
 // The dev server proxies /v1, /health, /version and /metrics to the API, so it
 // is same-origin with it and gets the refresh cookie exactly as production
@@ -25,7 +24,7 @@
 //   node scripts/dev-stack.mjs --api     API and runner only — bring your own
 //                                        dev server, or point a build at it
 //
-// Ports default to 4230 / 4232 and are overridable when something else on the
+// Ports default to 4230 / 4231 and are overridable when something else on the
 // machine already holds one:
 //   CRONIQ_DEV_PORT, CRONIQ_DEV_UI_PORT
 //
@@ -54,7 +53,7 @@ const args = new Set(process.argv.slice(2));
 const withUi = !args.has("--api");
 
 const PORT = Number(process.env.CRONIQ_DEV_PORT ?? 4230);
-const UI_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4232);
+const UI_PORT = Number(process.env.CRONIQ_DEV_UI_PORT ?? 4231);
 const USER = "admin";
 const PASSWORD = "demo-admin";
 const API_KEY = "croniq_dev_stack_key_not_for_production_use";
