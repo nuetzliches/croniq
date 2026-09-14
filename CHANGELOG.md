@@ -8,6 +8,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The dashboard warns when it and the server were not released together
+  ([#604](https://github.com/nuetzliches/croniq/issues/604)).** The combined
+  image cannot have version skew — one digest, both halves. The split images
+  from [#587](https://github.com/nuetzliches/croniq/issues/587) /
+  [#598](https://github.com/nuetzliches/croniq/issues/598) can: pinning
+  `croniq-ui:0.39.0` against `croniq-server:0.38.0` gives a dashboard calling
+  endpoints its server may not have, and the symptom is a scattering of 404s
+  on individual screens rather than anything naming the cause. The tag rule was
+  documented but unenforced.
+
+  Each released bundle is now stamped with its version at build time and
+  compares that against `GET /version` on load. A mismatch raises a dismissible
+  banner naming both versions, plus a line on the sign-in page — in case the
+  mismatch is what is stopping you signing in.
+
+  A warning, not a refusal: a mismatched pair is usually still mostly
+  functional, and locking an operator out of their own dashboard over a version
+  string is worse than the skew. Dismissal is remembered for *that pair only*,
+  so changing either half into a different mismatch brings it back.
+
+  It stays quiet when either side is unknown — a dashboard built from source,
+  or a server too old to serve `/version` — because a warning that fires on
+  every development reload is a warning nobody reads on the day it is real. And
+  it compares exactly rather than by major or minor: the three images ship
+  under one tag from one run, so any difference means they were pinned apart by
+  hand.
+
 - **Two more images: `croniq-server` and `croniq-ui`
   ([#587](https://github.com/nuetzliches/croniq/issues/587),
   [#598](https://github.com/nuetzliches/croniq/issues/598)).** The same

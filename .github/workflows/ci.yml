@@ -536,6 +536,12 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          # No `CRONIQ_VERSION` build-arg here, deliberately. It stamps the
+          # dashboard for the version-skew warning (#604), and a main-branch
+          # image is not half of a released pair — stamping it with a sha or a
+          # date would make every such image warn against a server reporting
+          # `CARGO_PKG_VERSION`. The Dockerfile's `dev` default is read as
+          # "not stamped, say nothing". release.yml passes the tag.
           # OCI labels link the container to this (public) repo so new
           # package names inherit the repo's visibility on first
           # creation. See the note in release.yml for the full rationale.

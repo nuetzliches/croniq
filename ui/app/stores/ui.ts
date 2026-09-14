@@ -4,11 +4,12 @@ import { defineStore } from 'pinia'
 /**
  * Per-browser display preferences.
  *
- * The storage keys are the React tree's, verbatim. Both dashboards are served
- * from the same origin, so they share a `localStorage` namespace — which means
- * an operator who has collapsed the sidebar keeps it collapsed across the
- * cutover instead of having their preferences silently reset by an upgrade
- * they did not ask for.
+ * The storage keys are the React tree's, verbatim, and stay that way now that
+ * it is gone. Both dashboards were served from the same origin and so shared a
+ * `localStorage` namespace — which means an operator who had collapsed the
+ * sidebar kept it collapsed across the cutover instead of having their
+ * preferences silently reset by an upgrade they did not ask for. Renaming the
+ * keys now would spend that for nothing.
  */
 const SIDEBAR_KEY = 'croniq_sidebar'
 const THEME_KEY = 'croniq_theme'
