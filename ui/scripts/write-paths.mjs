@@ -18,7 +18,7 @@
 // It cleans up after itself: `smoke:vue-jobs`, `smoke:calendar-user` and
 // `smoke-business-days` are all removed before it exits.
 //
-// Usage (with `node scripts/dev-stack.mjs` running, from ui-vue/):
+// Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/write-paths.mjs
 //
 // Not in CI: it needs the dev stack and writes to the demo database.

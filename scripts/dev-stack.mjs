@@ -3,7 +3,7 @@
 // Start everything needed to work on the dashboard:
 //
 //   croniq-server   http://127.0.0.1:4230   API, seeded demo data, one runner
-//   ui-vue          http://127.0.0.1:4232   the dashboard
+//   dashboard       http://127.0.0.1:4232   the Vue SPA in ui/
 //
 // 4230-4233 is croniq's development block, deliberately contiguous and
 // deliberately not 4000. The server's *product* default stays 4000 -- it is
@@ -13,7 +13,7 @@
 //
 // 4231 is free: it held the React dashboard until the cutover removed it. The
 // dashboard keeps 4232 rather than sliding down a slot, because every tool in
-// ui-vue/scripts/ and every note in docs/ names that port, and renumbering a
+// ui/scripts/ and every note in docs/ names that port, and renumbering a
 // working port only to close a gap is churn.
 //
 // The dev server proxies /v1, /health, /version and /metrics to the API, so it
@@ -32,7 +32,7 @@
 // Prerequisites, once:
 //   cargo build -p croniq-cli -p croniq-server -p croniq-demo-runner \
 //     --bin croniq --bin croniq-server --bin croniq-demo-runner
-//   (cd ui-vue && npm ci)
+//   (cd ui && npm ci)
 //
 // Deliberately not docker compose: HMR through a bind mount on Windows is
 // slow and the point of this script is the edit-reload loop.
@@ -228,7 +228,7 @@ run("runner", bin("croniq-demo-runner"), [], {
 // true and the pre-flight check meaningful.
 if (withUi) {
   run("ui", "npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(UI_PORT)], {
-    cwd: path.join(ROOT, "ui-vue"),
+    cwd: path.join(ROOT, "ui"),
     env: { CRONIQ_API_ORIGIN: `http://127.0.0.1:${PORT}` },
     shell: true,
   });

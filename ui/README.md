@@ -1,8 +1,10 @@
 # Croniq UI
 
-The dashboard. Vue 3, rebuilt from the React tree that used to live in `../ui`
-per [ADR-0004](../docs/adr/0004-vue-rebuild-for-the-dashboard.md); that tree was
-removed at the cutover, so this is the only one.
+The dashboard. Vue 3, rebuilt from the React SPA that occupied this directory
+until 2026-09-14, per
+[ADR-0004](../docs/adr/0004-vue-rebuild-for-the-dashboard.md). The rebuild grew
+up next door in `ui-vue/` and moved in once the old tree was removed, so
+anything written before that date and pointing at `ui/` means the React one.
 
 Read [`../docs/ui-screen-inventory.md`](../docs/ui-screen-inventory.md) before
 adding a screen — it holds the agreed screen set and the list of capabilities

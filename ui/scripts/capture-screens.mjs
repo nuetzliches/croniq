@@ -9,7 +9,7 @@
 // for exactly as long as there were two. It still earns its place — a capture
 // is the cheapest way to see every screen at once after a change.
 //
-// Usage (with `node scripts/dev-stack.mjs` running, from ui-vue/):
+// Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/capture-screens.mjs ../screens/today
 //
 // The port follows the dev stack; override with CRONIQ_DEV_UI_PORT.

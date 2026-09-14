@@ -84,7 +84,7 @@ undo this ADR silently.
 - `crates/croniq-server/src/api/refresh_cookie.rs` — cookie name, attributes, delivery mode
 - `crates/croniq-server/src/api/auth_endpoints.rs` — login/refresh/logout paths that choose body vs. cookie
 - `crates/croniq-server/src/api/hardening.rs` — `CONTENT_SECURITY_POLICY` (`connect-src 'self'`), origin-locked CORS, no `Allow-Credentials`
-- `ui-vue/vite.config.ts` — no API-base setting exists; the dashboard is
+- `ui/vite.config.ts` — no API-base setting exists; the dashboard is
   same-origin by construction (it was `assertTokenStorageAcknowledged` in the
   React tree, until the cutover removed the flag it guarded)
 - `docs/operations.md` → "Where the dashboard keeps its tokens"

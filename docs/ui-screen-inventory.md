@@ -70,7 +70,7 @@ Executions-Block im Runner-Detail. Die Job-Seite zeigt stattdessen eine
 Statuszeile („letzte 5 Läufe", Sparkline) und verlinkt in die gefilterte Liste.
 
 **Route bleibt `/executions`.** Ein Rename auf `/runs` wäre hübscher und bricht
-Bookmarks und die URL-Verträge, die `ui-vue/e2e/url-state.spec.ts` prüft — ohne
+Bookmarks und die URL-Verträge, die `ui/e2e/url-state.spec.ts` prüft — ohne
 Gegenwert.
 
 ### 2. Job-Detail: von sechs Tabs auf zwei

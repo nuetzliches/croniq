@@ -38,7 +38,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// the page is open, which makes the CSP the main thing limiting the blast
 /// radius of any future XSS.
 ///
-/// Checked against the actual Vite production build (`ui-vue/dist`):
+/// Checked against the actual Vite production build (`ui/dist`):
 ///
 /// * `script-src 'self' 'wasm-unsafe-eval'` — `index.html` contains no
 ///   inline scripts (only external module scripts + modulepreload links),
@@ -55,7 +55,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 ///   rendered as inline SVG markup (a DOM subtree, not a resource load) and
 ///   needs no directive.
 /// * `connect-src 'self'` — the SPA is same-origin only (see
-///   `ui-vue/vite.config.ts`), which also covers the SSE streams and the
+///   `ui/vite.config.ts`), which also covers the SSE streams and the
 ///   wasm-bindgen loader fetching its `.wasm` next to the JS.
 /// * `frame-ancestors 'none'` — no embedding (clickjacking); the modern
 ///   equivalent of `X-Frame-Options: DENY`, which is also set for older

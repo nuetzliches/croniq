@@ -77,8 +77,7 @@ component at a time.
      merging is the opposite of scope growth. What is frozen is the set of
      capabilities, enumerated in `docs/ui-screen-inventory.md` under *Was nicht
      verloren gehen darf*; the arrangement is open.
-  2. **The acceptance gate is the Playwright suite** (now `ui-vue/e2e/`,
-     #586). It
+  2. **The acceptance gate is the Playwright suite** (`ui/e2e/`, #586). It
      asserts routes, the login and refresh-cookie session behaviour, the URL
      contracts, both SSE surfaces, and preference persistence — all of it
      framework-agnostic and none of it about appearance. It must pass against
@@ -95,7 +94,7 @@ component at a time.
      across specs; the React half of that file leaves with the React tree.
      *Amended 2026-09-14:* it did. `trees.ts` is gone, the switch with it, and
      what the specs needed from it — the nav list, sign-out, the theme picker —
-     is now `ui-vue/e2e/app.ts`, describing one dashboard rather than
+     is now `ui/e2e/app.ts`, describing one dashboard rather than
      reconciling two.
   3. **Fixes go to the Vue tree first** once a file is rebuilt, and are
      cherry-picked back if the React tree still needs them. Never the reverse.
@@ -141,14 +140,21 @@ Carried out 2026-09-14, after the capability list in `docs/ui-screen-inventory.m
 was satisfied in full and the Playwright suite passed against the Vue build.
 What moved, in one change:
 
-- `ui/` deleted — 118 files. Nothing was kept "just in case": git has it, and a
-  parallel tree nobody builds is a tree that rots into a trap.
-- The e2e suite, the Playwright config and the seven tooling scripts moved from
-  `ui/` to `ui-vue/`, which is now the only npm project in the repo besides the
-  SDKs. `style-snapshot.mjs` was not moved: guard 2 above says it does not
-  survive a rebuild, and it did not.
+- The React tree in `ui/` deleted — 118 files. Nothing was kept "just in
+  case": git has it, and a parallel tree nobody builds is a tree that rots into
+  a trap.
+- The e2e suite, the Playwright config and the seven tooling scripts moved out
+  of it and into the rebuild, which is now the only npm project in the repo
+  besides the SDKs. `style-snapshot.mjs` was not moved: guard 2 above says it
+  does not survive a rebuild, and it did not.
+- **The rebuild then moved into `ui/`.** It grew up in `ui-vue/` because the
+  name had to be free while both trees existed; keeping that name afterwards
+  would leave the directory encoding a framework, which is the exact thing
+  [ADR-0003](0003-react-for-the-dashboard.md) got caught by — a stack recorded
+  in a name nobody revisits. `ui-vue/` no longer exists. Pure renames, so
+  history follows.
 - `Dockerfile`, `.github/workflows/*`, `scripts/dev-stack.mjs`, `.gitignore`
-  and `.dockerignore` all point at `ui-vue/`. The CI job kept the name
+  and `.dockerignore` follow the directory. The CI job kept the name
   `UI (build + typecheck)` and swapped its contents, because it is a required
   status check and renaming one blocks every merge until branch protection
   catches up (incident #98).
@@ -163,13 +169,16 @@ What moved, in one change:
 Two things this cutover did **not** do, deliberately. It did not rewrite the
 historical documents — `docs/ui-architecture-decision.md`, `docs/ui-spike-brief.md`,
 `docs/reviews/*` and ADR-0003 still describe `ui/` in the present tense,
-because they are records of when that was true. And it did not renumber,
-rename or re-scope anything that was merely adjacent to the change.
+because they are records of when that was true. Note the trap the rename
+leaves behind: those documents name a path that still exists and now holds
+something else. Anything written before 2026-09-14 that points at `ui/` means
+the React tree. And the cutover did not renumber, rename or re-scope anything
+that was merely adjacent to it.
 
 ## Enforced by
 
 - `AGENTS.md` → "Core Expectations", item 1
-- `ui-vue/package.json`, `ui-vue/vite.config.ts` — the toolchain
+- `ui/package.json`, `ui/vite.config.ts` — the toolchain
 - `.github/workflows/ci.yml` — `UI (build + typecheck)` and `UI (e2e smoke)`.
   Do not rename `UI (build + typecheck)`: it is a required status check, and
   renaming one blocks every merge until branch protection is updated

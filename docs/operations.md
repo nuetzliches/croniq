@@ -146,7 +146,7 @@ origin than the API, so such a build would have to keep the refresh token in
 `localStorage` — with exactly the exposure described above.
 
 **There is no such build.** The dashboard has no API-base setting: it always
-talks to its own origin (`ui-vue/vite.config.ts`). Serve it from
+talks to its own origin (`ui/vite.config.ts`). Serve it from
 `croniq-server --ui-dir`, or from the `croniq-ui` container behind a proxy
 that routes `/v1` to the API on the same hostname — see below. Both are
 same-origin and both get the cookie.

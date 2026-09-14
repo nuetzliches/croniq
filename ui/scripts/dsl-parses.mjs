@@ -10,7 +10,7 @@
 // dashboard puts on screen, hand it to the same binary an operator would, and
 // report what the binary says.
 //
-// Usage (with `node scripts/dev-stack.mjs` running, from ui-vue/):
+// Usage (with `node scripts/dev-stack.mjs` running, from ui/):
 //   node scripts/dsl-parses.mjs
 //
 // Needs a debug or release build of croniq. Not in CI — it needs both the dev
