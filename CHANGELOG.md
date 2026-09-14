@@ -610,6 +610,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pattern all along; `JobDetail` now uses it, and the detail pane is also keyed
   by job so a different selection remounts rather than re-rendering in place.
 
+- **Four destructive controls no longer fail in silence
+  ([#664](https://github.com/nuetzliches/croniq/issues/664)).** Maintenance
+  mode, removing a runner, discarding one dead letter and cancelling a run all
+  called their mutation bare. There is no global error handling for mutations —
+  no `MutationCache` `onError`, no `app.config.errorHandler` — so a rejection
+  reached Vue's default handler and went to the console. To the person who
+  pressed the button, a 403, a 409 or a 5xx looked exactly like
+  success-but-slow: the popover stayed open with the old value, the row stayed
+  put, nothing said why.
+
+  Maintenance mode was the worst of them. Its popover closed either way, so an
+  operator could believe they had stopped dispatch when they had not.
+
+  All four now report what the server said, using the pattern the other fifteen
+  screens already had — extracted into `useActionError` rather than copied a
+  sixteenth time. The maintenance popover closes on success and stays open on
+  failure, because closing it would throw away the message that just appeared.
+
+  Writing a test for the extracted version turned up a defect all the existing
+  copies share: `??` does not fall through an empty string, so a refusal
+  carrying a blank message rendered an empty alert. The composable checks for
+  blank rather than for nullish.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

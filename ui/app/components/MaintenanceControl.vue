@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useMaintenance, useSetMaintenance } from '~/api/queries'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * Turn maintenance on or off, from the topbar.
@@ -15,6 +16,8 @@ import { useMaintenance, useSetMaintenance } from '~/api/queries'
  */
 const { data } = useMaintenance()
 const setMaintenance = useSetMaintenance()
+
+const { error, attempt, clear } = useActionError()
 
 const open = ref(false)
 const manual = ref(false)
@@ -51,30 +54,43 @@ function localInputToIso(value: string): string | null {
  */
 watch(open, (isOpen) => {
   if (!isOpen) return
+  clear()
   manual.value = data.value?.manual_active ?? false
   start.value = isoToLocalInput(data.value?.window_start)
   end.value = isoToLocalInput(data.value?.window_end)
   note.value = data.value?.note ?? ''
 })
 
+/**
+ * The popover closes on success and stays open on failure.
+ *
+ * Closing it either way would throw away the message that just appeared, and
+ * leave an operator believing they had stopped dispatch when they had not —
+ * which is the worst possible thing to be wrong about on this particular
+ * control (issue #664).
+ */
 async function save() {
-  await setMaintenance.mutateAsync({
-    manual_active: manual.value,
-    window_start: localInputToIso(start.value),
-    window_end: localInputToIso(end.value),
-    note: note.value.trim() || null,
-  })
-  open.value = false
+  const ok = await attempt(() =>
+    setMaintenance.mutateAsync({
+      manual_active: manual.value,
+      window_start: localInputToIso(start.value),
+      window_end: localInputToIso(end.value),
+      note: note.value.trim() || null,
+    }),
+  )
+  if (ok) open.value = false
 }
 
 async function clearAll() {
-  await setMaintenance.mutateAsync({
-    manual_active: false,
-    window_start: null,
-    window_end: null,
-    note: null,
-  })
-  open.value = false
+  const ok = await attempt(() =>
+    setMaintenance.mutateAsync({
+      manual_active: false,
+      window_start: null,
+      window_end: null,
+      note: null,
+    }),
+  )
+  if (ok) open.value = false
 }
 </script>
 
@@ -149,6 +165,16 @@ async function clearAll() {
             />
           </UFormField>
         </div>
+
+        <UAlert
+          v-if="error"
+          class="mt-4"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-alert-triangle"
+          :description="error"
+          role="alert"
+        />
 
         <div class="mt-4 flex items-center gap-2">
           <UButton

@@ -136,8 +136,16 @@ async function doReplay(id: string, force = false) {
 }
 
 async function doDelete(id: string) {
-  await remove.mutateAsync(id)
-  if (selectedId.value === id) selectedId.value = null
+  // Reuses the replay banner: one row can only be in one of these states, and
+  // a second alert bar for the same list would be noise.
+  replayError.value = null
+  try {
+    await remove.mutateAsync(id)
+    if (selectedId.value === id) selectedId.value = null
+  } catch (caught) {
+    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
+    replayError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+  }
 }
 
 const expiring = (row: DeadLetter) => Boolean(row.expires_at)

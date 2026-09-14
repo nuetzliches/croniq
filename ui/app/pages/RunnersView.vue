@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useDeleteRunner } from '~/api/queries'
+import { useActionError } from '~/composables/useActionError'
 import { useRunnersStream } from '~/composables/useRunnersStream'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 
@@ -16,6 +17,7 @@ import { formatAbsolute, formatRelative } from '~/lib/format'
  */
 const { runners, connected, received } = useRunnersStream()
 const removeRunner = useDeleteRunner()
+const { error, attempt } = useActionError()
 
 const tagFilter = ref('')
 
@@ -42,7 +44,7 @@ const online = computed(() => runners.value.filter((r) => r.status === 'online')
  * they time out.
  */
 async function remove(runnerId: string) {
-  await removeRunner.mutateAsync(runnerId)
+  await attempt(() => removeRunner.mutateAsync(runnerId))
 }
 </script>
 
@@ -87,6 +89,17 @@ async function remove(runnerId: string) {
         <span class="cq-num text-sm text-muted">{{ online }} online</span>
       </div>
     </div>
+
+    <UAlert
+      v-if="error"
+      color="error"
+      variant="subtle"
+      icon="i-lucide-alert-triangle"
+      :description="error"
+      role="alert"
+      close
+      @update:open="error = null"
+    />
 
     <div class="cq-list min-h-0 flex-1">
       <AppLoading
