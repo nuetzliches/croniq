@@ -1502,10 +1502,15 @@ protocol* section for the semantics and the
   runner id). The refusal happens before the registry is touched, so the
   incumbent runner is unaffected: its lease is not extended by the stranger,
   its claims are not requeued, and it is not fenced out with `409`.
-- **Runner SDKs treat a `403` as a transient poll error** and keep retrying on
-  their poll interval, so a fenced-out runner shows up as one that never
-  receives work rather than one that exits. Check the server log or the audit
-  trail — the runner side may only log at `debug`.
+- **Runner SDKs treat a `403` as fatal** and stop on the first one, surfacing an
+  error that names the `runner_id` and the fix. Retrying cannot clear a `403` —
+  unlike the `409` of an instance takeover, where a deposed runner may
+  legitimately win its identity back — and a runner that retried anyway looked
+  merely *idle*, which was the diagnostic trap issue
+  [#437](https://github.com/nuetzliches/croniq/issues/437) closed. The
+  behaviour is pinned for every SDK by conformance case
+  `15-poll-403-ownership-fatal`. So the symptom is a runner that **exits**; the
+  server log and the audit trail say why.
 - **Two causes worth distinguishing.** Either two runners genuinely share a
   `runner_id` and hold different credentials (give each its own id — the same
   advice as for identity flapping above), or a `runner_id` is legitimately

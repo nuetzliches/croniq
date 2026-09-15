@@ -6,7 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Four standing constraints are now ADRs
+  ([`docs/adr/`](docs/adr/README.md)).** Each was documented only as behaviour
+  — in `operations.md` as the state of things, or in the README as a feature
+  description — with the alternatives that lost left out, which is what an ADR
+  is for. Nothing about how Croniq behaves changes.
+
+  [0006](docs/adr/0006-croniqfile-owns-what-it-declares.md): the Croniqfile
+  owns what it declares, and the API adopts rather than edits.
+  [0007](docs/adr/0007-calendars-carry-their-own-timezone.md): every timezone
+  is declared, never inherited from the host or from the job consulting a
+  calendar.
+  [0008](docs/adr/0008-runner-identity-binds-first-writer-wins.md): a
+  `runner_id` belongs to the credential that first used it.
+  [0009](docs/adr/0009-one-wire-level-conformance-suite-for-every-sdk.md): one
+  wire-level conformance suite defines runner SDK behaviour for all six
+  languages.
+
 ### Fixed
+
+- **`docs/operations.md` described the opposite symptom for a fenced-out
+  runner.** It said runner SDKs treat a `403` from a work endpoint as transient
+  and keep retrying, so such a runner "shows up as one that never receives work
+  rather than one that exits" — the behaviour before
+  [#437](https://github.com/nuetzliches/croniq/issues/437), and precisely the
+  diagnostic trap that issue closed. A `403` has been fatal on the first
+  occurrence since, pinned for every SDK by conformance case
+  `15-poll-403-ownership-fatal`. An operator following the old paragraph would
+  have gone looking for an idle runner that had in fact already exited.
 
 - **Four things the dashboard showed but would not let you read or follow
   ([#747](https://github.com/nuetzliches/croniq/issues/747)).** Found together
