@@ -148,7 +148,19 @@ pub async fn handle_create(
         (Some(_), Some(_)) => return Err(StatusCode::BAD_REQUEST),
         (Some(at), None) => Some(at),
         (None, Some(0)) => return Err(StatusCode::BAD_REQUEST),
-        (None, Some(hours)) => Some(Utc::now() + chrono::Duration::hours(i64::from(hours))),
+        (None, Some(hours)) => Some(
+            // Checked, because `Utc::now() + Duration::hours(..)` panics
+            // rather than saturating once the result leaves chrono's year
+            // range — and `expires_in_hours` is a `u32` a caller chooses. A
+            // value near `u32::MAX` therefore took the connection down instead
+            // of answering 400, since there is no catch-panic layer (#714).
+            //
+            // No ceiling beyond representability: a long-lived PAT is a
+            // legitimate thing to ask for, an un-representable one is not.
+            chrono::Duration::try_hours(i64::from(hours))
+                .and_then(|d| Utc::now().checked_add_signed(d))
+                .ok_or(StatusCode::BAD_REQUEST)?,
+        ),
         (None, None) => None,
     };
 
@@ -433,6 +445,60 @@ mod tests {
 
     /// Neither form still means "never expires", which is what a caller that
     /// predates this field gets.
+    /// `expires_in_hours` is a `u32` the caller picks, and
+    /// `Utc::now() + Duration::hours(..)` panics rather than saturating once
+    /// the result leaves chrono's year range. With no catch-panic layer that
+    /// took the connection down instead of answering (issue #714).
+    #[tokio::test]
+    async fn an_unrepresentable_lifetime_is_refused_not_a_panic() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        match handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(CreatePatRequest {
+                name: "ci".into(),
+                scopes: None,
+                expires_at: None,
+                expires_in_hours: Some(u32::MAX),
+            }),
+        )
+        .await
+        {
+            Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("a lifetime that cannot be represented must be refused"),
+        }
+    }
+
+    /// The other side of it: a long but representable lifetime is fine. There
+    /// is deliberately no ceiling — a ten-year PAT is a choice, not a bug.
+    #[tokio::test]
+    async fn a_long_but_representable_lifetime_is_allowed() {
+        let store = make_store();
+        seed_user(&store, "user-1");
+        let state = state_with(&store);
+
+        let Ok((_, Json(created))) = handle_create(
+            State(state),
+            Extension(user_ctx("user-1")),
+            Json(CreatePatRequest {
+                name: "ci".into(),
+                scopes: None,
+                expires_at: None,
+                // Ten years.
+                expires_in_hours: Some(24 * 365 * 10),
+            }),
+        )
+        .await
+        else {
+            panic!("create should succeed");
+        };
+
+        assert!(created.expires_at.is_some());
+    }
+
     #[tokio::test]
     async fn no_expiry_field_still_means_never() {
         let store = make_store();

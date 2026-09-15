@@ -77,6 +77,13 @@ services:
     build: .
     entrypoint: ["croniq-demo-runner"]
     restart: unless-stopped
+    # The image's HEALTHCHECK probes the server on 4000, because that is what
+    # its default CMD runs. This container runs a runner instead and never
+    # listens on anything, so the inherited probe would report every replica
+    # unhealthy forever — and `docker compose up --wait` would exit non-zero on
+    # a stack that is working (#715).
+    healthcheck:
+      disable: true
     deploy:
       replicas: ${RUNNER_REPLICAS:-2}
     environment:
