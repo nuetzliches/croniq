@@ -201,11 +201,11 @@ services:
     depends_on: [ui, server]
 
   ui:
-    image: ghcr.io/nuetzliches/croniq-ui:0.38.0   # same tag as the server
+    image: ghcr.io/nuetzliches/croniq-ui:0.39.0   # same tag as the server
     restart: unless-stopped
 
   server:
-    image: ghcr.io/nuetzliches/croniq-server:0.38.0
+    image: ghcr.io/nuetzliches/croniq-server:0.39.0
     restart: unless-stopped
     volumes:
       - croniq-data:/var/lib/croniq

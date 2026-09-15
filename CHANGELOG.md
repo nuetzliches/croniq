@@ -1146,6 +1146,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   earlier parse was in flight let the earlier result land last. The same
   generation guard the DSL tab and the rule builder already use.
 
+### Security
+
+- **rustls updated past RUSTSEC-2026-0285
+  ([#684](https://github.com/nuetzliches/croniq/pull/684)).** Rustls accepted
+  TLS 1.3 handshake messages sent at the wrong encryption level when they
+  followed a key-changing message in the same record — a plaintext
+  `EncryptedExtensions` packed into the same record as the `ServerHello`, for
+  example. RFC 8446 §5.1 requires terminating the connection with
+  `unexpected_message` instead.
+
+  The transcript stays authenticated, so this is not a handshake-forgery path.
+  The effect is that a peer can send in plaintext what should have been
+  encrypted. Croniq reaches rustls through reqwest, lettre,
+  tokio-postgres-rustls and hyper-rustls — outbound TLS in every case.
+
+  0.23.37 → 0.23.45, carrying rustls-webpki 0.103.13 → 0.103.15. Lockfile
+  only; no manifest change.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
