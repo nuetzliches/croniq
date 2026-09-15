@@ -35,6 +35,62 @@ use crate::store::DynStore;
 /// the in-memory tracking map.
 const EPHEMERAL_TRACKING_MAX_AGE_HOURS: i64 = 1;
 
+/// Carry a trigger's runtime state across a rebuild.
+///
+/// A trigger rebuilt from its definition starts with no history: `fire_count`
+/// zero, `last_fired_at` none, and a `next_fire_at` computed from *now*. For a
+/// job that has been running, all three are wrong — and the third is the one
+/// that loses work. An hourly job last fired at 10:00 and due at 11:00 becomes
+/// due at 11:55 if it is rebuilt at 10:55, and the 11:00 fire simply does not
+/// happen.
+///
+/// `reload` has always done this. `AddJob` did not, and until #683 it did not
+/// have to: no path rebuilt a *running* job's trigger except a reload. Now that
+/// every job edit goes through `job_sync`, editing a description re-armed the
+/// trigger from scratch (issue #712), so the two share this.
+///
+/// `reason` only labels the log line.
+fn carry_over_state(
+    old: &Trigger,
+    new_trigger: &mut Trigger,
+    key: &str,
+    now: DateTime<Utc>,
+    reason: &str,
+) {
+    new_trigger.fire_count = old.fire_count;
+    new_trigger.last_fired_at = old.last_fired_at;
+
+    if old.state == TriggerState::Exhausted {
+        // `Exhausted` is terminal only for non-recurring schedules (`once` /
+        // `disabled`). A recurring schedule that was somehow exhausted must not
+        // be frozen by a rebuild — keep the freshly-built trigger's Armed state
+        // and next_fire_at so it recovers (issue #249).
+        let recurring = !matches!(
+            new_trigger.schedule,
+            Schedule::Once { .. } | Schedule::Disabled
+        );
+        if !recurring {
+            new_trigger.state = TriggerState::Exhausted;
+            new_trigger.next_fire_at = None;
+        }
+    } else if let Some(pending) = old.next_fire_at {
+        // Carry the pending fire over so a rebuild neither skips nor
+        // double-fires — but only while it can still belong to the schedule
+        // just loaded. A shortened interval used to stay silent until the
+        // *old*, longer fire elapsed (#535).
+        if new_trigger.carry_over_pending_fire(pending, now) == PendingFire::HealedOutlivedSchedule
+        {
+            tracing::info!(
+                job_key = %key,
+                pending = %pending,
+                next_fire_at = ?new_trigger.next_fire_at,
+                schedule = %new_trigger.schedule.summary(),
+                "{reason}: pending fire outlived its schedule (shortened?) — recomputed (#535)"
+            );
+        }
+    }
+}
+
 /// Commands that can be sent to the scheduler to modify its state at runtime.
 #[derive(Debug)]
 pub enum SchedulerCommand {
@@ -186,41 +242,7 @@ impl SchedulerLoop {
         let mut merged = HashMap::new();
         for (key, mut new_trigger) in new_triggers {
             if let Some(old_trigger) = self.triggers.get(&key) {
-                // Preserve runtime state from the old trigger
-                new_trigger.fire_count = old_trigger.fire_count;
-                new_trigger.last_fired_at = old_trigger.last_fired_at;
-                if old_trigger.state == TriggerState::Exhausted {
-                    // `Exhausted` is terminal only for non-recurring schedules
-                    // (`once` / `disabled`). A recurring schedule that was
-                    // somehow exhausted must not be frozen by a reload — keep
-                    // the freshly-built trigger's Armed state + next_fire_at so
-                    // it recovers (issue #249).
-                    let recurring = !matches!(
-                        new_trigger.schedule,
-                        Schedule::Once { .. } | Schedule::Disabled
-                    );
-                    if !recurring {
-                        new_trigger.state = TriggerState::Exhausted;
-                        new_trigger.next_fire_at = None;
-                    }
-                } else if let Some(pending) = old_trigger.next_fire_at {
-                    // Carry the pending fire over so a reload neither skips
-                    // nor double-fires — but only while it can still belong
-                    // to the schedule just loaded. A shortened interval used
-                    // to stay silent until the *old*, longer fire elapsed
-                    // (#535).
-                    if new_trigger.carry_over_pending_fire(pending, now)
-                        == PendingFire::HealedOutlivedSchedule
-                    {
-                        tracing::info!(
-                            job_key = %key,
-                            pending = %pending,
-                            next_fire_at = ?new_trigger.next_fire_at,
-                            schedule = %new_trigger.schedule.summary(),
-                            "reload: pending fire outlived its schedule (shortened?) — recomputed (#535)"
-                        );
-                    }
-                }
+                carry_over_state(old_trigger, &mut new_trigger, &key, now, "reload");
             }
             merged.insert(key, new_trigger);
         }
@@ -478,9 +500,20 @@ impl SchedulerLoop {
         match cmd {
             SchedulerCommand::AddJob { job, trigger } => {
                 let key = job.key.clone();
-                tracing::info!(job_key = %key, "scheduler: job added via API");
+                let mut trigger = *trigger;
+                // Replacing a job that is already here is a *rebuild*, not a
+                // first arrival: keep what it has done so far and when it is
+                // next due. Without this, any edit to a running job — even one
+                // that does not touch its schedule — re-armed it from now and
+                // silently dropped the fire it was waiting for (issue #712).
+                if let Some(old) = self.triggers.get(&key) {
+                    carry_over_state(old, &mut trigger, &key, Utc::now(), "add");
+                    tracing::info!(job_key = %key, "scheduler: job replaced via API");
+                } else {
+                    tracing::info!(job_key = %key, "scheduler: job added via API");
+                }
                 self.jobs.insert(key.clone(), *job);
-                self.triggers.insert(key, *trigger);
+                self.triggers.insert(key, trigger);
             }
             SchedulerCommand::RemoveJob { job_key } => {
                 tracing::info!(job_key = %job_key, "scheduler: job removed via API");
@@ -907,6 +940,96 @@ mod tests {
 
     fn make_runner() -> Arc<AppState> {
         AppState::new()
+    }
+
+    /// Replacing a running job must not re-arm it from scratch.
+    ///
+    /// Every job edit goes through `job_sync` since #683, and `sync_job`
+    /// rebuilds the trigger from its definition with `Utc::now()`. For a job
+    /// that has been running, that trigger has no history and a next fire
+    /// computed from the moment of the edit — so an hourly job last fired at
+    /// 10:00 and due at 11:00 became due at 11:55 when its *description* was
+    /// edited at 10:55, and the 11:00 fire simply did not happen (issue #712).
+    ///
+    /// `reload` has always carried this state across. `AddJob` now does too.
+    #[tokio::test]
+    async fn adding_a_job_that_is_already_there_keeps_its_phase() {
+        let mut scheduler = SchedulerLoop::new(HashMap::new(), vec![], make_store(), make_runner());
+
+        // A running hourly job: fired twice, next due in five minutes.
+        let due = Utc::now() + ChronoDuration::minutes(5);
+        let last = Utc::now() - ChronoDuration::minutes(55);
+        let mut running = make_trigger_future("etl:nightly");
+        running.fire_count = 2;
+        running.last_fired_at = Some(last);
+        running.next_fire_at = Some(due);
+        scheduler.triggers.insert("etl:nightly".into(), running);
+        scheduler
+            .jobs
+            .insert("etl:nightly".into(), make_job("etl:nightly"));
+
+        // What `sync_job` sends after an unrelated edit: same schedule, no
+        // history, next fire an hour from now.
+        scheduler.apply_command(SchedulerCommand::AddJob {
+            job: Box::new(make_job("etl:nightly")),
+            trigger: Box::new(make_trigger_future("etl:nightly")),
+        });
+
+        let after = &scheduler.triggers["etl:nightly"];
+        assert_eq!(after.fire_count, 2, "history must survive a rebuild");
+        assert_eq!(after.last_fired_at, Some(last));
+        assert_eq!(
+            after.next_fire_at,
+            Some(due),
+            "the pending fire must survive — losing it drops a run silently"
+        );
+    }
+
+    /// A job the scheduler has never seen keeps the trigger it was handed.
+    #[tokio::test]
+    async fn adding_a_new_job_takes_the_trigger_as_given() {
+        let mut scheduler = SchedulerLoop::new(HashMap::new(), vec![], make_store(), make_runner());
+
+        let fresh = make_trigger_future("etl:new");
+        let expected = fresh.next_fire_at;
+        scheduler.apply_command(SchedulerCommand::AddJob {
+            job: Box::new(make_job("etl:new")),
+            trigger: Box::new(fresh),
+        });
+
+        let added = &scheduler.triggers["etl:new"];
+        assert_eq!(added.fire_count, 0);
+        assert_eq!(added.last_fired_at, None);
+        assert_eq!(added.next_fire_at, expected);
+    }
+
+    /// A schedule that actually changed still takes effect: the carried-over
+    /// pending fire is dropped when it can no longer belong to the new
+    /// schedule (#535), which is the case `reload` already handled.
+    #[tokio::test]
+    async fn a_shortened_schedule_still_takes_effect() {
+        let mut scheduler = SchedulerLoop::new(HashMap::new(), vec![], make_store(), make_runner());
+
+        // Hourly, due in 50 minutes.
+        let mut hourly = make_trigger_future("etl:nightly");
+        hourly.next_fire_at = Some(Utc::now() + ChronoDuration::minutes(50));
+        scheduler.triggers.insert("etl:nightly".into(), hourly);
+        scheduler
+            .jobs
+            .insert("etl:nightly".into(), make_job("etl:nightly"));
+
+        // Re-scheduled to every ten seconds.
+        scheduler.apply_command(SchedulerCommand::AddJob {
+            job: Box::new(make_job("etl:nightly")),
+            trigger: Box::new(make_trigger_due_now("etl:nightly")),
+        });
+
+        let after = &scheduler.triggers["etl:nightly"];
+        let next = after.next_fire_at.expect("armed");
+        assert!(
+            next < Utc::now() + ChronoDuration::minutes(5),
+            "a shortened schedule must not wait out the old, longer interval (#535); next={next}"
+        );
     }
 
     #[tokio::test]

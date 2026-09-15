@@ -213,19 +213,17 @@ pub async fn handle_create(
         )
     })?;
 
-    // Push to live scheduler if possible. The calendar gate is resolved and
-    // attached here (issue #393); an unresolvable reference fails closed
-    // (paused trigger + config_error fault) under `strict_calendars`.
-    if let Some(ref tx) = state.scheduler_tx
-        && let Some(built) = crate::loader::trigger_from_definition(&trigger, &resolved, now)
-    {
-        let job_config = crate::loader::job_config_from_definition(&trigger, None);
-        let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-            job: Box::new(job_config),
-            trigger: Box::new(built.trigger),
-        });
-        state.set_config_fault(&trigger.job_key, built.config_fault);
-    }
+    // Push to live scheduler through the one function that owns that. The
+    // calendar gate is resolved and attached there (issue #393); an
+    // unresolvable reference fails closed (paused trigger + config_error fault)
+    // under `strict_calendars`.
+    //
+    // This used to build the config here with `job_config_from_definition(…,
+    // None)`, which meant creating a schedule handed the scheduler a job with
+    // the default 5m timeout and 3 retries instead of the job's own — and did
+    // it for a job that may be deactivated, since nothing here read
+    // `is_active` (issue #711).
+    crate::api::job_sync::sync_job_with(&state, &trigger.job_key, Some(&trigger)).await;
 
     Ok((StatusCode::CREATED, Json(trigger)))
 }

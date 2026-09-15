@@ -516,6 +516,14 @@ pub async fn handle_create(
     store
         .create_job_definition(&job)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // A new job usually has no trigger yet, so this is normally a no-op — but
+    // creating a job for a key that already has one (the trigger-first order
+    // `POST /v1/schedules` allows) did not reach the scheduler at all, and the
+    // job's timeout and retries stayed at the defaults until something else
+    // synced it (issue #711).
+    crate::api::job_sync::sync_job(&state, &job.job_key).await;
+
     Ok((StatusCode::CREATED, Json(job)))
 }
 

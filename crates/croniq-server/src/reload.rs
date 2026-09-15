@@ -420,8 +420,26 @@ pub async fn build_plan(
             // DSL precedence — drop API trigger for this key.
             continue;
         }
+
+        // The job's own row, for the two reasons `main.rs`'s boot restore and
+        // `job_sync` both read it (issues #653, #711).
+        //
+        // `is_active`: nothing in the scheduler reads the flag, so leaving a
+        // job out is how it is honoured. Without this check a reload — the
+        // file watcher, or `POST /v1/admin/reload-config` — put every
+        // deactivated job back and it started firing again.
+        //
+        // And `timeout` / `max_retries` / the dead-letter settings, which
+        // `job_config_from_definition` fills from the system defaults when
+        // handed `None`: a reload silently reset every API-registered job to a
+        // 5m timeout and 3 retries.
+        let job_def = store.get_job_definition(&def.job_key).unwrap_or_default();
+        if job_def.as_ref().is_some_and(|j| !j.is_active) {
+            continue;
+        }
+
         if let Some(built) = trigger_from_definition(def, &resolved, now) {
-            let job_config = job_config_from_definition(def, None);
+            let job_config = job_config_from_definition(def, job_def.as_ref());
             merged_jobs.push(job_config);
             merged_triggers.insert(def.job_key.clone(), built.trigger);
             if let Some(reason) = built.config_fault {
@@ -625,6 +643,100 @@ mod tests {
             RwLock::new(loaded.triggers),
             RwLock::new(loaded.runtime.jobs),
         )
+    }
+
+    /// Seed an API-registered job with a schedule.
+    fn seed_api_job(store: &DynStore, key: &str, active: bool, timeout: Option<&str>) {
+        let now = chrono::Utc::now();
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: key.into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: active,
+                metadata: Default::default(),
+                created_at: now,
+                updated_at: now,
+                timeout: timeout.map(Into::into),
+                max_retries: Some(7),
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec![],
+            })
+            .unwrap();
+        store
+            .create_trigger(&croniq_store::models::TriggerDefinition {
+                trigger_id: format!("t-{key}"),
+                job_key: key.into(),
+                cron_expression: Some("5m".into()),
+                timezone: None,
+                calendar: None,
+                window: None,
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+    }
+
+    /// A reload rebuilds the whole trigger map from the store, and it skipped
+    /// only `managed_by == "dsl"` and `!enabled` — never `is_active`.
+    ///
+    /// So `POST /v1/jobs/{key}/deactivate` stopped a job, and the next config
+    /// reload put it straight back: the file watcher, or an admin hitting
+    /// `POST /v1/admin/reload-config` for an unrelated change (issue #711).
+    #[tokio::test]
+    async fn a_reload_leaves_a_deactivated_job_out() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "job dsl:one { every 1 hours }").unwrap();
+        let (cur_tr, cur_dsl) = state_from("job dsl:one { every 1 hours }").await;
+
+        let store = empty_store();
+        seed_api_job(&store, "api:live", true, None);
+        seed_api_job(&store, "api:stopped", false, None);
+
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        assert!(
+            plan.merged_triggers.contains_key("api:live"),
+            "an active API job belongs in the reloaded map"
+        );
+        assert!(
+            !plan.merged_triggers.contains_key("api:stopped"),
+            "a deactivated job must not come back on reload"
+        );
+    }
+
+    /// The same `job_config_from_definition(def, None)` that #653 fixed at boot
+    /// was still here, so every reload reset an API job's timeout and retries
+    /// to the system defaults in the running scheduler.
+    #[tokio::test]
+    async fn a_reload_keeps_an_api_jobs_own_timeout_and_retries() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "job dsl:one { every 1 hours }").unwrap();
+        let (cur_tr, cur_dsl) = state_from("job dsl:one { every 1 hours }").await;
+
+        let store = empty_store();
+        seed_api_job(&store, "api:live", true, Some("90s"));
+
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        let job = plan
+            .merged_jobs
+            .iter()
+            .find(|j| j.key == "api:live")
+            .expect("the job is in the plan");
+        assert_eq!(job.timeout.as_deref(), Some("90s"));
+        assert_eq!(job.retry.max_attempts, 7);
     }
 
     // ── Boot-only settings (issue #406) ─────────────────────────────────
