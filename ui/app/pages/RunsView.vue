@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchExecutions, useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
+import { useDebounced } from '~/composables/useDebounced'
 
 /**
  * Runs — the one list of executions.
@@ -61,6 +62,15 @@ const WINDOWS = [
   { label: 'Last 7 days', value: '7d', ms: 604_800_000 },
 ]
 
+/**
+ * The typed filter, trailing the box by a beat.
+ *
+ * `job_key` is the only one typed a character at a time; `state` and `window`
+ * are chosen from a menu and `runner_id` arrives from a link, so those stay
+ * immediate (issue #730).
+ */
+const typedJobKey = useDebounced(() => filters.value.job_key)
+
 const sinceMs = computed(
     () => WINDOWS.find((entry) => entry.value === filters.value.window)?.ms,
 )
@@ -97,7 +107,7 @@ let filterGeneration = 0
 // way. The cursor lives in `loadOlder`, which uses it once and throws it away.
 const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   state: filters.value.state || undefined,
-  job_key: filters.value.job_key || undefined,
+  job_key: typedJobKey.value || undefined,
   runner_id: filters.value.runner_id || undefined,
   since_ms: sinceMs.value,
   limit: PAGE_SIZE,
@@ -154,7 +164,7 @@ async function loadOlder() {
   try {
     const page = await fetchExecutions({
       state: filters.value.state || undefined,
-      job_key: filters.value.job_key || undefined,
+      job_key: typedJobKey.value || undefined,
       runner_id: filters.value.runner_id || undefined,
       since_ms: sinceMs.value,
       until: oldest.created_at,
@@ -171,7 +181,9 @@ async function loadOlder() {
 // Any change of filter starts again from the newest rows. Keeping the pages
 // would mean showing rows that the new filter excludes.
 watch(
-  () => [filters.value.state, filters.value.job_key, filters.value.runner_id, filters.value.window],
+  // The debounced key, not the typed one: the reset has to line up with the
+  // request it invalidates, or a page fetched under the old filter survives it.
+  () => [filters.value.state, typedJobKey.value, filters.value.runner_id, filters.value.window],
   () => {
     filterGeneration += 1
     pages.value = []

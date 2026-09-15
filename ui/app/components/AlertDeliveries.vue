@@ -5,6 +5,7 @@ import { useAlertDeliveries } from '~/api/queries'
 import type { AlertDelivery } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
 import StatusPill from '~/components/StatusPill.vue'
+import { useDebounced } from '~/composables/useDebounced'
 
 /**
  * What actually went out.
@@ -28,9 +29,13 @@ const filters = computed(() => ({
   state: (route.query.state as string) || '',
 }))
 
+/** The two typed filters, trailing their boxes by a beat (issue #730). */
+const typedRule = useDebounced(() => filters.value.rule_name)
+const typedJobKey = useDebounced(() => filters.value.job_key)
+
 const { data, isPending, isError, error, refetch } = useAlertDeliveries(() => ({
-  rule_name: filters.value.rule_name || undefined,
-  job_key: filters.value.job_key || undefined,
+  rule_name: typedRule.value || undefined,
+  job_key: typedJobKey.value || undefined,
   state: (filters.value.state || undefined) as AlertDelivery['state'] | undefined,
 }))
 

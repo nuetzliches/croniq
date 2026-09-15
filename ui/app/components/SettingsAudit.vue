@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuditEvents, useUsers } from '~/api/queries'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
+import { useDebounced } from '~/composables/useDebounced'
 
 /**
  * Who did what.
@@ -32,11 +33,20 @@ const filters = computed(() => ({
   action: (route.query.action as string) || '',
 }))
 
+/**
+ * The two typed filters, trailing their boxes by a beat (issue #730).
+ *
+ * `target_type` is a menu and `target_id` arrives from a link, so both stay
+ * immediate.
+ */
+const typedActor = useDebounced(() => filters.value.actor_id)
+const typedAction = useDebounced(() => filters.value.action)
+
 const { data, isPending, isError, error, refetch } = useAuditEvents(() => ({
-  actor_id: filters.value.actor_id || undefined,
+  actor_id: typedActor.value || undefined,
   target_type: filters.value.target_type || undefined,
   target_id: filters.value.target_id || undefined,
-  action: filters.value.action || undefined,
+  action: typedAction.value || undefined,
 }))
 
 const rows = computed(() => data.value ?? [])
