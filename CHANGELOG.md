@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-15
+
 ### Added
 
 - **The dashboard warns when it and the server were not released together
