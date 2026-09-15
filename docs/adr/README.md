@@ -63,3 +63,4 @@ it from four files the way this practice was started.
 | [0002](0002-single-image-delivery.md) | One image serves the API, the dashboard and MCP | Accepted |
 | [0003](0003-react-for-the-dashboard.md) | React + TypeScript for the dashboard | Superseded by 0004 |
 | [0004](0004-vue-rebuild-for-the-dashboard.md) | Rebuild the dashboard in Vue 3 | Accepted |
+| [0005](0005-no-third-party-runtime-sources.md) | The dashboard loads nothing from a third-party origin | Accepted |

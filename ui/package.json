@@ -8,6 +8,7 @@
     "prebuild": "npm run build:wasm",
     "dev": "vite",
     "build": "vue-tsc --build && vite build",
+    "check:sources": "node scripts/check-local-sources.mjs",
     "typecheck": "vue-tsc --build",
     "lint": "eslint .",
     "test": "vitest run",

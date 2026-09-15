@@ -320,6 +320,13 @@ jobs:
       # solution file (`"files": []` plus references), so only `--build`
       # descends into the projects that hold the code.
       - run: npm run build
+      - name: Check the bundle loads nothing from a third-party origin
+        # ADR-0005. Greps the built output for absolute URLs and fails on any
+        # that is not on the annotated allowlist in the script. This is the
+        # check that would have caught the Iconify CDN default before it
+        # shipped (#745); the e2e job's `local-sources.spec.ts` covers the
+        # runtime-assembled URLs a grep cannot see.
+        run: npm run check:sources
       - name: Check wasm bundle size budget
         # Soft 250 KB gzipped ceiling — we ship at ~70 KB today, so this
         # only fires if a future change accidentally pulls a heavy dep

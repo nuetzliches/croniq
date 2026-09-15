@@ -46,12 +46,44 @@ export default defineConfig({
         imports: ['vue', 'vue-router', 'pinia', '@vueuse/core'],
       },
       components: { dirs: ['app/components'] },
+      // Icons are resolved here, at build time, and never over the network
+      // (ADR-0005). Nuxt UI bundles the icons named in its own app config by
+      // default; the ~70 `i-lucide-*` names this dashboard writes itself were
+      // not among them, so each one became a runtime request to
+      // `api.iconify.design` — blocked by the server's `connect-src 'self'`,
+      // and on a deployment without that header, a page view reported to a
+      // third party.
+      //
+      // `globInclude` is spelled out because the default
+      // (`**/*.{vue,jsx,tsx,md,…}`) does not include `.ts`, and
+      // `app/router/nav.ts` is where the sidebar's icons live — exactly the
+      // ones that were missing. Scoped to `app/` so the scan does not walk
+      // `dist/` or the e2e suite.
+      icon: {
+        clientBundle: {
+          scan: { globInclude: ['app/**/*.{vue,ts}'] },
+        },
+      },
     }),
   ],
   resolve: {
-    alias: {
-      '~': fileURLToPath(new URL('./app', import.meta.url)),
-    },
+    // The array form, not the object shorthand, because one of these has to
+    // match exactly. A string alias also matches everything under it
+    // (`find + '/'`), which for `@iconify/vue` would rewrite the shim's own
+    // `@iconify/vue/offline` import into a path inside itself.
+    alias: [
+      { find: '~', replacement: fileURLToPath(new URL('./app', import.meta.url)) },
+      // The offline build of Iconify, via a shim that reconciles it with what
+      // Nuxt UI expects (ADR-0005; `app/lib/iconify-offline.ts` says how).
+      // Bundling every icon (above) means nothing *needs*
+      // the API client; this alias means nothing *has* it — `api.iconify.design`
+      // is not a host the shipped JS knows about, so no later config change can
+      // reintroduce the fetch. Verified by `scripts/check-local-sources.mjs`.
+      {
+        find: /^@iconify\/vue$/,
+        replacement: fileURLToPath(new URL('./app/lib/iconify-offline.ts', import.meta.url)),
+      },
+    ],
   },
   server: {
     port: PORTS.ui,

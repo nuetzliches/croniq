@@ -50,10 +50,12 @@ use tower_http::set_header::SetResponseHeaderLayer;
 ///   files, but components use `:style` bindings throughout (the login
 ///   stage's spotlights, the console's countdown bar, every progress
 ///   meter), and style *attributes* require `'unsafe-inline'`.
-/// * `img-src 'self' data:` — icons ship as files under `/icons/`; `data:`
-///   is a low-risk allowance for data-URI images. The TOTP QR code is
-///   rendered as inline SVG markup (a DOM subtree, not a resource load) and
-///   needs no directive.
+/// * `img-src 'self' data:` — the favicon and PWA icons ship as files under
+///   `/icons/`, and the dashboard's UI icons are bundled into the JS at build
+///   time (ADR-0005) and rendered as inline SVG. `data:` is a low-risk
+///   allowance for data-URI images, and covers the CSS mask form Iconify
+///   falls back to. The TOTP QR code is rendered as inline SVG markup (a DOM
+///   subtree, not a resource load) and needs no directive.
 /// * `connect-src 'self'` — the SPA is same-origin only (see
 ///   `ui/vite.config.ts`), which also covers the SSE streams and the
 ///   wasm-bindgen loader fetching its `.wasm` next to the JS.
@@ -62,6 +64,12 @@ use tower_http::set_header::SetResponseHeaderLayer;
 ///   proxies/browsers.
 /// * `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` — nothing
 ///   uses plugins, `<base>`, or HTML form submission.
+///
+/// No directive names a third-party origin, and that is a decision rather than
+/// an omission: ADR-0005 makes it the dashboard's job never to need one. This
+/// header is the backstop that turns a regression into a blocked request
+/// instead of a silent call home — which is exactly how issue #745 surfaced,
+/// with Nuxt UI's Iconify default fetching icons from `api.iconify.design`.
 ///
 /// Note: this header only covers what *this* server serves. A browser app on
 /// another origin is served by that origin's web server, whose CSP — not this
