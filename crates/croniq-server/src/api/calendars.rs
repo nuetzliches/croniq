@@ -170,6 +170,15 @@ async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize
     let Ok(triggers) = store.list_triggers(None) else {
         return 0;
     };
+    // Compiled at most once for the whole propagation rather than once per
+    // affected trigger: a calendar referenced by twenty jobs used to mean
+    // twenty full compilations of every calendar in the store (issue #731).
+    //
+    // Lazily, so a calendar nothing references still costs nothing. And a
+    // snapshot is right here by construction — this runs after one calendar
+    // write, and every trigger in the loop is being rebuilt against *that*
+    // state.
+    let mut resolved: Option<crate::loader::ResolvedCalendars> = None;
     let mut rebuilt = 0;
     for def in &triggers {
         if def.managed_by == "dsl" || !def.enabled {
@@ -184,7 +193,18 @@ async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize
         // loop used to rebuild both from the trigger row alone, which quietly
         // undid a `deactivate` whenever a calendar the job referenced was
         // edited (issue #711).
-        crate::api::job_sync::sync_job_with(state, &def.job_key, Some(def)).await;
+        if resolved.is_none() {
+            resolved = Some(state.resolved_calendars().await);
+        }
+        crate::api::job_sync::sync_job_with(
+            state,
+            &def.job_key,
+            crate::api::job_sync::Known {
+                edited: Some(def),
+                calendars: resolved.as_ref(),
+            },
+        )
+        .await;
         rebuilt += 1;
     }
     rebuilt

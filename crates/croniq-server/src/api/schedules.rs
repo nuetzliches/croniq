@@ -223,7 +223,17 @@ pub async fn handle_create(
     // the default 5m timeout and 3 retries instead of the job's own — and did
     // it for a job that may be deactivated, since nothing here read
     // `is_active` (issue #711).
-    crate::api::job_sync::sync_job_with(&state, &trigger.job_key, Some(&trigger)).await;
+    crate::api::job_sync::sync_job_with(
+        &state,
+        &trigger.job_key,
+        crate::api::job_sync::Known {
+            edited: Some(&trigger),
+            // Compiled above to validate the reference; nothing has touched a
+            // calendar since (issue #731).
+            calendars: Some(&resolved),
+        },
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(trigger)))
 }
@@ -366,7 +376,21 @@ pub async fn handle_update(
     // #653 found elsewhere: editing a schedule reset the job's `timeout` and
     // `max_retries` to the system defaults in the scheduler, because the
     // rebuilt config was never given the job's own row to read them from.
-    crate::api::job_sync::sync_job(&state, &existing.job_key).await;
+    crate::api::job_sync::sync_job_with(
+        &state,
+        &existing.job_key,
+        crate::api::job_sync::Known {
+            // The row this request edited. Without it the sync looks the job's
+            // triggers up and takes the oldest enabled one, so editing the
+            // newer of two schedules pushed the older one's expression — the
+            // #713 shape, on the one endpoint whose example it was, left
+            // unconverted when the others were fixed.
+            edited: Some(&existing),
+            // Compiled above to validate the reference (issue #731).
+            calendars: Some(&resolved),
+        },
+    )
+    .await;
     if !existing.enabled {
         // A disabled schedule can't be faulted — it isn't running at all.
         state.set_config_fault(&existing.job_key, None);
@@ -716,6 +740,40 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (status, json)
+    }
+
+    /// A job may hold more than one trigger, and the sync's fallback lookup
+    /// takes the *oldest* enabled one. So editing the newer of two schedules
+    /// pushed the older one's expression: the API answered with the new
+    /// schedule while the scheduler ran the old one, and the next edit flipped
+    /// it back.
+    ///
+    /// That is issue #713, which was fixed everywhere except here — on the one
+    /// endpoint whose example it was. `handle_create` was converted to name the
+    /// row it wrote; this handler was left calling the lookup.
+    #[tokio::test]
+    async fn editing_a_schedule_pushes_that_schedule_not_the_oldest() {
+        let store = make_store();
+        // Older first, so the fallback lookup would find this one.
+        seed_api_trigger(&store, "etl:nightly", "1h");
+        let newer = seed_api_trigger(&store, "etl:nightly", "30m");
+        let (state, mut sched_rx) = make_state_sched(vec![], Arc::clone(&store));
+
+        let (status, _) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{newer}"),
+            serde_json::json!({ "cron_expression": "10m" }),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        match sched_rx.try_recv().expect("nothing reached the scheduler") {
+            SchedulerCommand::AddJob { job, .. } => assert_eq!(
+                job.schedule_summary, "10m",
+                "the scheduler must run the schedule the request edited"
+            ),
+            other => panic!("expected AddJob, got {other:?}"),
+        }
     }
 
     #[tokio::test]
