@@ -550,18 +550,23 @@ FROM alpine:3.21
 RUN apk add --no-cache postgresql17-client
 
 # x86_64-unknown-linux-musl / aarch64-unknown-linux-musl are both published.
-ADD https://github.com/nuetzliches/croniq/releases/download/v0.38.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
+ADD https://github.com/nuetzliches/croniq/releases/download/v0.39.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
 RUN tar xzf /tmp/croniq.tar.gz -C /usr/local/bin croniq-shell-runner  && rm /tmp/croniq.tar.gz
 
 ENTRYPOINT ["croniq-shell-runner"]
 ```
 
-The glibc archives — and the binaries inside `ghcr.io/nuetzliches/croniq` — are
-dynamically linked, so they do **not** run on Alpine, and `gcompat` does not
-close the gap: it gets the shared libraries resolved and then fails on
-`gnu_get_libc_version` / `__res_init`, which it does not implement. Use the
-`*-unknown-linux-musl` archive on any musl host; `install.sh` detects the
-host's libc and picks it for you.
+The **glibc archives** are dynamically linked, so they do **not** run on
+Alpine, and `gcompat` does not close the gap: it gets the shared libraries
+resolved and then fails on `gnu_get_libc_version` / `__res_init`, which it does
+not implement. Use the `*-unknown-linux-musl` archive on any musl host;
+`install.sh` detects the host's libc and picks it for you.
+
+The binaries **inside the published images** are a separate matter and are
+statically linked musl since the runtime moved to Alpine (issue #649). Copying
+one out of `ghcr.io/nuetzliches/croniq` into your own Alpine image works; the
+archive is still the supported route, because the image layout is not a
+compatibility surface.
 
 **Trust model.** Anyone with write access to the Croniqfile can run arbitrary
 commands as the shell-runner process. `__runner_exec` is stamped by the DSL
