@@ -161,6 +161,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runner and entity filters that arrive from a link are a single decisive
   change each, not a sequence of prefixes.
 
+- **One schedule edit no longer compiles every calendar twice
+  ([#731](https://github.com/nuetzliches/croniq/issues/731)).** Both
+  `POST` and `PUT /v1/schedules` compiled the effective calendar set to
+  validate the request's reference, and then the scheduler sync compiled it
+  again to rebuild the trigger. Compiling lists every stored calendar and
+  parses every rule in it, so on an installation with a few dozen calendars
+  that was two full passes where one would do.
+
+  The bigger one was calendars: editing a calendar rebuilds every API-managed
+  trigger that references it, and each rebuild compiled the whole set again. A
+  calendar referenced by twenty jobs meant twenty full compilations. It is now
+  compiled once per propagation, and lazily, so a calendar nothing references
+  still costs nothing.
+
+  A caller that already holds a compiled set passes it in. Opt-in per call
+  site rather than a cache, because a passed set is a snapshot and is only
+  correct where the calendars cannot have changed in between.
+
 - **The runtime image is Alpine with statically linked binaries, and half the
   size ([#599](https://github.com/nuetzliches/croniq/issues/599)).** The
   published combined image goes from **57.83 MB to 29.40 MB compressed** — a
@@ -298,6 +316,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configured to set its own, in which case its values continue to apply.
 
 ### Fixed
+
+- **Editing a schedule ran a different schedule
+  ([#713](https://github.com/nuetzliches/croniq/issues/713)).** A job may hold
+  more than one trigger — `trigger_definitions` has no `UNIQUE(job_key)` and
+  `POST /v1/schedules` never refuses a second row — and the scheduler sync's
+  fallback looks a job's triggers up by key and takes the oldest enabled one.
+  So editing the newer of two schedules pushed the *older* one's expression:
+  the API answered with the new schedule while the scheduler ran the old one,
+  and the next edit flipped it back.
+
+  This was fixed across the other writers in
+  [#733](https://github.com/nuetzliches/croniq/pull/733), which converted the
+  paths that write a specific row to name it. `PUT /v1/schedules/{id}` — the
+  one endpoint whose example it was — was left calling the lookup. It now names
+  the row it just wrote, with a test that fails without it.
 
 - **A long-poll could be held open indefinitely, and runners logged a failure
   for it ([#648](https://github.com/nuetzliches/croniq/issues/648)).**

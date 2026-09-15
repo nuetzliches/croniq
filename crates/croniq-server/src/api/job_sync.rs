@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ServerState;
-use crate::loader::{job_config_from_definition, trigger_from_definition};
+use crate::loader::{ResolvedCalendars, job_config_from_definition, trigger_from_definition};
 use crate::scheduler::SchedulerCommand;
 use croniq_store::models::TriggerDefinition;
 
@@ -57,10 +57,38 @@ use croniq_store::models::TriggerDefinition;
 /// call sites ignore them: the store write already happened and the scheduler
 /// receiver only disappears at shutdown.
 pub async fn sync_job(state: &ServerState, job_key: &str) {
-    sync_job_with(state, job_key, None).await
+    sync_job_with(state, job_key, Known::default()).await
 }
 
-/// [`sync_job`], told which trigger to apply.
+/// What a caller already holds, so the sync need not work it out again.
+///
+/// Every field is optional and [`Default`] means "read it all back from the
+/// store", which is what most callers want — they changed one row and have no
+/// opinion about the rest.
+///
+/// A caller that *does* hold something says so, and the two fields are held for
+/// different reasons:
+///
+/// - `edited` is about **correctness**. See [`sync_job_with`].
+/// - `calendars` is about **cost**. Compiling the effective calendar set lists
+///   every stored calendar and parses every rule in it, and the handlers that
+///   validate a calendar reference have already done exactly that a few lines
+///   earlier. On an installation with a few dozen calendars, one schedule edit
+///   compiled all of them twice; a calendar edit compiled them once per job
+///   that referenced it (issue #731).
+///
+/// Passing a set makes the sync use a snapshot rather than the current state.
+/// That is only safe while the calendars cannot have changed in between, which
+/// is why this is opt-in per call site rather than a cache.
+#[derive(Default, Clone, Copy)]
+pub struct Known<'a> {
+    /// The trigger row the caller just wrote.
+    pub edited: Option<&'a TriggerDefinition>,
+    /// An effective calendar set the caller has already compiled.
+    pub calendars: Option<&'a ResolvedCalendars>,
+}
+
+/// [`sync_job`], told what the caller already knows.
 ///
 /// A job may hold several triggers — `trigger_definitions` has no
 /// `UNIQUE(job_key)`, `POST /v1/schedules` never refuses a second one, and
@@ -70,11 +98,11 @@ pub async fn sync_job(state: &ServerState, job_key: &str) {
 /// older one's expression and the scheduler ran a schedule the API had not been
 /// asked for (issue #713).
 ///
-/// A caller that has just written a specific row passes it here. `None` keeps
-/// the lookup, which is right for the paths that changed the *job* rather than
-/// a trigger — activate, deactivate, `PUT /v1/jobs` — where any enabled trigger
-/// is the job's schedule.
-pub async fn sync_job_with(state: &ServerState, job_key: &str, edited: Option<&TriggerDefinition>) {
+/// A caller that has just written a specific row passes it as `known.edited`.
+/// `None` keeps the lookup, which is right for the paths that changed the *job*
+/// rather than a trigger — activate, deactivate, `PUT /v1/jobs` — where any
+/// enabled trigger is the job's schedule.
+pub async fn sync_job_with(state: &ServerState, job_key: &str, known: Known<'_>) {
     let Some(tx) = state.scheduler_tx.as_ref() else {
         return;
     };
@@ -102,7 +130,7 @@ pub async fn sync_job_with(state: &ServerState, job_key: &str, edited: Option<&T
 
     let usable = |t: &TriggerDefinition| t.managed_by != "dsl" && t.enabled;
 
-    let trigger_def = match edited {
+    let trigger_def = match known.edited {
         // The caller wrote this row; it is the one to apply, if it may fire at
         // all. A disabled or DSL-managed row falls through to `None` below,
         // which takes the job out of the scheduler — which is what disabling
@@ -129,8 +157,16 @@ pub async fn sync_job_with(state: &ServerState, job_key: &str, edited: Option<&T
         return;
     };
 
-    let resolved = state.resolved_calendars().await;
-    let Some(built) = trigger_from_definition(&trigger_def, &resolved, chrono::Utc::now()) else {
+    // Only compiled here when the caller did not bring one; see [`Known`].
+    let compiled;
+    let resolved = match known.calendars {
+        Some(already) => already,
+        None => {
+            compiled = state.resolved_calendars().await;
+            &compiled
+        }
+    };
+    let Some(built) = trigger_from_definition(&trigger_def, resolved, chrono::Utc::now()) else {
         // An unparseable schedule cannot be scheduled. Leaving the old trigger
         // in place would keep firing the *previous* expression, which is worse
         // than not firing: the operator sees their edit accepted and the old
@@ -410,7 +446,15 @@ mod tests {
         newer.cron_expression = Some("10m".into());
         store.create_trigger(&newer).unwrap();
 
-        sync_job_with(&state, "etl:nightly", Some(&newer)).await;
+        sync_job_with(
+            &state,
+            "etl:nightly",
+            Known {
+                edited: Some(&newer),
+                ..Default::default()
+            },
+        )
+        .await;
 
         match rx.try_recv().expect("no command pushed") {
             SchedulerCommand::AddJob { job, .. } => {
@@ -435,7 +479,15 @@ mod tests {
         let disabled = trigger("etl:nightly", false);
         store.create_trigger(&disabled).unwrap();
 
-        sync_job_with(&state, "etl:nightly", Some(&disabled)).await;
+        sync_job_with(
+            &state,
+            "etl:nightly",
+            Known {
+                edited: Some(&disabled),
+                ..Default::default()
+            },
+        )
+        .await;
 
         match rx.try_recv().expect("no command pushed") {
             SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "etl:nightly"),
