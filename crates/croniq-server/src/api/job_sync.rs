@@ -41,6 +41,7 @@ use std::sync::Arc;
 use crate::api::ServerState;
 use crate::loader::{job_config_from_definition, trigger_from_definition};
 use crate::scheduler::SchedulerCommand;
+use croniq_store::models::TriggerDefinition;
 
 /// Mirror a job's current store state into the running scheduler.
 ///
@@ -55,6 +56,24 @@ use crate::scheduler::SchedulerCommand;
 /// call sites ignore them: the store write already happened and the scheduler
 /// receiver only disappears at shutdown.
 pub async fn sync_job(state: &ServerState, job_key: &str) {
+    sync_job_with(state, job_key, None).await
+}
+
+/// [`sync_job`], told which trigger to apply.
+///
+/// A job may hold several triggers — `trigger_definitions` has no
+/// `UNIQUE(job_key)`, `POST /v1/schedules` never refuses a second one, and
+/// `jobs.rs` anticipates the case. Looking one up by job key therefore answers
+/// "some enabled trigger", not "the one that just changed": the lookup is
+/// ordered by `created_at`, so editing the *newer* of two schedules pushed the
+/// older one's expression and the scheduler ran a schedule the API had not been
+/// asked for (issue #713).
+///
+/// A caller that has just written a specific row passes it here. `None` keeps
+/// the lookup, which is right for the paths that changed the *job* rather than
+/// a trigger — activate, deactivate, `PUT /v1/jobs` — where any enabled trigger
+/// is the job's schedule.
+pub async fn sync_job_with(state: &ServerState, job_key: &str, edited: Option<&TriggerDefinition>) {
     let Some(tx) = state.scheduler_tx.as_ref() else {
         return;
     };
@@ -80,20 +99,29 @@ pub async fn sync_job(state: &ServerState, job_key: &str) {
         return;
     }
 
-    let trigger_def = store
-        .list_triggers(Some(job_key))
-        .unwrap_or_else(|e| {
-            tracing::warn!(
-                job_key = %job_key,
-                error = %e,
-                "could not read the job's triggers while syncing the scheduler"
-            );
-            Vec::new()
-        })
-        .into_iter()
-        // A DSL-managed row is not ours to push: the Croniqfile owns that key
-        // and a reload is what updates it.
-        .find(|t| t.managed_by != "dsl" && t.enabled);
+    let usable = |t: &TriggerDefinition| t.managed_by != "dsl" && t.enabled;
+
+    let trigger_def = match edited {
+        // The caller wrote this row; it is the one to apply, if it may fire at
+        // all. A disabled or DSL-managed row falls through to `None` below,
+        // which takes the job out of the scheduler — which is what disabling
+        // the schedule means.
+        Some(t) => Some(t.clone()).filter(usable),
+        None => store
+            .list_triggers(Some(job_key))
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    job_key = %job_key,
+                    error = %e,
+                    "could not read the job's triggers while syncing the scheduler"
+                );
+                Vec::new()
+            })
+            .into_iter()
+            // A DSL-managed row is not ours to push: the Croniqfile owns that
+            // key and a reload is what updates it.
+            .find(usable),
+    };
 
     let Some(trigger_def) = trigger_def else {
         remove_job(state, job_key);
@@ -324,6 +352,62 @@ mod tests {
         match rx.try_recv().expect("no command pushed") {
             SchedulerCommand::AddJob { job, .. } => assert_eq!(job.key, "bare:key"),
             other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
+    /// A job may hold more than one trigger — nothing enforces otherwise — and
+    /// the lookup by job key is ordered by `created_at`. So editing the newer
+    /// of two schedules used to push the older one's expression: the store said
+    /// one thing and the scheduler ran another, and the next edit flipped it
+    /// back (issue #713).
+    #[tokio::test]
+    async fn the_edited_trigger_is_the_one_applied() {
+        let (state, store, mut rx) = wired();
+        store
+            .create_job_definition(&job("etl:nightly", true))
+            .unwrap();
+
+        let mut older = trigger("etl:nightly", true);
+        older.trigger_id = "t-older".into();
+        older.cron_expression = Some("1h".into());
+        older.created_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        store.create_trigger(&older).unwrap();
+
+        let mut newer = trigger("etl:nightly", true);
+        newer.trigger_id = "t-newer".into();
+        newer.cron_expression = Some("10m".into());
+        store.create_trigger(&newer).unwrap();
+
+        sync_job_with(&state, "etl:nightly", Some(&newer)).await;
+
+        match rx.try_recv().expect("no command pushed") {
+            SchedulerCommand::AddJob { job, .. } => {
+                assert_eq!(
+                    job.schedule_summary, "10m",
+                    "the edited trigger decides, not the oldest one"
+                );
+            }
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+    }
+
+    /// Disabling the schedule a caller just edited takes the job out, even
+    /// though another enabled trigger might exist — the caller named this row,
+    /// and "this schedule is off" is what they said.
+    #[tokio::test]
+    async fn an_edited_trigger_that_is_disabled_removes_the_job() {
+        let (state, store, mut rx) = wired();
+        store
+            .create_job_definition(&job("etl:nightly", true))
+            .unwrap();
+        let disabled = trigger("etl:nightly", false);
+        store.create_trigger(&disabled).unwrap();
+
+        sync_job_with(&state, "etl:nightly", Some(&disabled)).await;
+
+        match rx.try_recv().expect("no command pushed") {
+            SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "etl:nightly"),
+            other => panic!("expected RemoveJob, got {other:?}"),
         }
     }
 

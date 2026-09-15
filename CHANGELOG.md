@@ -910,6 +910,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it reads the Rust request structs, works out which fields are required, and
   fails if the sign-in screen stops sending one.
 
+- **Three more paths reach the scheduler correctly
+  ([#711](https://github.com/nuetzliches/croniq/issues/711),
+  [#712](https://github.com/nuetzliches/croniq/issues/712),
+  [#713](https://github.com/nuetzliches/croniq/issues/713)).**
+  [#683](https://github.com/nuetzliches/croniq/pull/683) routed job mutations
+  through one function so `is_active` finally meant something. Three writers
+  were not converted and each kept the old shape, so the fix was real but
+  incomplete.
+
+  **A reload undid a deactivation.** `build_plan`, `POST /v1/schedules` and the
+  calendar-change propagation all rebuilt jobs from the trigger row alone —
+  never reading `is_active`, and passing `None` where the job's own definition
+  belongs. So deactivating a job stopped it until the next config reload, a
+  calendar edit, or a new schedule for that key put it back; and every
+  API-registered job's `timeout` and `max_retries` reverted to the 5m/3 defaults
+  in the running scheduler. `POST /v1/jobs` told the scheduler nothing at all.
+
+  **Editing a job reset its phase.** `sync_job` rebuilds the trigger from now,
+  and `AddJob` replaced it outright. An hourly job last fired at 10:00 and due
+  at 11:00 became due at 11:55 when its *description* was edited at 10:55 — the
+  11:00 run simply did not happen, and repeated edits starved the job. `reload`
+  has always carried `fire_count`, `last_fired_at` and the pending fire across a
+  rebuild; that is now shared, so `AddJob` does too. A schedule that genuinely
+  changed still takes effect, including a shortened one
+  ([#535](https://github.com/nuetzliches/croniq/issues/535)).
+
+  **The wrong schedule was pushed.** With two triggers on one job, `sync_job`
+  applied the oldest rather than the one just edited — the API answered with the
+  new expression while the scheduler ran the old one. Callers that write a
+  specific row now name it.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

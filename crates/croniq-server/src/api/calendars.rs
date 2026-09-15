@@ -159,17 +159,17 @@ fn validate_rules(rules: &str) -> Result<(), String> {
 /// — the trigger is paused and a `config_error` recorded — instead of running
 /// with a gate that no longer exists. Returns the number of triggers rebuilt.
 async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize {
-    let Some(ref tx) = state.scheduler_tx else {
+    // `sync_job` no-ops without a channel, but there is no point walking every
+    // trigger to find that out.
+    if state.scheduler_tx.is_none() {
         return 0;
-    };
+    }
     let Some(store) = state.store.as_ref() else {
         return 0;
     };
     let Ok(triggers) = store.list_triggers(None) else {
         return 0;
     };
-    let now = Utc::now();
-    let resolved = state.resolved_calendars().await;
     let mut rebuilt = 0;
     for def in &triggers {
         if def.managed_by == "dsl" || !def.enabled {
@@ -179,15 +179,13 @@ async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize
         if !refs {
             continue;
         }
-        if let Some(built) = crate::loader::trigger_from_definition(def, &resolved, now) {
-            let job_config = crate::loader::job_config_from_definition(def, None);
-            let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-                job: Box::new(job_config),
-                trigger: Box::new(built.trigger),
-            });
-            state.set_config_fault(&def.job_key, built.config_fault);
-            rebuilt += 1;
-        }
+        // Through `job_sync`, so a deactivated job stays out of the scheduler
+        // and the pushed config carries the job's own timeout and retries. This
+        // loop used to rebuild both from the trigger row alone, which quietly
+        // undid a `deactivate` whenever a calendar the job referenced was
+        // edited (issue #711).
+        crate::api::job_sync::sync_job_with(state, &def.job_key, Some(def)).await;
+        rebuilt += 1;
     }
     rebuilt
 }
