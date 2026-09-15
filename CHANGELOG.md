@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dashboard fetched its icons from a third-party CDN
+  ([#745](https://github.com/nuetzliches/croniq/issues/745)).** Nuxt UI renders
+  icons through Iconify, whose default resolution path is a runtime HTTP
+  request to `api.iconify.design` for any icon not bundled at build time. Nuxt
+  UI bundles the icons named in its own app config; the ~70 `i-lucide-*` names
+  the dashboard writes itself were not among them — the sidebar's above all,
+  which live in a `.ts` file the icon scanner does not read by default.
+
+  On a deployment served by `croniq-server` the server's own
+  `connect-src 'self'` blocked every one of those requests, so the icons did
+  not render and the console filled with CSP violations. The hardening was
+  right; the dashboard was wrong. Where that header does not apply — a proxy
+  that strips it, a `--ui-dir` served by someone else's web server — the
+  requests succeeded instead, and each page view told a third party that the
+  deployment exists and when it is used. On an air-gapped host they did
+  neither: they hung on DNS.
+
+  Icons are now resolved at build time and shipped in the bundle, and
+  `@iconify/vue` is aliased to its `offline` build, which contains no API
+  client at all — so this is not a setting that can be lost again. The standing
+  constraint behind it is recorded as
+  [ADR-0005](docs/adr/0005-no-third-party-runtime-sources.md): the dashboard
+  loads nothing from a third-party origin.
+
+  Two checks keep it that way. `npm run check:sources` greps the built output
+  for absolute URLs and for icons the source names but the bundle lacks, and
+  runs in CI; the e2e suite walks the signed-in dashboard and fails on any
+  request that leaves the origin — which is what catches a URL assembled at
+  runtime, the shape this bug actually had.
+
+  Adding a new icon now means adding a name the build can see. One written as
+  `` `i-lucide-${kind}` `` resolves to nothing, and `check:sources` says so.
+
 ## [0.39.0] - 2026-09-15
 
 ### Added

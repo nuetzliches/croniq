@@ -82,6 +82,15 @@ fn assert_security_headers(resp: &axum::response::Response) {
     ] {
         assert!(csp.contains(needle), "CSP lost directive: {needle}");
     }
+    // No third-party origin, anywhere (ADR-0005). The dashboard resolves
+    // every resource from its own origin, so a host name appearing here means
+    // something stopped doing that and the CSP was widened to match — which is
+    // how issue #745 would have been "fixed" had nobody looked twice. A scheme
+    // separator is the cheapest thing that catches every spelling of a host.
+    assert!(
+        !csp.contains("://"),
+        "CSP names a third-party origin, which ADR-0005 forbids: {csp}"
+    );
     // Exactly one value per header — the layer is applied both inside
     // server_router() and over the final app, and must not duplicate.
     assert_eq!(
