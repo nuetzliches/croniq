@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
-import { ApiError } from '~/api/client'
 import {
   useAdoptJob,
   useCalendars,
@@ -17,6 +16,7 @@ import type { JobDefinition, TriggerDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { renderJobDsl } from '~/lib/render-dsl'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * One job, beside the list.
@@ -75,7 +75,7 @@ const TABS = [
 /** What the last action said, when it said no. Mutations here get refused for
  *  real reasons — adoption needs a server policy, deletion needs the job not
  *  to be DSL-managed — and the server's own wording is the useful part. */
-const actionError = ref<string | null>(null)
+const { error: actionError, attempt } = useActionError()
 /** And what it said when it worked but did not do what you might assume. */
 const actionNote = ref<string | null>(null)
 
@@ -138,15 +138,15 @@ async function copyDsl() {
 }
 
 async function run<T>(fn: () => Promise<T>, note?: (result: T) => string | null) {
-  actionError.value = null
+  // The note is what this component adds; the refusal handling is shared
+  // (#729). `attempt` takes a thunk returning unknown, so the result is
+  // captured here rather than threaded through it.
   actionNote.value = null
-  try {
-    const result = await fn()
-    if (note) actionNote.value = note(result)
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    actionError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-  }
+  let result: T | undefined
+  const ok = await attempt(async () => {
+    result = await fn()
+  })
+  if (ok && note && result !== undefined) actionNote.value = note(result)
 }
 
 function fireNow() {

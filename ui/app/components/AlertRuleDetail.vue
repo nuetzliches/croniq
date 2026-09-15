@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ApiError } from '~/api/client'
 import {
   useAlertDeliveries,
   useClearOverride,
@@ -10,6 +9,7 @@ import {
 } from '~/api/queries'
 import type { AlertRuleConfig, AlertRuleOverride } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * One alert rule: what the Croniqfile says, what an operator has done to it,
@@ -35,7 +35,7 @@ const disable = useDisableRule()
 const throttle = useThrottleRule()
 const clear = useClearOverride()
 
-const actionError = ref<string | null>(null)
+const { error: actionError, attempt } = useActionError()
 /** Which override form is open; only one intent applies at a time. */
 const composing = ref<'snooze' | 'disable' | 'throttle' | null>(null)
 const note = ref('')
@@ -50,14 +50,11 @@ const pending = computed(
 )
 
 async function run(fn: () => Promise<unknown>) {
-  actionError.value = null
-  try {
-    await fn()
+  // Closing the composer is this component's business; reporting the refusal
+  // is not, and was one more copy of the same block (#729).
+  if (await attempt(fn)) {
     composing.value = null
     note.value = ''
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    actionError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
   }
 }
 

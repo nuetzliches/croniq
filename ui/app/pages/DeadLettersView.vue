@@ -12,6 +12,7 @@ import {
 import type { DeadLetter, StaleReplayError } from '~/api/types'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { describeRefusal } from '~/composables/useActionError'
 
 /**
  * Dead letters — the work queue.
@@ -111,8 +112,7 @@ async function runBulk() {
     picked.value = new Set()
     selectedId.value = null
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    replayError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+    replayError.value = describeRefusal(caught)
   } finally {
     confirmingBulk.value = null
   }
@@ -145,7 +145,7 @@ async function doReplay(id: string, force = false) {
     // against a declared contract rather than a string this file made up.
     const body =
       caught instanceof ApiError ? (caught.body as Partial<StaleReplayError>) : undefined
-    replayError.value = body?.message ?? (caught as Error).message ?? 'Replay was refused.'
+    replayError.value = describeRefusal(caught, 'Replay was refused.')
     if (body?.error === 'stale_replay') forceable.value = id
   }
 }
@@ -158,8 +158,7 @@ async function doDelete(id: string) {
     await remove.mutateAsync(id)
     if (selectedId.value === id) selectedId.value = null
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    replayError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+    replayError.value = describeRefusal(caught)
   }
 }
 

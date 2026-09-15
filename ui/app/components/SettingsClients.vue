@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ApiError } from '~/api/client'
 import {
   useApiClients,
   useCreateApiClient,
@@ -12,6 +11,7 @@ import type { ApiClient } from '~/api/types'
 import { declaringKeyVar, MANAGED_BY_ENV } from '~/lib/env-managed'
 import { formatAbsolute } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * Machine access: the clients, their scopes, and minting a key.
@@ -32,7 +32,7 @@ const updateClient = useUpdateApiClient()
 const deleteClient = useDeleteApiClient()
 const issueKey = useIssueClientToken()
 
-const error = ref<string | null>(null)
+const { error, attempt } = useActionError()
 
 /**
  * Which client is being deleted, while the question is on screen.
@@ -65,18 +65,6 @@ const rows = computed(() =>
 
 const envManaged = (client: ApiClient) => client.managed_by === MANAGED_BY_ENV
 
-async function attempt(fn: () => Promise<unknown>) {
-  error.value = null
-  try {
-    await fn()
-    return true
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-    return false
-  }
-}
-
 async function create() {
   if (!name.value.trim()) {
     error.value = 'A client needs a name.'
@@ -97,14 +85,12 @@ async function create() {
 }
 
 async function mint(client: ApiClient) {
-  error.value = null
-  try {
+  await attempt(async () => {
     const created = await issueKey.mutateAsync(client.client_id)
+    // Inside the attempt so a refusal never leaves a half-set banner claiming
+    // a key was minted.
     mintedKey.value = { client: client.name, key: created.raw_key }
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-  }
+  })
 }
 
 function startEdit(client: ApiClient) {

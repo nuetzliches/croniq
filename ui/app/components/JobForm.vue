@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ApiError } from '~/api/client'
 import { useCreateJob, useUpdateJob } from '~/api/queries'
 import type { JobDefinition } from '~/api/types'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * Create and edit, in one form.
@@ -36,7 +36,7 @@ const form = ref({
   dead_letter_replay_max_age: '',
 })
 
-const error = ref<string | null>(null)
+const { error, attempt } = useActionError()
 
 /** Refill on open, so a cancelled edit does not leak into the next one. */
 watch(
@@ -83,7 +83,9 @@ async function submit() {
     return
   }
 
-  try {
+  // The dialog closes only on success; the refusal is reported by the shared
+  // helper, which knows to prefer the server's own wording (#729).
+  await attempt(async () => {
     if (props.job) {
       await updateJob.mutateAsync({ job_key: props.job.job_key, ...patch })
     } else {
@@ -96,10 +98,7 @@ async function submit() {
       emit('created', key)
     }
     open.value = false
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-  }
+  })
 }
 </script>
 

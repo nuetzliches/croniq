@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ApiError } from '~/api/client'
 import { useCreateCalendar, useUpdateCalendar } from '~/api/queries'
 import type { CalendarDefinition } from '~/api/types'
 import { parseCalendarRules, type CalendarRulePayload } from '~/lib/croniq-dsl'
+import { describeRefusal } from '~/composables/useActionError'
 
 /**
  * Create and edit a calendar.
@@ -113,10 +113,9 @@ async function submit() {
     }
     open.value = false
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
     // The server validates the rules too, and its parser is the authority —
     // its message beats anything this form could phrase.
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+    error.value = describeRefusal(caught)
   }
 }
 </script>
