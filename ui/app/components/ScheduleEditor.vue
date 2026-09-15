@@ -69,6 +69,19 @@ function startEdit(trigger: TriggerDefinition) {
 const orBlank = (value: string) => value.trim()
 
 /**
+ * The calendar choices, with "no calendar" as a real option.
+ *
+ * The save path has spelled clearing as an empty string since #689, and the
+ * control could not produce one: the menu listed only existing calendars, so a
+ * gate could be swapped but never removed, and un-gating a job meant deleting
+ * the schedule and making a new one (issue #718).
+ */
+const calendarOptions = computed(() => [
+  { label: 'No calendar', value: '' },
+  ...calendarNames.value.map((name) => ({ label: name, value: name })),
+])
+
+/**
  * Closing the form is the caller's business, not the helper's.
  *
  * A bad cron expression is refused by the server, and its parser message is
@@ -225,7 +238,8 @@ const pending = computed(
               -->
               <USelectMenu
                 v-model="form.calendar"
-                :items="calendarNames"
+                :items="calendarOptions"
+                value-key="value"
                 class="w-full"
                 placeholder="None"
                 aria-label="Calendar this schedule is gated by"
@@ -334,7 +348,8 @@ const pending = computed(
           <UFormField label="Calendar">
             <USelectMenu
               v-model="form.calendar"
-              :items="calendarNames"
+              :items="calendarOptions"
+              value-key="value"
               class="w-full"
               placeholder="None"
               aria-label="Calendar this schedule is gated by"

@@ -965,6 +965,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   assumes. That a `HEALTHCHECK` belongs to the default command is Docker's own
   convention, but it is cheap to miss and expensive to diagnose.
 
+- **Revoking a token or an invitation asks first
+  ([#717](https://github.com/nuetzliches/croniq/issues/717)).** Both fired
+  straight from the click, and the React dashboard had asked in both cases. A
+  mis-click revoked the token a pipeline authenticates with, irreversibly — a
+  replacement is a new secret that has to be distributed again. The guard test
+  from [#698](https://github.com/nuetzliches/croniq/pull/698) missed them
+  because its pattern said delete, remove and discard; revoking a credential is
+  deleting it, and the pattern says so now.
+
+- **A schedule's calendar gate can be removed
+  ([#718](https://github.com/nuetzliches/croniq/issues/718)).** Clearing has
+  worked on the wire since [#689](https://github.com/nuetzliches/croniq/pull/689)
+  — an empty string is how this API spells it — but the menu listed only
+  existing calendars, so a gate could be swapped and never removed. Un-gating a
+  job meant deleting the schedule and making a new one. There is a "No calendar"
+  option now.
+
+- **Pre-#454 refresh tokens are purged from `localStorage`
+  ([#719](https://github.com/nuetzliches/croniq/issues/719)).**
+  [#454](https://github.com/nuetzliches/croniq/issues/454) moved the refresh
+  credential into an `HttpOnly` cookie so a script on this origin could not read
+  it. The React tree removed the old keys on sight; this one never mentioned
+  them, so a browser that used the old dashboard kept a readable refresh token
+  indefinitely after the upgrade. It is very likely expired — they lasted seven
+  days — but that is not the property #454 was after. Cleared on boot, by exact
+  key: the theme and sidebar preferences share the prefix and are deliberately
+  kept.
+
+- **A signed-out deep link reaches the sign-in page
+  ([#720](https://github.com/nuetzliches/croniq/issues/720)).** The catch-all
+  route was marked public, so the guard returned early for it: an
+  unauthenticated visitor opening a renamed screen, a typo or an old bookmark
+  got the not-found page, which sits outside the shell and has no navigation.
+  Their only way forward was the back button. It now redirects to sign-in with
+  a `next`; signed in, an unknown URL is still a 404, which is the honest
+  answer.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

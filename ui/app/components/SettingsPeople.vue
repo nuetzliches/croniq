@@ -43,6 +43,16 @@ const error = ref<string | null>(null)
  * reading, which defeats the point of asking (issue #667).
  */
 const confirmRemoveUser = ref<{ id: string; label: string } | null>(null)
+/** Which invitation is being revoked, while the question is on screen. */
+const confirmRevoke = ref<{ id: string; label: string } | null>(null)
+
+async function doRevokeInvitation() {
+  const target = confirmRevoke.value
+  if (!target) return
+  if (await attempt(() => revokeInvitation.mutateAsync(target.id))) {
+    confirmRevoke.value = null
+  }
+}
 
 async function doRemoveUser() {
   const target = confirmRemoveUser.value
@@ -337,7 +347,7 @@ function isSelf(row: Row): boolean {
               :aria-label="`Revoke the invitation for ${row.identity}`"
               title="Revoke the invitation"
               :loading="revokeInvitation.isPending.value"
-              @click="attempt(() => revokeInvitation.mutateAsync(row.id))"
+              @click="confirmRevoke = { id: row.id, label: row.identity }"
             />
             <UButton
               v-else-if="row.kind === 'user' && !isSelf(row)"
@@ -354,6 +364,16 @@ function isSelf(row: Row): boolean {
         </tr>
       </tbody>
     </table>
+    <ConfirmModal
+      :open="confirmRevoke !== null"
+      title="Revoke this invitation?"
+      :description="`The link sent to ${confirmRevoke?.label ?? 'them'} stops working. They will need a new invitation to join.`"
+      confirm-label="Revoke"
+      :loading="revokeInvitation.isPending.value"
+      @update:open="(open: boolean) => { if (!open) confirmRevoke = null }"
+      @confirm="doRevokeInvitation"
+    />
+
     <ConfirmModal
       :open="confirmRemoveUser !== null"
       title="Remove this person?"
