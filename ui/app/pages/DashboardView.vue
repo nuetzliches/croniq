@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import {
-  useDeadLetters,
+  useDeadLetterCount,
   useExecutions,
   useFailureHeatmap,
   useHealth,
@@ -23,7 +23,8 @@ import { formatDuration, formatRelative } from '~/lib/format'
 const { data: health } = useHealth()
 const { data: jobs } = useJobs()
 const { data: runners } = useRunners()
-const { data: deadLetters } = useDeadLetters()
+/** The queue, not the page `useDeadLetters` returns (issue #722). */
+const deadLetterCount = useDeadLetterCount()
 const { data: throughput } = useThroughput('24h')
 const { data: heatmap } = useFailureHeatmap(7)
 
@@ -88,11 +89,16 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         :tone="successRate === null ? 'default' : successRate < 95 ? 'error' : 'success'"
         to="/executions?state=failed"
       />
+      <!-- The count, not the length of a page. `useDeadLetters` is capped at
+           the server's default of 50, so a queue of any size above that used to
+           read as "50" on the screen an operator looks at first (issue #722).
+           #692 moved the other two surfaces onto the count endpoint; this tile
+           was missed. -->
       <KpiCard
         label="Dead letters"
-        :value="deadLetters?.length ?? 0"
-        :sub="deadLetters?.length ? 'waiting for a decision' : 'none pending'"
-        :tone="deadLetters?.length ? 'error' : 'success'"
+        :value="deadLetterCount"
+        :sub="deadLetterCount ? 'waiting for a decision' : 'none pending'"
+        :tone="deadLetterCount ? 'error' : 'success'"
         to="/dead-letters"
       />
     </div>

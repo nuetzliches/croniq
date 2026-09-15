@@ -59,8 +59,23 @@ const base = ofetch.create({
  * them away — and mistypes: they hold a valid refresh cookie, so the refresh
  * succeeds and the replay lands.
  */
+/**
+ * Endpoints that take no access token, listed rather than matched by prefix.
+ *
+ * `/v1/auth/*` was the shortcut, and it left two out: redeeming an invitation
+ * and confirming a password reset are the same kind of endpoint — the caller
+ * has no session by definition, and a 401 is the answer rather than an expired
+ * token. Refreshing there fires a request that cannot succeed and then replays
+ * the attempt (issue #725).
+ */
+const UNAUTHENTICATED_PREFIXES = [
+  '/v1/auth/',
+  '/v1/invitations/accept',
+  '/v1/password-reset/',
+]
+
 function isAuthEndpoint(path: string): boolean {
-  return path.startsWith('/v1/auth/')
+  return UNAUTHENTICATED_PREFIXES.some((prefix) => path.startsWith(prefix))
 }
 
 /**

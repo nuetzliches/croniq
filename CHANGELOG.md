@@ -1002,6 +1002,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a `next`; signed in, an unknown URL is still a 404, which is the honest
   answer.
 
+- **"Load older" cannot append a page from the previous filters
+  ([#721](https://github.com/nuetzliches/croniq/issues/721)).** The request read
+  the filters when it was built, and the watcher that clears the loaded pages on
+  a filter change runs separately — so changing a filter while a page was in
+  flight appended rows the new filter excludes, unmarked, beneath rows that
+  match it. A generation counter drops a response that belongs to a superseded
+  question.
+
+- **The dashboard's dead-letter tile counts the queue
+  ([#722](https://github.com/nuetzliches/croniq/issues/722)).**
+  [#692](https://github.com/nuetzliches/croniq/pull/692) moved the dead-letter
+  screen and the sidebar badge onto `GET /v1/dead-letters/count`; this tile was
+  missed and still counted a page, which the server caps at 50. A queue of any
+  size above that read as "50" on the screen an operator looks at first.
+
+- **The console's NDJSON export writes log events again
+  ([#723](https://github.com/nuetzliches/croniq/issues/723)).**
+  [#702](https://github.com/nuetzliches/croniq/pull/702) changed the filtered
+  list from events to row objects so the template could stop recomputing per
+  patch, and the export was not unwrapped with it — so every record carried
+  `gutter`, a CSS class name, and a pre-sliced timestamp. NDJSON exists for
+  whatever reads the log next, and that reader was being handed styling.
+
+- **The TOTP panel shows the QR code it tells you to scan
+  ([#724](https://github.com/nuetzliches/croniq/issues/724)).** The copy said to
+  scan a code the rebuilt panel did not render, leaving a base32 secret to type
+  by hand against instructions describing something else. The QR is drawn
+  client-side from the `otpauth://` URL the server already returns — handing
+  that URL to an image service would be handing away the second factor. The
+  secret stays visible beside it: scanning is the easy path, not the only one.
+
+- **Redeeming an invitation no longer triggers a pointless refresh
+  ([#725](https://github.com/nuetzliches/croniq/issues/725)).**
+  [#691](https://github.com/nuetzliches/croniq/pull/691) exempted the sign-in
+  surface from refresh-and-replay, matching on the `/v1/auth/` prefix. Accepting
+  an invitation and confirming a password reset are the same kind of endpoint —
+  the caller has no session by definition — and the prefix missed both. The
+  exemption is a list of unauthenticated endpoints now rather than one prefix.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

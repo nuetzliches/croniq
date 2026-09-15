@@ -84,6 +84,11 @@ const PAGE_SIZE = 200
 const pages = ref<Execution[][]>([])
 /** In flight, so the button can say so and cannot be clicked twice. */
 const loadingOlder = ref(false)
+/**
+ * Bumped whenever the filters change or a page is requested, so a response
+ * that belongs to a superseded question can be dropped rather than shown.
+ */
+let filterGeneration = 0
 
 // A getter, not a value — see useExecutions. Passing `filters.value` here is
 // the mistake that makes the list freeze on its first filter.
@@ -140,6 +145,12 @@ async function loadOlder() {
   const oldest = rows.value.at(-1)
   if (!oldest || loadingOlder.value) return
   loadingOlder.value = true
+  // Which filter set this page was asked for. The watcher below clears `pages`
+  // on a filter change, but it runs separately from this request — so a page
+  // already in flight used to be appended underneath rows fetched with the new
+  // filter, and the list showed two different questions' answers as one
+  // (issue #721).
+  const asked = ++filterGeneration
   try {
     const page = await fetchExecutions({
       state: filters.value.state || undefined,
@@ -150,6 +161,7 @@ async function loadOlder() {
       until_id: oldest.id,
       limit: PAGE_SIZE,
     })
+    if (asked !== filterGeneration) return
     if (page.length) pages.value = [...pages.value, page]
   } finally {
     loadingOlder.value = false
@@ -161,6 +173,7 @@ async function loadOlder() {
 watch(
   () => [filters.value.state, filters.value.job_key, filters.value.runner_id, filters.value.window],
   () => {
+    filterGeneration += 1
     pages.value = []
   },
 )
