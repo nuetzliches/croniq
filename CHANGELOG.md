@@ -892,6 +892,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes the browser. `install-deps` still runs on a hit — those are system
   libraries outside the cached directory, and apt work rather than a download.
 
+- **Enforced 2FA: a first sign-in can be completed again
+  ([#710](https://github.com/nuetzliches/croniq/issues/710)).** On a server with
+  `totp.required`, a user without a confirmed secret is walked through inline
+  enrolment. The last step posted only `{ code }`, while
+  `EnrollTotpConfirmRequest` requires `enroll_token` — a plain `String`, so
+  axum's extractor answered 422 before the handler ran. The token arrived with
+  the login response, was used once for `/begin`, and was never kept.
+
+  Nobody could sign in for the first time on such a server. The dashboard now
+  holds the token for the confirm step and asks for the refresh cookie there
+  too; without that the operator would enrol successfully and be signed out on
+  the next page load.
+
+  The server side of this contract was already well covered. The gap was
+  between the two, so `ui/app/pages/login-contract.test.ts` sits between them:
+  it reads the Rust request structs, works out which fields are required, and
+  fails if the sign-in screen stops sending one.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
