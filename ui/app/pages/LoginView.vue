@@ -62,6 +62,16 @@ const code = ref('')
 const useRecovery = ref(false)
 const acknowledged = ref(false)
 const enrolment = ref<TotpSetupResponse | null>(null)
+/**
+ * The enrolment token from the login response, held for the confirm step.
+ *
+ * `/begin` and `/confirm` both need it — it is the proof that a password was
+ * verified, since neither endpoint is authenticated. Keeping it only long
+ * enough to reach `/begin` meant the confirm body was missing a required field
+ * and axum rejected it with 422 before the handler ran, so nobody could
+ * complete a first sign-in on a server with enforced 2FA (issue #710).
+ */
+const enrolToken = ref('')
 const error = ref('')
 const busy = ref(false)
 
@@ -238,6 +248,7 @@ async function submitCredentials() {
       return
     }
     if (isEnrollmentRequired(response)) {
+      enrolToken.value = response.enroll_token
       enrolment.value = await apiPost<TotpSetupResponse>('/v1/auth/login/enroll/totp/begin', {
         enroll_token: response.enroll_token,
       })
@@ -258,7 +269,14 @@ async function confirmEnrolment() {
   busy.value = true
   try {
     const tokens = await apiPost<TokenResponse>('/v1/auth/login/enroll/totp/confirm', {
+      enroll_token: enrolToken.value,
       code: code.value.trim(),
+      // Same as the login body above: the refresh token belongs in an
+      // HttpOnly cookie (ADR-0001). The server defaults this to `false`, so
+      // omitting it would hand the operator a session that does not survive a
+      // reload — they would enrol successfully and be signed out on the next
+      // page load.
+      refresh_cookie: true,
     })
     finish(tokens)
   } catch (caught) {
