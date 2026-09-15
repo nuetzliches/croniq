@@ -178,8 +178,16 @@ const facts = computed(() => {
   const job = props.job
   if (!job) return []
   return [
-    { label: 'Description', value: job.description || '—' },
-    { label: 'Tags', value: (job.tags ?? []).join(' ') || '—', mono: true },
+    // `wrap` on the three facts that hold prose or an open-ended list. The
+    // rest are a date, a duration or a count — a line each, always — and
+    // truncating those costs nothing because there is nothing to cut.
+    // Description, tags and the operator hint are the opposite: they are as
+    // long as someone made them, and an operator hint cut off at "Sampler
+    // defekt (nicht: schlechter Messwert). Pruefen: …" is withholding the
+    // instruction it exists to give. A `title` tooltip is not a substitute —
+    // it is invisible until hovered and unreachable on a touch screen.
+    { label: 'Description', value: job.description || '—', wrap: true },
+    { label: 'Tags', value: (job.tags ?? []).join(' ') || '—', mono: true, wrap: true },
     { label: 'Timeout', value: job.timeout ?? '5m (default)', mono: true },
     { label: 'Max retries', value: job.max_retries == null ? 'default' : String(job.max_retries) },
     // Only when it says something: `queued` is the norm, `ephemeral` is the
@@ -218,7 +226,7 @@ const deadLetterFacts = computed(() => {
       ? [{ label: 'Replay max age', value: job.dead_letter_replay_max_age, mono: true }]
       : []),
     ...(job.dead_letter_operator_hint
-      ? [{ label: 'Operator hint', value: job.dead_letter_operator_hint }]
+      ? [{ label: 'Operator hint', value: job.dead_letter_operator_hint, wrap: true }]
       : []),
   ]
 })
@@ -458,10 +466,17 @@ const deadLetterFacts = computed(() => {
                 <dt class="text-muted">
                   {{ fact.label }}
                 </dt>
+                <!--
+                  `break-words` as well as wrapping: a tag list or a hint can
+                  contain one token longer than the column, and without it the
+                  word overflows the pane instead of the line breaking.
+                  `title` only where the text is still cut, so a hover card
+                  does not cover text the reader can already see.
+                -->
                 <dd
-                  class="min-w-0 truncate text-right"
-                  :class="fact.mono && 'font-mono'"
-                  :title="fact.value"
+                  class="min-w-0 text-right"
+                  :class="[fact.mono && 'font-mono', fact.wrap ? 'break-words' : 'truncate']"
+                  :title="fact.wrap ? undefined : fact.value"
                 >
                   {{ fact.value }}
                 </dd>
@@ -481,9 +496,9 @@ const deadLetterFacts = computed(() => {
                     {{ fact.label }}
                   </dt>
                   <dd
-                    class="min-w-0 truncate text-right"
-                    :class="fact.mono && 'font-mono'"
-                    :title="fact.value"
+                    class="min-w-0 text-right"
+                    :class="[fact.mono && 'font-mono', fact.wrap ? 'break-words' : 'truncate']"
+                    :title="fact.wrap ? undefined : fact.value"
                   >
                     {{ fact.value }}
                   </dd>

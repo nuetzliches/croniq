@@ -47,8 +47,28 @@ const facts = computed(() => {
   if (!run) return []
   return [
     { label: 'Run', value: run.id, mono: true },
-    { label: 'Job', value: run.job_key, mono: true },
-    { label: 'Runner', value: run.runner_id ?? '—', mono: true },
+    // The two facts that name something with a screen of its own. Reading a
+    // run is how you arrive at a question about the job that produced it or
+    // the runner that took it, and both were dead text you had to retype into
+    // a filter — while the same job key two columns to the left, in the list,
+    // was already a link.
+    //
+    // The runner goes to its runs rather than to the fleet: there is no runner
+    // detail page (`/runners/:runnerId` redirects to the list), and
+    // `/executions?runner_id=…` is what a runner name links to everywhere else
+    // in the dashboard, including the fleet row itself.
+    {
+      label: 'Job',
+      value: run.job_key,
+      mono: true,
+      to: `/jobs/${encodeURIComponent(run.job_key)}`,
+    },
+    {
+      label: 'Runner',
+      value: run.runner_id ?? '—',
+      mono: true,
+      to: run.runner_id ? `/executions?runner_id=${encodeURIComponent(run.runner_id)}` : undefined,
+    },
     { label: 'Attempt', value: String(run.attempt) },
     { label: 'Fired', value: formatAbsolute(run.fire_at) },
     // scheduled_for is the logical trigger time, held constant across retries
@@ -110,11 +130,20 @@ const facts = computed(() => {
               {{ fact.label }}
             </dt>
             <dd
-              class="truncate text-right"
+              class="min-w-0 truncate text-right"
               :class="fact.mono && 'font-mono'"
               :title="fact.value"
             >
-              {{ fact.value }}
+              <RouterLink
+                v-if="fact.to"
+                :to="fact.to"
+                class="text-primary hover:underline"
+              >
+                {{ fact.value }}
+              </RouterLink>
+              <template v-else>
+                {{ fact.value }}
+              </template>
             </dd>
           </template>
         </dl>

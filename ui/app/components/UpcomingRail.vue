@@ -142,7 +142,21 @@ const totalAhead = computed(() =>
           :key="state.job_key"
           class="flex h-8 items-center gap-3 text-sm"
         >
-          <span class="min-w-0 flex-1 truncate font-mono text-primary">{{ state.job_key }}</span>
+          <!--
+            A link, not coloured text. These were `text-primary` spans: they
+            looked exactly like the job keys in the runs table, which are
+            links, and clicking them did nothing. "What fires next" is a list
+            whose every entry is a question about that job, so the answer
+            should be one click away rather than a name to retype into the
+            jobs filter.
+          -->
+          <RouterLink
+            :to="`/jobs/${encodeURIComponent(state.job_key)}`"
+            class="min-w-0 flex-1 truncate font-mono text-primary hover:underline"
+            :title="state.job_key"
+          >
+            {{ state.job_key }}
+          </RouterLink>
           <span
             class="cq-num text-muted"
             :title="formatAbsolute(state.next_fire_at)"

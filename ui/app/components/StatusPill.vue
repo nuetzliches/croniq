@@ -12,11 +12,15 @@ import { computed } from 'vue'
  * that might still retry, it is one that has stopped trying and is waiting for
  * a person (see /dead-letters).
  *
- * It carries job lifecycle states too, and deliberately in the same mapping:
- * `active` is the same green as `completed` because both mean "nothing to do
- * here", and one pill component means a state the server adds later looks
- * consistent wherever it turns up instead of neutral in one place and
- * unstyled in another.
+ * It carries job lifecycle and runner health states too, and deliberately in
+ * the same mapping: `active`, `completed` and `online` are the same green
+ * because all three mean "nothing to do here", and one pill component means a
+ * state the server adds later looks consistent wherever it turns up instead of
+ * neutral in one place and unstyled in another.
+ *
+ * The cost of the shared mapping is that a state absent from it is not an
+ * error, it is grey — which is how `online` spent its time looking like a
+ * disabled job. A state this switch does not name is a bug, not a default.
  */
 const props = defineProps<{
   state: string
@@ -49,6 +53,19 @@ const tone = computed(() => {
       return { color: 'warning' as const, dot: 'bg-warning' }
     case 'disabled':
       return { color: 'neutral' as const, dot: 'bg-muted' }
+    // Runner health (GET /v1/runners — `RunnerStatus` is online/stale/dead).
+    // These were missing, so the commonest state in the product, a healthy
+    // runner, fell through to the neutral default: `online` rendered in the
+    // same grey as `disabled`, next to a dashboard tile calling the same
+    // runner green. `stale` is a runner that is lagging but still alive —
+    // warning, the same as a paused job, because both mean "look, but nothing
+    // has broken yet". A `dead` runner needs no case of its own: it lands on
+    // the error colouring above, and for the same reason — it has stopped and
+    // is waiting for a person.
+    case 'online':
+      return { color: 'success' as const, dot: 'bg-success' }
+    case 'stale':
+      return { color: 'warning' as const, dot: 'bg-warning' }
     // Not "off" — it ran out of retries and gave up, which is a fault.
     case 'exhausted':
       return { color: 'error' as const, dot: 'bg-error' }

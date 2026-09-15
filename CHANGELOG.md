@@ -8,6 +8,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Four things the dashboard showed but would not let you read or follow
+  ([#747](https://github.com/nuetzliches/croniq/issues/747)).** Found together
+  in one pass over the job and run screens, and fixed together because they are
+  the same mistake in four places — a detail pane that shows a value without
+  letting you use it.
+
+  *Long fields are cut off.* Description, Tags and the dead-letter Operator
+  hint were truncated to one line in a job's detail, with the rest behind a
+  hover tooltip — invisible until hovered, unreachable on a touch screen, and
+  worst on the one field written to be read under pressure: an operator hint
+  cut at "Sampler defekt (nicht: schlechter Messwert). Pruefen: …" is
+  withholding the instruction it exists to give. Those three now wrap. Dates,
+  durations and counts still truncate, because there is nothing there to cut.
+
+  *A healthy runner looked disabled.* `StatusPill` maps a state to a colour,
+  and the runner states — `online`, `stale` — were missing from the mapping. A
+  state it does not name falls through to neutral, so the fleet list rendered
+  `online` in the same grey as a disabled job while the dashboard tile two
+  clicks away called the same runner green. `online` is green and `stale` is
+  amber; `dead` already landed on the error colouring and still does.
+
+  *Names that look like links now are links.* The "what fires next" rail on the
+  dashboard drew each job key in the accent colour and did nothing when
+  clicked; it links to the job.
+
+  *The run detail links its job and its runner.* Both were dead text you had to
+  select and retype into a filter. The job goes to its detail page; the runner
+  goes to `/executions?runner_id=…`, which is where a runner name links from
+  everywhere else in the dashboard — there is no runner detail page, and the
+  fleet row uses the same target.
+
 - **The dashboard fetched its icons from a third-party CDN
   ([#745](https://github.com/nuetzliches/croniq/issues/745)).** Nuxt UI renders
   icons through Iconify, whose default resolution path is a runtime HTTP
