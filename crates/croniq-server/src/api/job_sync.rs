@@ -36,6 +36,7 @@
 //! `POST /v1/schedules` can create) is treated as active. The flag can only
 //! suppress firing where there is a row to carry it.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ServerState;
@@ -168,11 +169,35 @@ pub fn remove_job(state: &ServerState, job_key: &str) {
 /// HTTP handlers now reach the scheduler through the same function.
 pub struct SchedulerJobSync {
     state: Arc<ServerState>,
+    /// One lock per job key, so two syncs for the same job cannot interleave.
+    ///
+    /// Each notification spawns a task that re-reads the store and sends a
+    /// command. Two of them for the same key — `deactivate_job` then
+    /// `activate_job` in quick succession — had no ordering, so whichever
+    /// finished last won and the scheduler could be left holding the earlier
+    /// state (issue #726). The store is correct either way, which is what made
+    /// it silent.
+    ///
+    /// A map of mutexes rather than one global lock: syncing two unrelated jobs
+    /// in parallel is fine, and a single lock would serialise every MCP
+    /// mutation on a busy server. Entries are never removed — one `Mutex` per
+    /// job key the MCP tools have touched is a few dozen bytes against a job
+    /// count that is already bounded by the store.
+    locks: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl SchedulerJobSync {
     pub fn new(state: Arc<ServerState>) -> Self {
-        Self { state }
+        Self {
+            state,
+            locks: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The lock for one job key, created on first use.
+    fn lock_for(&self, job_key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(locks.entry(job_key.to_string()).or_default())
     }
 }
 
@@ -184,9 +209,16 @@ impl croniq_mcp::JobSync for SchedulerJobSync {
         // fire-and-forget notification. `sync_job` needs an executor for the
         // calendar read, so it gets one — the tool has already written the
         // store and its answer does not depend on this landing.
+        //
+        // Under this job's lock, so two notifications for the same key apply in
+        // the order they were made. Each re-reads the store, so the last one to
+        // run decides — which is correct only if "last" means "most recent"
+        // (issue #726).
         let state = Arc::clone(&self.state);
+        let lock = self.lock_for(job_key);
         let job_key = job_key.to_string();
         tokio::spawn(async move {
+            let _guard = lock.lock().await;
             sync_job(&state, &job_key).await;
         });
     }

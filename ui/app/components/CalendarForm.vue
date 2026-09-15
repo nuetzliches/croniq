@@ -38,10 +38,22 @@ const builderKey = ref(0)
 const error = ref<string | null>(null)
 const ruleError = ref<string | null>(null)
 
+/**
+ * Which seeding run is the current one.
+ *
+ * The parse below is asynchronous — it crosses into wasm — so reopening the
+ * dialog on a different calendar while an earlier parse is in flight lets the
+ * earlier result land last and seed the builder with the *previous* calendar's
+ * rules (issue #727). The same guard `CalendarRuleBuilder` and `JobDetail`
+ * already use.
+ */
+let seedGeneration = 0
+
 watch(
   () => [open.value, props.calendar] as const,
   async ([isOpen, calendar]) => {
     if (!isOpen) return
+    const mine = ++seedGeneration
     error.value = null
     ruleError.value = null
     name.value = calendar?.name ?? ''
@@ -56,6 +68,7 @@ watch(
     }
 
     const parsed = await parseCalendarRules(calendar.rules)
+    if (mine !== seedGeneration) return
     // A clean parse means the builder can represent what is stored. A dirty
     // one means the saved text says something the builder would quietly
     // change, so the saved text is what gets shown.

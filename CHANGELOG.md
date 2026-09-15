@@ -1041,6 +1041,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the caller has no session by definition — and the prefix missed both. The
   exemption is a list of unauthenticated endpoints now rather than one prefix.
 
+- **The release build asserts its CA bundle, and labels the images correctly
+  ([#716](https://github.com/nuetzliches/croniq/issues/716)).** The assertion
+  that the shipped trust store is a current one ran on the main-branch build
+  only — so a tagged release, the one path that actually publishes, was the
+  case it did not cover. `operations.md` and the Dockerfile both said it ran
+  "before anything is published". It does now, with the same cache guard
+  [#706](https://github.com/nuetzliches/croniq/pull/706) added to CI: without
+  it, a release weeks after the last one would ship the bundle apt served on
+  the earlier build's day while `:latest` off main is current.
+
+  The release build also hard-coded `org.opencontainers.image.title=croniq` for
+  all three variants, although it computes the right title two steps earlier —
+  so `croniq-server` and `croniq-ui` published under the combined image's name.
+
+- **MCP job notifications apply in order
+  ([#726](https://github.com/nuetzliches/croniq/issues/726)).** Each one spawns
+  a task that re-reads the store, and two for the same job — `deactivate_job`
+  then `activate_job` in quick succession — had no ordering between them, so
+  whichever finished last won. The store stayed correct, which is what made it
+  silent. They now take a per-job lock; unrelated jobs still sync in parallel.
+
+- **The calendar form cannot seed the builder from the wrong calendar
+  ([#727](https://github.com/nuetzliches/croniq/issues/727)).** Its rule parse
+  crosses into wasm, so reopening the dialog on a different calendar while an
+  earlier parse was in flight let the earlier result land last. The same
+  generation guard the DSL tab and the rule builder already use.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added
