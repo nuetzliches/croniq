@@ -149,7 +149,18 @@ async function copyAll() {
 function downloadNdjson() {
   // NDJSON rather than the rendered text: whatever reads this next is a
   // program, and the fields survive as fields.
-  const ndjson = filtered.value.map((event) => JSON.stringify(event)).join('\n')
+  // `filtered` yields rows, not events — `{ event, time, fields, gutter }`
+  // since #702 — so mapping it directly exported a CSS class name and a
+  // pre-sliced timestamp alongside the real fields (issue #723). `seq` goes
+  // too: it is assigned on arrival to key the rows and was never sent by the
+  // server, so it has no business in an export.
+  const ndjson = filtered.value
+    .map((row) => {
+      const record: Partial<LogEvent> = { ...row.event }
+      delete record.seq
+      return JSON.stringify(record)
+    })
+    .join('\n')
   const blob = new Blob([ndjson], { type: 'application/x-ndjson' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')

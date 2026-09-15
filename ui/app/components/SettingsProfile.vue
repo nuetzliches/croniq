@@ -239,12 +239,16 @@ function expiryLabel(iso: string | null): string {
         v-if="enrolment"
         class="flex max-w-2xl flex-col gap-4"
       >
-        <SecretOnce
-          title="Your authenticator secret"
-          description="Scan it, or type it into your authenticator app. It is not shown again — if you lose it before confirming, start the enrolment over."
-          :value="enrolment.secret"
-          acknowledgement="I have added it to my authenticator"
-        />
+        <div class="flex flex-wrap items-start gap-4">
+          <TotpQr :value="enrolment.otpauth_url" />
+          <SecretOnce
+            class="min-w-0 flex-1"
+            title="Your authenticator secret"
+            description="Scan the code, or type this into your authenticator app. It is not shown again — if you lose it before confirming, start the enrolment over."
+            :value="enrolment.secret"
+            acknowledgement="I have added it to my authenticator"
+          />
+        </div>
         <SecretOnce
           title="Recovery codes"
           description="Each one signs you in once if you lose your authenticator. Without them and without the app, an administrator has to reset your account."

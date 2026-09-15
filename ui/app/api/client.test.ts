@@ -102,6 +102,37 @@ describe('api() 401 handling', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['/v1/invitations/accept', 'redeeming an invitation'],
+    ['/v1/password-reset/confirm', 'confirming a password reset'],
+  ])('does not refresh-and-replay a 401 from %s', async (path) => {
+    // Same shape as the sign-in surface and missed by the original prefix
+    // match: the caller has no session by definition, so a 401 is the answer —
+    // a wrong or expired token — rather than an expired access token. The
+    // refresh cannot succeed and the replay sends the attempt twice
+    // (issue #725).
+    respondWith({ status: 401, body: { error: 'invalid_token' } })
+    refreshAccessToken.mockResolvedValue('fresh-token')
+    const { api } = await import('./client')
+
+    await expect(api(path, { method: 'POST' })).rejects.toThrow()
+
+    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('still refreshes for an ordinary endpoint that happens to start similarly', async () => {
+    // The exemption is a list of prefixes, so it is worth pinning that it does
+    // not swallow the endpoints that *do* carry an access token.
+    respondWith({ status: 401 }, { status: 200, body: { ok: true } })
+    refreshAccessToken.mockResolvedValue('fresh-token')
+    const { api } = await import('./client')
+
+    await expect(api('/v1/invitations')).resolves.toEqual({ ok: true })
+
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+  })
+
   it('leaves a non-401 alone', async () => {
     respondWith({ status: 403, body: { message: 'Forbidden' } })
     const { api } = await import('./client')
