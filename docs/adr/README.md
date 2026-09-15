@@ -64,3 +64,7 @@ it from four files the way this practice was started.
 | [0003](0003-react-for-the-dashboard.md) | React + TypeScript for the dashboard | Superseded by 0004 |
 | [0004](0004-vue-rebuild-for-the-dashboard.md) | Rebuild the dashboard in Vue 3 | Accepted |
 | [0005](0005-no-third-party-runtime-sources.md) | The dashboard loads nothing from a third-party origin | Accepted |
+| [0006](0006-croniqfile-owns-what-it-declares.md) | The Croniqfile owns what it declares; the API adopts rather than edits | Accepted |
+| [0007](0007-calendars-carry-their-own-timezone.md) | Every zone is declared, never inherited from the host or the caller | Accepted |
+| [0008](0008-runner-identity-binds-first-writer-wins.md) | A `runner_id` belongs to the credential that first used it | Accepted |
+| [0009](0009-one-wire-level-conformance-suite-for-every-sdk.md) | Runner SDK behaviour is defined by one wire-level suite, not per language | Accepted |

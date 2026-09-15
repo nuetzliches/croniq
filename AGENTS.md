@@ -33,8 +33,10 @@
 
 Standing constraints that no single file owns are recorded under
 [`docs/adr/`](docs/adr/README.md). Read the index before proposing a change to
-delivery topology, auth-token storage, or the UI stack — each of those has an
-ADR that names the alternatives already weighed.
+delivery topology, auth-token storage, the UI stack, what the dashboard may
+load, who owns a resource the Croniqfile declares, how a timezone is resolved,
+how a `runner_id` is bound to a credential, or how runner SDK behaviour is
+pinned — each of those has an ADR that names the alternatives already weighed.
 
 Most decisions do **not** belong there. Reasoning goes in a comment at the
 decision site, in the CHANGELOG entry for the change, or in `operations.md` for
