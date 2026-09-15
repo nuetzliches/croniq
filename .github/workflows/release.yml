@@ -298,7 +298,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/nuetzliches/croniq
             org.opencontainers.image.url=https://github.com/nuetzliches/croniq
-            org.opencontainers.image.title=croniq
+            org.opencontainers.image.title=${{ steps.var.outputs.title }}
             org.opencontainers.image.description=Distributed cron that just works. Single binary. SQLite default. Production-ready retries.
             org.opencontainers.image.licenses=MIT OR Apache-2.0
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
@@ -322,6 +322,40 @@ jobs:
           # the main-branch CI cache (and vice versa).
           cache-from: type=gha,scope=docker-release-${{ steps.plat.outputs.name }}
           cache-to: type=gha,mode=max,scope=docker-release-${{ steps.plat.outputs.name }}
+          # …except `ca-provider`, for the reason ci.yml gives: its layer is
+          # keyed on the base digest plus the instruction text, so a cached one
+          # keeps whatever apt served on the day it was first built. On this
+          # path that is worse than a red check — a release weeks after the
+          # last one would ship a stale trust store while `:latest` off main is
+          # current (#716).
+          no-cache-filters: ca-provider
+      - name: The shipped CA bundle must match an apt-installed one
+        # The same assertion ci.yml runs on main, on the path that actually
+        # publishes. `operations.md` and the Dockerfile both say this runs
+        # "before anything is published", and until now it only ran on the
+        # main-branch build — so a tagged release was the one case it did not
+        # cover (#716).
+        #
+        # One leg only: the file is architecture-independent and identical in
+        # all three variants.
+        if: matrix.variant == 'combined' && matrix.platform == 'linux/amd64'
+        run: |
+          set -euo pipefail
+          docker buildx build --target server-runtime --load \
+            --cache-from type=gha,scope=docker-release-${{ steps.plat.outputs.name }} \
+            --no-cache-filter ca-provider \
+            -t croniq-ca-check:release .
+          shipped=$(docker run --rm --entrypoint sha256sum croniq-ca-check:release \
+            /etc/ssl/certs/ca-certificates.crt | cut -d' ' -f1)
+          fresh=$(docker run --rm debian:bookworm-slim sh -c \
+            'apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 && sha256sum /etc/ssl/certs/ca-certificates.crt' \
+            | cut -d' ' -f1)
+          echo "shipped: $shipped"
+          echo "fresh  : $fresh"
+          if [ "$shipped" != "$fresh" ]; then
+            echo "::error::the release image's CA bundle is not a current debian:bookworm-slim one — check what the runtime stage copies it from (both legs build ca-provider with --no-cache-filter, so a stale cache is not the explanation)"
+            exit 1
+          fi
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
