@@ -141,6 +141,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Typing in a filter no longer scans 200 rows per keystroke
+  ([#730](https://github.com/nuetzliches/croniq/issues/730)).** The text
+  filters on Runs, Audit and Alert deliveries fed straight into their query
+  keys, so every character was a new cache entry and a new `limit=200`
+  request. An eight-character job key was eight requests, seven of them
+  answered and discarded, each one a 200-row scan on the server.
+
+  The query now trails the box by 250ms. The input stays immediate and the URL
+  is still written on every keystroke — filter state lives in the URL here, a
+  pasted link is the point, and `router.replace` does not grow the back button.
+
+  Clearing takes effect at once, with no wait: emptying the box is deliberate
+  and its result is obvious, so a quarter second of the narrower list still on
+  screen would read as a control that did not work. A filter that arrives in
+  the URL is likewise applied to the first request rather than a beat later.
+
+  Menus and links are unaffected — state, time window, target type and the
+  runner and entity filters that arrive from a link are a single decisive
+  change each, not a sequence of prefixes.
+
 - **The runtime image is Alpine with statically linked binaries, and half the
   size ([#599](https://github.com/nuetzliches/croniq/issues/599)).** The
   published combined image goes from **57.83 MB to 29.40 MB compressed** — a
