@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '~/api/client'
-import { useActionError } from './useActionError'
+import { describeRefusal, useActionError } from './useActionError'
 
 /**
  * What an operator is told when a destructive control is refused.
@@ -66,5 +66,40 @@ describe('useActionError', () => {
     clear()
 
     expect(error.value).toBeNull()
+  })
+})
+
+/**
+ * The reading on its own, for the `try` blocks that also produce a value.
+ *
+ * Fourteen copies of it lived in nine components. Every copy chained `??`,
+ * which does not fall through an empty string — so a refusal whose body said
+ * `{"message": ""}` rendered an empty alert instead of the fallback (#729).
+ */
+describe('describeRefusal', () => {
+  it('prefers the body over the status line', () => {
+    const caught = new ApiError(422, 'Request failed with 422', {
+      message: 'Line 3: unknown weekday "Funday".',
+    })
+
+    expect(describeRefusal(caught)).toBe('Line 3: unknown weekday "Funday".')
+  })
+
+  it('treats a blank body message as absent', () => {
+    // The copies this replaced would have shown an empty alert here.
+    const caught = new ApiError(500, 'Internal Server Error', { message: '   ' })
+
+    expect(describeRefusal(caught)).toBe('Internal Server Error')
+  })
+
+  it('takes the caller’s own fallback', () => {
+    // Enrolment and replay say what was refused, not just that something was.
+    expect(describeRefusal(new ApiError(500, ''), 'Replay was refused.')).toBe(
+      'Replay was refused.',
+    )
+  })
+
+  it('survives a thrown non-error', () => {
+    expect(describeRefusal('a bare string')).toBe('The server refused that.')
   })
 })

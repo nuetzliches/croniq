@@ -179,6 +179,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   site rather than a cache, because a passed set is a snapshot and is only
   correct where the calendars cannot have changed in between.
 
+- **One reading of a refusal, instead of fourteen
+  ([#729](https://github.com/nuetzliches/croniq/issues/729)).** Nine dashboard
+  components each carried their own copy of the block that decides what an
+  operator is told when the server says no. `useActionError` was extracted for
+  four screens that had no such handling at all, and deliberately left the
+  existing copies alone so that fix would not arrive as a fifteen-file diff.
+  This is that follow-up.
+
+  Every copy chained `??`, which does not fall through an empty string — so a
+  refusal whose body carried a blank `message` rendered an *empty* alert rather
+  than falling back to the status line or to "The server refused that." Visibly
+  broken rather than merely unhelpful, in fourteen places, and fixed in one.
+
+  Components that only run a mutation now use the composable directly. The ones
+  that also produce a value — a minted token, an issued invitation, a closed
+  dialog — keep their own `try` and share just the reading, via a new
+  `describeRefusal(caught, fallback?)`.
+
+  Four sites keep their own handling on purpose: the invitation and
+  password-reset screens map HTTP statuses to their own wording, because an
+  unauthenticated caller gets terse codes and the bespoke text is the point;
+  the reload control reads a typed `ReloadFailure` with a line and column; and
+  the dead-letter replay reads the `stale_replay` marker that turns a refusal
+  into a force button.
+
 - **The runtime image is Alpine with statically linked binaries, and half the
   size ([#599](https://github.com/nuetzliches/croniq/issues/599)).** The
   published combined image goes from **57.83 MB to 29.40 MB compressed** — a

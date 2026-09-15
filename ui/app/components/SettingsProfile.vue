@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ApiError } from '~/api/client'
 import {
   useCreatePat,
   useCurrentUser,
@@ -13,6 +12,7 @@ import {
 import type { TotpSetupResponse } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { describeRefusal, useActionError } from '~/composables/useActionError'
 
 /**
  * You: who you are signed in as, your second factor, and your tokens.
@@ -50,7 +50,7 @@ async function doRevoke() {
   }
 }
 
-const error = ref<string | null>(null)
+const { error, attempt } = useActionError()
 
 /* ─── two-factor ─────────────────────────────────────────────────────────── */
 
@@ -61,18 +61,6 @@ const codesAcknowledged = ref(false)
 const disablePassword = ref('')
 const disabling = ref(false)
 
-async function attempt(fn: () => Promise<unknown>) {
-  error.value = null
-  try {
-    await fn()
-    return true
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-    return false
-  }
-}
-
 async function beginEnrolment() {
   error.value = null
   codesAcknowledged.value = false
@@ -80,8 +68,7 @@ async function beginEnrolment() {
   try {
     enrolment.value = await setup.mutateAsync()
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'Could not start enrolment.'
+    error.value = describeRefusal(caught, 'Could not start enrolment.')
   }
 }
 
@@ -145,8 +132,7 @@ async function createToken() {
     tokenScopes.value = []
     tokenExpiry.value = ''
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+    error.value = describeRefusal(caught)
   }
 }
 

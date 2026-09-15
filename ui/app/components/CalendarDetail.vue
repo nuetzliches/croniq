@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ApiError } from '~/api/client'
 import {
   useAdoptCalendar,
   useDeleteCalendar,
@@ -12,6 +11,7 @@ import {
 import type { CalendarDefinition } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { useActionError } from '~/composables/useActionError'
 
 /**
  * One calendar, and — the part that is new — what it is actually doing.
@@ -46,7 +46,9 @@ const unadopt = useUnadoptCalendar()
 
 const editing = ref(false)
 const confirmingDelete = ref(false)
-const actionError = ref<string | null>(null)
+// `run` is what the template calls; there is nothing left for a wrapper
+// to add now that the refusal handling is shared (#729).
+const { error: actionError, attempt: run } = useActionError()
 
 const dslManaged = computed(() => props.calendar?.managed_by === 'dsl')
 
@@ -72,16 +74,6 @@ const governed = computed(() => {
 const held = computed(() =>
   governed.value.filter((row) => row.state?.suppressed_by?.includes(props.calendar?.name ?? '\0')),
 )
-
-async function run(fn: () => Promise<unknown>) {
-  actionError.value = null
-  try {
-    await fn()
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    actionError.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-  }
-}
 
 async function doDelete() {
   await run(() => removeCalendar.mutateAsync(props.calendarId))

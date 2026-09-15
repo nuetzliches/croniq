@@ -7,6 +7,25 @@ function firstNonEmpty(...candidates: Array<string | undefined>): string | undef
 }
 
 /**
+ * What the server said when it refused, or a fallback.
+ *
+ * Exported on its own because not every caller is `attempt`-shaped: a form
+ * that mints a token sets a second piece of state on success and cannot hand
+ * the whole body to a helper, and an enrolment step wants its own fallback
+ * wording. Those kept their own `try`, and with it their own copy of this
+ * reading — every one carrying the `??` edge below (#729).
+ *
+ * @param fallback used when neither the body nor the error says anything.
+ */
+export function describeRefusal(caught: unknown, fallback = 'The server refused that.'): string {
+  const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
+  // `??` alone is not enough: an empty string is neither null nor undefined,
+  // so a refusal with a blank message would render an empty alert — visibly
+  // broken rather than merely unhelpful.
+  return firstNonEmpty(body?.message, (caught as Error | undefined)?.message) ?? fallback
+}
+
+/**
  * Run a mutation and keep whatever the server said when it refused.
  *
  * Every destructive control in this dashboard needs the same three things: run
@@ -45,14 +64,7 @@ export function useActionError() {
       await fn()
       return true
     } catch (caught) {
-      const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-      // `??` alone is not enough: an empty string is neither null nor
-      // undefined, so a refusal with a blank message would render an empty
-      // alert — visibly broken rather than merely unhelpful. The copies of
-      // this block scattered through the components all have that edge.
-      error.value =
-        firstNonEmpty(body?.message, (caught as Error | undefined)?.message) ??
-        'The server refused that.'
+      error.value = describeRefusal(caught)
       return false
     }
   }

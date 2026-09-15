@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ApiError } from '~/api/client'
 import {
   useCreateInvitation,
   useCurrentUser,
@@ -12,6 +11,7 @@ import {
 import type { Invitation, Role, User } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import { describeRefusal, useActionError } from '~/composables/useActionError'
 
 /**
  * Who has access.
@@ -33,7 +33,7 @@ const invite = useCreateInvitation()
 const revokeInvitation = useRevokeInvitation()
 const removeUser = useDeleteUser()
 
-const error = ref<string | null>(null)
+const { error, attempt } = useActionError()
 
 /**
  * Who is being removed, while the question is on screen.
@@ -141,18 +141,6 @@ const rows = computed<Row[]>(() => {
   return [...userRows, ...inviteRows].sort((a, b) => a.identity.localeCompare(b.identity))
 })
 
-async function attempt(fn: () => Promise<unknown>) {
-  error.value = null
-  try {
-    await fn()
-    return true
-  } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
-    return false
-  }
-}
-
 async function sendInvite() {
   if (!inviteEmail.value.trim()) {
     error.value = 'An invitation needs an email address.'
@@ -175,8 +163,7 @@ async function sendInvite() {
     inviteEmail.value = ''
     inviteHours.value = ''
   } catch (caught) {
-    const body = caught instanceof ApiError ? (caught.body as { message?: string }) : undefined
-    error.value = body?.message ?? (caught as Error).message ?? 'The server refused that.'
+    error.value = describeRefusal(caught)
   }
 }
 
