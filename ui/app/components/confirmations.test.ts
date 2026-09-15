@@ -37,7 +37,8 @@ function vueFiles(dir: string): string[] {
  * a named function — those are read by a human, and the dialog is visible in
  * the same file.
  */
-const DESTRUCTIVE_CLICK = /@click="[^"]*\b(delete|remove|discard)\w*\.mutate(Async)?\(/i
+const DESTRUCTIVE_CLICK =
+  /@click="[^"]*\b(delete|remove|discard|revoke)\w*\.mutate(Async)?\(/i
 
 describe('destructive controls', () => {
   it('never call a delete mutation straight from a click handler', () => {
@@ -64,6 +65,11 @@ describe('destructive controls', () => {
       'useDeleteSchedule',
       'useDeleteJob',
       'useDeleteCalendar',
+      // Revoking is deleting a credential. The original pattern said
+      // delete/remove/discard and missed both of these, so they shipped
+      // without a confirmation the React tree had (issue #717).
+      'useRevokePat',
+      'useRevokeInvitation',
     ]
 
     const missing = vueFiles(APP)

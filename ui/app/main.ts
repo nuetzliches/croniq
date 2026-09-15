@@ -6,7 +6,14 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import ui from '@nuxt/ui/vue-plugin'
 
 import App from './App.vue'
+import { forgetLegacyTokens } from './api/session'
 import { installAuthWatch, router } from './router'
+
+// Before anything else: a browser that used the pre-#454 dashboard still holds
+// a refresh token in `localStorage`, where a script on this origin can read it.
+// That is the exposure #454 removed, and the React tree cleaned up on sight
+// (issue #719).
+forgetLegacyTokens()
 
 const app = createApp(App)
 

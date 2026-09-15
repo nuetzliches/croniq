@@ -50,6 +50,32 @@ describe('routes that outlived their pages', () => {
     expect(router.currentRoute.value.query.selected).toBeUndefined()
   })
 
+  it('sends a signed-out visitor from an unknown URL to the sign-in page', async () => {
+    // The catch-all used to be `meta.public`, so the guard returned early for
+    // it: an unauthenticated visitor opening a renamed screen, a typo or an
+    // old bookmark landed on the not-found page. That page sits outside the
+    // shell and has no navigation, so their only way forward was the back
+    // button (issue #720).
+    setActivePinia(createPinia())
+    useAuthStore().clear()
+
+    await router.push('/a-screen-that-never-existed')
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.next).toBe('/a-screen-that-never-existed')
+  })
+
+  it('still answers 404 for a signed-in visitor', async () => {
+    // Signed in, an unknown URL is genuinely unknown, and saying so is the
+    // honest answer.
+    setActivePinia(createPinia())
+    useAuthStore().setToken('access-token')
+
+    await router.push('/a-screen-that-never-existed')
+
+    expect(router.currentRoute.value.name).toBe('not-found')
+  })
+
   it('no longer serves the scaffold check', async () => {
     // It said so itself: "deleted when the shell lands in step 2" (issue #672).
     // The shell landed. A verification page inside the authenticated app is a

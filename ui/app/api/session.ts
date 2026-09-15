@@ -98,6 +98,31 @@ async function isNoSession(response: Response): Promise<boolean> {
  * Resolves once the store has left `'unknown'`. A first-ever visit gets a 401
  * here — the expected answer, not an error.
  */
+/**
+ * Keys the React dashboard kept tokens under, before #454.
+ *
+ * That issue moved the refresh credential into an `HttpOnly` cookie precisely
+ * so a script on this origin could not read it. The React tree cleaned these up
+ * on every login, refresh failure and logout; this one never mentioned them, so
+ * a browser that used the old dashboard kept a readable refresh token
+ * indefinitely after the upgrade (issue #719).
+ *
+ * It has very likely expired — they lasted seven days — but "probably expired"
+ * is not the property #454 was after.
+ */
+const LEGACY_TOKEN_KEYS = ['croniq_token', 'croniq_refresh']
+
+/** Remove them, once, wherever storage is reachable. */
+export function forgetLegacyTokens() {
+  for (const key of LEGACY_TOKEN_KEYS) {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      // Private mode, or storage disabled. Nothing to remove there either.
+    }
+  }
+}
+
 export async function bootstrap(): Promise<void> {
   const token = await refreshAccessToken()
   if (!token) useAuthStore().clear()

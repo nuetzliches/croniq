@@ -178,7 +178,18 @@ const routes: RouteRecordRaw[] = [
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('~/pages/NotFoundView.vue'),
-    meta: { public: true, title: 'Not found' },
+    /*
+     * Not `public`.
+     *
+     * It was, so the guard returned early for it and an unauthenticated
+     * visitor opening any unknown URL — a renamed screen, a typo, a bookmark
+     * from a version with more routes — got the not-found page instead of the
+     * sign-in form. That page sits outside the shell and has no navigation, so
+     * their only way forward was the back button (issue #720).
+     *
+     * Signed in, an unknown URL is still a 404, which is the honest answer.
+     */
+    meta: { title: 'Not found' },
   },
 ]
 

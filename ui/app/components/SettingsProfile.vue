@@ -12,6 +12,7 @@ import {
 } from '~/api/queries'
 import type { TotpSetupResponse } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
  * You: who you are signed in as, your second factor, and your tokens.
@@ -31,6 +32,23 @@ const confirm = useTotpConfirm()
 const disableTotp = useTotpDisable()
 const createPat = useCreatePat()
 const revokePat = useRevokePat()
+
+/**
+ * Which token is being revoked, while the question is on screen.
+ *
+ * Naming it matters here more than anywhere: an operator has several tokens
+ * and the rows look alike, so "revoke this token?" without the name is a
+ * question nobody can answer (issue #717).
+ */
+const confirmRevoke = ref<{ id: string; label: string } | null>(null)
+
+async function doRevoke() {
+  const target = confirmRevoke.value
+  if (!target) return
+  if (await attempt(() => revokePat.mutateAsync(target.id))) {
+    confirmRevoke.value = null
+  }
+}
 
 const error = ref<string | null>(null)
 
@@ -469,12 +487,22 @@ function expiryLabel(iso: string | null): string {
                 :aria-label="`Revoke ${token.name}`"
                 title="Revoke"
                 :loading="revokePat.isPending.value"
-                @click="attempt(() => revokePat.mutateAsync(token.token_id))"
+                @click="confirmRevoke = { id: token.token_id, label: token.name }"
               />
             </td>
           </tr>
         </tbody>
       </table>
     </section>
+
+    <ConfirmModal
+      :open="confirmRevoke !== null"
+      title="Revoke this token?"
+      :description="`Anything authenticating as ${confirmRevoke?.label ?? 'it'} starts failing immediately. Revoking cannot be undone — a replacement is a new secret that has to be distributed again.`"
+      confirm-label="Revoke"
+      :loading="revokePat.isPending.value"
+      @update:open="(open: boolean) => { if (!open) confirmRevoke = null }"
+      @confirm="doRevoke"
+    />
   </div>
 </template>
