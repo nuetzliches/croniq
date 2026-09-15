@@ -225,6 +225,14 @@ EXPOSE 4000 9900
 # here means a plain `docker run` reports health, and compose's own
 # `healthcheck:` still overrides it where a deployment wants different timings.
 #
+# **It describes the default CMD, which is the server.** These images ship
+# several binaries, and a container that overrides the entrypoint to run one of
+# the others — a runner, `croniq` itself — is not serving HTTP on 4000 and will
+# fail this probe forever. Such a container has to disable it, the way
+# docker-compose.yml's runner services do (#715). That is Docker's own
+# convention for HEALTHCHECK, but it costs a `(unhealthy)` in `docker ps` and a
+# non-zero `compose up --wait` when it is missed, so it is worth stating.
+#
 # BusyBox wget, not bash: `/dev/tcp` is a bash builtin rather than a kernel
 # feature, and this runtime is Alpine. `127.0.0.1`, not `localhost`: the
 # container maps both 127.0.0.1 and ::1 to that name, busybox tries ::1 first,

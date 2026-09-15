@@ -941,6 +941,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   new expression while the scheduler ran the old one. Callers that write a
   specific row now name it.
 
+- **A huge `expires_in_hours` is refused rather than fatal
+  ([#714](https://github.com/nuetzliches/croniq/issues/714)).**
+  `POST /v1/auth/tokens` computed the deadline with `Utc::now() +
+  Duration::hours(..)`, which panics rather than saturating once the result
+  leaves chrono's year range. `expires_in_hours` is a `u32` the caller picks, so
+  a value near its maximum took the connection down instead of answering — there
+  is no catch-panic layer. It is a checked add now, and out of range is a 400.
+  No ceiling beyond representability: a long-lived token is a legitimate thing
+  to ask for.
+
+- **The runner containers are no longer permanently unhealthy
+  ([#715](https://github.com/nuetzliches/croniq/issues/715)).** The
+  `HEALTHCHECK` added in the previous entry describes the image's default
+  command, which is the server. These images ship several binaries, and
+  `docker-compose.yml`'s runner services override the entrypoint to run one of
+  the others — so they inherited a probe against a port they never listen on and
+  reported unhealthy forever, which also made `docker compose up --wait` exit
+  non-zero on a working stack.
+
+  The runner services opt out with `healthcheck: disable: true`, the README's
+  shell-runner example does the same, and the Dockerfile says what the probe
+  assumes. That a `HEALTHCHECK` belongs to the default command is Docker's own
+  convention, but it is cheap to miss and expensive to diagnose.
+
 ## [0.38.0] - 2026-09-08
 
 ### Added

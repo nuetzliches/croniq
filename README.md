@@ -518,6 +518,12 @@ sensitive shell-runner pools separate from your custom-Rust runners.
 shell-runner:
   image: ghcr.io/nuetzliches/croniq:latest
   entrypoint: ["croniq-shell-runner"]
+  # The image's health check probes the server on :4000, which is what its
+  # default command runs. This container runs a runner and listens on nothing,
+  # so the inherited probe has to be switched off — otherwise every replica
+  # reports unhealthy and an orchestrator keeps rescheduling them.
+  healthcheck:
+    disable: true
   environment:
     CRONIQ_SERVER_URL: http://server:4000
     CRONIQ_API_KEY: croniq_…
