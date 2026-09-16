@@ -375,6 +375,11 @@ pub async fn handle_list_states(
         None => Default::default(),
     };
 
+    // The jobs the running configuration has switched off. Their stored rows
+    // still describe the schedule they had before, which reads as active and
+    // permanently overdue (#752) — see `ServerState::disabled_jobs`.
+    let disabled = state.disabled_jobs().await;
+
     // Rows whose job the running configuration no longer defines are dropped
     // rather than reported permanently overdue (issue #506). The metrics
     // exporter has filtered them since #470; this endpoint is what the
@@ -386,14 +391,22 @@ pub async fn handle_list_states(
         .into_iter()
         .filter(|s| live.includes(&s.job_key))
         .map(|s| {
+            // What the running configuration says wins over what the row
+            // remembers: a `disabled` schedule has no next fire, so it can
+            // have neither a missed one nor an active status (#752).
+            let (status, next_fire_at) = if disabled.contains(&s.job_key) {
+                (JobStatus::Disabled, None)
+            } else {
+                (s.status, s.next_fire_at)
+            };
             let overdue =
-                s.status == JobStatus::Active && s.next_fire_at.map(|t| t < now).unwrap_or(false);
+                status == JobStatus::Active && next_fire_at.map(|t| t < now).unwrap_or(false);
             let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
             let config_error = faults.get(&s.job_key).cloned();
             // Only an active, non-overdue job is "waiting on its gate";
             // `overdue` keeps priority so a genuinely stalled scheduler
             // still reads as stalled (#250).
-            let suppressed_by = if s.status == JobStatus::Active && !overdue {
+            let suppressed_by = if status == JobStatus::Active && !overdue {
                 suppressed.get(&s.job_key).cloned()
             } else {
                 None
@@ -401,8 +414,8 @@ pub async fn handle_list_states(
             let timezone = timezones.get(&s.job_key).cloned();
             JobScheduleState {
                 job_key: s.job_key,
-                status: s.status,
-                next_fire_at: s.next_fire_at,
+                status,
+                next_fire_at,
                 timezone,
                 last_fired_at: s.last_fired_at,
                 fire_count: s.fire_count,
@@ -1436,6 +1449,46 @@ mod tests {
             .as_object()
             .unwrap();
         assert!(row.get("suppressed_by").is_none());
+    }
+
+    // ─── a job the configuration switched off (#752) ───
+
+    #[tokio::test]
+    async fn job_states_reports_a_disabled_job_as_disabled_not_overdue() {
+        // The row was written by the last fire of the schedule this job had
+        // before the Croniqfile said `disabled`: status `active`, next fire a
+        // day in the past and never advancing again. Read literally it is the
+        // signature of a stalled scheduler; what it actually describes is a
+        // job that was switched off on purpose.
+        let store = make_store();
+        seed_active_state(
+            &store,
+            "storage:copy",
+            Utc::now() - chrono::Duration::days(1),
+        );
+        let triggers = crate::loader::load_str(r#"job storage:copy { disabled }"#)
+            .unwrap()
+            .triggers;
+        let state = make_state_with_triggers(store, triggers);
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "storage:copy")
+            .expect("job_states row present")
+            .as_object()
+            .unwrap();
+        assert_eq!(row["overdue"], false);
+        assert_eq!(row["status"], "disabled");
+        assert!(
+            row["next_fire_at"].is_null(),
+            "a disabled schedule has no next fire: {row:?}"
+        );
+        // The history it earned is still its own.
+        assert_eq!(row["fire_count"], 3);
     }
 
     /// POST a JSON body and return (status, parsed body).

@@ -1800,6 +1800,27 @@ A server with no trigger map to consult — an embedding, or a store-only mode �
 reports **everything** rather than nothing. Losing every per-job signal is a
 worse failure than showing a stale one, and it would be silent.
 
+### Disabled jobs stop being reported as overdue
+
+The same table tells the same half-truth about a job that is still defined but
+switched off. `job_states` is written when a job *fires*, so a job that ran on
+a real schedule and was then changed to `disabled` keeps the row its last fire
+wrote: status `active`, `next_fire_at` at the fire that never came. That
+instant recedes further into the past every minute and never advances — the
+exact signature of a stalled scheduler.
+
+So the four consumers above project the running configuration over the stored
+row: a job whose live schedule is `disabled` reports `status: disabled` with no
+next fire on `GET /v1/jobs/states`, emits no `croniq_job_next_fire_timestamp`
+and no `croniq_job_overdue`, and never trips a `job_missed_fire` alert
+([issue #752](https://github.com/nuetzliches/croniq/issues/752)).
+`croniq_job_last_fire_timestamp` still reports — that fire did happen.
+
+Booting also **heals** the row (status `disabled`, no next fire), because a
+disabled job never fires again and so has no other chance to correct itself. A
+hot reload does not write to the store at all, which is why the projection
+exists as well as the heal.
+
 ### Watchdog metrics
 
 The frequency of these recovery actions is the operator signal, so `/metrics`

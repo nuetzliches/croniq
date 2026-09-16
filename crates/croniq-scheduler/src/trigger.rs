@@ -88,6 +88,11 @@ pub enum PendingFire {
     /// it outlived the schedule that produced it (#535, e.g. a shortened
     /// interval); `next_fire_at` was recomputed from `now`.
     HealedOutlivedSchedule,
+    /// The schedule this trigger was just built from is `disabled`, so there
+    /// is no fire to carry: the pending instant belongs to the schedule the
+    /// `disabled` one replaced. `next_fire_at` was cleared and the trigger
+    /// left paused (#752).
+    DroppedDisabled,
 }
 
 impl Trigger {
@@ -248,6 +253,10 @@ impl Trigger {
     ///   to a schedule that no longer applies — typically an interval that
     ///   has since been shortened, which would otherwise stay silent for up
     ///   to the whole *old* interval (a day, for daily → hourly). Recomputed.
+    /// - the schedule is now `disabled` (#752): a disabled schedule has no
+    ///   fires at all, so it can have no missed ones either. Dropped — and
+    ///   with it the permanent "overdue" the stale instant otherwise reports
+    ///   for a job that is doing exactly what it was told.
     /// - otherwise adopted as-is, past instants included: a gate-allowed
     ///   overdue fire is a missed fire, and `MisfirePolicy::FireNow` catches
     ///   it up once.
@@ -263,6 +272,12 @@ impl Trigger {
         stored: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> PendingFire {
+        if matches!(self.schedule, Schedule::Disabled) {
+            self.next_fire_at = None;
+            self.state = TriggerState::Paused;
+            return PendingFire::DroppedDisabled;
+        }
+
         if !self.gate_allows(stored) {
             self.resume(now);
             return PendingFire::HealedGateClosed;
@@ -1043,6 +1058,26 @@ mod tests {
             PendingFire::Adopted
         );
         assert_eq!(trigger.next_fire_at, Some(at));
+    }
+
+    #[test]
+    fn disabled_schedule_drops_the_pending_fire_it_inherited() {
+        // Issue #752: a job that ran on a real schedule and was then set to
+        // `disabled` still has the next fire that schedule computed. Adopting
+        // it leaves a paused trigger holding a fire time that only ever
+        // recedes into the past — which every reader of the persisted state
+        // reports as a missed fire, i.e. a stalled scheduler.
+        let now = utc(2026, 3, 29, 12, 4);
+        let mut trigger = make_trigger(Schedule::Disabled, now);
+        let pending = utc(2026, 3, 29, 11, 50);
+
+        assert_eq!(
+            trigger.carry_over_pending_fire(pending, now),
+            PendingFire::DroppedDisabled
+        );
+        assert_eq!(trigger.next_fire_at, None);
+        assert_eq!(trigger.state, TriggerState::Paused);
+        assert_eq!(trigger.evaluate(now), None);
     }
 
     // ─── The calendar's own zone (#450) ───

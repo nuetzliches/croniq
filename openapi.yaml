@@ -603,7 +603,11 @@ components:
         status:
           type: string
           enum: [active, paused, disabled, exhausted]
-          description: Lowercase trigger status.
+          description: >
+            Lowercase trigger status. Read off the stored row, except for a
+            job whose schedule the running configuration declares `disabled`:
+            that one reports `disabled` with no `next_fire_at`, whatever the
+            row still remembers of the schedule it had before (issue #752).
         next_fire_at: { type: string, format: date-time, nullable: true }
         timezone:
           type: string
@@ -621,7 +625,9 @@ components:
           type: boolean
           description: >
             true when the trigger is active but its next scheduled fire is in
-            the past — the scheduler hasn't advanced it (a missed fire).
+            the past — the scheduler hasn't advanced it (a missed fire). Never
+            true for a job the configuration has switched off: a `disabled`
+            schedule has no fires, so it can have no missed ones.
         execution_mode:
           type: string
           enum: [queued, ephemeral]

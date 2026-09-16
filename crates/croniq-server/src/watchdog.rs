@@ -633,9 +633,30 @@ impl WatchdogLoop {
         // job's row stays permanently overdue — so without this the sweep
         // paged someone about a job that no longer exists, again after every
         // restart since `next_fire_at` never advances (issue #506).
-        let live = match self.triggers.as_ref() {
-            Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
-            None => LiveJobs::Unknown,
+        //
+        // The same guard answers the second question the stored row cannot:
+        // which jobs the configuration has since switched off. Their rows
+        // still say `active` with the next fire of the schedule they had
+        // before — a fire that is now permanently in the past, which is
+        // exactly the shape this sweep pages about (issue #752).
+        let (live, disabled) = match self.triggers.as_ref() {
+            Some(triggers) => {
+                let guard = triggers.read().await;
+                (
+                    LiveJobs::from_snapshot(Some(&guard)),
+                    guard
+                        .iter()
+                        .filter(|(_, trigger)| {
+                            matches!(
+                                trigger.schedule,
+                                croniq_scheduler::schedule::Schedule::Disabled
+                            )
+                        })
+                        .map(|(key, _)| key.clone())
+                        .collect::<std::collections::HashSet<String>>(),
+                )
+            }
+            None => (LiveJobs::Unknown, std::collections::HashSet::new()),
         };
 
         for state in &states {
@@ -643,8 +664,9 @@ impl WatchdogLoop {
                 continue;
             }
             // Only Active triggers have a meaningful "expected" fire; a
-            // paused/disabled/exhausted job is not supposed to fire.
-            if state.status != JobStatus::Active {
+            // paused/disabled/exhausted job is not supposed to fire — whether
+            // the row says so, or only the running configuration does.
+            if state.status != JobStatus::Active || disabled.contains(&state.job_key) {
                 continue;
             }
             let Some(next_fire) = state.next_fire_at else {
@@ -2432,10 +2454,21 @@ mod tests {
 
     /// A trigger just real enough to put a key in a snapshot; the sweep only
     /// consults the keys.
+    /// A trigger that only has to exist — what the sweep reads off it is that
+    /// the configuration still defines this job (#506). The schedule is a
+    /// live one, because `disabled` is now a distinct answer: the sweep skips
+    /// those (#752).
     fn test_trigger(job_key: &str) -> Trigger {
+        test_trigger_with(
+            job_key,
+            croniq_scheduler::schedule::Schedule::Interval { seconds: 60 },
+        )
+    }
+
+    fn test_trigger_with(job_key: &str, schedule: croniq_scheduler::schedule::Schedule) -> Trigger {
         Trigger::new(
             job_key.to_string(),
-            croniq_scheduler::schedule::Schedule::Disabled,
+            schedule,
             chrono_tz::UTC,
             None,
             None,
@@ -2668,6 +2701,39 @@ mod tests {
         let result = watchdog.sweep(now).await;
 
         assert!(result.missed_fires.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missed_fire_skips_a_job_the_configuration_disabled() {
+        // Issue #752: the row is the one the last fire wrote before the
+        // Croniqfile said `disabled` — `active`, with a next fire that has
+        // long passed and will never advance. Only the running configuration
+        // knows the job is off, and this sweep is the consumer that pages
+        // someone at 03:00 about it.
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "storage:copy",
+            Some(now - ChronoDuration::days(1)),
+            JobStatus::Active,
+        );
+
+        let alerts = alerts_with_sla(vec![missed_fire_rule("liveness", "*", "10m", "ops")]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let mut triggers = HashMap::new();
+        triggers.insert(
+            "storage:copy".to_string(),
+            test_trigger_with(
+                "storage:copy",
+                croniq_scheduler::schedule::Schedule::Disabled,
+            ),
+        );
+        watchdog.set_trigger_snapshot(Arc::new(tokio::sync::RwLock::new(triggers)));
+
+        let result = watchdog.sweep(now).await;
+
+        assert!(result.missed_fires.is_empty(), "{:?}", result.missed_fires);
     }
 
     #[tokio::test]
