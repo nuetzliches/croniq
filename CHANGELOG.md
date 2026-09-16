@@ -24,6 +24,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still pastes into a ticket) and renders a deep-linked `job_key` as a
   read-only filter, the way it already renders `runner_id`.
 
+  The MCP `list_executions` tool takes the same parameter
+  ([#756](https://github.com/nuetzliches/croniq/issues/756)), so an agent asked
+  about "the storage jobs" no longer has to know every key up front. No runner
+  SDK is affected — none of the six exposes the execution list; it is a
+  control-plane read, not part of the work protocol.
+
 ### Fixed
 
 - **A job the Croniqfile disables was reported as active and permanently
