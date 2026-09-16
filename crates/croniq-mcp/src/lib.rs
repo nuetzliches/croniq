@@ -17,7 +17,7 @@
 //! | `delete_job`       | Delete a store-managed job (requires --mutations + --data-dir) |
 //! | `activate_job`     | Mark a job active (requires --mutations + --data-dir) |
 //! | `deactivate_job`   | Mark a job inactive (requires --mutations + --data-dir) |
-//! | `list_executions`  | List recent executions (requires --data-dir) |
+//! | `list_executions`  | List recent executions, by state / job key / job-key search (requires --data-dir) |
 //! | `get_execution_logs` | Read captured logs for an execution (requires --data-dir) |
 //! | `enqueue_job`      | Schedule a new execution (requires --mutations) |
 //! | `cancel_execution` | Remove a pending execution (requires --mutations) |

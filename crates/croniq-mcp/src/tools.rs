@@ -216,9 +216,16 @@ pub struct JobTriggerParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListExecutionsParams {
-    /// Filter by job key.
+    /// Filter by exact job key. Use `job_key_contains` to search instead.
     #[serde(default)]
     pub job_key: Option<String>,
+
+    /// Search the job key: a case-insensitive substring, so `storage` finds
+    /// `storage:copy` and `storage:copy-verify`. Use this when the exact key
+    /// is not known; `job_key` names one job and only that job. Wildcards are
+    /// literal — `%` matches a percent sign, not everything.
+    #[serde(default)]
+    pub job_key_contains: Option<String>,
 
     /// Filter by execution state (queued, claimed, completed, failed, dead, cancelled).
     #[serde(default)]
@@ -970,7 +977,7 @@ impl CroniqMcp {
 
     /// List recent executions with optional filters.
     #[tool(
-        description = "List recent executions from the store. Filter by job_key and/or state. Requires --data-dir."
+        description = "List recent executions from the store. Filter by state, by exact job_key, or by job_key_contains — a case-insensitive substring of the job key, for when the exact key is not known. Requires --data-dir."
     )]
     async fn list_executions(
         &self,
@@ -997,6 +1004,13 @@ impl CroniqMcp {
 
         let filter = ExecutionFilter {
             job_key: p.job_key,
+            // Blank is no filter, matching the HTTP endpoint: an agent that
+            // fills the field in with an empty string is not asking for
+            // nothing (issue #756).
+            job_key_contains: p
+                .job_key_contains
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
             state,
             limit: Some(p.limit.min(100)),
             ..Default::default()
@@ -2125,6 +2139,86 @@ mod tests {
         use croniq_store::sqlite::SqliteStore;
         let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
         CroniqMcp::new_with_store(AppState::new(), store, vec![], true)
+    }
+
+    /// One finished execution for `job_key`, enough for a list to find.
+    fn seed_execution(store: &DynStore, job_key: &str) {
+        let now = chrono::Utc::now();
+        store
+            .create_execution(&croniq_store::models::Execution {
+                id: Uuid::new_v4(),
+                job_key: job_key.into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Completed,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: Some(now),
+                duration_ms: Some(1),
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_executions_searches_the_job_key() {
+        // Issue #756: `job_key` alone meant an agent asking about "the storage
+        // jobs" had to know every key first — the dead end the dashboard had
+        // until #753. The two parameters stay distinct: one names a job, the
+        // other searches.
+        use croniq_store::sqlite::SqliteStore;
+
+        let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
+        for key in ["storage:copy", "storage:copy-verify", "mail:send"] {
+            seed_execution(&store, key);
+        }
+        let server = CroniqMcp::new_with_store(AppState::new(), store, vec![], false);
+
+        let keys = |out: &str| -> Vec<String> {
+            let rows: serde_json::Value = serde_json::from_str(out).unwrap();
+            let mut keys: Vec<String> = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["job_key"].as_str().unwrap().to_string())
+                .collect();
+            keys.sort();
+            keys
+        };
+
+        let search = |needle: Option<&str>, exact: Option<&str>| ListExecutionsParams {
+            job_key: exact.map(str::to_string),
+            job_key_contains: needle.map(str::to_string),
+            state: None,
+            limit: 20,
+        };
+
+        // Case-insensitive, and anywhere in the key.
+        let out = server
+            .list_executions(Parameters(search(Some("STORAGE"), None)))
+            .await
+            .unwrap();
+        assert_eq!(keys(&out), ["storage:copy", "storage:copy-verify"]);
+
+        // The exact parameter still names one job, not its longer namesake.
+        let out = server
+            .list_executions(Parameters(search(None, Some("storage:copy"))))
+            .await
+            .unwrap();
+        assert_eq!(keys(&out), ["storage:copy"]);
+
+        // An empty search is no search, as on the HTTP endpoint.
+        let out = server
+            .list_executions(Parameters(search(Some("  "), None)))
+            .await
+            .unwrap();
+        assert_eq!(keys(&out).len(), 3);
     }
 
     #[tokio::test]
