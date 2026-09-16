@@ -210,7 +210,15 @@ export function useReloadConfig() {
 }
 
 export interface ExecutionFilters {
+  /** Exact job key — what a link from a job's detail carries. */
   job_key?: string
+  /**
+   * Case-insensitive substring of the job key: the typed search, and a
+   * different question from `job_key` (issue #753). A link that means one job
+   * must keep meaning one job — a substring of `mail:send` also answers for
+   * `mail:send-retry` — so the search never reuses the exact parameter.
+   */
+  job_key_contains?: string
   state?: string
   runner_id?: string
   limit?: number
@@ -274,6 +282,7 @@ export interface ExecutionFilters {
 function executionQuery(active: ExecutionFilters): Record<string, string | number> {
   const query: Record<string, string | number> = {}
   if (active.job_key) query.job_key = active.job_key
+  if (active.job_key_contains) query.job_key_contains = active.job_key_contains
   if (active.state) query.state = active.state
   if (active.runner_id) query.runner_id = active.runner_id
   // Resolved here rather than by the caller: this runs on every fetch, so a

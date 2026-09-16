@@ -104,6 +104,20 @@ describe('execution list requests', () => {
     expect(lastQuery().get('since')).toBeNull()
   })
 
+  it('sends the search and the exact key as separate parameters', async () => {
+    // Issue #753: the typed box searches, the deep link still names one job.
+    // Sending the search as `job_key` would have widened every link a job's
+    // detail hands out.
+    const { useExecutions } = await import('./queries')
+    useExecutions(() => ({ job_key: 'mail:send', job_key_contains: 'storage' }))
+
+    await queries.at(-1)!.queryFn()
+
+    const query = lastQuery()
+    expect(query.get('job_key')).toBe('mail:send')
+    expect(query.get('job_key_contains')).toBe('storage')
+  })
+
   it('fetchExecutions carries the full keyset cursor', async () => {
     // Paging backwards goes through this rather than through the polled query,
     // so that the polled one stays on the newest page (issue #662).

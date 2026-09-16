@@ -214,7 +214,15 @@ pub struct DeadLetter {
 /// advances (issue #654).
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionFilter {
+    /// Exact job key. What a link from a job's detail carries, so it means
+    /// that one job and no other.
     pub job_key: Option<String>,
+    /// Case-insensitive substring of the job key — the typed search on the
+    /// Runs screen (issue #753). Separate from `job_key` on purpose: a
+    /// substring would answer `mail:send` with `mail:send-retry`'s runs, which
+    /// is right for a search box and wrong for a deep link. Wildcards in the
+    /// needle are escaped, so `%` and `_` match themselves.
+    pub job_key_contains: Option<String>,
     pub state: Option<ExecutionState>,
     pub runner_id: Option<String>,
     pub since: Option<DateTime<Utc>>,
@@ -224,6 +232,18 @@ pub struct ExecutionFilter {
     /// clients written before #654 expect.
     pub until_id: Option<Uuid>,
     pub limit: Option<u32>,
+}
+
+/// Wrap a needle as a containment pattern for `LIKE` / `ILIKE`, escaping the
+/// wildcards so a literal `%` or `_` in the needle matches itself rather than
+/// everything. Both backends pass the result as a bound parameter and spell
+/// `ESCAPE '\'` in the SQL, so the two agree on what a needle means.
+pub fn like_contains(needle: &str) -> String {
+    let escaped = needle
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
 }
 
 /// Upper bounds, in seconds, for the per-job execution-duration histogram

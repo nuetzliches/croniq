@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The job-key box on Runs searches instead of demanding the exact key**
+  ([#753](https://github.com/nuetzliches/croniq/issues/753)). It passed what
+  was typed to `GET /v1/executions?job_key=`, which compares with `=`, so
+  typing `storage` returned nothing and only `storage:copy` — spelled in full
+  and in the right case — returned anything. On the one screen where the key is
+  all there is to search by, you had to know the key already.
+
+  `GET /v1/executions` takes a new `job_key_contains`: a case-insensitive
+  substring of the job key, with wildcards in the needle escaped so `%` and `_`
+  match themselves. `job_key` is unchanged and still exact, because
+  `/executions?job_key=mail:send` is what a job's detail links to for "its
+  runs" and a substring there would answer with `mail:send-retry`'s runs as
+  well. The Runs screen types into the first (it travels as `?q=`, so a search
+  still pastes into a ticket) and renders a deep-linked `job_key` as a
+  read-only filter, the way it already renders `runner_id`.
+
 ### Fixed
 
 - **A job the Croniqfile disables was reported as active and permanently

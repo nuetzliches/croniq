@@ -1080,6 +1080,55 @@ fn list_executions_with_filter() {
     assert_eq!(results[0].job_key, "billing:invoice");
 }
 
+#[test]
+fn list_executions_searches_the_job_key_by_substring() {
+    // Issue #753: the Runs screen's typed filter. `job_key` stays exact — a
+    // link from a job's detail must mean that job — so the search is its own
+    // parameter, and both backends have to answer it the same way.
+    let store = create_memory_store().unwrap();
+
+    for key in ["storage:copy", "storage:copy-verify", "mail:send"] {
+        store
+            .create_execution(&make_execution(key, utc(2026, 3, 29, 2, 0)))
+            .unwrap();
+    }
+
+    let found = |needle: &str| {
+        let mut keys: Vec<String> = store
+            .list_executions(&ExecutionFilter {
+                job_key_contains: Some(needle.into()),
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|e| e.job_key)
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    // A prefix matches every key it is a prefix of — the point of a search.
+    assert_eq!(found("storage"), ["storage:copy", "storage:copy-verify"]);
+    // Anywhere in the key, and case-insensitively.
+    assert_eq!(found("COPY-V"), ["storage:copy-verify"]);
+    assert!(found("nothing:here").is_empty());
+
+    // Wildcards in the needle are literals: `%` must not match everything,
+    // and `_` must not match any character.
+    assert!(found("%").is_empty());
+    assert!(found("storage_copy").is_empty());
+
+    // The exact filter is unchanged, and the two compose.
+    let exact = store
+        .list_executions(&ExecutionFilter {
+            job_key: Some("storage:copy".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].job_key, "storage:copy");
+}
+
 // ─── RunnerStore ───
 
 #[test]
