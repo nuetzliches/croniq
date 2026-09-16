@@ -370,10 +370,12 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
 /// - `Active` in DB     → `next_fire_at` restored from the stored value so
 ///   the next tick fires at the correct time instead of re-computing from now,
 ///   as long as the instant can still belong to the schedule now loaded —
-///   `Trigger::carry_over_pending_fire` owns that judgement and names the two
-///   exceptions: a gate-disallowed instant from a pre-#391 build, and one
-///   later than this schedule's own next fire, which outlived the schedule
-///   that produced it (#535, typically a shortened interval).
+///   `Trigger::carry_over_pending_fire` owns that judgement and names the
+///   exceptions: a gate-disallowed instant from a pre-#391 build, one later
+///   than this schedule's own next fire, which outlived the schedule that
+///   produced it (#535, typically a shortened interval), and any instant at
+///   all once the schedule is `disabled` — that job no longer has fires to
+///   miss, and the stale one reported it overdue forever (#752).
 /// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
 ///
 /// States healed here (re-armed exhausted triggers, recomputed gate-blocked
@@ -483,6 +485,14 @@ pub fn restore_trigger_states(
                             );
                             persist_healed_state(store, trigger, &job_state, now);
                         }
+                        PendingFire::DroppedDisabled => {
+                            tracing::info!(
+                                job_key = %job_state.job_key,
+                                stored = %stored,
+                                "trigger restore: schedule is now disabled — dropped the pending fire the previous schedule left behind (#752)"
+                            );
+                            persist_healed_state(store, trigger, &job_state, now);
+                        }
                     }
                 }
             }
@@ -497,16 +507,24 @@ pub fn restore_trigger_states(
 /// missed-fire watchdog see the corrected `next_fire_at` immediately after
 /// boot instead of only after the next fire (#391). Best-effort: a failed
 /// write only logs — the next fire persists the same state anyway.
+///
+/// The status written is the one the *trigger* is in, not the one the row
+/// remembered: a schedule turned `disabled` leaves a paused trigger, and the
+/// row has to say so or the job keeps reading as active with a fire time it
+/// will never reach (#752). A disabled job never fires again, so this write
+/// is the only one that will ever correct it.
 fn persist_healed_state(
     store: &dyn JobStore,
     trigger: &Trigger,
     stored: &JobState,
     now: DateTime<Utc>,
 ) {
-    let healed_status = if trigger.state == TriggerState::Armed {
-        JobStatus::Active
-    } else {
-        JobStatus::Exhausted
+    let healed_status = match trigger.state {
+        TriggerState::Paused => JobStatus::Disabled,
+        TriggerState::Exhausted => JobStatus::Exhausted,
+        // Armed, and the two transient states a freshly built trigger cannot
+        // be in during restore.
+        _ => JobStatus::Active,
     };
     if healed_status == stored.status && trigger.next_fire_at == stored.next_fire_at {
         return; // nothing changed — don't touch updated_at
@@ -1791,6 +1809,43 @@ mod tests {
         // Disabled DSL → Paused trigger; Paused status in DB → no override
         let trigger = &cfg.triggers["reports:monthly"];
         assert_eq!(trigger.state, TriggerState::Paused);
+    }
+
+    #[test]
+    fn restore_of_a_newly_disabled_job_clears_the_fire_it_left_behind() {
+        // Issue #752: the job ran on a real schedule, the Croniqfile was
+        // edited to `disabled`, and the server restarted. The row the last
+        // fire wrote still says `active` with a next fire that has since
+        // passed — which `/v1/jobs/states` and `/metrics` both read as a
+        // missed fire, i.e. a stalled scheduler, for a job that was switched
+        // off on purpose.
+        let src = r#"job storage:copy { disabled }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        let now = Utc::now();
+        let stale = now - chrono::Duration::days(1);
+        seed_job_state(
+            &store,
+            "storage:copy",
+            croniq_store::models::JobStatus::Active,
+            Some(stale),
+            455,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["storage:copy"];
+        assert_eq!(trigger.state, TriggerState::Paused);
+        assert_eq!(trigger.next_fire_at, None);
+
+        // Persisted, because a disabled job never fires again: this write is
+        // the only chance the row has to stop describing a schedule that is
+        // gone. The fire history it earned is kept.
+        let row = stored_state(&store, "storage:copy");
+        assert_eq!(row.status, croniq_store::models::JobStatus::Disabled);
+        assert_eq!(row.next_fire_at, None);
+        assert_eq!(row.fire_count, 455);
     }
 
     // ─── restore healing for calendar-gated jobs (#391) ─────────────────────

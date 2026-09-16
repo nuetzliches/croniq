@@ -927,13 +927,41 @@ impl CroniqMcp {
         // overdue, and indistinguishable from live ones (issue #506). With no
         // trigger snapshot to consult (the stdio binary) everything is
         // listed, as `LiveJobs::Unknown` prescribes.
-        let live = match self.triggers.as_ref() {
-            Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
-            None => LiveJobs::Unknown,
+        //
+        // The same snapshot answers the other question a stored row gets
+        // wrong: a job the configuration has since switched off keeps the row
+        // its last fire wrote — `active`, with a next fire that has passed and
+        // never advances — so an agent reads a deliberately disabled job as a
+        // stalled one (issue #752).
+        let (live, disabled) = match self.triggers.as_ref() {
+            Some(triggers) => {
+                let guard = triggers.read().await;
+                (
+                    LiveJobs::from_snapshot(Some(&guard)),
+                    guard
+                        .iter()
+                        .filter(|(_, trigger)| {
+                            matches!(
+                                trigger.schedule,
+                                croniq_scheduler::schedule::Schedule::Disabled
+                            )
+                        })
+                        .map(|(key, _)| key.clone())
+                        .collect::<std::collections::HashSet<String>>(),
+                )
+            }
+            None => (LiveJobs::Unknown, std::collections::HashSet::new()),
         };
         let states: Vec<_> = states
             .into_iter()
             .filter(|s| live.includes(&s.job_key))
+            .map(|mut s| {
+                if disabled.contains(&s.job_key) {
+                    s.status = croniq_store::models::JobStatus::Disabled;
+                    s.next_fire_at = None;
+                }
+                s
+            })
             .collect();
 
         serde_json::to_string_pretty(&states)
@@ -2097,6 +2125,55 @@ mod tests {
         use croniq_store::sqlite::SqliteStore;
         let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
         CroniqMcp::new_with_store(AppState::new(), store, vec![], true)
+    }
+
+    #[tokio::test]
+    async fn list_jobs_reports_a_disabled_job_as_disabled() {
+        // Issue #752: the row is the one the job's last fire wrote, before the
+        // Croniqfile switched it off — `active`, with a next fire a day in the
+        // past that will never advance. An agent reading that concludes the
+        // scheduler is stuck.
+        use croniq_store::models::{JobState, JobStatus};
+        use croniq_store::sqlite::SqliteStore;
+
+        let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
+        let now = chrono::Utc::now();
+        store
+            .upsert_job_state(&JobState {
+                job_key: "storage:copy".into(),
+                next_fire_at: Some(now - chrono::Duration::days(1)),
+                last_fired_at: Some(now - chrono::Duration::days(1)),
+                fire_count: 455,
+                status: JobStatus::Active,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let mut triggers = HashMap::new();
+        triggers.insert(
+            "storage:copy".to_string(),
+            Trigger::new(
+                "storage:copy".to_string(),
+                croniq_scheduler::schedule::Schedule::Disabled,
+                // The zone type comes from `croniq-scheduler`, which this
+                // crate does not depend on by name — inferred from the
+                // parameter rather than named.
+                "UTC".parse().unwrap(),
+                None,
+                None,
+                croniq_scheduler::misfire::MisfirePolicy::default(),
+                now,
+            ),
+        );
+        let server = CroniqMcp::new_with_store(AppState::new(), store, vec![], false)
+            .with_triggers(Arc::new(tokio::sync::RwLock::new(triggers)));
+
+        let out = server.list_jobs().await.unwrap();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let row = &rows.as_array().unwrap()[0];
+        assert_eq!(row["status"], "disabled", "{out}");
+        assert!(row["next_fire_at"].is_null(), "{out}");
+        assert_eq!(row["fire_count"], 455, "{out}");
     }
 
     /// Records what a tool reported, so a test can assert the store write was

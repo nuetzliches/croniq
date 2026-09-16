@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A job the Croniqfile disables was reported as active and permanently
+  overdue** ([#752](https://github.com/nuetzliches/croniq/issues/752)). The
+  `job_states` row is written when a job *fires*, so a job that ran on a real
+  schedule and was then changed to `disabled` kept the row its last fire wrote:
+  status `active`, `next_fire_at` at the fire that never came. That instant
+  only ever recedes further into the past, which is exactly what a stalled
+  scheduler looks like — so the dashboard badged the job `overdue` under a
+  green `active` pill, `/metrics` reported `croniq_job_overdue 1` for it
+  forever, and a `job_missed_fire` rule paged about a job that was switched off
+  on purpose.
+
+  A `disabled` schedule has no fires, so it can have no missed ones:
+  `Trigger::carry_over_pending_fire` now drops the pending fire it inherited
+  instead of adopting it, boot writes the corrected row back (`disabled`, no
+  next fire) — the only chance a job that never fires again gets to correct
+  itself — and the four readers of those rows (`GET /v1/jobs/states`,
+  `/metrics`, the watchdog's missed-fire sweep and the MCP `list_jobs` tool)
+  project the running configuration over the stored row, so a hot reload takes
+  effect without waiting for a restart. The row now reads `disabled` / `—`.
+  `croniq_job_last_fire_timestamp` still reports: that fire did happen.
+
 ## [0.39.1] - 2026-09-15
 
 ### Changed

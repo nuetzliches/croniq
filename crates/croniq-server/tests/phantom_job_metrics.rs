@@ -91,13 +91,16 @@ fn fixture(with_triggers: bool) -> Arc<ServerState> {
     );
     if with_triggers {
         // Only the live job is loaded — exactly the state after the phantom
-        // was removed from the Croniqfile and the server restarted.
+        // was removed from the Croniqfile and the server restarted. Its
+        // schedule has to be a live one: a `disabled` schedule is the other
+        // reason a job stops reporting a next fire (issue #752), and this
+        // fixture is about the first.
         let mut triggers = HashMap::new();
         triggers.insert(
             LIVE.to_string(),
             Trigger::new(
                 LIVE.to_string(),
-                Schedule::Disabled,
+                Schedule::Interval { seconds: 60 },
                 chrono_tz::UTC,
                 None,
                 None,

@@ -31,7 +31,7 @@ pub mod totp;
 pub mod users;
 pub mod work;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -353,6 +353,38 @@ impl ServerState {
         match self.triggers.as_ref() {
             Some(triggers) => LiveJobs::from_snapshot(Some(&*triggers.read().await)),
             None => LiveJobs::Unknown,
+        }
+    }
+
+    /// The jobs the running configuration has switched off — those whose
+    /// schedule is `disabled` (issue #752).
+    ///
+    /// `job_states` rows are written only when a job fires, so a job that ran
+    /// on a real schedule and was then disabled keeps the row it last wrote:
+    /// status `active`, `next_fire_at` at a fire that will never come. Boot
+    /// heals that row (`loader::restore_trigger_states`), but a hot reload
+    /// never touches the store, so every reader of those rows has to project
+    /// the running configuration over them or report a disabled job as active
+    /// and permanently overdue.
+    ///
+    /// An absent snapshot yields an empty set: nothing is known to be
+    /// disabled, which leaves the stored rows exactly as they were read — the
+    /// same fail-open direction [`LiveJobs`] takes.
+    pub async fn disabled_jobs(&self) -> HashSet<String> {
+        match self.triggers.as_ref() {
+            Some(triggers) => triggers
+                .read()
+                .await
+                .iter()
+                .filter(|(_, trigger)| {
+                    matches!(
+                        trigger.schedule,
+                        croniq_scheduler::schedule::Schedule::Disabled
+                    )
+                })
+                .map(|(key, _)| key.clone())
+                .collect(),
+            None => HashSet::new(),
         }
     }
 
