@@ -1876,6 +1876,15 @@ async fn handle_list_executions(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
+        // The search the Runs screen types, as opposed to the exact `job_key`
+        // a link from a job's detail carries (issue #753). Kept apart: a
+        // substring would answer `mail:send` with `mail:send-retry`'s runs,
+        // which is right for a box someone is typing in and wrong for a deep
+        // link. An empty value is dropped so `?q=` behaves as no filter.
+        job_key_contains: params
+            .get("job_key_contains")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
         runner_id: params.get("runner_id").cloned(),
         state: params.get("state").and_then(|s| match s.as_str() {
             "queued" => Some(croniq_store::models::ExecutionState::Queued),
@@ -3370,6 +3379,65 @@ mod tests {
         assert!(
             page.as_array().unwrap().is_empty(),
             "the cursor row itself must not come back"
+        );
+    }
+
+    /// `job_key_contains` searches; `job_key` still matches exactly.
+    ///
+    /// Issue #753: the Runs screen's typed box passed what it had to
+    /// `job_key`, which compares with `=` — so the one screen where the key is
+    /// the only thing to search by required knowing the key already. The two
+    /// are different questions and stayed separate parameters: a link from a
+    /// job's detail means *that* job, and a substring would answer it with
+    /// every job whose key it is a prefix of.
+    #[tokio::test]
+    async fn listing_executions_searches_the_job_key() {
+        let (state, store) = make_store_state();
+        let now = Utc::now();
+        for (job, key) in [
+            ("storage:copy", "a"),
+            ("storage:copy-verify", "b"),
+            ("mail:send", "c"),
+        ] {
+            seed_keyed_execution(&store, job, key, ExecutionState::Completed, now);
+        }
+
+        let keys = |value: &serde_json::Value| -> Vec<String> {
+            let mut out: Vec<String> = value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["job_key"].as_str().unwrap().to_string())
+                .collect();
+            out.sort();
+            out.dedup();
+            out
+        };
+
+        let found = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?job_key_contains=STORAGE",
+        )
+        .await;
+        assert_eq!(keys(&found), ["storage:copy", "storage:copy-verify"]);
+
+        // The exact parameter is untouched: one job, not its longer namesake.
+        let exact = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?job_key=storage:copy",
+        )
+        .await;
+        assert_eq!(keys(&exact), ["storage:copy"]);
+
+        // An empty search is no search, not "match nothing".
+        let blank = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?job_key_contains=",
+        )
+        .await;
+        assert_eq!(
+            keys(&blank),
+            ["mail:send", "storage:copy", "storage:copy-verify"]
         );
     }
 

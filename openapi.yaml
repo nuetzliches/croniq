@@ -1204,6 +1204,20 @@ paths:
       parameters:
         - name: job_key
           in: query
+          description: >
+            Exact job key. What a link to one job's runs carries, so it means
+            that job and no other. For a search box, use `job_key_contains`.
+          schema: { type: string }
+        - name: job_key_contains
+          in: query
+          description: >
+            Case-insensitive substring of the job key — the typed search on the
+            dashboard's Runs screen. Separate from `job_key` on purpose: a
+            substring answers `mail:send` with `mail:send-retry`'s runs too,
+            which is what a search should do and not what a deep link should.
+            Wildcards in the needle are escaped, so `%` and `_` match
+            themselves. An empty value is no filter. Combining both narrows to
+            their intersection.
           schema: { type: string }
         - name: state
           in: query

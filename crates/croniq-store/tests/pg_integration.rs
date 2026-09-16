@@ -59,6 +59,7 @@ fn pg_backend_exercises_all_traits() {
     calendar_definitions(&store, &s);
     execution_logs(&store);
     execution_retention(&store, &s);
+    execution_job_key_search(&store, &s);
     execution_completion_cas(&store, &s);
     dsl_adoptions(&store, &s);
     register_fires(&store, &s);
@@ -827,6 +828,37 @@ fn seed_execution(
             .unwrap();
     }
     id
+}
+
+/// The job-key search on the Runs screen (issue #753). `ILIKE ... ESCAPE` is
+/// one more SQL string the compiler cannot see into, and the wildcard escaping
+/// only means anything against a real server.
+fn execution_job_key_search(store: &PgStore, s: &str) {
+    let hit = format!("storage-{s}:copy");
+    let miss = format!("mail-{s}:send");
+    seed_execution(store, &hit, None);
+    seed_execution(store, &miss, None);
+
+    // Case-insensitive substring, not an exact match.
+    let found = store
+        .list_executions(&ExecutionFilter {
+            job_key_contains: Some(format!("STORAGE-{s}")),
+            limit: Some(50),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].job_key, hit);
+
+    // A wildcard in the needle is a literal, or `%` would match everything.
+    let none = store
+        .list_executions(&ExecutionFilter {
+            job_key_contains: Some(format!("storage-{s}%copy")),
+            limit: Some(50),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(none.is_empty(), "{none:?}");
 }
 
 /// Completion compare-and-swap (issue #374): a late completion after a

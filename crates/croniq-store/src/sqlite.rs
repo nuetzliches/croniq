@@ -317,6 +317,16 @@ impl ExecutionStore for SqliteStore {
             param_values.push(Box::new(jk.clone()));
             sql.push_str(&format!(" AND job_key = ?{}", param_values.len()));
         }
+        if let Some(ref needle) = filter.job_key_contains {
+            // SQLite's LIKE is case-insensitive for ASCII, which is the whole
+            // of a job key. The leading wildcard rules out an index either
+            // way, so nothing is lost by scanning (issue #753).
+            param_values.push(Box::new(like_contains(needle)));
+            sql.push_str(&format!(
+                " AND job_key LIKE ?{} ESCAPE '\\'",
+                param_values.len()
+            ));
+        }
         if let Some(state) = filter.state {
             param_values.push(Box::new(state_to_str(state).to_string()));
             sql.push_str(&format!(" AND state = ?{}", param_values.len()));

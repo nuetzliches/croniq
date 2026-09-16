@@ -867,6 +867,14 @@ impl ExecutionStore for PgStore {
             sql.push_str(&format!(" AND job_key = ${idx}"));
             idx += 1;
         }
+        if let Some(ref needle) = filter.job_key_contains {
+            // `ILIKE` rather than `LIKE`: SQLite's LIKE is case-insensitive
+            // for ASCII and the two backends have to answer the same search
+            // the same way (issue #753).
+            params.push(Box::new(like_contains(needle)));
+            sql.push_str(&format!(" AND job_key ILIKE ${idx} ESCAPE '\\'"));
+            idx += 1;
+        }
         if let Some(state) = filter.state {
             params.push(Box::new(state_to_str(state).to_string()));
             sql.push_str(&format!(" AND state = ${idx}"));

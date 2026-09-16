@@ -36,6 +36,17 @@ const router = useRouter()
  */
 const filters = computed(() => ({
   state: (route.query.state as string) || '',
+  /**
+   * The typed search, matched as a case-insensitive substring of the job key
+   * — the same thing the box on Jobs does.
+   *
+   * It is deliberately not `job_key`. That one is exact and stays exact:
+   * `/executions?job_key=mail:send` is what a job's detail links to for "its
+   * runs", and a substring there would answer with `mail:send-retry`'s runs
+   * as well (issue #753). So a deep link keeps meaning one job, and the box
+   * gets its own parameter.
+   */
+  q: (route.query.q as string) || '',
   job_key: (route.query.job_key as string) || '',
   runner_id: (route.query.runner_id as string) || '',
   window: (route.query.window as string) || '',
@@ -65,11 +76,11 @@ const WINDOWS = [
 /**
  * The typed filter, trailing the box by a beat.
  *
- * `job_key` is the only one typed a character at a time; `state` and `window`
- * are chosen from a menu and `runner_id` arrives from a link, so those stay
- * immediate (issue #730).
+ * The search is the only one typed a character at a time; `state` and `window`
+ * are chosen from a menu, and `job_key` and `runner_id` arrive from a link, so
+ * those stay immediate (issue #730).
  */
-const typedJobKey = useDebounced(() => filters.value.job_key)
+const typedSearch = useDebounced(() => filters.value.q)
 
 const sinceMs = computed(
     () => WINDOWS.find((entry) => entry.value === filters.value.window)?.ms,
@@ -107,7 +118,8 @@ let filterGeneration = 0
 // way. The cursor lives in `loadOlder`, which uses it once and throws it away.
 const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   state: filters.value.state || undefined,
-  job_key: typedJobKey.value || undefined,
+  job_key: filters.value.job_key || undefined,
+  job_key_contains: typedSearch.value || undefined,
   runner_id: filters.value.runner_id || undefined,
   since_ms: sinceMs.value,
   limit: PAGE_SIZE,
@@ -164,7 +176,8 @@ async function loadOlder() {
   try {
     const page = await fetchExecutions({
       state: filters.value.state || undefined,
-      job_key: typedJobKey.value || undefined,
+      job_key: filters.value.job_key || undefined,
+      job_key_contains: typedSearch.value || undefined,
       runner_id: filters.value.runner_id || undefined,
       since_ms: sinceMs.value,
       until: oldest.created_at,
@@ -183,7 +196,13 @@ async function loadOlder() {
 watch(
   // The debounced key, not the typed one: the reset has to line up with the
   // request it invalidates, or a page fetched under the old filter survives it.
-  () => [filters.value.state, typedJobKey.value, filters.value.runner_id, filters.value.window],
+  () => [
+    filters.value.state,
+    typedSearch.value,
+    filters.value.job_key,
+    filters.value.runner_id,
+    filters.value.window,
+  ],
   () => {
     filterGeneration += 1
     pages.value = []
@@ -194,7 +213,7 @@ watch(
 const selectedId = computed(() => (route.params.id as string | undefined) ?? undefined)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
 
-function setFilter(key: 'state' | 'job_key' | 'runner_id' | 'window', value: string) {
+function setFilter(key: 'state' | 'q' | 'job_key' | 'runner_id' | 'window', value: string) {
   const query = { ...route.query }
   if (value) query[key] = value
   else delete query[key]
@@ -218,6 +237,7 @@ function close() {
 const hasFilters = computed(() =>
   Boolean(
     filters.value.state ||
+      filters.value.q ||
       filters.value.job_key ||
       filters.value.runner_id ||
       filters.value.window,
@@ -279,12 +299,22 @@ function onKey(event: KeyboardEvent) {
         @update:model-value="(value: string) => setFilter('state', value ?? '')"
       />
       <UInput
-        :model-value="filters.job_key"
-        placeholder="Job key…"
+        :model-value="filters.q"
+        placeholder="Search job key…"
         icon="i-lucide-search"
-        aria-label="Filter by job key"
+        aria-label="Search by job key"
         class="w-56"
-        @update:model-value="(value: string) => setFilter('job_key', value)"
+        @update:model-value="(value: string) => setFilter('q', value)"
+      />
+      <!-- The exact filter a link brought in. Read-only like the runner one:
+           it names one job, and widening it is what the search box is for. -->
+      <UInput
+        v-if="filters.job_key"
+        :model-value="filters.job_key"
+        readonly
+        aria-label="Filtered to one job"
+        icon="i-lucide-clock"
+        class="w-56 font-mono"
       />
       <UInput
         v-if="filters.runner_id"

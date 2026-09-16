@@ -79,6 +79,39 @@ test.describe('URL state', () => {
    * Croniqfile and exist the moment the server boots. Same promise, data that
    * is there.
    */
+  /**
+   * The Runs screen asks two different questions about a job key, and they
+   * travel separately.
+   *
+   * The box used to write `?job_key=`, which the API compares with `=` — so
+   * the one screen where the key is all there is to search by answered
+   * nothing until you spelled a key in full (issue #753). It writes `?q=` now
+   * and searches; `?job_key=` stays exact, because that is what a job's
+   * detail links to for "its runs" and it has to keep meaning one job.
+   *
+   * Rows are deliberately not asserted here: this stack is seeded fresh and
+   * the first demo run is up to a minute away. What the matching does is
+   * pinned in the store contract tests and against the endpoint.
+   */
+  test('the runs screen carries its search and its exact filter separately', async ({ app }) => {
+    await app.goto('/executions')
+    const search = app.getByLabel('Search by job key')
+    await search.fill('eartbea')
+    await expect(app).toHaveURL(/q=eartbea/)
+
+    // Round-trips: a pasted search comes back in the box, not just the URL.
+    await app.goto('/executions?q=eartbea')
+    await expect(app.getByLabel('Search by job key')).toHaveValue('eartbea')
+
+    // A deep link names one job. It is shown as its own read-only filter, so
+    // the box stays free to widen the list rather than silently broadening
+    // what the link meant.
+    await app.goto('/executions?job_key=demo%3Aheartbeat')
+    await expect(app).toHaveURL(/job_key=demo%3Aheartbeat/)
+    await expect(app.getByLabel('Filtered to one job')).toHaveValue('demo:heartbeat')
+    await expect(app.getByLabel('Search by job key')).toHaveValue('')
+  })
+
   test('opening a detail keeps the list filters in the URL', async ({ app }) => {
     await app.goto('/jobs?q=demo')
     const row = app.locator('tbody tr').first()
