@@ -1694,6 +1694,130 @@ eligible members. Where ordering is a hard requirement, keep the members'
 runner-pool recipe, whose single one-slot runner enforces order structurally
 rather than by convention.
 
+## Event triggers next to a periodic job
+
+A job on a schedule that consumers also fire out of band — a webhook lands, a
+row changes, and something calls `POST /v1/trigger` to have the work done now
+instead of at the next tick:
+
+```hcl
+job soapneo:sync {
+  every 1 minute
+  singleton
+  runner { require soapneo }
+}
+```
+
+What follows is what happens when the schedule and the trigger collide, and
+which knobs are the right ones when many consumers trigger at once.
+
+### `singleton` gates dispatch, it does not suppress fires
+
+The guard is not "do not fire again". The scheduler keeps firing every minute
+and keeps writing `queued` execution rows; only the *dispatch* is held back,
+against a count of `claimed` rows taken from the store and therefore shared
+across every runner. The gate does not distinguish a scheduled fire from a
+manual one — both carry the same `__max_concurrent` out of the job's compiled
+metadata.
+
+A blocked item is **skipped in place**: it keeps its queue position rather than
+being dropped or starving the items behind it (`dequeue_for_where`, issue
+#278). And every processed completion calls `work_notify.notify_waiters()`
+precisely because a `claimed → terminal` transition frees a slot, so a runner
+sitting in a long poll re-evaluates at once instead of waiting out its poll
+timeout.
+
+So the default is already the behaviour you want: a trigger arriving mid-run
+queues behind the run and starts a round-trip after it finishes. The guard
+never cancels it.
+
+### What the wait actually costs
+
+The queue is FIFO and the trigger joins at the back:
+
+```
+wait ≈ remaining run time + (scheduled fires already queued × run duration)
+```
+
+With a two-second job on a one-minute schedule the queue is empty in practice
+and the event run starts almost immediately. The formula only bites when a run
+can outlast its own interval: the backlog then grows until `max_queue_depth`
+(default 10), after which the scheduler logs `skipping execution — queue
+overflow` and a trigger is answered `429` with a `Retry-After`. That is the
+signal to stretch the schedule and let the trigger be the fast path, with the
+schedule demoted to a reconciler for missed signals.
+
+Keep the job's `timeout` tight for the same reason. The slot is held for as
+long as an execution stays `claimed`, so an unbounded downstream call turns
+"the event run waits two seconds" into "the event run waits until the reaper
+gets to it". A manual trigger without `timeout` inherits the job's; with
+neither, it is five minutes.
+
+### Four ways the event run disappears anyway
+
+1. **An `idempotency_key` that is stable per entity.** The dedup lookup matches
+   `queued` and `claimed` rows *and* anything created within
+   `trigger_dedup_window` (default 10 m). Two consequences, both silent: a
+   trigger during a run is answered with the id of an execution that started
+   *before* the event and therefore cannot contain it, and a trigger minutes
+   after a finished run does nothing at all. Use an event-scoped key (the event
+   id) or none — the key is for deduplicating a retrying producer, not for
+   collapsing distinct events.
+2. **`max_queue_depth`** — see above; the trigger is rejected, not deferred.
+3. **`ephemeral`** — `singleton` is rejected there outright (issue #302), and
+   its replace-latest semantics apply only to scheduled fires: the trigger path
+   always enqueues a persisted, non-ephemeral item, while `ephemeral` forces
+   `max_queue_depth` to 1, so the second trigger gets a `429`.
+4. **A `queue_ttl` shorter than the backlog** — the watchdog cancels queued
+   executions once they exceed it.
+
+### Many producers, one work list
+
+Now the burst: twenty participants produce the same signal within a minute,
+and the job drains a work list rather than processing one named item. One run
+per burst is the goal. None of these gets there:
+
+- **`max_queue_depth 1`** collapses by rejecting. It keeps the oldest rather
+  than the newest, reports the collapse as an error, and races — the queued
+  item can be claimed between the depth check and the commit of the last event,
+  which is then only picked up at the next scheduled tick.
+- **A coarse `idempotency_key`** collapses for real, but backwards, into
+  running and recently finished executions. It loses exactly the events that
+  arrive during a run.
+- **A debounce in the consumer** collapses per process. Twenty producers each
+  debounce their own stream and still send twenty triggers.
+
+What does work today is to make the trigger conditional on the work list's
+`0 → 1` transition: trigger only when the insert took the list from empty to
+non-empty, in the same transaction as the event itself. That collapse is
+distributed, because every producer sees the same table. The job then reads the
+work list **at start**, never at enqueue, so a run that is still queued covers
+every event that arrives before it is claimed — the same forward-only property
+the guard gives you, one layer up.
+
+Around that: keep the job `singleton` and `queued`, `max_queue_depth` at 2–3 as
+a net, no `idempotency_key`, a tight `timeout`, and let the schedule tick
+slowly.
+
+Croniq has no server-side collapse for this yet; issue #759 proposes a
+`coalesce` directive that folds a burst into at most one follow-up run.
+
+### Parameterised triggers are never collapsible
+
+A trigger's `metadata` is arbitrary JSON, forwarded to the runner and persisted
+on the execution row, so a trigger can name the item it is about. That is the
+dividing line:
+
+- **Parameterless trigger** — "there is work, run soon". Two of them are
+  interchangeable, so collapsing them loses nothing.
+- **Parameterised trigger** — "process *this*". Every one must produce its own
+  run; collapsing two drops work that nothing afterwards can show.
+
+Croniq does not infer which kind a job receives, and deliberately so: nothing
+on the server can tell whether two payloads mean the same thing. Whichever
+collapse you build — the `0 → 1` recipe above, or `coalesce` once it lands —
+applies to the parameterless case only.
+
 ## Orphaned claims (issue #374)
 
 A `claimed` execution whose runner process vanished is recovered by
