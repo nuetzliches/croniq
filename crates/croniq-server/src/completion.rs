@@ -640,6 +640,7 @@ mod tests {
             keep_last: None,
             max_concurrent: None,
             concurrency_group: None,
+            coalesce: false,
             tags: vec![],
             run_on_register: false,
         }

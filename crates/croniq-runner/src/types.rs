@@ -333,6 +333,19 @@ pub struct TriggerResponse {
     /// `idempotency_key` instead of enqueuing a new one (issue #279).
     #[serde(default)]
     pub deduplicated: bool,
+    /// `true` when the trigger folded into an already-queued execution of a
+    /// job that declares `coalesce` (issue #759). `execution_id` is then the
+    /// execution that absorbed it — one that has not started yet, so it still
+    /// covers the event — and nothing was enqueued.
+    ///
+    /// Distinct from [`Self::deduplicated`] on purpose, though both mean "no
+    /// new execution". `deduplicated` answers a caller that sent the same
+    /// `idempotency_key` twice and may hand back an execution that started
+    /// *before* the event; `coalesced` only ever names one that starts after
+    /// it. A producer that retries on the first and not on the second needs
+    /// to tell them apart.
+    #[serde(default)]
+    pub coalesced: bool,
 }
 
 #[cfg(test)]

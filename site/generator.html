@@ -735,6 +735,17 @@
               </div>
 
               <div class="field">
+                <label class="opt-check"><input type="checkbox" id="sch-opt-coalesce"> Collapse a burst of triggers</label>
+                <p class="opt-hint">
+                  <code>coalesce</code> &mdash; a trigger that carries no
+                  payload folds into an execution of this job that is already
+                  queued, so twenty events in a minute produce one run rather
+                  than twenty. A trigger carrying metadata always gets its own
+                  run. Not available on <code>ephemeral</code> jobs.
+                </p>
+              </div>
+
+              <div class="field">
                 <label class="opt-check"><input type="checkbox" id="sch-opt-run-on-register"> Fire once on registration</label>
                 <p class="opt-hint">
                   <code>run_on_register</code> — also fires the job when croniq
@@ -852,6 +863,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-09-02b"></script>
+  <script type="module" src="./generator.js?v=2026-09-17a"></script>
 </body>
 </html>

@@ -8,6 +8,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`coalesce`: a burst of triggers on one job collapses into one run**
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)). A job on a
+  schedule that consumers also fire out of band gets one queued execution per
+  event, because `POST /v1/trigger` enqueues unconditionally and the
+  concurrency guard only holds the items back at dispatch. Twenty producers
+  signalling "there is work in the list" therefore queued twenty runs of a job
+  whose second run has nothing left to do, and the eleventh was answered `429`.
+
+  None of the existing knobs expressed the intent. `max_queue_depth 1`
+  collapses by *rejecting*, keeps the oldest rather than the newest, and races.
+  A coarse `idempotency_key` folds *backwards* — it matches executions created
+  before the event, which therefore cannot contain it. `ephemeral` has real
+  replace-latest semantics but only for scheduled fires, and forbids
+  `singleton`.
+
+  The new bare job directive folds a trigger into an execution of the same job
+  that is already queued and not yet claimed. With one execution in flight, the
+  first trigger enqueues one follow-up and the rest of the burst folds into
+  that, so N events during a run yield exactly one more run. The fold is
+  forward-only by construction rather than by rule: only queued items are
+  candidates, and an item leaves the queue and has its claim persisted under
+  the same lock the fold decides under.
+
+  **A trigger carrying caller `metadata` is never folded**, even on a job that
+  declares `coalesce`, and the execution it creates never absorbs a later
+  signal either. A parameterised trigger names the item it is about, and
+  folding two of them drops work that nothing afterwards can show. That is a
+  property of the call, not something an operator can get wrong by setting a
+  flag. Croniq holds `require`, `prefer` and `timeout` to the same rule: each
+  says something specific about the run being asked for, and a fold would drop
+  it silently.
+
+  `coalesce` composes with `singleton` / `max_concurrent` and
+  `concurrency_group` — it decides whether an item is *created*, they decide
+  when it is *dispatched* — and does not exempt a job from `max_queue_depth`.
+  Rejected on an `ephemeral` job for the reason
+  [#302](https://github.com/nuetzliches/croniq/issues/302) gives for the
+  concurrency guard. Scheduled fires keep today's behaviour, and a job that
+  does not declare the directive is unchanged.
+
+  `POST /v1/trigger` gains a `coalesced` flag in its response, kept distinct
+  from `deduplicated`: both mean "no new execution", but only `deduplicated`
+  can hand back a run that started before the event. Runner SDK parity for the
+  field is tracked as a follow-up issue per language; a client that does not
+  know it yet still sees the absorbing `execution_id` and a `200`.
+
 - **The job-key box on Runs searches instead of demanding the exact key**
   ([#753](https://github.com/nuetzliches/croniq/issues/753)). It passed what
   was typed to `GET /v1/executions?job_key=`, which compares with `=`, so

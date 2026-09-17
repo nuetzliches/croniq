@@ -343,6 +343,13 @@ job etl:sync {
   # executions. `ephemeral` jobs are not persisted, so `singleton` /
   # `max_concurrent` there is rejected at validation time — use `queued`
   # if a fire-and-forget poll must never overlap itself.
+
+  # Collapse a burst of event triggers into one run. A POST /v1/trigger
+  # that carries no payload folds into an execution of this job that is
+  # already queued, so twenty events in a minute produce at most one run
+  # beyond the one in flight. A trigger carrying `metadata` names the item
+  # it is about and always gets its own run, on any job.
+  # coalesce
 }
 
 # Reconcile-on-deploy job: fires once when croniq adopts the definition,

@@ -71,6 +71,9 @@ const schState = {
     // guard above, so it is a separate field and not another `concurrency`
     // mode.
     concurrencyGroup: '',
+    // Collapse a burst of parameterless triggers into at most one follow-up
+    // run (#759). Composes with the guard above rather than replacing it.
+    coalesce: false,
     // Job-level `timezone` — distinct from `schedTimezone`, which is the
     // schedule-option spelling and is dropped on once/disabled.
     jobTimezone: '',
@@ -280,6 +283,7 @@ bindText('sch-opt-max-queue', () => O.maxQueueDepth, (v) => { O.maxQueueDepth = 
 bindText('sch-opt-keep-last', () => O.keepLast, (v) => { O.keepLast = v })
 bindText('sch-opt-job-timezone', () => O.jobTimezone, (v) => { O.jobTimezone = v })
 bindCheckbox('sch-opt-run-on-register', () => O.runOnRegister, (v) => { O.runOnRegister = v })
+bindCheckbox('sch-opt-coalesce', () => O.coalesce, (v) => { O.coalesce = v })
 bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
 bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
 
@@ -378,6 +382,8 @@ function buildJobOptions() {
   if (O.concurrency === 'singleton') opts.concurrency = 'singleton'
   else if (O.concurrency === 'max_concurrent') opts.concurrency = String(O.maxConcurrent)
   if (O.concurrencyGroup.trim()) opts.concurrency_group = O.concurrencyGroup.trim()
+  // Bare directive, like run_on_register below.
+  if (O.coalesce) opts.coalesce = true
 
   // Recurring-only scheduling constraints — the schedule-options block is
   // invalid on once/disabled, so don't emit them there (the wasm bridge
