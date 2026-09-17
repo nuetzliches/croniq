@@ -30,6 +30,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SDK is affected — none of the six exposes the execution list; it is a
   control-plane read, not part of the work protocol.
 
+### Changed
+
+- **`docs/operations.md` now covers event triggers next to a periodic job.**
+  `singleton` reads like "do not fire again" and is in fact a dispatch gate:
+  the scheduler keeps firing and keeps writing `queued` rows, and a trigger
+  that arrives mid-run keeps its queue position and starts a round-trip after
+  the run ends rather than being cancelled. The new section says so, gives the
+  wait as a formula, and names the four ways the event run disappears anyway —
+  a per-entity `idempotency_key` that folds into a run which started before
+  the event, `max_queue_depth`, `ephemeral`, and a `queue_ttl` shorter than
+  the backlog.
+
+  It also answers the burst case — many producers, one work list — where
+  `max_queue_depth 1`, a coarse `idempotency_key` and a consumer-side debounce
+  each collapse the wrong thing, and triggering on the work list's `0 → 1`
+  transition inside the event's own transaction is what survives distribution.
+  Server-side collapsing is proposed in
+  [#759](https://github.com/nuetzliches/croniq/issues/759). Nothing about how
+  Croniq behaves changes.
+
 ### Fixed
 
 - **A job the Croniqfile disables was reported as active and permanently
