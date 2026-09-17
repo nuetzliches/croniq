@@ -1787,20 +1787,81 @@ per burst is the goal. None of these gets there:
 - **A debounce in the consumer** collapses per process. Twenty producers each
   debounce their own stream and still send twenty triggers.
 
-What does work today is to make the trigger conditional on the work list's
+The server-side answer is `coalesce` (issue #759), described in the next
+section. Without it — or alongside it — the one consumer-side collapse that
+survives distribution is to make the trigger conditional on the work list's
 `0 → 1` transition: trigger only when the insert took the list from empty to
-non-empty, in the same transaction as the event itself. That collapse is
-distributed, because every producer sees the same table. The job then reads the
-work list **at start**, never at enqueue, so a run that is still queued covers
-every event that arrives before it is claimed — the same forward-only property
-the guard gives you, one layer up.
+non-empty, in the same transaction as the event itself. That collapse works
+because every producer sees the same table. The job then reads the work list
+**at start**, never at enqueue, so a run that is still queued covers every
+event that arrives before it is claimed — the same forward-only property the
+guard gives you, one layer up.
 
-Around that: keep the job `singleton` and `queued`, `max_queue_depth` at 2–3 as
-a net, no `idempotency_key`, a tight `timeout`, and let the schedule tick
+Around either: keep the job `singleton` and `queued`, `max_queue_depth` at 2–3
+as a net, no `idempotency_key`, a tight `timeout`, and let the schedule tick
 slowly.
 
-Croniq has no server-side collapse for this yet; issue #759 proposes a
-`coalesce` directive that folds a burst into at most one follow-up run.
+### `coalesce`: one run per burst
+
+```hcl
+job soapneo:sync {
+  every 5 minutes
+  singleton
+  coalesce
+  runner { require soapneo }
+}
+```
+
+A trigger on a job that declares `coalesce` folds into an execution of that
+job that is **already queued and not yet claimed**, instead of enqueuing its
+own. What the operator gets is trailing-edge collapsing with no timer and no
+new scheduler state:
+
+| State when the trigger arrives | Behaviour |
+| --- | --- |
+| Nothing queued, nothing in flight | Enqueue, exactly as without the directive |
+| An execution is **queued** | Fold into it: `200`, its `execution_id`, `coalesced: true` |
+| An execution is **claimed**, nothing queued | Enqueue one follow-up; the rest of the burst folds into that |
+
+So twenty events during a run produce at most two runs: the one in flight,
+plus one that starts after it. Latency is unchanged — the follow-up starts as
+soon as the slot frees.
+
+The fold is **forward-only**, and structurally so rather than by a rule
+someone has to remember. Only queued items are candidates, and an item leaves
+the queue and has its claim persisted under the same lock the fold decides
+under. A trigger can therefore never be answered with an execution that has
+already started — which is exactly the failure a coarse `idempotency_key` has,
+and the reason that knob is not the answer here.
+
+It composes with the guards rather than replacing them. `coalesce` decides
+whether an item is *created*; `singleton` / `max_concurrent` and
+`concurrency_group` decide when it is *dispatched*. A job may declare
+`coalesce` without a guard — the fold then happens against the queue only,
+since nothing bounds the in-flight count. `max_queue_depth` still applies, so
+the directive is a collapse, not an exemption.
+
+Scheduled fires are fold *targets* but are never themselves folded: the
+scheduler keeps firing on its own schedule. A trigger arriving while a tick's
+run is still queued folds into it, because that run has not read the work list
+yet.
+
+Two things it deliberately does not do. It does not accumulate the collapsed
+payloads into a list — that would change the shape the job sees. And it is
+never inferred: nothing on the server can tell whether two payloads mean the
+same thing, so it is an opt-in declaration on the job.
+
+`ephemeral` jobs reject it at validation time, for the reason #302 gives for
+the concurrency guard: they keep at most one queued fire, which the next
+scheduled one replaces outright, while the trigger path enqueues a persisted
+item regardless.
+
+The response field is `coalesced`, distinct from `deduplicated`. Both mean
+"no new execution", but `deduplicated` can hand back a run that started before
+the event, and `coalesced` never does. A producer that retries on one and not
+the other needs to tell them apart. SDK support for the field lands per
+language as a follow-up; a client that does not know it yet still sees the
+absorbing `execution_id` and a `200`.
 
 ### Parameterised triggers are never collapsible
 
@@ -1815,8 +1876,25 @@ dividing line:
 
 Croniq does not infer which kind a job receives, and deliberately so: nothing
 on the server can tell whether two payloads mean the same thing. Whichever
-collapse you build — the `0 → 1` recipe above, or `coalesce` once it lands —
-applies to the parameterless case only.
+collapse you use — the `0 → 1` recipe above, or `coalesce` — applies to the
+parameterless case only.
+
+`coalesce` enforces that itself, and this is the part an operator cannot get
+wrong by setting a flag: **a trigger carrying caller `metadata` is never
+folded**, on any job. It is not eligible to fold, and the execution it creates
+is not eligible to absorb a later signal either — so the parameterised run
+never ends up carrying work it was not asked to do.
+
+Croniq holds three more caller fields to the same rule, though they are not
+payload: a trigger that sets `require`, `prefer` or `timeout` is not folded
+either. Each says something specific about the run being asked for, and a fold
+would drop it silently — an explicit `require` would end up routed to whatever
+runner the queued item was bound for. The burst this directive exists for
+sends a job key and nothing else, so the narrower rule costs it nothing.
+
+`idempotency_key` is not on that list. It identifies the call, not the run, and
+its own dedup lookup has already run and missed by the time a fold is
+considered.
 
 ## Orphaned claims (issue #374)
 
