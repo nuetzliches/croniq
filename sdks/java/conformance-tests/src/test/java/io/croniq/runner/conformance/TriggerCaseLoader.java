@@ -49,7 +49,8 @@ final class TriggerCaseLoader {
      * unrecognised key here is the silent-drop case exactly and has to be
      * rejected up front.
      */
-    private static final Set<String> TRIGGER_RESPONSE_KEYS = Set.of("execution_id", "queued", "deduplicated");
+    private static final Set<String> TRIGGER_RESPONSE_KEYS =
+            Set.of("execution_id", "queued", "deduplicated", "coalesced");
 
     private TriggerCaseLoader() {}
 
@@ -112,7 +113,10 @@ final class TriggerCaseLoader {
         TriggerCaseSpec.TriggerCall.Expect.Response response = resp == null
                 ? null
                 : new TriggerCaseSpec.TriggerCall.Expect.Response(
-                        stringOf(resp, "execution_id"), intOf(resp, "queued"), boolOf(resp, "deduplicated"));
+                        stringOf(resp, "execution_id"),
+                        intOf(resp, "queued"),
+                        boolOf(resp, "deduplicated"),
+                        boolOf(resp, "coalesced"));
         return new TriggerCaseSpec.TriggerCall.Expect(response, boolOf(m, "error"));
     }
 

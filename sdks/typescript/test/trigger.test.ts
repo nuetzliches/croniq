@@ -64,7 +64,7 @@ describe('CroniqTriggerClient.trigger', () => {
     expect(body.timeout).toBe('10m');
     expect(body.idempotency_key).toBe('evt-123');
 
-    expect(result).toEqual({ executionId: 'exec-1', queued: 3, deduplicated: false });
+    expect(result).toEqual({ executionId: 'exec-1', queued: 3, deduplicated: false, coalesced: false });
   });
 
   it('omits unset optional fields from the wire body', async () => {
@@ -141,6 +141,30 @@ describe('CroniqTriggerClient.trigger', () => {
 
     expect(result.deduplicated).toBe(true);
     expect(result.executionId).toBe('exec-1');
+  });
+
+  it('defaults a missing coalesced flag to false (server without `coalesce`)', async () => {
+    const { fetchImpl } = stubFetch(() => OK('{"execution_id":"exec-1","queued":0,"deduplicated":false}'));
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
+
+    const result = await client.trigger('etl:data-sync');
+
+    expect(result.coalesced).toBe(false);
+  });
+
+  it('surfaces coalesced: true without calling it a dedup hit', async () => {
+    const { fetchImpl } = stubFetch(() =>
+      OK('{"execution_id":"exec-9","queued":2,"deduplicated":false,"coalesced":true}'),
+    );
+    const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
+
+    const result = await client.trigger('soapneo:sync');
+
+    expect(result.coalesced).toBe(true);
+    // The two flags are not interchangeable: a fold names an execution that
+    // has not started, a dedup hit may name one that already has.
+    expect(result.deduplicated).toBe(false);
+    expect(result.executionId).toBe('exec-9');
   });
 
   it('throws HttpError on a non-2xx response', async () => {

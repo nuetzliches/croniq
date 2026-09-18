@@ -106,6 +106,10 @@ final class TriggerConformanceRunner {
             fail("trigger(%s): expected deduplicated=%s but got %s"
                     .formatted(jobKey, expected.deduplicated(), actual.deduplicated()));
         }
+        if (expected.coalesced() != null && expected.coalesced() != actual.coalesced()) {
+            fail("trigger(%s): expected coalesced=%s but got %s"
+                    .formatted(jobKey, expected.coalesced(), actual.coalesced()));
+        }
     }
 
     private static void assertExpectations(

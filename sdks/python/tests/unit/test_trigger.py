@@ -1,7 +1,8 @@
 """Wire-level unit tests for :class:`croniq_runner.TriggerClient`.
 
 Covers request shape (snake_case, omission of unset optionals, nested metadata),
-response parsing (including the forward-compatible ``deduplicated`` flag), auth
+response parsing (including the forward-compatible ``deduplicated`` and
+``coalesced`` flags), auth
 header selection, and error propagation (non-2xx incl. the #299 queue-overflow
 ``429``). Uses ``httpx.MockTransport`` so no network is touched.
 """
@@ -146,6 +147,31 @@ async def test_deduplicated_flag_is_surfaced() -> None:
 
     assert result.deduplicated is True
     assert result.execution_id == "exec-1"
+
+
+async def test_missing_coalesced_flag_defaults_to_false() -> None:
+    # Every server released before the ``coalesce`` directive (#759).
+    rec = _Recorder(body={"execution_id": "exec-1", "queued": 0, "deduplicated": False})
+    client = _client(rec, api_key="k")
+
+    result = await client.trigger("etl:data-sync")
+
+    assert result.coalesced is False
+
+
+async def test_coalesced_flag_is_surfaced() -> None:
+    rec = _Recorder(
+        body={"execution_id": "exec-9", "queued": 2, "deduplicated": False, "coalesced": True}
+    )
+    client = _client(rec, api_key="k")
+
+    result = await client.trigger("soapneo:sync")
+
+    assert result.coalesced is True
+    # The two flags are not interchangeable: a fold names an execution that has
+    # not started, a dedup hit may name one that already has.
+    assert result.deduplicated is False
+    assert result.execution_id == "exec-9"
 
 
 @pytest.mark.parametrize("status", [400, 404, 429, 500])

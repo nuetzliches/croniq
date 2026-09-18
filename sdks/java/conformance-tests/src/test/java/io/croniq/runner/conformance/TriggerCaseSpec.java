@@ -36,7 +36,7 @@ public record TriggerCaseSpec(
         /** Exactly one of {@code response} (success) or {@code error} (true) by convention. */
         public record Expect(Response response, Boolean error) {
 
-            public record Response(String executionId, Integer queued, Boolean deduplicated) {}
+            public record Response(String executionId, Integer queued, Boolean deduplicated, Boolean coalesced) {}
         }
     }
 

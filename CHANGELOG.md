@@ -8,6 +8,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The six runner SDKs surface the trigger `coalesced` flag**
+  ([#762](https://github.com/nuetzliches/croniq/issues/762),
+  [#763](https://github.com/nuetzliches/croniq/issues/763),
+  [#764](https://github.com/nuetzliches/croniq/issues/764),
+  [#765](https://github.com/nuetzliches/croniq/issues/765),
+  [#766](https://github.com/nuetzliches/croniq/issues/766),
+  [#767](https://github.com/nuetzliches/croniq/issues/767)). `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)) added the field to
+  the `POST /v1/trigger` response; until now every client dropped it, so a
+  producer could not tell a fold from an ordinary enqueue.
+
+  Rust, TypeScript, Python, Go, Java and .NET now parse it next to
+  `deduplicated`, with the same absent-means-false handling — a server
+  predating the directive omits the key, and that must read as `false` rather
+  than fail the parse.
+
+  The shared trigger conformance suite gains the contract
+  ([#768](https://github.com/nuetzliches/croniq/issues/768)): `coalesced` in
+  the case schema, all six bindings assert it, and two new cases pin both
+  shapes. The absent-field case is the one that matters — it is what a client
+  shipped ahead of its server sees, and
+  [#553](https://github.com/nuetzliches/croniq/issues/553) and
+  [#554](https://github.com/nuetzliches/croniq/issues/554) both came out of a
+  missing absent-field case.
+
 - **`coalesce`: a burst of triggers on one job collapses into one run**
   ([#759](https://github.com/nuetzliches/croniq/issues/759)). A job on a
   schedule that consumers also fire out of band gets one queued execution per
