@@ -59,6 +59,13 @@ jobs:
           # Both flags together mirror the recipe in the MinVer FAQ.
           fetch-depth: 0
           fetch-tags: true
+          # Check out the tag being released, not the default branch. On a
+          # tag push `github.ref` already is the tag; on a manual dispatch it
+          # is the branch. Without this, a re-run packs main's sources under
+          # the tag's version number (MinVerVersionOverride pins the number,
+          # not the code) -- a package whose contents nobody reviewed under
+          # that version. Matches the Python and Java release workflows.
+          ref: ${{ inputs.version || github.ref }}
 
       - name: Resolve tag → version
         id: version

@@ -48,6 +48,15 @@ jobs:
         working-directory: sdks/typescript
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Check out the tag being released, not the default branch. On a
+          # tag push `github.ref` already is the tag; on a manual dispatch it
+          # is the branch, so without this the job builds whatever main holds
+          # and only the version *number* comes from the tag. That is what
+          # made re-running an older release impossible: the manifest check
+          # compared main's version against the tag and failed. Matches what
+          # the Python and Java release workflows already do.
+          ref: ${{ inputs.version || github.ref }}
 
       - name: Setup Node.js (LTS) with npm registry
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
