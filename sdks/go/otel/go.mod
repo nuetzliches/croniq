@@ -15,7 +15,7 @@ go 1.25.0
 // this file (see sdks/go/RELEASING.md), so dev-only redirects must
 // stay in go.work, not here.
 require (
-	github.com/nuetzliches/croniq/sdks/go v0.1.0
+	github.com/nuetzliches/croniq/sdks/go v0.5.0
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
