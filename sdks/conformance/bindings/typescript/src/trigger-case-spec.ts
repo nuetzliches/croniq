@@ -45,6 +45,7 @@ export interface TriggerResponseExpect {
   execution_id?: string;
   queued?: number;
   deduplicated?: boolean;
+  coalesced?: boolean;
 }
 
 export interface TriggerExpectations {

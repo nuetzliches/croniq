@@ -83,6 +83,8 @@ struct ExpectResponse {
     queued: Option<i64>,
     #[serde(default)]
     deduplicated: Option<bool>,
+    #[serde(default)]
+    coalesced: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -531,6 +533,14 @@ fn check_call_outcome(
             return Err(format!(
                 "call[{i}]: deduplicated expected {deduplicated} but got {}",
                 value.deduplicated
+            ));
+        }
+        if let Some(coalesced) = response.coalesced
+            && value.coalesced != coalesced
+        {
+            return Err(format!(
+                "call[{i}]: coalesced expected {coalesced} but got {}",
+                value.coalesced
             ));
         }
     }

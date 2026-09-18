@@ -105,7 +105,7 @@ export const TRIGGER_EXPECT_KEYS = ['response', 'error'] as const;
  * Asserted one key at a time in the trigger suite, so an unrecognised key here
  * is the silent-drop case exactly — it has to be rejected up front.
  */
-export const TRIGGER_RESPONSE_KEYS = ['execution_id', 'queued', 'deduplicated'] as const;
+export const TRIGGER_RESPONSE_KEYS = ['execution_id', 'queued', 'deduplicated', 'coalesced'] as const;
 
 /**
  * Reject any key `allowed` does not list.

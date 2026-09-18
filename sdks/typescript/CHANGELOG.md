@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`coalesced` on the trigger result
+  ([#763](https://github.com/nuetzliches/croniq/issues/763)).** `true` when the
+  server folded this trigger into an execution that was already queued for the
+  job, because the job declares `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)). The execution id
+  is then that execution's and nothing was enqueued.
+
+  Kept distinct from `deduplicated` even though both mean "no new execution": a
+  dedup hit can name an execution that started *before* the call, while a fold
+  only ever names one that starts after it, because a claimed execution is
+  never a fold target. A producer deciding whether its signal still gets acted
+  on needs that difference.
+
+  Servers without `coalesce` support omit the field and it reads as `false`, so
+  this is additive for every existing caller.
+
 ## 0.5.0 - 2026-09-02
 
 ### Fixed

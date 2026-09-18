@@ -128,9 +128,12 @@ class TriggerResponse(_Model):
     """POST /v1/trigger response body.
 
     ``deduplicated`` is sent by servers with trigger-idempotency support
-    (#279); older servers omit it and the field defaults to ``False``.
+    (#279) and ``coalesced`` by servers supporting the ``coalesce`` job
+    directive (#759); older servers omit either and the field defaults to
+    ``False``.
     """
 
     execution_id: str
     queued: int
     deduplicated: bool = False
+    coalesced: bool = False

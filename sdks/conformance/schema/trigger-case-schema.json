@@ -80,7 +80,8 @@
               "properties": {
                 "execution_id": { "type": "string" },
                 "queued": { "type": "integer", "minimum": 0 },
-                "deduplicated": { "type": "boolean" }
+                "deduplicated": { "type": "boolean" },
+                "coalesced": { "type": "boolean" }
               }
             },
             "error": {

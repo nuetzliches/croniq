@@ -92,6 +92,7 @@ public sealed class TriggerExpectedResponseSpec
     public string? ExecutionId { get; set; }
     public int? Queued { get; set; }
     public bool? Deduplicated { get; set; }
+    public bool? Coalesced { get; set; }
 }
 
 public sealed class TriggerExpectationsSpec

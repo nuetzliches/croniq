@@ -1,0 +1,70 @@
+name: "Trigger coalesce — a folded trigger returns coalesced: true"
+description: |
+  The `coalesce` job directive (issue #759). A job declaring it folds a
+  parameterless trigger into an execution that is already queued and not yet
+  claimed, instead of enqueuing another. Two triggers are sent. The first
+  finds an empty queue and enqueues (coalesced: false). The second — the rest
+  of the burst — folds: the server responds 200 with the SAME execution_id, an
+  unchanged queue depth, and coalesced: true.
+
+  The client must surface coalesced=true and the absorbing execution_id rather
+  than treating the second call as a fresh enqueue. Note both calls report
+  deduplicated: false: a fold is not an idempotency-key dedup hit, and the two
+  flags mean different things — a dedup hit may name an execution that started
+  BEFORE the call, a fold never does. Neither request carries an
+  idempotency_key, because a fold does not need one.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "soapneo:sync"
+    expect:
+      response:
+        execution_id: "exec-900"
+        queued: 2
+        deduplicated: false
+        coalesced: false
+  - request:
+      job_key: "soapneo:sync"
+    expect:
+      response:
+        execution_id: "exec-900"
+        queued: 2
+        deduplicated: false
+        coalesced: true
+
+server_script:
+  - on: "POST /v1/trigger"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-900"
+        queued: 2
+        deduplicated: false
+        coalesced: false
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-900"
+        queued: 2
+        deduplicated: false
+        coalesced: true
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 2
+      body_match:
+        job_key: "soapneo:sync"
+      body_absent:
+        - metadata
+        - require
+        - prefer
+        - timeout
+        - idempotency_key
