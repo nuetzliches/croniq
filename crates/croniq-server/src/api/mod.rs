@@ -1664,7 +1664,7 @@ async fn handle_trigger(
     // one lookup, and it holds for any job whose metadata carries the key.
     let job_coalesces = dsl_job
         .as_ref()
-        .is_some_and(|j| j.metadata.contains_key(COALESCE_METADATA_KEY));
+        .is_some_and(|j| croniq_config::compile::job_declares_coalesce(&j.metadata));
     let bare_signal = is_bare_signal(&req);
     let may_fold = job_coalesces && bare_signal;
 
@@ -1950,62 +1950,29 @@ async fn handle_trigger(
 
 /// Whether a queued work item may absorb a trigger (`coalesce`, issue #759).
 ///
-/// The item carries the job's `__coalesce` stamp, which every work-item
-/// producer copies out of the compiled job metadata — a scheduled fire, a
-/// retry, a watchdog requeue, a dead-letter replay. So a trigger folds into
-/// whichever of them is waiting, without any of those paths knowing the
-/// directive exists.
-///
-/// The one producer that removes the stamp is the trigger path itself, for a
-/// call that is not a bare signal (see [`is_bare_signal`]). Reading the item
-/// rather than the job config is what makes that removal effective.
+/// A thin adapter over [`croniq_config::compile::metadata_is_foldable`] so it
+/// can be passed to `WorkQueue::find_for_job` as a predicate over items. The
+/// rule itself lives beside the metadata key, because the MCP `job_trigger`
+/// tool folds by the same one (issue #769) and two copies of it would be two
+/// places to get the payload invariant wrong.
 fn item_is_foldable(item: &WorkItem) -> bool {
-    item.metadata.get(COALESCE_METADATA_KEY).is_some()
+    croniq_config::compile::metadata_is_foldable(&item.metadata)
 }
 
 /// Whether a trigger is a pure signal — "there is work, run soon" — and may
 /// therefore be collapsed into another execution (issue #759).
 ///
-/// True only when the call says nothing specific about the run it asks for:
-/// no `metadata`, and no override of the routing or the timeout the job
-/// config would supply. Each of those is something a fold would silently
-/// drop, and a dropped instruction is indistinguishable afterwards from one
-/// that was never sent.
-///
-/// `metadata` is the case the issue names, and the important one: a
-/// parameterised trigger identifies the item it is about, so folding two of
-/// them loses work that nothing later can show. Reserved `__` keys do not
-/// count against it — the overlay in `handle_trigger` strips them before they
-/// reach a runner, so a trigger carrying only those asks for nothing.
-///
-/// `require` / `prefer` / `timeout` are held to the same rule though the
-/// issue does not name them. They are not payload, but they are still
-/// instructions about this run: folding a trigger that pinned a capability
-/// would run the work on a different runner than the caller named, and
-/// silently. The narrower rule costs nothing — the burst this directive
-/// exists for sends `{"job_key": "…"}` and nothing else — and it means no
-/// override is ever answered by ignoring it.
-///
-/// `idempotency_key` is deliberately *not* on the list. It identifies the
-/// call, not the run, and its own dedup lookup has already run and missed by
-/// the time a fold is considered. A retry of a folded trigger misses that
-/// lookup again and folds again into the same execution, which is the same
-/// answer it got the first time.
+/// Adapts this endpoint's request shape onto
+/// [`croniq_config::compile::is_bare_trigger_signal`], which documents why
+/// `require` / `prefer` / `timeout` count against it and why
+/// `idempotency_key` does not.
 fn is_bare_signal(req: &TriggerRequest) -> bool {
-    if !req.require.is_empty() || !req.prefer.is_empty() {
-        return false;
-    }
-    if req.timeout.as_deref().is_some_and(|t| !t.trim().is_empty()) {
-        return false;
-    }
-    match &req.metadata {
-        serde_json::Value::Null => true,
-        serde_json::Value::Object(map) => map
-            .keys()
-            .all(|k| croniq_config::compile::is_reserved_metadata_key(k)),
-        // A scalar or array payload is still a payload.
-        _ => false,
-    }
+    croniq_config::compile::is_bare_trigger_signal(
+        &req.metadata,
+        &req.require,
+        &req.prefer,
+        req.timeout.as_deref(),
+    )
 }
 
 /// An RFC3339 instant from a query parameter, or `None` if it is not one.
