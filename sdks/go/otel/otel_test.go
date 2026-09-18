@@ -97,7 +97,10 @@ func TestTracingMiddlewareRecordsErrorOnFailure(t *testing.T) {
 func attrMap(kvs []attribute.KeyValue) map[string]string {
 	out := make(map[string]string, len(kvs))
 	for _, kv := range kvs {
-		out[string(kv.Key)] = kv.Value.Emit()
+		// `Value.String()` rather than `Value.Emit()`: otel 1.45 deprecated
+		// the latter in favour of it, and staticcheck's SA1019 fails the build
+		// on a deprecated call. Same rendering for every attribute kind.
+		out[string(kv.Key)] = kv.Value.String()
 	}
 	return out
 }
