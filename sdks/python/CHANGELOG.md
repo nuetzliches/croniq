@@ -5,6 +5,26 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`coalesced` on the trigger result
+  ([#764](https://github.com/nuetzliches/croniq/issues/764)).** `true` when the
+  server folded this trigger into an execution that was already queued for the
+  job, because the job declares `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)). The execution id
+  is then that execution's and nothing was enqueued.
+
+  Kept distinct from `deduplicated` even though both mean "no new execution": a
+  dedup hit can name an execution that started *before* the call, while a fold
+  only ever names one that starts after it, because a claimed execution is
+  never a fold target. A producer deciding whether its signal still gets acted
+  on needs that difference.
+
+  Servers without `coalesce` support omit the field and it reads as `false`, so
+  this is additive for every existing caller.
+
 ## [0.5.0] - 2026-09-02
 
 ### Fixed

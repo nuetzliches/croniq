@@ -92,7 +92,7 @@ async function runTriggerCall(client: CroniqTriggerClient, call: TriggerCall, in
 
 function assertResponse(
   expected: TriggerResponseExpect | undefined,
-  result: { executionId: string; queued: number; deduplicated: boolean },
+  result: { executionId: string; queued: number; deduplicated: boolean; coalesced: boolean },
   label: string,
 ): void {
   if (!expected) return;
@@ -108,6 +108,9 @@ function assertResponse(
   }
   if (expected.deduplicated !== undefined) {
     expect(result.deduplicated, `${label}: deduplicated`).toBe(expected.deduplicated);
+  }
+  if (expected.coalesced !== undefined) {
+    expect(result.coalesced, `${label}: coalesced`).toBe(expected.coalesced);
   }
 }
 

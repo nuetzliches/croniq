@@ -658,6 +658,82 @@ pub fn is_reserved_metadata_key(key: &str) -> bool {
     key.starts_with(RESERVED_METADATA_PREFIX)
 }
 
+/// Whether a job's compiled metadata declares `coalesce` (issue #759).
+///
+/// Every trigger path asks this of the job it is about to fire, and reads the
+/// *stamp* rather than [`JobConfig::coalesce`] so that the answer comes from
+/// the same place the fold target is recognised by
+/// ([`metadata_is_foldable`]) — one concept, one lookup, and it holds for any
+/// job whose metadata carries the key rather than only a DSL-compiled one.
+pub fn job_declares_coalesce(metadata: &HashMap<String, String>) -> bool {
+    metadata.contains_key(COALESCE_METADATA_KEY)
+}
+
+/// Whether a queued work item may absorb a trigger (issue #759).
+///
+/// Takes the item's metadata as the JSON it travels as. The stamp is copied
+/// out of the compiled job metadata by every work-item producer — a scheduled
+/// fire, a retry, a watchdog requeue, a dead-letter replay — so a trigger
+/// folds into whichever of them is waiting without any of those paths knowing
+/// the directive exists.
+///
+/// The one producer that *removes* the stamp is a trigger path handling a call
+/// that is not a bare signal (see [`is_bare_trigger_signal`]). Asking the item
+/// rather than the job config is what makes that removal effective, and it is
+/// why the rule lives in the data instead of in a second code path that could
+/// be forgotten.
+pub fn metadata_is_foldable(metadata: &serde_json::Value) -> bool {
+    metadata.get(COALESCE_METADATA_KEY).is_some()
+}
+
+/// Whether a trigger call is a pure signal — "there is work, run soon" — and
+/// may therefore be collapsed into another execution (issue #759).
+///
+/// True only when the call says nothing specific about the run it asks for: no
+/// `metadata`, and no override of the routing or the timeout the job config
+/// would supply. Each of those is something a fold would silently drop, and a
+/// dropped instruction is indistinguishable afterwards from one that was never
+/// sent.
+///
+/// `metadata` is the case issue #759 names, and the important one: a
+/// parameterised trigger identifies the item it is about, so folding two of
+/// them loses work that nothing later can show. Reserved `__` keys do not
+/// count against it — every ingress strips them before they reach a runner
+/// (see [`is_reserved_metadata_key`]), so a call carrying only those asks for
+/// nothing.
+///
+/// `require` / `prefer` / `timeout` are held to the same rule though the issue
+/// does not name them. They are not payload, but they are still instructions
+/// about this run: folding a trigger that pinned a capability would run the
+/// work on a different runner than the caller named, and silently. The
+/// narrower rule costs nothing — the burst the directive exists for sends a
+/// job key and nothing else — and it means no override is ever answered by
+/// ignoring it. A blank `timeout` counts as absent, matching how every trigger
+/// ingress already reads it (issue #553).
+///
+/// An idempotency key is deliberately not a parameter. It identifies the call,
+/// not the run, and its own dedup lookup has already run and missed by the
+/// time a fold is considered.
+pub fn is_bare_trigger_signal(
+    metadata: &serde_json::Value,
+    require: &[String],
+    prefer: &[String],
+    timeout: Option<&str>,
+) -> bool {
+    if !require.is_empty() || !prefer.is_empty() {
+        return false;
+    }
+    if timeout.is_some_and(|t| !t.trim().is_empty()) {
+        return false;
+    }
+    match metadata {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.keys().all(|k| is_reserved_metadata_key(k)),
+        // A scalar or array payload is still a payload.
+        _ => false,
+    }
+}
+
 /// Drop every reserved-namespace key from a caller-supplied metadata map.
 ///
 /// Returns the dropped keys so the caller can log what it refused. The map is
@@ -2520,6 +2596,89 @@ mod tests {
             !cfg.jobs[0].metadata.contains_key(COALESCE_METADATA_KEY),
             "an ephemeral job must not carry an inert __coalesce"
         );
+    }
+
+    // ── coalesce predicates (issue #759) ─────────────────────────────
+
+    #[test]
+    fn job_declares_coalesce_reads_the_stamp() {
+        let ast = Parser::parse(r#"job a:b { every 5 minutes; coalesce }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(job_declares_coalesce(&cfg.jobs[0].metadata));
+
+        let ast = Parser::parse(r#"job a:b { every 5 minutes }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(!job_declares_coalesce(&cfg.jobs[0].metadata));
+    }
+
+    #[test]
+    fn metadata_is_foldable_only_with_the_stamp() {
+        assert!(metadata_is_foldable(
+            &serde_json::json!({ COALESCE_METADATA_KEY: "1" })
+        ));
+        assert!(!metadata_is_foldable(&serde_json::json!({})));
+        assert!(!metadata_is_foldable(&serde_json::json!({ "user": "x" })));
+        // A work item whose metadata never became an object at all.
+        assert!(!metadata_is_foldable(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn a_call_with_nothing_set_is_a_bare_signal() {
+        assert!(is_bare_trigger_signal(
+            &serde_json::Value::Null,
+            &[],
+            &[],
+            None
+        ));
+        assert!(is_bare_trigger_signal(
+            &serde_json::json!({}),
+            &[],
+            &[],
+            None
+        ));
+        // Blank counts as absent, as it does everywhere else on the trigger
+        // ingress (issue #553).
+        assert!(is_bare_trigger_signal(
+            &serde_json::json!({}),
+            &[],
+            &[],
+            Some("   ")
+        ));
+    }
+
+    #[test]
+    fn a_payload_is_not_a_bare_signal() {
+        for payload in [
+            serde_json::json!({ "item": "42" }),
+            serde_json::json!("just-a-string"),
+            serde_json::json!([1, 2, 3]),
+        ] {
+            assert!(
+                !is_bare_trigger_signal(&payload, &[], &[], None),
+                "{payload} must not count as a bare signal"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_keys_alone_still_count_as_a_bare_signal() {
+        // Every ingress strips these before they reach a runner, so a call
+        // carrying only them has asked for nothing.
+        let payload = serde_json::json!({ MAX_CONCURRENT_METADATA_KEY: "9" });
+        assert!(is_bare_trigger_signal(&payload, &[], &[], None));
+    }
+
+    #[test]
+    fn an_override_is_not_a_bare_signal() {
+        let none = serde_json::Value::Null;
+        assert!(!is_bare_trigger_signal(
+            &none,
+            &["soapneo".into()],
+            &[],
+            None
+        ));
+        assert!(!is_bare_trigger_signal(&none, &[], &["fast".into()], None));
+        assert!(!is_bare_trigger_signal(&none, &[], &[], Some("30m")));
     }
 
     // ── singleton / max_concurrent (issue #278) ──────────────────────────────

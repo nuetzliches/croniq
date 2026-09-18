@@ -48,6 +48,6 @@ internal sealed class CroniqTriggerClient(
             .ReadFromJsonAsync(CroniqJsonContext.Default.TriggerResponse, linked.Token)
             .ConfigureAwait(false)
             ?? throw new HttpRequestException("POST /v1/trigger returned an empty body.");
-        return new TriggerResult(body.ExecutionId, body.Queued, body.Deduplicated);
+        return new TriggerResult(body.ExecutionId, body.Queued, body.Deduplicated, body.Coalesced);
     }
 }

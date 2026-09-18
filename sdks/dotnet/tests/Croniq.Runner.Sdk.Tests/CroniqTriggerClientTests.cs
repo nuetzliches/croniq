@@ -164,6 +164,37 @@ public class CroniqTriggerClientTests
     }
 
     [Fact]
+    public async Task MissingCoalescedFlagDefaultsToFalse()
+    {
+        // Every server released before the `coalesce` directive (#759).
+        var stub = new StubHandler(
+            HttpStatusCode.OK,
+            """{"execution_id":"exec-1","queued":0,"deduplicated":false}""");
+        var client = CreateClient(stub);
+
+        var result = await client.TriggerAsync("etl:data-sync");
+
+        result.Coalesced.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CoalescedFlagIsSurfaced()
+    {
+        var stub = new StubHandler(
+            HttpStatusCode.OK,
+            """{"execution_id":"exec-9","queued":2,"deduplicated":false,"coalesced":true}""");
+        var client = CreateClient(stub);
+
+        var result = await client.TriggerAsync("soapneo:sync");
+
+        result.Coalesced.ShouldBeTrue();
+        // The two flags are not interchangeable: a fold names an execution that
+        // has not started, a dedup hit may name one that already has.
+        result.Deduplicated.ShouldBeFalse();
+        result.ExecutionId.ShouldBe("exec-9");
+    }
+
+    [Fact]
     public async Task NonSuccessStatusThrows()
     {
         var stub = new StubHandler(HttpStatusCode.NotFound, """{"error":"unknown job"}""");

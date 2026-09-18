@@ -119,6 +119,23 @@ pub struct TriggerResult {
     /// — they omit the field and it defaults to `false` here.
     #[serde(default)]
     pub deduplicated: bool,
+
+    /// `true` when the server folded this trigger into an execution that was
+    /// already queued for the job, because the job declares `coalesce`
+    /// (issue #759). [`execution_id`](TriggerResult::execution_id) is then
+    /// that execution's id and nothing was enqueued.
+    ///
+    /// Distinct from [`deduplicated`](TriggerResult::deduplicated) even though
+    /// both mean "no new execution". A dedup hit can name an execution that
+    /// started *before* this call; a fold only ever names one that starts
+    /// after it, because a claimed execution is never a fold target. A
+    /// producer deciding whether its signal still gets acted on needs that
+    /// difference.
+    ///
+    /// Always `false` on servers without `coalesce` support — they omit the
+    /// field and it defaults to `false` here.
+    #[serde(default)]
+    pub coalesced: bool,
 }
 
 /// Wire body for `POST /v1/trigger`. All optional fields skip serialization
@@ -487,6 +504,24 @@ mod tests {
                 .unwrap();
         assert!(result.deduplicated);
         assert_eq!(result.queued, 4);
+    }
+
+    #[test]
+    fn missing_coalesced_flag_parses_as_false() {
+        // The shape every server predating `coalesce` (issue #759) sends.
+        let result: TriggerResult =
+            serde_json::from_str(r#"{"execution_id":"exec-1","queued":0}"#).unwrap();
+        assert!(!result.coalesced);
+    }
+
+    #[test]
+    fn coalesced_flag_is_parsed() {
+        let result: TriggerResult = serde_json::from_str(
+            r#"{"execution_id":"exec-1","queued":2,"deduplicated":false,"coalesced":true}"#,
+        )
+        .unwrap();
+        assert!(result.coalesced);
+        assert!(!result.deduplicated, "a fold is not a dedup hit");
     }
 
     // ── Offline HTTP round-trip tests ────────────────────────────────────

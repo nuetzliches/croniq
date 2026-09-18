@@ -1856,6 +1856,11 @@ the concurrency guard: they keep at most one queued fire, which the next
 scheduled one replaces outright, while the trigger path enqueues a persisted
 item regardless.
 
+The MCP `job_trigger` tool folds by the same rule, sharing the predicates that
+decide it, so an agent firing a job in a loop collapses exactly as an HTTP
+producer does. Its answer is prose rather than a response body, and it names
+the execution that absorbed the call.
+
 The response field is `coalesced`, distinct from `deduplicated`. Both mean
 "no new execution", but `deduplicated` can hand back a run that started before
 the event, and `coalesced` never does. A producer that retries on one and not

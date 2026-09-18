@@ -6,7 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP `job_trigger` tool honours `coalesce`**
+  ([#769](https://github.com/nuetzliches/croniq/issues/769)). It has its own
+  enqueue path, so the fold that landed with
+  [#759](https://github.com/nuetzliches/croniq/issues/759) passed it by: an
+  agent firing a job in a loop still queued one run per call, on a job whose
+  configuration says otherwise.
+
+  Worse than merely missing the feature. The tool stamped the job's compiled
+  metadata onto every item it created, `__coalesce` included, so its
+  executions *were* fold targets for HTTP triggers while it never folded into
+  anything itself. The two paths disagreed about the same directive, and a
+  parameterised MCP fire could absorb an unrelated signal.
+
+  Both now share the predicates that decide a fold
+  (`job_declares_coalesce`, `metadata_is_foldable`, `is_bare_trigger_signal`
+  in `croniq-config`), rather than carrying two copies of a rule that has to
+  match. The payload invariant comes along: a `job_trigger` call carrying
+  `metadata` — or overriding `require`, `prefer` or `timeout` — neither folds
+  nor leaves a foldable item behind. The tool's prose answer says when a fold
+  happened and names the execution that absorbed it.
+
 ### Added
+
+- **The six runner SDKs surface the trigger `coalesced` flag**
+  ([#762](https://github.com/nuetzliches/croniq/issues/762),
+  [#763](https://github.com/nuetzliches/croniq/issues/763),
+  [#764](https://github.com/nuetzliches/croniq/issues/764),
+  [#765](https://github.com/nuetzliches/croniq/issues/765),
+  [#766](https://github.com/nuetzliches/croniq/issues/766),
+  [#767](https://github.com/nuetzliches/croniq/issues/767)). `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)) added the field to
+  the `POST /v1/trigger` response; until now every client dropped it, so a
+  producer could not tell a fold from an ordinary enqueue.
+
+  Rust, TypeScript, Python, Go, Java and .NET now parse it next to
+  `deduplicated`, with the same absent-means-false handling — a server
+  predating the directive omits the key, and that must read as `false` rather
+  than fail the parse.
+
+  The shared trigger conformance suite gains the contract
+  ([#768](https://github.com/nuetzliches/croniq/issues/768)): `coalesced` in
+  the case schema, all six bindings assert it, and two new cases pin both
+  shapes. The absent-field case is the one that matters — it is what a client
+  shipped ahead of its server sees, and
+  [#553](https://github.com/nuetzliches/croniq/issues/553) and
+  [#554](https://github.com/nuetzliches/croniq/issues/554) both came out of a
+  missing absent-field case.
 
 - **`coalesce`: a burst of triggers on one job collapses into one run**
   ([#759](https://github.com/nuetzliches/croniq/issues/759)). A job on a

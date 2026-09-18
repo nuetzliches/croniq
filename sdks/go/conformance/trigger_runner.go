@@ -90,6 +90,9 @@ func assertTriggerCall(t *testing.T, idx int, expect TriggerCallExpect, resp *cr
 	if exp.Queued != nil && resp.Queued != *exp.Queued {
 		t.Errorf("call[%d]: queued = %d, want %d", idx, resp.Queued, *exp.Queued)
 	}
+	if exp.Coalesced != nil && resp.Coalesced != *exp.Coalesced {
+		t.Errorf("call[%d]: coalesced = %v, want %v", idx, resp.Coalesced, *exp.Coalesced)
+	}
 	if exp.Deduplicated != nil && resp.Deduplicated != *exp.Deduplicated {
 		t.Errorf("call[%d]: deduplicated = %v, want %v", idx, resp.Deduplicated, *exp.Deduplicated)
 	}

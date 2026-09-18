@@ -75,6 +75,18 @@ type TriggerResponse struct {
 	// field entirely; it then decodes to false (Go's zero value), which is
 	// the intended default.
 	Deduplicated bool `json:"deduplicated"`
+
+	// Coalesced is true when the server folded this trigger into an
+	// execution that was already queued for the job, because the job
+	// declares coalesce. ExecutionID is then that execution's id and
+	// nothing was enqueued.
+	//
+	// Distinct from Deduplicated even though both mean "no new execution":
+	// a dedup hit can name an execution that started BEFORE this call,
+	// while a fold only ever names one that starts after it, because a
+	// claimed execution is never a fold target. Servers without coalesce
+	// support omit the field; it then decodes to false.
+	Coalesced bool `json:"coalesced"`
 }
 
 // TriggerClient is the producer-side client for firing Croniq jobs on
