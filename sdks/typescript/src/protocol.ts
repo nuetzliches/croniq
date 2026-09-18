@@ -89,11 +89,13 @@ export interface TriggerRequest {
 
 /**
  * Wire response of `POST /v1/trigger`. `deduplicated` is sent by servers that
- * support trigger idempotency keys (#279); older servers omit it and the
- * client defaults it to `false`.
+ * support trigger idempotency keys (#279) and `coalesced` by servers that
+ * support the `coalesce` job directive (#759); older servers omit either and
+ * the client defaults it to `false`.
  */
 export interface TriggerResponse {
   execution_id: string;
   queued: number;
   deduplicated?: boolean;
+  coalesced?: boolean;
 }

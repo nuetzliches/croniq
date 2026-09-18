@@ -10,5 +10,13 @@ package io.croniq.runner;
  *     {@code idempotency_key} it had already seen; {@link #executionId()} then
  *     refers to that existing execution. Always {@code false} on servers
  *     without idempotency-key support (they omit the flag on the wire).
+ * @param coalesced {@code true} when the server folded this trigger into an
+ *     execution that was already queued for the job, because the job declares
+ *     {@code coalesce}; {@link #executionId()} then refers to that execution
+ *     and nothing was enqueued. Distinct from {@code deduplicated} even though
+ *     both mean "no new execution": a dedup hit can name an execution that
+ *     started <em>before</em> this call, while a fold only ever names one that
+ *     starts after it. Always {@code false} on servers without
+ *     {@code coalesce} support.
  */
-public record TriggerResult(String executionId, int queued, boolean deduplicated) {}
+public record TriggerResult(String executionId, int queued, boolean deduplicated, boolean coalesced) {}

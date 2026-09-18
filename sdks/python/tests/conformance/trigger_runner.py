@@ -67,6 +67,8 @@ async def _run_call(client: TriggerClient, call: TriggerCallSpec) -> None:
         assert result.queued == expected["queued"]
     if "deduplicated" in expected:
         assert result.deduplicated is expected["deduplicated"]
+    if "coalesced" in expected:
+        assert result.coalesced is expected["coalesced"]
 
 
 def _assert_expectations(

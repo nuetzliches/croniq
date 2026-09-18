@@ -117,6 +117,19 @@ export interface TriggerResult {
    * flag and the client defaults it to `false`).
    */
   deduplicated: boolean;
+
+  /**
+   * `true` when the server folded this trigger into an execution that was
+   * already queued for the job, because the job declares `coalesce` (#759).
+   * {@link executionId} is then that execution's id and nothing was enqueued.
+   *
+   * Distinct from {@link deduplicated} even though both mean "no new
+   * execution": a dedup hit can name an execution that started *before* this
+   * call, while a fold only ever names one that starts after it. Always
+   * `false` on servers without `coalesce` support (they omit the flag and the
+   * client defaults it to `false`).
+   */
+  coalesced: boolean;
 }
 
 /**
@@ -271,6 +284,7 @@ export class CroniqTriggerClient {
       executionId: parsed.execution_id,
       queued: parsed.queued,
       deduplicated: parsed.deduplicated ?? false,
+      coalesced: parsed.coalesced ?? false,
     };
   }
 }

@@ -49,7 +49,7 @@ _TRIGGER_REQUEST_KEYS = frozenset(
 _TRIGGER_EXPECT_KEYS = frozenset({"response", "error"})
 # Asserted by _run_call with `if "<key>" in expected` — an unrecognised key
 # here is the silent-drop case exactly, so it has to be rejected up front.
-_TRIGGER_RESPONSE_KEYS = frozenset({"execution_id", "queued", "deduplicated"})
+_TRIGGER_RESPONSE_KEYS = frozenset({"execution_id", "queued", "deduplicated", "coalesced"})
 
 
 @dataclass(slots=True)

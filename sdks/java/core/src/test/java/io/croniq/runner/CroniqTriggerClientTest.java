@@ -24,7 +24,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Wire-level coverage for {@link CroniqTriggerClient}: request shape
  * (snake_case, omission of unset optionals, auth header), response parsing
- * (including the forward-compatible {@code deduplicated} flag), and error
+ * (including the forward-compatible {@code deduplicated} and {@code coalesced}
+ * flags), and error
  * propagation. Mirrors the .NET SDK's {@code CroniqTriggerClientTests}; runs
  * the real client against a tiny in-process {@link HttpServer}.
  */
@@ -154,6 +155,31 @@ class CroniqTriggerClientTest {
 
         assertThat(result.deduplicated()).isTrue();
         assertThat(result.executionId()).isEqualTo("exec-1");
+    }
+
+    @Test
+    void missingCoalescedFlagDefaultsToFalse() {
+        // Every server released before the `coalesce` directive (#759).
+        server.respond(200, "{\"execution_id\":\"exec-1\",\"queued\":0,\"deduplicated\":false}");
+        CroniqTriggerClient client = client("croniq_trigger_key", null);
+
+        TriggerResult result = client.trigger("etl:data-sync");
+
+        assertThat(result.coalesced()).isFalse();
+    }
+
+    @Test
+    void coalescedFlagIsSurfaced() {
+        server.respond(200, "{\"execution_id\":\"exec-9\",\"queued\":2,\"deduplicated\":false,\"coalesced\":true}");
+        CroniqTriggerClient client = client("croniq_trigger_key", null);
+
+        TriggerResult result = client.trigger("soapneo:sync");
+
+        assertThat(result.coalesced()).isTrue();
+        // The two flags are not interchangeable: a fold names an execution that
+        // has not started, a dedup hit may name one that already has.
+        assertThat(result.deduplicated()).isFalse();
+        assertThat(result.executionId()).isEqualTo("exec-9");
     }
 
     @Test

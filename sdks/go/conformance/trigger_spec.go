@@ -59,4 +59,5 @@ type TriggerExpectResponse struct {
 	ExecutionID  *string `yaml:"execution_id"`
 	Queued       *int    `yaml:"queued"`
 	Deduplicated *bool   `yaml:"deduplicated"`
+	Coalesced    *bool   `yaml:"coalesced"`
 }
