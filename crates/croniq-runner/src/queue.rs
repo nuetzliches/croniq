@@ -120,6 +120,32 @@ impl WorkQueue {
         self.per_job_count.get(job_key).copied().unwrap_or(0)
     }
 
+    /// The first queued item for `job_key` that satisfies `pred`, without
+    /// removing it.
+    ///
+    /// The trigger fold uses this (`coalesce`, issue #759): a trigger looks
+    /// for an item of its own job that is still waiting and folds into it
+    /// instead of enqueuing another. Returning the *first* match keeps the
+    /// answer FIFO-stable — a burst of triggers all name the same execution,
+    /// which is the whole point of the collapse.
+    ///
+    /// Only queued items are visible here, and that is the forward-only
+    /// guarantee: `try_dequeue_for` removes an item and persists its claim
+    /// under the same write lock a fold decides under, so an execution that
+    /// has already started can never be found by this method.
+    ///
+    /// Linear, like [`Self::enqueue`]'s duplicate scan, and for the same
+    /// reason: the queue is small and this runs once per trigger.
+    pub fn find_for_job(
+        &self,
+        job_key: &str,
+        mut pred: impl FnMut(&WorkItem) -> bool,
+    ) -> Option<&WorkItem> {
+        self.items
+            .iter()
+            .find(|item| item.job_key == job_key && pred(item))
+    }
+
     /// Remove a specific execution by ID (e.g. when cancelled before dispatch).
     ///
     /// Returns `true` if an item was found and removed.
@@ -464,5 +490,47 @@ mod tests {
         let _ = q.drain();
         assert_eq!(q.count_for_job("billing:invoice"), 0);
         assert_eq!(q.count_for_job("etl:sync"), 0);
+    }
+
+    // ── find_for_job (issue #759) ─────────────────────────────────────────────
+
+    #[test]
+    fn find_for_job_returns_the_first_match_and_leaves_it_queued() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "soapneo:sync"));
+        q.enqueue(item_with_job("e2", "soapneo:sync"));
+
+        let found = q.find_for_job("soapneo:sync", |_| true);
+        assert_eq!(found.map(|i| i.execution_id.as_str()), Some("e1"));
+        // A fold reads, it does not consume: the item stays for the runner.
+        assert_eq!(q.len(), 2);
+        assert_eq!(q.count_for_job("soapneo:sync"), 2);
+    }
+
+    #[test]
+    fn find_for_job_ignores_other_jobs() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "etl:sync"));
+
+        assert!(q.find_for_job("soapneo:sync", |_| true).is_none());
+    }
+
+    #[test]
+    fn find_for_job_honours_the_predicate() {
+        // What makes the payload invariant work: a queued item of the right
+        // job that the predicate rejects is not a fold target.
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "soapneo:sync"));
+        q.enqueue(item_with_job("e2", "soapneo:sync"));
+
+        let found = q.find_for_job("soapneo:sync", |i| i.execution_id == "e2");
+        assert_eq!(found.map(|i| i.execution_id.as_str()), Some("e2"));
+        assert!(q.find_for_job("soapneo:sync", |_| false).is_none());
+    }
+
+    #[test]
+    fn find_for_job_on_an_empty_queue_is_none() {
+        let q = WorkQueue::new();
+        assert!(q.find_for_job("soapneo:sync", |_| true).is_none());
     }
 }

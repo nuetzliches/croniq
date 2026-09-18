@@ -116,6 +116,7 @@ const JOB: &[&str] = &[
     "singleton",
     "max_concurrent",
     "concurrency_group",
+    "coalesce",
     "tags",
     "run_on_register",
 ];
@@ -530,6 +531,14 @@ mod tests {
     }
 
     #[test]
+    fn coalesce_is_accepted_as_a_bare_job_directive() {
+        // Issue #759. Bare like `singleton` / `run_on_register` — presence is
+        // the whole signal, there is no value to tune.
+        let msgs = errors("job a:b { every 5 minutes\n singleton\n coalesce }");
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    #[test]
     fn typo_in_job_body_errors_with_suggestion() {
         let msgs = errors("job a:b { every day at 02:00\n timezon Europe/Vienna }");
         assert_eq!(msgs.len(), 1, "got: {msgs:?}");
@@ -544,7 +553,7 @@ mod tests {
         let msgs = errors("job a:b { every 5 minutes\n frobnicate yes }");
         assert_eq!(msgs.len(), 1, "got: {msgs:?}");
         assert!(
-            msgs[0].contains("(known: catch_up, concurrency_group, description,"),
+            msgs[0].contains("(known: catch_up, coalesce, concurrency_group, description,"),
             "got: {}",
             msgs[0]
         );

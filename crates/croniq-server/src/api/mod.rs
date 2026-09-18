@@ -63,7 +63,7 @@ use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
 use crate::watchdog::WatchdogCounters;
-use croniq_config::compile::{CalendarConfig, JobConfig};
+use croniq_config::compile::{COALESCE_METADATA_KEY, CalendarConfig, JobConfig};
 use croniq_store::models::{Execution, ExecutionFilter, ExecutionState, MaintenanceState};
 
 /// Default maximum time a poll request will block waiting for work.
@@ -1536,6 +1536,11 @@ async fn handle_delete_runner(
 /// duplicate. The check-then-insert is best-effort (two truly concurrent
 /// identical triggers may both pass the lookup): the endpoint dedups
 /// at-least-once producers, it is NOT a strict exactly-once guarantee.
+///
+/// Jobs that declare `coalesce` additionally fold a burst of bare signals
+/// into at most one follow-up run (issue #759) — see [`is_bare_signal`] and
+/// [`item_is_foldable`] for the two halves of that decision, and the block
+/// marked "trigger fold" below for where it happens.
 async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
@@ -1553,6 +1558,7 @@ async fn handle_trigger(
                 execution_id: String::new(),
                 queued: 0,
                 deduplicated: false,
+                coalesced: false,
             }),
         )
     };
@@ -1620,6 +1626,7 @@ async fn handle_trigger(
                         execution_id: existing.id.to_string(),
                         queued,
                         deduplicated: true,
+                        coalesced: false,
                     }),
                 );
             }
@@ -1647,6 +1654,62 @@ async fn handle_trigger(
         None
     };
 
+    // ── Trigger fold (`coalesce`, issue #759) ────────────────────────────────
+    //
+    // Two things have to be true before a trigger may collapse into another
+    // execution: the job opted in, and this particular call is a bare signal
+    // rather than an instruction about one item. The first is read off the
+    // job's compiled metadata rather than its typed field, because that is
+    // the same stamp the fold *target* is recognised by below — one concept,
+    // one lookup, and it holds for any job whose metadata carries the key.
+    let job_coalesces = dsl_job
+        .as_ref()
+        .is_some_and(|j| croniq_config::compile::job_declares_coalesce(&j.metadata));
+    let bare_signal = is_bare_signal(&req);
+    let may_fold = job_coalesces && bare_signal;
+
+    // The lock is taken here, before the depth check, and held through the
+    // store insert and the enqueue below. That is what makes the collapse
+    // exact rather than probabilistic: without it, twenty concurrent triggers
+    // could all miss the fold lookup and all enqueue a follow-up, which is
+    // the pile-up the directive exists to prevent. `try_dequeue_for` already
+    // holds this same lock across `claim_execution`, so a store call under it
+    // is the established shape here — and it is the very reason a fold can
+    // never land on a started execution: the claim that removes an item from
+    // the queue serialises against this guard.
+    //
+    // Only on the fold path. A job without `coalesce` keeps the read-then-
+    // write it has always had, including its benign over-admit race at the
+    // cap — tightening that here would reject triggers that succeed today.
+    let queue_guard = if may_fold {
+        Some(state.runner.queue.write().await)
+    } else {
+        None
+    };
+
+    if let Some(ref q) = queue_guard
+        && let Some(target) = q.find_for_job(&req.job_key, item_is_foldable)
+    {
+        let execution_id = target.execution_id.clone();
+        let queued = q.len();
+        drop(queue_guard);
+        tracing::info!(
+            job_key = %req.job_key,
+            execution_id = %execution_id,
+            "trigger coalesced into a queued execution (#759) — nothing enqueued"
+        );
+        return (
+            StatusCode::OK,
+            HeaderMap::new(),
+            Json(TriggerResponse {
+                execution_id,
+                queued,
+                deduplicated: false,
+                coalesced: true,
+            }),
+        );
+    }
+
     // Per-job queue-overflow cap (#299). The scheduler bounds *scheduled*
     // fires at `max_queue_depth` (per-job override, default 10 — see
     // `scheduler::tick`); a manual `POST /v1/trigger` must honour the same cap
@@ -1659,7 +1722,13 @@ async fn handle_trigger(
         .as_ref()
         .and_then(|j| j.max_queue_depth)
         .unwrap_or(10) as usize;
-    let queued_for_job = state.runner.queue.read().await.count_for_job(&req.job_key);
+    let queued_for_job = match queue_guard {
+        // Already holding the write lock for the fold — reuse it rather than
+        // dropping it and racing to take a read lock we would have to give up
+        // again for the enqueue.
+        Some(ref q) => q.count_for_job(&req.job_key),
+        None => state.runner.queue.read().await.count_for_job(&req.job_key),
+    };
     if queued_for_job >= max_queue_depth {
         tracing::warn!(
             job_key = %req.job_key,
@@ -1682,6 +1751,7 @@ async fn handle_trigger(
                 execution_id: String::new(),
                 queued: 0,
                 deduplicated: false,
+                coalesced: false,
             }),
         );
     }
@@ -1718,6 +1788,17 @@ async fn handle_trigger(
             }
             metadata.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
         }
+    }
+    // The payload invariant, enforced on the item this trigger creates rather
+    // than only on the trigger itself (issue #759): a call that says something
+    // specific about *this* run must not later absorb someone else's signal.
+    // Dropping the stamp is what makes that structural — a later trigger's
+    // fold lookup simply does not see this item, so there is no second place
+    // the rule can be forgotten. A bare signal keeps the stamp it inherited
+    // from the job, which is how the follow-up run this trigger may be about
+    // to enqueue becomes the target the rest of the burst folds into.
+    if !bare_signal {
+        metadata.remove(COALESCE_METADATA_KEY);
     }
     // Runner capabilities: an explicit request value overrides, an omitted one
     // inherits the DSL job's `runner { require … }` (issue #549). Both fields
@@ -1838,10 +1919,20 @@ async fn handle_trigger(
         is_ephemeral: false,
     };
 
-    let queued = {
-        let mut q = state.runner.queue.write().await;
-        q.enqueue(item);
-        q.len()
+    let queued = match queue_guard {
+        // The fold path has held this lock since before the depth check, so
+        // the miss that sent us here and the enqueue that answers it are one
+        // atomic step: a concurrent trigger either folds into this item or
+        // waits for it to exist. Exactly one follow-up, never two.
+        Some(mut q) => {
+            q.enqueue(item);
+            q.len()
+        }
+        None => {
+            let mut q = state.runner.queue.write().await;
+            q.enqueue(item);
+            q.len()
+        }
     };
     state.runner.work_notify.notify_waiters();
 
@@ -1852,7 +1943,35 @@ async fn handle_trigger(
             execution_id,
             queued,
             deduplicated: false,
+            coalesced: false,
         }),
+    )
+}
+
+/// Whether a queued work item may absorb a trigger (`coalesce`, issue #759).
+///
+/// A thin adapter over [`croniq_config::compile::metadata_is_foldable`] so it
+/// can be passed to `WorkQueue::find_for_job` as a predicate over items. The
+/// rule itself lives beside the metadata key, because the MCP `job_trigger`
+/// tool folds by the same one (issue #769) and two copies of it would be two
+/// places to get the payload invariant wrong.
+fn item_is_foldable(item: &WorkItem) -> bool {
+    croniq_config::compile::metadata_is_foldable(&item.metadata)
+}
+
+/// Whether a trigger is a pure signal — "there is work, run soon" — and may
+/// therefore be collapsed into another execution (issue #759).
+///
+/// Adapts this endpoint's request shape onto
+/// [`croniq_config::compile::is_bare_trigger_signal`], which documents why
+/// `require` / `prefer` / `timeout` count against it and why
+/// `idempotency_key` does not.
+fn is_bare_signal(req: &TriggerRequest) -> bool {
+    croniq_config::compile::is_bare_trigger_signal(
+        &req.metadata,
+        &req.require,
+        &req.prefer,
+        req.timeout.as_deref(),
     )
 }
 
@@ -4744,6 +4863,442 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("1"),
             "__max_concurrent must be present in the triggered WorkItem metadata"
+        );
+    }
+
+    // ── coalesce: collapsing a burst of triggers (issue #759) ────────────────
+
+    /// A server whose `dsl_jobs` are compiled from `dsl`, sharing the
+    /// store-backed fixture the concurrency-guard tests use.
+    async fn make_dsl_state(dsl: &str) -> (Arc<ServerState>, DynStore) {
+        let loaded = crate::loader::load_str(dsl).unwrap();
+        let (mut state, store, _rx) = make_guard_state();
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.dsl_jobs = Some(Arc::new(tokio::sync::RwLock::new(loaded.runtime.jobs)));
+        }
+        // `_rx` is dropped here on purpose: these tests never complete an
+        // execution, so nothing is ever sent on the completion channel.
+        (state, store)
+    }
+
+    /// `POST /v1/trigger` with nothing but a job key — the bare signal the
+    /// directive is about.
+    async fn trigger_signal(state: &Arc<ServerState>, job_key: &str) -> serde_json::Value {
+        post_json(
+            server_router(Arc::clone(state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": job_key }),
+        )
+        .await
+    }
+
+    const COALESCING_JOB: &str = r#"
+        job soapneo:sync {
+            every 5 minutes
+            singleton
+            coalesce
+        }
+    "#;
+
+    #[tokio::test]
+    async fn coalesce_folds_a_burst_into_one_queued_execution() {
+        // The headline acceptance case: a burst of bare signals against a
+        // job with nothing queued produces one execution, not twenty.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let first = trigger_signal(&state, "soapneo:sync").await;
+        let first_id = first["execution_id"].as_str().unwrap().to_string();
+        assert_eq!(
+            first["coalesced"].as_bool(),
+            Some(false),
+            "the trigger that finds an empty queue enqueues: {first}"
+        );
+
+        for i in 0..19 {
+            let resp = trigger_signal(&state, "soapneo:sync").await;
+            assert_eq!(
+                resp["coalesced"].as_bool(),
+                Some(true),
+                "trigger #{i} of the burst must fold: {resp}"
+            );
+            assert_eq!(
+                resp["execution_id"].as_str().unwrap(),
+                first_id,
+                "a fold must answer with the execution that absorbed it"
+            );
+            assert_eq!(
+                resp["deduplicated"].as_bool(),
+                Some(false),
+                "a fold is not an idempotency-key dedup hit: {resp}"
+            );
+        }
+
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            1,
+            "twenty signals must leave exactly one queued execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn coalesce_enqueues_exactly_one_follow_up_behind_a_claimed_execution() {
+        // The scenario from the issue: one execution in flight, a burst
+        // arrives, and at most one follow-up run may result.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        // Put one execution in flight by letting a runner claim it.
+        let in_flight = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let poll = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+        assert_eq!(
+            poll["work"].as_array().unwrap()[0]["execution_id"]
+                .as_str()
+                .unwrap(),
+            in_flight,
+            "the first trigger should have been dispatched: {poll}"
+        );
+        assert_eq!(state.runner.queue.read().await.len(), 0);
+
+        // The burst. The first signal has nothing queued to fold into, so it
+        // enqueues the one follow-up; every later one folds into that.
+        let follow_up = trigger_signal(&state, "soapneo:sync").await;
+        let follow_up_id = follow_up["execution_id"].as_str().unwrap().to_string();
+        assert_eq!(follow_up["coalesced"].as_bool(), Some(false));
+        assert_ne!(
+            follow_up_id, in_flight,
+            "a trigger must never be answered with an execution that already started"
+        );
+
+        for _ in 0..19 {
+            let resp = trigger_signal(&state, "soapneo:sync").await;
+            assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
+            assert_eq!(resp["execution_id"].as_str().unwrap(), follow_up_id);
+        }
+
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            1,
+            "the in-flight run plus exactly one follow-up — no more"
+        );
+    }
+
+    #[tokio::test]
+    async fn coalesce_never_folds_into_a_claimed_execution() {
+        // Forward-only: once the queued item is claimed, the next signal gets
+        // its own execution rather than the running one's id.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let first = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let _ = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            }),
+        )
+        .await;
+
+        let after = trigger_signal(&state, "soapneo:sync").await;
+        assert_eq!(
+            after["coalesced"].as_bool(),
+            Some(false),
+            "nothing is queued any more, so there is nothing to fold into: {after}"
+        );
+        assert_ne!(after["execution_id"].as_str().unwrap(), first);
+    }
+
+    #[tokio::test]
+    async fn a_trigger_carrying_metadata_is_never_folded() {
+        // The payload invariant: a parameterised trigger names the item it is
+        // about, so it always gets its own run even here.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let signal = trigger_signal(&state, "soapneo:sync").await;
+        let signal_id = signal["execution_id"].as_str().unwrap().to_string();
+
+        let parameterised = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": "42" } }),
+        )
+        .await;
+        assert_eq!(
+            parameterised["coalesced"].as_bool(),
+            Some(false),
+            "a trigger with a payload must not fold: {parameterised}"
+        );
+        assert_ne!(parameterised["execution_id"].as_str().unwrap(), signal_id);
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_parameterised_trigger_is_never_a_fold_target() {
+        // The other half of the invariant, and the one a config flag could
+        // not express: the item a parameterised trigger created must not
+        // absorb a later signal, or the signal's work would ride on a run
+        // that was about something else.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let parameterised = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": "42" } }),
+        )
+        .await;
+        let parameterised_id = parameterised["execution_id"].as_str().unwrap().to_string();
+
+        // Its work item must not carry the stamp a fold looks for.
+        {
+            let q = state.runner.queue.read().await;
+            let item = q.peek().unwrap();
+            assert_eq!(item.execution_id, parameterised_id);
+            assert!(
+                item.metadata.get(COALESCE_METADATA_KEY).is_none(),
+                "a parameterised trigger's item must not be foldable: {:?}",
+                item.metadata
+            );
+        }
+
+        let signal = trigger_signal(&state, "soapneo:sync").await;
+        assert_eq!(
+            signal["coalesced"].as_bool(),
+            Some(false),
+            "a signal must not fold into a parameterised run: {signal}"
+        );
+        assert_ne!(signal["execution_id"].as_str().unwrap(), parameterised_id);
+    }
+
+    #[tokio::test]
+    async fn a_trigger_overriding_routing_or_timeout_is_not_folded() {
+        // Narrower than the issue's rule and deliberately so: each of these
+        // says something specific about the run, and a fold would drop it
+        // with nothing afterwards to show that it was ever asked for.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let signal_id = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        for body in [
+            serde_json::json!({ "job_key": "soapneo:sync", "require": ["soapneo"] }),
+            serde_json::json!({ "job_key": "soapneo:sync", "prefer": ["fast"] }),
+            serde_json::json!({ "job_key": "soapneo:sync", "timeout": "30m" }),
+        ] {
+            let resp = post_json(
+                server_router(Arc::clone(&state)),
+                "/v1/trigger",
+                body.clone(),
+            )
+            .await;
+            assert_eq!(
+                resp["coalesced"].as_bool(),
+                Some(false),
+                "{body} must not fold: {resp}"
+            );
+            assert_ne!(resp["execution_id"].as_str().unwrap(), signal_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_blank_timeout_still_counts_as_a_bare_signal() {
+        // `""` is treated as absent everywhere else on this endpoint (issue
+        // #553), so it must not quietly disable the fold either.
+        let (state, _store) = make_dsl_state(COALESCING_JOB).await;
+
+        let first_id = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let resp = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "soapneo:sync", "timeout": "", "metadata": {} }),
+        )
+        .await;
+        assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
+        assert_eq!(resp["execution_id"].as_str().unwrap(), first_id);
+    }
+
+    #[tokio::test]
+    async fn coalesce_folds_into_a_queued_scheduled_fire() {
+        // The stamp travels on the job's compiled metadata, so a scheduled
+        // fire is a fold target too — which is the case that matters most:
+        // the event arrives while the tick's run is still waiting, and that
+        // run has not read the work list yet.
+        let (state, store) = make_dsl_state(COALESCING_JOB).await;
+
+        // A scheduled fire, built the way the scheduler builds one.
+        let scheduled_id = uuid::Uuid::new_v4();
+        let now = Utc::now();
+        let job = state.dsl_jobs.as_ref().unwrap().read().await[0].clone();
+        let metadata = croniq_bridge::dispatch::job_execution_metadata(&job);
+        assert!(
+            metadata.contains_key(COALESCE_METADATA_KEY),
+            "a scheduled fire of a coalescing job must carry the stamp: {metadata:?}"
+        );
+        store
+            .create_execution(&Execution {
+                id: scheduled_id,
+                job_key: "soapneo:sync".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: metadata.clone(),
+                created_at: now,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: scheduled_id.to_string(),
+            job_key: "soapneo:sync".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::to_value(&metadata).unwrap(),
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+
+        let resp = trigger_signal(&state, "soapneo:sync").await;
+        assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
+        assert_eq!(
+            resp["execution_id"].as_str().unwrap(),
+            scheduled_id.to_string(),
+            "the signal must fold into the queued scheduled fire"
+        );
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn without_coalesce_every_trigger_still_enqueues() {
+        // The regression guard for "unchanged without the directive": the
+        // same burst against a job that only declares `singleton`.
+        let dsl = r#"
+            job soapneo:sync {
+                every 5 minutes
+                singleton
+            }
+        "#;
+        let (state, _store) = make_dsl_state(dsl).await;
+
+        let mut ids = HashSet::new();
+        for _ in 0..5 {
+            let resp = trigger_signal(&state, "soapneo:sync").await;
+            assert_eq!(
+                resp["coalesced"].as_bool(),
+                Some(false),
+                "a job without `coalesce` must never fold: {resp}"
+            );
+            ids.insert(resp["execution_id"].as_str().unwrap().to_string());
+        }
+        assert_eq!(ids.len(), 5, "each trigger gets its own execution");
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn coalesce_still_honours_the_queue_overflow_cap() {
+        // The fold decides whether an item is *created*; it does not exempt
+        // the job from `max_queue_depth`. With the fold in play the cap is
+        // only reachable through items a signal cannot fold into, so this
+        // pins that those two still compose.
+        let dsl = r#"
+            job soapneo:sync {
+                every 5 minutes
+                max_queue_depth 2
+                coalesce
+            }
+        "#;
+        let (state, _store) = make_dsl_state(dsl).await;
+
+        // Two parameterised triggers: neither folds, neither is foldable.
+        for i in 0..2 {
+            let (status, _) = post_json_status(
+                server_router(Arc::clone(&state)),
+                "/v1/trigger",
+                serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": i } }),
+            )
+            .await;
+            assert_eq!(status, 200);
+        }
+
+        // A bare signal now finds nothing foldable and hits the full queue.
+        let (status, _) = post_json_status(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "soapneo:sync" }),
+        )
+        .await;
+        assert_eq!(
+            status, 429,
+            "`coalesce` must not turn off the per-job queue cap"
+        );
+        assert_eq!(
+            state
+                .runner
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            2
         );
     }
 

@@ -78,6 +78,17 @@ class TriggerResult:
     seen; :attr:`execution_id` then refers to that existing execution. Always
     ``False`` on servers without idempotency-key support (#279)."""
 
+    coalesced: bool = False
+    """``True`` when the server folded this trigger into an execution that was
+    already queued for the job, because the job declares ``coalesce`` (#759);
+    :attr:`execution_id` then refers to that execution and nothing was
+    enqueued.
+
+    Distinct from :attr:`deduplicated` even though both mean "no new
+    execution": a dedup hit can name an execution that started *before* this
+    call, while a fold only ever names one that starts after it. Always
+    ``False`` on servers without ``coalesce`` support."""
+
 
 class TriggerClient:
     """Async producer client over ``POST /v1/trigger``.
@@ -205,4 +216,5 @@ class TriggerClient:
             execution_id=parsed.execution_id,
             queued=parsed.queued,
             deduplicated=parsed.deduplicated,
+            coalesced=parsed.coalesced,
         )

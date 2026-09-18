@@ -1694,6 +1694,213 @@ eligible members. Where ordering is a hard requirement, keep the members'
 runner-pool recipe, whose single one-slot runner enforces order structurally
 rather than by convention.
 
+## Event triggers next to a periodic job
+
+A job on a schedule that consumers also fire out of band — a webhook lands, a
+row changes, and something calls `POST /v1/trigger` to have the work done now
+instead of at the next tick:
+
+```hcl
+job soapneo:sync {
+  every 1 minute
+  singleton
+  runner { require soapneo }
+}
+```
+
+What follows is what happens when the schedule and the trigger collide, and
+which knobs are the right ones when many consumers trigger at once.
+
+### `singleton` gates dispatch, it does not suppress fires
+
+The guard is not "do not fire again". The scheduler keeps firing every minute
+and keeps writing `queued` execution rows; only the *dispatch* is held back,
+against a count of `claimed` rows taken from the store and therefore shared
+across every runner. The gate does not distinguish a scheduled fire from a
+manual one — both carry the same `__max_concurrent` out of the job's compiled
+metadata.
+
+A blocked item is **skipped in place**: it keeps its queue position rather than
+being dropped or starving the items behind it (`dequeue_for_where`, issue
+#278). And every processed completion calls `work_notify.notify_waiters()`
+precisely because a `claimed → terminal` transition frees a slot, so a runner
+sitting in a long poll re-evaluates at once instead of waiting out its poll
+timeout.
+
+So the default is already the behaviour you want: a trigger arriving mid-run
+queues behind the run and starts a round-trip after it finishes. The guard
+never cancels it.
+
+### What the wait actually costs
+
+The queue is FIFO and the trigger joins at the back:
+
+```
+wait ≈ remaining run time + (scheduled fires already queued × run duration)
+```
+
+With a two-second job on a one-minute schedule the queue is empty in practice
+and the event run starts almost immediately. The formula only bites when a run
+can outlast its own interval: the backlog then grows until `max_queue_depth`
+(default 10), after which the scheduler logs `skipping execution — queue
+overflow` and a trigger is answered `429` with a `Retry-After`. That is the
+signal to stretch the schedule and let the trigger be the fast path, with the
+schedule demoted to a reconciler for missed signals.
+
+Keep the job's `timeout` tight for the same reason. The slot is held for as
+long as an execution stays `claimed`, so an unbounded downstream call turns
+"the event run waits two seconds" into "the event run waits until the reaper
+gets to it". A manual trigger without `timeout` inherits the job's; with
+neither, it is five minutes.
+
+### Four ways the event run disappears anyway
+
+1. **An `idempotency_key` that is stable per entity.** The dedup lookup matches
+   `queued` and `claimed` rows *and* anything created within
+   `trigger_dedup_window` (default 10 m). Two consequences, both silent: a
+   trigger during a run is answered with the id of an execution that started
+   *before* the event and therefore cannot contain it, and a trigger minutes
+   after a finished run does nothing at all. Use an event-scoped key (the event
+   id) or none — the key is for deduplicating a retrying producer, not for
+   collapsing distinct events.
+2. **`max_queue_depth`** — see above; the trigger is rejected, not deferred.
+3. **`ephemeral`** — `singleton` is rejected there outright (issue #302), and
+   its replace-latest semantics apply only to scheduled fires: the trigger path
+   always enqueues a persisted, non-ephemeral item, while `ephemeral` forces
+   `max_queue_depth` to 1, so the second trigger gets a `429`.
+4. **A `queue_ttl` shorter than the backlog** — the watchdog cancels queued
+   executions once they exceed it.
+
+### Many producers, one work list
+
+Now the burst: twenty participants produce the same signal within a minute,
+and the job drains a work list rather than processing one named item. One run
+per burst is the goal. None of these gets there:
+
+- **`max_queue_depth 1`** collapses by rejecting. It keeps the oldest rather
+  than the newest, reports the collapse as an error, and races — the queued
+  item can be claimed between the depth check and the commit of the last event,
+  which is then only picked up at the next scheduled tick.
+- **A coarse `idempotency_key`** collapses for real, but backwards, into
+  running and recently finished executions. It loses exactly the events that
+  arrive during a run.
+- **A debounce in the consumer** collapses per process. Twenty producers each
+  debounce their own stream and still send twenty triggers.
+
+The server-side answer is `coalesce` (issue #759), described in the next
+section. Without it — or alongside it — the one consumer-side collapse that
+survives distribution is to make the trigger conditional on the work list's
+`0 → 1` transition: trigger only when the insert took the list from empty to
+non-empty, in the same transaction as the event itself. That collapse works
+because every producer sees the same table. The job then reads the work list
+**at start**, never at enqueue, so a run that is still queued covers every
+event that arrives before it is claimed — the same forward-only property the
+guard gives you, one layer up.
+
+Around either: keep the job `singleton` and `queued`, `max_queue_depth` at 2–3
+as a net, no `idempotency_key`, a tight `timeout`, and let the schedule tick
+slowly.
+
+### `coalesce`: one run per burst
+
+```hcl
+job soapneo:sync {
+  every 5 minutes
+  singleton
+  coalesce
+  runner { require soapneo }
+}
+```
+
+A trigger on a job that declares `coalesce` folds into an execution of that
+job that is **already queued and not yet claimed**, instead of enqueuing its
+own. What the operator gets is trailing-edge collapsing with no timer and no
+new scheduler state:
+
+| State when the trigger arrives | Behaviour |
+| --- | --- |
+| Nothing queued, nothing in flight | Enqueue, exactly as without the directive |
+| An execution is **queued** | Fold into it: `200`, its `execution_id`, `coalesced: true` |
+| An execution is **claimed**, nothing queued | Enqueue one follow-up; the rest of the burst folds into that |
+
+So twenty events during a run produce at most two runs: the one in flight,
+plus one that starts after it. Latency is unchanged — the follow-up starts as
+soon as the slot frees.
+
+The fold is **forward-only**, and structurally so rather than by a rule
+someone has to remember. Only queued items are candidates, and an item leaves
+the queue and has its claim persisted under the same lock the fold decides
+under. A trigger can therefore never be answered with an execution that has
+already started — which is exactly the failure a coarse `idempotency_key` has,
+and the reason that knob is not the answer here.
+
+It composes with the guards rather than replacing them. `coalesce` decides
+whether an item is *created*; `singleton` / `max_concurrent` and
+`concurrency_group` decide when it is *dispatched*. A job may declare
+`coalesce` without a guard — the fold then happens against the queue only,
+since nothing bounds the in-flight count. `max_queue_depth` still applies, so
+the directive is a collapse, not an exemption.
+
+Scheduled fires are fold *targets* but are never themselves folded: the
+scheduler keeps firing on its own schedule. A trigger arriving while a tick's
+run is still queued folds into it, because that run has not read the work list
+yet.
+
+Two things it deliberately does not do. It does not accumulate the collapsed
+payloads into a list — that would change the shape the job sees. And it is
+never inferred: nothing on the server can tell whether two payloads mean the
+same thing, so it is an opt-in declaration on the job.
+
+`ephemeral` jobs reject it at validation time, for the reason #302 gives for
+the concurrency guard: they keep at most one queued fire, which the next
+scheduled one replaces outright, while the trigger path enqueues a persisted
+item regardless.
+
+The MCP `job_trigger` tool folds by the same rule, sharing the predicates that
+decide it, so an agent firing a job in a loop collapses exactly as an HTTP
+producer does. Its answer is prose rather than a response body, and it names
+the execution that absorbed the call.
+
+The response field is `coalesced`, distinct from `deduplicated`. Both mean
+"no new execution", but `deduplicated` can hand back a run that started before
+the event, and `coalesced` never does. A producer that retries on one and not
+the other needs to tell them apart. SDK support for the field lands per
+language as a follow-up; a client that does not know it yet still sees the
+absorbing `execution_id` and a `200`.
+
+### Parameterised triggers are never collapsible
+
+A trigger's `metadata` is arbitrary JSON, forwarded to the runner and persisted
+on the execution row, so a trigger can name the item it is about. That is the
+dividing line:
+
+- **Parameterless trigger** — "there is work, run soon". Two of them are
+  interchangeable, so collapsing them loses nothing.
+- **Parameterised trigger** — "process *this*". Every one must produce its own
+  run; collapsing two drops work that nothing afterwards can show.
+
+Croniq does not infer which kind a job receives, and deliberately so: nothing
+on the server can tell whether two payloads mean the same thing. Whichever
+collapse you use — the `0 → 1` recipe above, or `coalesce` — applies to the
+parameterless case only.
+
+`coalesce` enforces that itself, and this is the part an operator cannot get
+wrong by setting a flag: **a trigger carrying caller `metadata` is never
+folded**, on any job. It is not eligible to fold, and the execution it creates
+is not eligible to absorb a later signal either — so the parameterised run
+never ends up carrying work it was not asked to do.
+
+Croniq holds three more caller fields to the same rule, though they are not
+payload: a trigger that sets `require`, `prefer` or `timeout` is not folded
+either. Each says something specific about the run being asked for, and a fold
+would drop it silently — an explicit `require` would end up routed to whatever
+runner the queued item was bound for. The burst this directive exists for
+sends a job key and nothing else, so the narrower rule costs it nothing.
+
+`idempotency_key` is not on that list. It identifies the call, not the run, and
+its own dedup lookup has already run and missed by the time a fold is
+considered.
+
 ## Orphaned claims (issue #374)
 
 A `claimed` execution whose runner process vanished is recovered by

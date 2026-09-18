@@ -133,7 +133,7 @@ public final class CroniqTriggerClient {
         } catch (IOException e) {
             throw new CroniqTriggerException("Could not parse /v1/trigger response", e);
         }
-        return new TriggerResult(parsed.executionId(), parsed.queued(), parsed.deduplicated());
+        return new TriggerResult(parsed.executionId(), parsed.queued(), parsed.deduplicated(), parsed.coalesced());
     }
 
     private static String buildAuthHeader(CroniqClientOptions options) {

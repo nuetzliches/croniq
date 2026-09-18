@@ -587,7 +587,10 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
 /// executions are never persisted, so the claim-time concurrency guard — which
 /// counts `Claimed` execution rows in the store — can never observe an
 /// in-flight ephemeral run. `singleton` / `max_concurrent` therefore compiles
-/// clean but is silently inert on an ephemeral job. `default_ephemeral` is the
+/// clean but is silently inert on an ephemeral job. The bare `coalesce`
+/// directive (issue #759) is checked here too, for the same ephemeral
+/// combination and no other reason — it has no argument to validate.
+/// `default_ephemeral` is the
 /// running `defaults { execution_mode … }` baseline; the effective mode is
 /// resolved exactly as `compile_job` does (default → schedule prefix →
 /// `execution_mode` directive).
@@ -603,6 +606,9 @@ fn validate_concurrency(
     // ephemeral-combo diagnostic so it points at the offending directive.
     let mut guard: Option<(&str, SourceSpan)> = None;
     let mut group_ref: Option<SourceSpan> = None;
+    // Span of the bare `coalesce` directive (issue #759), for the same
+    // ephemeral-combo diagnostic.
+    let mut coalesce_ref: Option<SourceSpan> = None;
 
     for dob in &job.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
@@ -676,6 +682,11 @@ fn validate_concurrency(
                     },
                 }
             }
+            // Issue #759: bare, so there is nothing to check about the
+            // directive itself — only the combination below.
+            "coalesce" => {
+                coalesce_ref.get_or_insert(d.key.span.into());
+            }
             // Issue #546: a job's reference to a shared budget. The
             // per-job guard above and this one compose — a job may cap
             // itself *and* draw on a group — so this arm adds its own
@@ -730,6 +741,30 @@ fn validate_concurrency(
                  executions are not persisted, so they are blocked by the group's budget without \
                  ever counting toward it. Use `queued` (the default) for a job that shares a \
                  budget, or drop `concurrency_group`.",
+                job.key.raw
+            ),
+            span,
+        });
+    }
+
+    // Issue #759: `coalesce` folds a trigger into a queued item, and an
+    // ephemeral job has at most one — `max_queue_depth` is forced to 1 — which
+    // the next scheduled fire replaces wholesale. Meanwhile the trigger path
+    // enqueues a *persisted*, non-ephemeral item whatever the job's mode says,
+    // so the fold would run against something the declared mode does not
+    // describe. Rejected for the same reason #302 rejects the guard: an
+    // operator who writes it means the collapse, and would get neither it nor
+    // a word about why.
+    if let Some(span) = coalesce_ref
+        && job_is_ephemeral(job, default_ephemeral)
+    {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "`coalesce` has no effect on the `ephemeral` job '{}': a trigger folds into a \
+                 queued execution, and ephemeral jobs keep at most one queued fire, which the \
+                 next scheduled one replaces outright. Use `queued` (the default) for a job \
+                 whose triggers should collapse, or drop `coalesce`.",
                 job.key.raw
             ),
             span,
@@ -1533,6 +1568,63 @@ mod tests {
         assert!(
             !has_ephemeral_guard_error(&diags),
             "execution_mode queued must un-reject the guard, got: {diags:?}"
+        );
+    }
+
+    // ── ephemeral + coalesce (issue #759) ─────────────────────────────────────
+
+    /// True when a diagnostic is the ephemeral rejection naming `coalesce`.
+    fn has_ephemeral_coalesce_error(diags: &[Diagnostic]) -> bool {
+        diags.iter().any(|d| {
+            d.severity == Severity::Error
+                && d.message
+                    .contains("`coalesce` has no effect on the `ephemeral` job")
+        })
+    }
+
+    #[test]
+    fn ephemeral_prefix_with_coalesce_errors() {
+        let diags = validate_src(r#"job beat:tick { ephemeral every 1 minute; coalesce }"#);
+        assert!(
+            has_ephemeral_coalesce_error(&diags),
+            "coalesce on an ephemeral job must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_default_with_coalesce_errors() {
+        let diags = validate_src(
+            r#"
+            defaults { execution_mode ephemeral }
+            job beat:tick { every 1 minute; coalesce }
+        "#,
+        );
+        assert!(
+            has_ephemeral_coalesce_error(&diags),
+            "coalesce on a defaults-ephemeral job must be rejected, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn queued_with_coalesce_and_singleton_is_valid() {
+        // The combination the directive exists for: a singleton job whose
+        // triggers collapse. Neither guard may reject it.
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; singleton; coalesce }"#);
+        assert!(
+            errors(&diags).is_empty(),
+            "singleton + coalesce on a queued job must validate clean, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn coalesce_without_singleton_is_valid() {
+        // `coalesce` does not require a concurrency guard: it decides whether
+        // an item is created, the guard decides when it is dispatched. On an
+        // unguarded job the fold simply happens against the queue only.
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; coalesce }"#);
+        assert!(
+            errors(&diags).is_empty(),
+            "coalesce alone must validate clean, got: {diags:?}"
         );
     }
 

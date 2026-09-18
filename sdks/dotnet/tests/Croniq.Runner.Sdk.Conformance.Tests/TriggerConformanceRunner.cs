@@ -133,6 +133,13 @@ internal static class TriggerConformanceRunner
                 wantDedup == actual.Deduplicated,
                 $"trigger({jobKey}): expected deduplicated={wantDedup} but got {actual.Deduplicated}");
         }
+
+        if (expected.Coalesced is { } wantCoalesced)
+        {
+            Assert.True(
+                wantCoalesced == actual.Coalesced,
+                $"trigger({jobKey}): expected coalesced={wantCoalesced} but got {actual.Coalesced}");
+        }
     }
 
     private static void AssertExpectations(

@@ -1003,6 +1003,11 @@ pub fn job_config_from_definition(
         // limit travel in metadata, and a `concurrency_group` block lives in
         // the Croniqfile — an API-registered job has none to reference.
         concurrency_group: None,
+        // And for the trigger fold (issue #759): `coalesce` is a Croniqfile
+        // directive, and the server recognises a foldable item by its
+        // `__coalesce` metadata stamp — so an API-registered job that wants
+        // the fold carries it there, exactly like `__max_concurrent`.
+        coalesce: false,
         tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).
@@ -1074,6 +1079,11 @@ pub fn job_config_from_job_def(
         // limit travel in metadata, and a `concurrency_group` block lives in
         // the Croniqfile — an API-registered job has none to reference.
         concurrency_group: None,
+        // And for the trigger fold (issue #759): `coalesce` is a Croniqfile
+        // directive, and the server recognises a foldable item by its
+        // `__coalesce` metadata stamp — so an API-registered job that wants
+        // the fold carries it there, exactly like `__max_concurrent`.
+        coalesce: false,
         tags: job_def.tags.clone(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).

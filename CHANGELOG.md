@@ -6,7 +6,101 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP `job_trigger` tool honours `coalesce`**
+  ([#769](https://github.com/nuetzliches/croniq/issues/769)). It has its own
+  enqueue path, so the fold that landed with
+  [#759](https://github.com/nuetzliches/croniq/issues/759) passed it by: an
+  agent firing a job in a loop still queued one run per call, on a job whose
+  configuration says otherwise.
+
+  Worse than merely missing the feature. The tool stamped the job's compiled
+  metadata onto every item it created, `__coalesce` included, so its
+  executions *were* fold targets for HTTP triggers while it never folded into
+  anything itself. The two paths disagreed about the same directive, and a
+  parameterised MCP fire could absorb an unrelated signal.
+
+  Both now share the predicates that decide a fold
+  (`job_declares_coalesce`, `metadata_is_foldable`, `is_bare_trigger_signal`
+  in `croniq-config`), rather than carrying two copies of a rule that has to
+  match. The payload invariant comes along: a `job_trigger` call carrying
+  `metadata` — or overriding `require`, `prefer` or `timeout` — neither folds
+  nor leaves a foldable item behind. The tool's prose answer says when a fold
+  happened and names the execution that absorbed it.
+
 ### Added
+
+- **The six runner SDKs surface the trigger `coalesced` flag**
+  ([#762](https://github.com/nuetzliches/croniq/issues/762),
+  [#763](https://github.com/nuetzliches/croniq/issues/763),
+  [#764](https://github.com/nuetzliches/croniq/issues/764),
+  [#765](https://github.com/nuetzliches/croniq/issues/765),
+  [#766](https://github.com/nuetzliches/croniq/issues/766),
+  [#767](https://github.com/nuetzliches/croniq/issues/767)). `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)) added the field to
+  the `POST /v1/trigger` response; until now every client dropped it, so a
+  producer could not tell a fold from an ordinary enqueue.
+
+  Rust, TypeScript, Python, Go, Java and .NET now parse it next to
+  `deduplicated`, with the same absent-means-false handling — a server
+  predating the directive omits the key, and that must read as `false` rather
+  than fail the parse.
+
+  The shared trigger conformance suite gains the contract
+  ([#768](https://github.com/nuetzliches/croniq/issues/768)): `coalesced` in
+  the case schema, all six bindings assert it, and two new cases pin both
+  shapes. The absent-field case is the one that matters — it is what a client
+  shipped ahead of its server sees, and
+  [#553](https://github.com/nuetzliches/croniq/issues/553) and
+  [#554](https://github.com/nuetzliches/croniq/issues/554) both came out of a
+  missing absent-field case.
+
+- **`coalesce`: a burst of triggers on one job collapses into one run**
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)). A job on a
+  schedule that consumers also fire out of band gets one queued execution per
+  event, because `POST /v1/trigger` enqueues unconditionally and the
+  concurrency guard only holds the items back at dispatch. Twenty producers
+  signalling "there is work in the list" therefore queued twenty runs of a job
+  whose second run has nothing left to do, and the eleventh was answered `429`.
+
+  None of the existing knobs expressed the intent. `max_queue_depth 1`
+  collapses by *rejecting*, keeps the oldest rather than the newest, and races.
+  A coarse `idempotency_key` folds *backwards* — it matches executions created
+  before the event, which therefore cannot contain it. `ephemeral` has real
+  replace-latest semantics but only for scheduled fires, and forbids
+  `singleton`.
+
+  The new bare job directive folds a trigger into an execution of the same job
+  that is already queued and not yet claimed. With one execution in flight, the
+  first trigger enqueues one follow-up and the rest of the burst folds into
+  that, so N events during a run yield exactly one more run. The fold is
+  forward-only by construction rather than by rule: only queued items are
+  candidates, and an item leaves the queue and has its claim persisted under
+  the same lock the fold decides under.
+
+  **A trigger carrying caller `metadata` is never folded**, even on a job that
+  declares `coalesce`, and the execution it creates never absorbs a later
+  signal either. A parameterised trigger names the item it is about, and
+  folding two of them drops work that nothing afterwards can show. That is a
+  property of the call, not something an operator can get wrong by setting a
+  flag. Croniq holds `require`, `prefer` and `timeout` to the same rule: each
+  says something specific about the run being asked for, and a fold would drop
+  it silently.
+
+  `coalesce` composes with `singleton` / `max_concurrent` and
+  `concurrency_group` — it decides whether an item is *created*, they decide
+  when it is *dispatched* — and does not exempt a job from `max_queue_depth`.
+  Rejected on an `ephemeral` job for the reason
+  [#302](https://github.com/nuetzliches/croniq/issues/302) gives for the
+  concurrency guard. Scheduled fires keep today's behaviour, and a job that
+  does not declare the directive is unchanged.
+
+  `POST /v1/trigger` gains a `coalesced` flag in its response, kept distinct
+  from `deduplicated`: both mean "no new execution", but only `deduplicated`
+  can hand back a run that started before the event. Runner SDK parity for the
+  field is tracked as a follow-up issue per language; a client that does not
+  know it yet still sees the absorbing `execution_id` and a `200`.
 
 - **The job-key box on Runs searches instead of demanding the exact key**
   ([#753](https://github.com/nuetzliches/croniq/issues/753)). It passed what
@@ -29,6 +123,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   about "the storage jobs" no longer has to know every key up front. No runner
   SDK is affected — none of the six exposes the execution list; it is a
   control-plane read, not part of the work protocol.
+
+### Changed
+
+- **`docs/operations.md` now covers event triggers next to a periodic job.**
+  `singleton` reads like "do not fire again" and is in fact a dispatch gate:
+  the scheduler keeps firing and keeps writing `queued` rows, and a trigger
+  that arrives mid-run keeps its queue position and starts a round-trip after
+  the run ends rather than being cancelled. The new section says so, gives the
+  wait as a formula, and names the four ways the event run disappears anyway —
+  a per-entity `idempotency_key` that folds into a run which started before
+  the event, `max_queue_depth`, `ephemeral`, and a `queue_ttl` shorter than
+  the backlog.
+
+  It also answers the burst case — many producers, one work list — where
+  `max_queue_depth 1`, a coarse `idempotency_key` and a consumer-side debounce
+  each collapse the wrong thing, and triggering on the work list's `0 → 1`
+  transition inside the event's own transaction is what survives distribution.
+  Server-side collapsing is proposed in
+  [#759](https://github.com/nuetzliches/croniq/issues/759). Nothing about how
+  Croniq behaves changes.
 
 ### Fixed
 

@@ -1,0 +1,43 @@
+name: "Trigger coalesce — missing coalesced field parses as false"
+description: |
+  Forward compatibility with a server that predates the `coalesce` directive
+  (issue #759), which is every server released before it. The 200 body carries
+  execution_id, queued and deduplicated but no coalesced key at all. The client
+  MUST default coalesced to false rather than erroring on the missing key or
+  leaving it null.
+
+  This is the case that matters most for the six SDKs: a client shipped ahead
+  of the server it talks to sees exactly this shape, and #553 and #554 both
+  came out of a missing absent-field case. Mirrors
+  08-trigger-dedup-flag-absent for the other flag.
+
+trigger_config:
+  api_key: "croniq_trigger_key"
+
+trigger_calls:
+  - request:
+      job_key: "legacy:sync"
+    expect:
+      response:
+        execution_id: "exec-910"
+        queued: 1
+        deduplicated: false
+        coalesced: false
+
+server_script:
+  - on: "POST /v1/trigger"
+    respond:
+      status: 200
+      body:
+        execution_id: "exec-910"
+        queued: 1
+        deduplicated: false
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/trigger
+      exact_count: 1
+      body_match:
+        job_key: "legacy:sync"

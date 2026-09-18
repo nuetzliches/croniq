@@ -365,6 +365,11 @@ pub struct JobOptions {
     /// A bare directive: `false` emits nothing.
     #[serde(default)]
     pub run_on_register: bool,
+    /// Collapse a burst of parameterless triggers into at most one follow-up
+    /// run (`coalesce`, issue #759). Another bare directive: `false` emits
+    /// nothing.
+    #[serde(default)]
+    pub coalesce: bool,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -531,6 +536,9 @@ fn format_job_block_inner(
     }
     if let Some(g) = opt_str(&o.concurrency_group) {
         lines.push(format!("  concurrency_group {}", quote_if_needed(g)));
+    }
+    if o.coalesce {
+        lines.push("  coalesce".into());
     }
     if o.run_on_register {
         lines.push("  run_on_register".into());
@@ -1743,6 +1751,27 @@ mod tests {
     fn job_block_run_on_register_off_emits_nothing() {
         let out = format_job_block_inner(&interval5(), "a:b", &JobOptions::default()).unwrap();
         assert!(!out.contains("run_on_register"), "{out}");
+    }
+
+    #[test]
+    fn job_block_coalesce_is_bare() {
+        let o = JobOptions {
+            concurrency: Some("singleton".into()),
+            coalesce: true,
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "soapneo:sync", &o).unwrap();
+        // Bare like `singleton` and `run_on_register` — `coalesce true` would
+        // be an unknown-directive error.
+        assert!(out.contains("\n  coalesce\n"), "{out}");
+        let cfg = croniq_config::compile::compile(&Parser::parse(&out).unwrap());
+        assert!(cfg.jobs[0].coalesce, "{out}");
+    }
+
+    #[test]
+    fn job_block_coalesce_off_emits_nothing() {
+        let out = format_job_block_inner(&interval5(), "a:b", &JobOptions::default()).unwrap();
+        assert!(!out.contains("coalesce"), "{out}");
     }
 
     #[test]

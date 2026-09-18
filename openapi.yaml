@@ -2267,6 +2267,16 @@ paths:
         default 10m), even if it already finished. Dedup is best-effort:
         two truly concurrent identical triggers may both pass the lookup
         and enqueue twice. It is NOT a strict exactly-once guarantee.
+
+
+        A job that declares `coalesce` additionally collapses a burst of
+        parameterless triggers: the call folds into an execution of that job
+        which is already queued and not yet claimed, answering `200` with
+        that execution's id and `coalesced: true`. With one execution in
+        flight the first trigger enqueues one follow-up and the rest of the
+        burst folds into it, so N events during a run yield exactly one more
+        run. A trigger carrying `metadata` — or overriding `require`,
+        `prefer` or `timeout` — is never folded, on any job.
       requestBody:
         content:
           application/json:
@@ -2312,7 +2322,9 @@ paths:
                     rejected with 400.
       responses:
         "200":
-          description: "Trigger outcome, including whether the run was deduplicated"
+          description: >
+            Trigger outcome, including whether the run was deduplicated or
+            coalesced.
           content:
             application/json:
               schema:
@@ -2333,6 +2345,16 @@ paths:
                     description: >
                       true when the trigger coalesced to an existing
                       execution via idempotency_key.
+                  coalesced:
+                    type: boolean
+                    description: >
+                      true when the trigger folded into an already-queued
+                      execution of a job that declares `coalesce`. Distinct
+                      from `deduplicated`: both mean no new execution, but
+                      `deduplicated` may name a run that started BEFORE the
+                      event, while `coalesced` only ever names one that
+                      starts after it. Absent on servers predating the
+                      directive; read a missing field as false.
         "400":
           description: >
             Invalid request — an `idempotency_key` longer than 200 characters,
@@ -2345,7 +2367,8 @@ paths:
             (per-job override, default 10), so the trigger is rejected rather
             than piling work up unbounded for one job. The body is an empty
             TriggerResponse (`execution_id: ""`, `queued: 0`,
-            `deduplicated: false`). Producers treat this as backpressure and
+            `deduplicated: false`, `coalesced: false`). Producers treat this
+            as backpressure and
             back off — the SDKs surface it as a dedicated queue-overflow error
             that carries `retryAfterMs`, read from the `Retry-After` header.
           headers:

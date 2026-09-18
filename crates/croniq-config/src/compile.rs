@@ -495,6 +495,28 @@ pub struct JobConfig {
     /// therefore cannot be counted.
     #[serde(default)]
     pub concurrency_group: Option<String>,
+    /// Collapse a burst of parameterless triggers into at most one follow-up
+    /// run (`coalesce`, issue #759).
+    ///
+    /// A trigger on a job that declares this folds into an already-queued,
+    /// not-yet-claimed execution of the same job instead of enqueuing its
+    /// own: the queued item has not started, so it still covers the event.
+    /// With one execution in flight and nothing queued, the first trigger
+    /// enqueues one follow-up and every further trigger folds into that —
+    /// so N triggers during a run yield exactly one more run.
+    ///
+    /// Forward-only by construction: an item is removed from the queue and
+    /// claimed under the same lock the fold decides under, so a trigger can
+    /// never fold into an execution that has already started.
+    ///
+    /// Opt-in, because nothing on the server can tell whether two payloads
+    /// mean the same thing. A trigger carrying caller `metadata` is never
+    /// folded even here — see [`COALESCE_METADATA_KEY`], which is how the
+    /// flag reaches the server. Forced to `false` for `ephemeral` jobs, whose
+    /// triggers enqueue persisted items against a `max_queue_depth` of 1;
+    /// `validate.rs` rejects the combination outright.
+    #[serde(default)]
+    pub coalesce: bool,
     /// Free-form tags for filtering/grouping. NOT routing-relevant —
     /// runner capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
@@ -571,6 +593,27 @@ pub const MAX_CONCURRENT_METADATA_KEY: &str = "__max_concurrent";
 /// the row that *counts* toward it always come from the same stamp.
 pub const CONCURRENCY_GROUP_METADATA_KEY: &str = "__concurrency_group";
 
+/// Metadata key marking a work item as *foldable* — a trigger may collapse
+/// into it instead of enqueuing its own execution (`coalesce`, issue #759).
+///
+/// Stamped by the compiler from the bare `coalesce` directive, so it rides
+/// along with every execution row and work item exactly like
+/// [`MAX_CONCURRENT_METADATA_KEY`]. That is what makes the fold target
+/// recognisable from the queued item alone, on every fire path: a scheduled
+/// fire, a retry, a watchdog requeue and a dead-letter replay all carry the
+/// job's compiled metadata, so a trigger can fold into any of them.
+///
+/// The trigger path is the one place that *removes* the stamp from an item it
+/// creates: a trigger carrying caller `metadata` names the item it is about,
+/// so it is neither folded nor a fold target (see the payload invariant in
+/// issue #759). The stamp therefore means "this item represents an
+/// unparameterised signal", not merely "this job declares `coalesce`".
+///
+/// In the reserved `__` namespace, so caller-supplied metadata can never set
+/// it (see [`is_reserved_metadata_key`]) — otherwise a client could make its
+/// own parameterised trigger absorb someone else's.
+pub const COALESCE_METADATA_KEY: &str = "__coalesce";
+
 /// Metadata key carrying the execution timeout that was in force when an
 /// execution was fired (issue #558).
 ///
@@ -613,6 +656,82 @@ pub const RESERVED_METADATA_PREFIX: &str = "__";
 /// [`RESERVED_METADATA_PREFIX`].
 pub fn is_reserved_metadata_key(key: &str) -> bool {
     key.starts_with(RESERVED_METADATA_PREFIX)
+}
+
+/// Whether a job's compiled metadata declares `coalesce` (issue #759).
+///
+/// Every trigger path asks this of the job it is about to fire, and reads the
+/// *stamp* rather than [`JobConfig::coalesce`] so that the answer comes from
+/// the same place the fold target is recognised by
+/// ([`metadata_is_foldable`]) — one concept, one lookup, and it holds for any
+/// job whose metadata carries the key rather than only a DSL-compiled one.
+pub fn job_declares_coalesce(metadata: &HashMap<String, String>) -> bool {
+    metadata.contains_key(COALESCE_METADATA_KEY)
+}
+
+/// Whether a queued work item may absorb a trigger (issue #759).
+///
+/// Takes the item's metadata as the JSON it travels as. The stamp is copied
+/// out of the compiled job metadata by every work-item producer — a scheduled
+/// fire, a retry, a watchdog requeue, a dead-letter replay — so a trigger
+/// folds into whichever of them is waiting without any of those paths knowing
+/// the directive exists.
+///
+/// The one producer that *removes* the stamp is a trigger path handling a call
+/// that is not a bare signal (see [`is_bare_trigger_signal`]). Asking the item
+/// rather than the job config is what makes that removal effective, and it is
+/// why the rule lives in the data instead of in a second code path that could
+/// be forgotten.
+pub fn metadata_is_foldable(metadata: &serde_json::Value) -> bool {
+    metadata.get(COALESCE_METADATA_KEY).is_some()
+}
+
+/// Whether a trigger call is a pure signal — "there is work, run soon" — and
+/// may therefore be collapsed into another execution (issue #759).
+///
+/// True only when the call says nothing specific about the run it asks for: no
+/// `metadata`, and no override of the routing or the timeout the job config
+/// would supply. Each of those is something a fold would silently drop, and a
+/// dropped instruction is indistinguishable afterwards from one that was never
+/// sent.
+///
+/// `metadata` is the case issue #759 names, and the important one: a
+/// parameterised trigger identifies the item it is about, so folding two of
+/// them loses work that nothing later can show. Reserved `__` keys do not
+/// count against it — every ingress strips them before they reach a runner
+/// (see [`is_reserved_metadata_key`]), so a call carrying only those asks for
+/// nothing.
+///
+/// `require` / `prefer` / `timeout` are held to the same rule though the issue
+/// does not name them. They are not payload, but they are still instructions
+/// about this run: folding a trigger that pinned a capability would run the
+/// work on a different runner than the caller named, and silently. The
+/// narrower rule costs nothing — the burst the directive exists for sends a
+/// job key and nothing else — and it means no override is ever answered by
+/// ignoring it. A blank `timeout` counts as absent, matching how every trigger
+/// ingress already reads it (issue #553).
+///
+/// An idempotency key is deliberately not a parameter. It identifies the call,
+/// not the run, and its own dedup lookup has already run and missed by the
+/// time a fold is considered.
+pub fn is_bare_trigger_signal(
+    metadata: &serde_json::Value,
+    require: &[String],
+    prefer: &[String],
+    timeout: Option<&str>,
+) -> bool {
+    if !require.is_empty() || !prefer.is_empty() {
+        return false;
+    }
+    if timeout.is_some_and(|t| !t.trim().is_empty()) {
+        return false;
+    }
+    match metadata {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.keys().all(|k| is_reserved_metadata_key(k)),
+        // A scalar or array payload is still a payload.
+        _ => false,
+    }
 }
 
 /// Drop every reserved-namespace key from a caller-supplied metadata map.
@@ -1476,6 +1595,7 @@ fn compile_job(
     let mut keep_last = defaults.keep_last;
     let mut max_concurrent: Option<u32> = None;
     let mut concurrency_group: Option<String> = None;
+    let mut coalesce = false;
     let mut tags: Vec<String> = Vec::new();
     let mut run_on_register = false;
 
@@ -1530,6 +1650,11 @@ fn compile_job(
                         first_arg(d, vars).filter(|name| group_limits.contains_key(name));
                 }
                 "singleton" => max_concurrent = Some(1),
+                // Bare directive (issue #759), like `singleton` above: there
+                // is no value to tune, the fold is either on or off. The
+                // collapsing itself happens in the server's trigger path —
+                // the compiler only records the intent.
+                "coalesce" => coalesce = true,
                 // Bare directive (issue #555): no value, presence is the
                 // whole signal. The adoption fire itself lives in the
                 // server — the compiler only records the intent and the
@@ -1621,6 +1746,16 @@ fn compile_job(
         // shared budget would read as free when it is not. Drop it here;
         // `validate.rs` rejects the combination outright.
         concurrency_group = None;
+        // `coalesce` folds a trigger into a queued item, and on an ephemeral
+        // job there is at most one (`max_queue_depth` is forced to 1 just
+        // above) which the scheduler replaces wholesale on the next fire
+        // (`remove_job`). Worse, the trigger path enqueues a *persisted*,
+        // non-ephemeral item regardless — so the stamp would advertise a fold
+        // whose semantics nobody can predict from the job's declared mode.
+        // Drop it for the same reason #302 drops the concurrency guard;
+        // `validate.rs` rejects the combination so a well-formed deploy never
+        // reaches this fallback.
+        coalesce = false;
     }
 
     // Stamp the concurrency limit into the job metadata so it rides along
@@ -1638,6 +1773,16 @@ fn compile_job(
     {
         metadata.insert(CONCURRENCY_GROUP_METADATA_KEY.into(), group.clone());
         metadata.insert(CONCURRENCY_GROUP_MAX_METADATA_KEY.into(), limit.to_string());
+    }
+
+    // Same mechanism again for the fold (issue #759): the trigger path reads
+    // this off the *queued item* rather than off the job config, so every
+    // producer of a work item — scheduler fire, retry, watchdog requeue,
+    // dead-letter replay — marks its item foldable without knowing the
+    // directive exists. Only present when the job declares it, so an item
+    // without the key is never a fold target.
+    if coalesce {
+        metadata.insert(COALESCE_METADATA_KEY.into(), "1".into());
     }
 
     JobConfig {
@@ -1665,6 +1810,7 @@ fn compile_job(
         keep_last,
         max_concurrent,
         concurrency_group,
+        coalesce,
         tags,
         run_on_register,
     }
@@ -2405,6 +2551,134 @@ mod tests {
         let cfg = compile(&ast);
         assert!(cfg.jobs[0].run_on_register);
         assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+    }
+
+    // ── coalesce (issue #759) ────────────────────────────────────────────────
+
+    #[test]
+    fn compile_coalesce_stamps_the_metadata_key() {
+        let ast =
+            Parser::parse(r#"job soapneo:sync { every 5 minutes; singleton; coalesce }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.jobs[0].coalesce);
+        assert_eq!(
+            cfg.jobs[0]
+                .metadata
+                .get(COALESCE_METADATA_KEY)
+                .map(String::as_str),
+            Some("1"),
+            "`coalesce` must stamp __coalesce into the job metadata — the server reads the \
+             fold off the queued item, not off the job config"
+        );
+    }
+
+    #[test]
+    fn compile_without_coalesce_leaves_the_stamp_off() {
+        // The absence is load-bearing: an item without the key is never a
+        // fold target, which is what keeps a job that never asked for the
+        // directive byte-for-byte unchanged.
+        let ast = Parser::parse(r#"job etl:sync { every 15 minutes; singleton }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(!cfg.jobs[0].coalesce);
+        assert!(!cfg.jobs[0].metadata.contains_key(COALESCE_METADATA_KEY));
+    }
+
+    #[test]
+    fn compile_coalesce_is_dropped_on_an_ephemeral_job() {
+        // Same treatment `max_concurrent` gets (issue #302): the compiled job
+        // must not advertise a directive that is inert in its mode.
+        // `validate.rs` rejects the combination, so this is the fallback.
+        let ast = Parser::parse(r#"job beat:tick { ephemeral every 1 minute; coalesce }"#).unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.jobs[0].execution_mode, ExecutionMode::Ephemeral);
+        assert!(!cfg.jobs[0].coalesce);
+        assert!(
+            !cfg.jobs[0].metadata.contains_key(COALESCE_METADATA_KEY),
+            "an ephemeral job must not carry an inert __coalesce"
+        );
+    }
+
+    // ── coalesce predicates (issue #759) ─────────────────────────────
+
+    #[test]
+    fn job_declares_coalesce_reads_the_stamp() {
+        let ast = Parser::parse(r#"job a:b { every 5 minutes; coalesce }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(job_declares_coalesce(&cfg.jobs[0].metadata));
+
+        let ast = Parser::parse(r#"job a:b { every 5 minutes }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(!job_declares_coalesce(&cfg.jobs[0].metadata));
+    }
+
+    #[test]
+    fn metadata_is_foldable_only_with_the_stamp() {
+        assert!(metadata_is_foldable(
+            &serde_json::json!({ COALESCE_METADATA_KEY: "1" })
+        ));
+        assert!(!metadata_is_foldable(&serde_json::json!({})));
+        assert!(!metadata_is_foldable(&serde_json::json!({ "user": "x" })));
+        // A work item whose metadata never became an object at all.
+        assert!(!metadata_is_foldable(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn a_call_with_nothing_set_is_a_bare_signal() {
+        assert!(is_bare_trigger_signal(
+            &serde_json::Value::Null,
+            &[],
+            &[],
+            None
+        ));
+        assert!(is_bare_trigger_signal(
+            &serde_json::json!({}),
+            &[],
+            &[],
+            None
+        ));
+        // Blank counts as absent, as it does everywhere else on the trigger
+        // ingress (issue #553).
+        assert!(is_bare_trigger_signal(
+            &serde_json::json!({}),
+            &[],
+            &[],
+            Some("   ")
+        ));
+    }
+
+    #[test]
+    fn a_payload_is_not_a_bare_signal() {
+        for payload in [
+            serde_json::json!({ "item": "42" }),
+            serde_json::json!("just-a-string"),
+            serde_json::json!([1, 2, 3]),
+        ] {
+            assert!(
+                !is_bare_trigger_signal(&payload, &[], &[], None),
+                "{payload} must not count as a bare signal"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_keys_alone_still_count_as_a_bare_signal() {
+        // Every ingress strips these before they reach a runner, so a call
+        // carrying only them has asked for nothing.
+        let payload = serde_json::json!({ MAX_CONCURRENT_METADATA_KEY: "9" });
+        assert!(is_bare_trigger_signal(&payload, &[], &[], None));
+    }
+
+    #[test]
+    fn an_override_is_not_a_bare_signal() {
+        let none = serde_json::Value::Null;
+        assert!(!is_bare_trigger_signal(
+            &none,
+            &["soapneo".into()],
+            &[],
+            None
+        ));
+        assert!(!is_bare_trigger_signal(&none, &[], &["fast".into()], None));
+        assert!(!is_bare_trigger_signal(&none, &[], &[], Some("30m")));
     }
 
     // ── singleton / max_concurrent (issue #278) ──────────────────────────────

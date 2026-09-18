@@ -4,6 +4,26 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Added
+
+- **`Coalesced` on the trigger result
+  ([#767](https://github.com/nuetzliches/croniq/issues/767)).** `true` when the
+  server folded this trigger into an execution that was already queued for the
+  job, because the job declares `coalesce`
+  ([#759](https://github.com/nuetzliches/croniq/issues/759)). The execution id
+  is then that execution's and nothing was enqueued.
+
+  Kept distinct from `Deduplicated` even though both mean "no new execution": a
+  dedup hit can name an execution that started *before* the call, while a fold
+  only ever names one that starts after it, because a claimed execution is
+  never a fold target. A producer deciding whether its signal still gets acted
+  on needs that difference.
+
+  Servers without `coalesce` support omit the field and it reads as `false`, so
+  this is additive for every existing caller.
+
 ## [0.7.0] - 2026-09-02
 
 ### Changed
