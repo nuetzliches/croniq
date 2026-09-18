@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP `job_trigger` tool honours `coalesce`**
+  ([#769](https://github.com/nuetzliches/croniq/issues/769)). It has its own
+  enqueue path, so the fold that landed with
+  [#759](https://github.com/nuetzliches/croniq/issues/759) passed it by: an
+  agent firing a job in a loop still queued one run per call, on a job whose
+  configuration says otherwise.
+
+  Worse than merely missing the feature. The tool stamped the job's compiled
+  metadata onto every item it created, `__coalesce` included, so its
+  executions *were* fold targets for HTTP triggers while it never folded into
+  anything itself. The two paths disagreed about the same directive, and a
+  parameterised MCP fire could absorb an unrelated signal.
+
+  Both now share the predicates that decide a fold
+  (`job_declares_coalesce`, `metadata_is_foldable`, `is_bare_trigger_signal`
+  in `croniq-config`), rather than carrying two copies of a rule that has to
+  match. The payload invariant comes along: a `job_trigger` call carrying
+  `metadata` — or overriding `require`, `prefer` or `timeout` — neither folds
+  nor leaves a foldable item behind. The tool's prose answer says when a fold
+  happened and names the execution that absorbed it.
+
 ### Added
 
 - **The six runner SDKs surface the trigger `coalesced` flag**

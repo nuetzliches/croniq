@@ -1145,8 +1145,15 @@ impl CroniqMcp {
 
     /// Immediately fire a job by enqueuing a new execution.
     /// This bypasses the schedule — the job runs as soon as an eligible runner picks it up.
+    ///
+    /// Honours `coalesce` exactly as `POST /v1/trigger` does (issue #769): a
+    /// bare call on a job that declares the directive folds into an execution
+    /// already queued for it instead of enqueuing another. Both paths share
+    /// the predicates that decide it (`croniq_config::compile`), because the
+    /// payload invariant is one rule and two copies of it would be two places
+    /// to get it wrong.
     #[tool(
-        description = "Trigger a job to run immediately, bypassing its schedule. Requires --mutations."
+        description = "Trigger a job to run immediately, bypassing its schedule. On a job declaring `coalesce`, a call with no metadata/require/prefer/timeout folds into an execution already queued for that job instead of enqueuing another. Requires --mutations."
     )]
     async fn job_trigger(
         &self,
@@ -1157,7 +1164,20 @@ impl CroniqMcp {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let (metadata, require, prefer, timeout) = self.inherit_job_dispatch(
+        // Both halves of the fold decision, taken before `inherit_job_dispatch`
+        // consumes the caller's metadata and overlays it onto the job's.
+        let bare_signal = croniq_config::compile::is_bare_trigger_signal(
+            &p.metadata,
+            &p.require,
+            &p.prefer,
+            p.timeout.as_deref(),
+        );
+        let job_coalesces = self
+            .jobs
+            .get(&p.job_key)
+            .is_some_and(|j| croniq_config::compile::job_declares_coalesce(&j.metadata));
+
+        let (mut metadata, require, prefer, timeout) = self.inherit_job_dispatch(
             "job_trigger",
             &p.job_key,
             p.metadata,
@@ -1165,6 +1185,45 @@ impl CroniqMcp {
             p.prefer,
             p.timeout,
         )?;
+
+        // The payload invariant, enforced on the item rather than only on the
+        // call: a trigger that says something specific about *this* run must
+        // not later absorb someone else's signal. Dropping the stamp is what
+        // makes that structural — a later fold lookup simply does not see this
+        // item. Without it this tool was worse than merely missing the
+        // feature: it stamped `__coalesce` onto every item it created, so its
+        // executions were fold targets for HTTP triggers while it never folded
+        // into anything itself (issue #769).
+        if !bare_signal {
+            metadata.remove(croniq_config::compile::COALESCE_METADATA_KEY);
+        }
+
+        // Held from the fold lookup through the store insert and the enqueue,
+        // so two concurrent calls cannot both miss and both enqueue a
+        // follow-up. Same shape and same reason as `handle_trigger`; only
+        // taken on the fold path, so an ordinary trigger keeps the locking it
+        // has always had.
+        let queue_guard = if job_coalesces && bare_signal {
+            Some(self.state.queue.write().await)
+        } else {
+            None
+        };
+
+        if let Some(ref queue) = queue_guard
+            && let Some(target) = queue.find_for_job(&p.job_key, |item| {
+                croniq_config::compile::metadata_is_foldable(&item.metadata)
+            })
+        {
+            let execution_id = target.execution_id.clone();
+            let depth = queue.len();
+            drop(queue_guard);
+            return Ok(format!(
+                "Job '{}' declares `coalesce` and an execution was already queued for it, \
+                 so this trigger folded into execution '{execution_id}' instead of enqueuing \
+                 another. Nothing was enqueued; queue depth: {depth}.",
+                p.job_key
+            ));
+        }
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -1204,10 +1263,20 @@ impl CroniqMcp {
             is_ephemeral: false,
         };
 
-        let depth = {
-            let mut queue = self.state.queue.write().await;
-            queue.enqueue(item);
-            queue.len()
+        let depth = match queue_guard {
+            // The fold path has held this lock since before the store insert,
+            // so the miss that sent us here and the enqueue that answers it
+            // are one atomic step: a concurrent call either folds into this
+            // item or waits for it to exist.
+            Some(mut queue) => {
+                queue.enqueue(item);
+                queue.len()
+            }
+            None => {
+                let mut queue = self.state.queue.write().await;
+                queue.enqueue(item);
+                queue.len()
+            }
         };
         self.state.work_notify.notify_waiters();
 
@@ -2738,6 +2807,280 @@ mod tests {
         // Verify it's in the queue.
         let queue = server.state.queue.read().await;
         assert_eq!(queue.len(), 1);
+    }
+
+    // ── job_trigger honours `coalesce` (issue #769) ───────────────────
+
+    const COALESCING_JOB: &str = r#"
+        job soapneo:sync {
+            every 5 minutes
+            singleton
+            coalesce
+        }
+    "#;
+
+    /// A bare `job_trigger` — nothing but the job key.
+    fn bare_trigger(job_key: &str) -> Parameters<JobTriggerParams> {
+        Parameters(JobTriggerParams {
+            job_key: job_key.into(),
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::Value::Null,
+            timeout: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn job_trigger_folds_a_burst_into_one_execution() {
+        let server = make_server_with_jobs(COALESCING_JOB);
+
+        let first = server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+        assert!(
+            first.contains("Triggered job"),
+            "the first call finds an empty queue and enqueues: {first}"
+        );
+
+        for i in 0..9 {
+            let resp = server
+                .job_trigger(bare_trigger("soapneo:sync"))
+                .await
+                .unwrap();
+            assert!(
+                resp.contains("folded into execution"),
+                "call #{i} of the burst must fold: {resp}"
+            );
+            assert!(
+                resp.contains("Nothing was enqueued"),
+                "the message must say nothing was enqueued: {resp}"
+            );
+        }
+
+        assert_eq!(
+            server
+                .state
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            1,
+            "ten bare triggers must leave exactly one queued execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn job_trigger_names_the_absorbing_execution() {
+        // The prose is this tool's whole answer, so the id has to be in it —
+        // an agent that folded needs to know which run covers its signal.
+        let server = make_server_with_jobs(COALESCING_JOB);
+
+        server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+        let queued_id = server
+            .state
+            .queue
+            .read()
+            .await
+            .peek()
+            .unwrap()
+            .execution_id
+            .clone();
+
+        let folded = server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+        assert!(
+            folded.contains(&queued_id),
+            "the fold must name execution {queued_id}: {folded}"
+        );
+    }
+
+    #[tokio::test]
+    async fn job_trigger_with_metadata_is_never_folded() {
+        // The payload invariant: a parameterised call names the item it is
+        // about, so it always gets its own run.
+        let server = make_server_with_jobs(COALESCING_JOB);
+
+        server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+
+        let parameterised = server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "soapneo:sync".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::json!({ "item": "42" }),
+                timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            parameterised.contains("Triggered job"),
+            "a call with a payload must not fold: {parameterised}"
+        );
+        assert_eq!(
+            server
+                .state
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn job_trigger_with_metadata_leaves_no_foldable_item() {
+        // The regression this tool shipped with (issue #769): it stamped the
+        // job's `__coalesce` onto every item it created, so a parameterised
+        // fire became a fold target for an HTTP trigger while never folding
+        // itself. The stamp has to come off the item, not just be ignored.
+        let server = make_server_with_jobs(COALESCING_JOB);
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "soapneo:sync".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::json!({ "item": "42" }),
+                timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        {
+            let queue = server.state.queue.read().await;
+            let item = queue.peek().unwrap();
+            assert!(
+                !croniq_config::compile::metadata_is_foldable(&item.metadata),
+                "a parameterised fire must not be foldable: {:?}",
+                item.metadata
+            );
+        }
+
+        // And a later bare signal must therefore enqueue its own run.
+        let signal = server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+        assert!(
+            signal.contains("Triggered job"),
+            "a signal must not fold into a parameterised run: {signal}"
+        );
+    }
+
+    #[tokio::test]
+    async fn job_trigger_overriding_routing_or_timeout_is_not_folded() {
+        let server = make_server_with_jobs(COALESCING_JOB);
+        server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+
+        let overrides = [
+            (vec!["soapneo".to_string()], vec![], None),
+            (vec![], vec!["fast".to_string()], None),
+            (vec![], vec![], Some("30m".to_string())),
+        ];
+        for (require, prefer, timeout) in overrides {
+            let resp = server
+                .job_trigger(Parameters(JobTriggerParams {
+                    job_key: "soapneo:sync".into(),
+                    require: require.clone(),
+                    prefer: prefer.clone(),
+                    metadata: serde_json::Value::Null,
+                    timeout: timeout.clone(),
+                }))
+                .await
+                .unwrap();
+            assert!(
+                resp.contains("Triggered job"),
+                "require={require:?} prefer={prefer:?} timeout={timeout:?} must not fold: {resp}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn job_trigger_without_coalesce_still_enqueues_every_call() {
+        // The regression guard: a job that only declares `singleton` behaves
+        // exactly as it did before #769.
+        let dsl = r#"
+            job soapneo:sync {
+                every 5 minutes
+                singleton
+            }
+        "#;
+        let server = make_server_with_jobs(dsl);
+
+        for _ in 0..5 {
+            let resp = server
+                .job_trigger(bare_trigger("soapneo:sync"))
+                .await
+                .unwrap();
+            assert!(
+                resp.contains("Triggered job"),
+                "a job without `coalesce` must never fold: {resp}"
+            );
+        }
+        assert_eq!(
+            server
+                .state
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn job_trigger_folds_into_a_queued_scheduled_fire() {
+        // The stamp travels on the job's compiled metadata, so an item the
+        // scheduler queued is a fold target here too — the same cross-path
+        // agreement that was missing before #769.
+        let server = make_server_with_jobs(COALESCING_JOB);
+        let job = server.jobs.get("soapneo:sync").unwrap().clone();
+
+        let scheduled_id = Uuid::new_v4();
+        let now = Utc::now();
+        server.state.queue.write().await.enqueue(WorkItem {
+            execution_id: scheduled_id.to_string(),
+            job_key: "soapneo:sync".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::to_value(&job.metadata).unwrap(),
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+
+        let resp = server
+            .job_trigger(bare_trigger("soapneo:sync"))
+            .await
+            .unwrap();
+        assert!(
+            resp.contains(&scheduled_id.to_string()),
+            "the signal must fold into the queued scheduled fire: {resp}"
+        );
+        assert_eq!(
+            server
+                .state
+                .queue
+                .read()
+                .await
+                .count_for_job("soapneo:sync"),
+            1
+        );
     }
 
     #[tokio::test]
