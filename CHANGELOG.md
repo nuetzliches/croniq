@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-18
+
+### Security
+
+- **rmcp updated past the cross-origin header leak
+  ([#758](https://github.com/nuetzliches/croniq/pull/758),
+  [#773](https://github.com/nuetzliches/croniq/pull/773)).** rmcp forwarded
+  custom HTTP headers to the target of a cross-origin redirect, so a redirect
+  to a host the caller never addressed could be handed the `Authorization`
+  header meant for the original one. `crates/croniq-mcp` enables
+  `transport-streamable-http-server`, so this was not theoretical for this
+  build.
+
+  1.5.0 to 2.1.0, in two steps. The bump Dependabot raised stopped at 2.0.0
+  because 2.1.0 did not exist yet when it opened, and the `~2.0` requirement
+  would have pinned below the fix in any case — a tilde on a minor allows
+  patch releases only. 2.0.0 also carries fixes for an OAuth resource-spoofing
+  path and a streamable-HTTP session leak.
+
+  The 2.0 major realigns rmcp's model types with the MCP 2025-11-25 spec.
+  Croniq only uses the stable tool and handler API, so nothing in the server
+  changed; protocol negotiation still answers older clients with the version
+  they ask for.
+
+- **OpenTelemetry Go SDK updated past the endpoint-URL leak
+  ([#770](https://github.com/nuetzliches/croniq/pull/770)).** Exporter config
+  logging could write endpoint URLs, credentials included, into info-level
+  logs. 1.43.0 to 1.45.0, affecting the optional `sdks/go/otel` tracing module
+  only — the core Go SDK is stdlib-only and pulls in nothing.
+
 ### Fixed
 
 - **The MCP `job_trigger` tool honours `coalesce`**
