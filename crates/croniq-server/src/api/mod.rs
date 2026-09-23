@@ -2062,6 +2062,7 @@ async fn handle_health(State(state): State<Arc<ServerState>>) -> Json<HealthResp
             .by_status_with_ttl(RunnerStatus::Dead, now, state.runner.lease_ttl_secs)
             .len(),
         queued: queue.len(),
+        running: reg.total_inflight(),
     })
 }
 
@@ -2353,6 +2354,27 @@ mod tests {
         let resp = get_json(app, "/health").await;
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["queued"], 0);
+        assert_eq!(resp["running"], 0);
+    }
+
+    #[tokio::test]
+    async fn health_counts_inflight_across_runners() {
+        let (state, _rx) = make_state();
+        {
+            let mut reg = state.runner.registry.write().await;
+            let _ = reg.register_or_update(
+                "r1",
+                vec![],
+                4,
+                vec!["e-1".into(), "e-2".into()],
+                None,
+                vec![],
+            );
+            let _ = reg.register_or_update("r2", vec![], 4, vec!["e-3".into()], None, vec![]);
+        }
+
+        let health = get_json(server_router(Arc::clone(&state)), "/health").await;
+        assert_eq!(health["running"], 3);
     }
 
     #[tokio::test]

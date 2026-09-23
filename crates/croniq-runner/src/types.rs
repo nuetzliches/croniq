@@ -255,6 +255,10 @@ pub struct HealthResponse {
     pub runners_stale: usize,
     pub runners_dead: usize,
     pub queued: usize,
+    /// Executions in flight on runners (see `RunnerRegistry::total_inflight`).
+    /// Defaulted so a newer client still reads an older server's response.
+    #[serde(default)]
+    pub running: usize,
 }
 
 // ─── Admin API ────────────────────────────────────────────────────────────────

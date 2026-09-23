@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The dashboard shows how much work is running.** A *Running* tile sits next
+  to *Queue depth*, reads against the slots the online runners offer ("3 of 8
+  slots"), and links to the claimed-filtered run list. The number comes from a
+  new `running` field on `GET /health` — also printed by `croniq status` and
+  exported as the `croniq_executions_inflight` gauge. It is the in-flight
+  count runners report on each poll, not a store query, so `/health` stays
+  cheap for liveness probes; it can lag a poll interval and includes
+  ephemeral runs, which have no execution row.
+
 ## [0.40.0] - 2026-09-18
 
 ### Security
