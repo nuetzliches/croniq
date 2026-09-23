@@ -189,6 +189,18 @@ impl RunnerRegistry {
         self.runners.values()
     }
 
+    /// Executions the runners report as in flight, summed over every runner.
+    ///
+    /// Backs the `running` figure on `/health` and the
+    /// `croniq_executions_inflight` gauge. It is runner-reported — refreshed
+    /// on each poll — rather than a count of the store's `claimed` rows, so it
+    /// can lag a poll interval and includes ephemeral runs, which have no row.
+    /// That keeps `/health` free of store queries (liveness probes hit it);
+    /// the claimed-filtered run list stays the authoritative view.
+    pub fn total_inflight(&self) -> usize {
+        self.runners.values().map(|r| r.inflight.len()).sum()
+    }
+
     /// Runners whose status matches `filter` at the given instant, using the
     /// default 120 s dead-threshold.
     #[deprecated(

@@ -35,6 +35,16 @@ const activeJobs = computed(() => (jobs.value ?? []).filter((job) => job.is_acti
 const online = computed(
   () => (runners.value ?? []).filter((runner) => runner.status === 'online').length,
 )
+/**
+ * Slots the online runners offer, so "Running" reads against capacity: a
+ * queue that grows while every slot is busy wants more runners, one that
+ * grows with slots free points at a guard (concurrency, capabilities).
+ */
+const slots = computed(() =>
+  (runners.value ?? [])
+    .filter((runner) => runner.status === 'online')
+    .reduce((sum, runner) => sum + runner.max_inflight, 0),
+)
 
 const buckets = computed(() => throughput.value?.buckets ?? [])
 const totals = computed(() =>
@@ -63,13 +73,22 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 <template>
   <div class="flex flex-col gap-4">
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <KpiCard
         label="Queue depth"
         :value="health?.queued ?? '—'"
         :sub="`${activeJobs} active job${activeJobs === 1 ? '' : 's'}`"
         :tone="(health?.queued ?? 0) > 0 ? 'warning' : 'default'"
         to="/executions?state=queued"
+      />
+      <!-- Runner-reported, like the per-runner figure on /runners: it can lag
+           a poll and counts ephemeral runs, which the claimed list cannot
+           show. Running work is normal, so no tone. -->
+      <KpiCard
+        label="Running"
+        :value="health?.running ?? '—'"
+        :sub="slots ? `of ${slots} slot${slots === 1 ? '' : 's'}` : 'no runner capacity'"
+        to="/executions?state=claimed"
       />
       <KpiCard
         label="Runners online"
