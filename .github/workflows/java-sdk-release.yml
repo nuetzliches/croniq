@@ -61,6 +61,8 @@ jobs:
   publish:
     name: Build, sign, publish (4 modules)
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     defaults:
       run:
         working-directory: sdks/java
@@ -172,3 +174,32 @@ jobs:
           # Maven Central is the durable copy; the artifact is just a
           # post-mortem aid if a publish fails partway through.
           retention-days: 14
+
+  verify-registry:
+    # A separate job so a slow sync can be re-checked with "Re-run failed
+    # jobs" without publishing again (Central rejects a second upload of the
+    # same version). The portal accepts the bundle and validates it on its
+    # own time, then syncs to repo1: 0.6.0 reached repo1 about seven minutes
+    # after the publish step returned. repo1 is what Gradle and Maven
+    # resolve from; search.maven.org lags by hours and is not checked (#784).
+    name: Verify Maven Central serves the version
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The workflow's own commit, not the released tag, so a dispatched
+          # re-run of a tag older than the script still finds it.
+          sparse-checkout: .github/scripts
+      - name: Wait for all four POMs on repo1
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          base=https://repo1.maven.org/maven2/io/github/nuetzliches
+          urls=()
+          for a in croniq-runner croniq-runner-spring-boot-starter \
+                   croniq-runner-kotlin-ext croniq-runner-opentelemetry; do
+            urls+=("${base}/${a}/${VERSION}/${a}-${VERSION}.pom")
+          done
+          bash .github/scripts/wait-for-registry.sh "Maven Central" 3600 "${urls[@]}"

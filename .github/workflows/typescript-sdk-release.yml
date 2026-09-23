@@ -43,6 +43,8 @@ jobs:
   publish:
     name: Build, verify, publish
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     defaults:
       run:
         working-directory: sdks/typescript
@@ -133,3 +135,24 @@ jobs:
         run: |
           npm publish --access public --tag "${{ steps.version.outputs.dist_tag }}"
           echo "Published @nuetzliches/croniq-runner@${{ steps.version.outputs.version }} with dist-tag ${{ steps.version.outputs.dist_tag }}"
+
+  verify-registry:
+    # A separate job so a slow registry can be re-checked with "Re-run failed
+    # jobs" without publishing again. npm serves a new version within
+    # seconds; ten minutes is headroom, not an expected wait (#784).
+    name: Verify npm serves the version
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The workflow's own commit, not the released tag, so a dispatched
+          # re-run of a tag older than the script still finds it.
+          sparse-checkout: .github/scripts
+      - name: Wait for the version on registry.npmjs.org
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          bash .github/scripts/wait-for-registry.sh npm 600 \
+            "https://registry.npmjs.org/@nuetzliches%2fcroniq-runner/${VERSION}"
