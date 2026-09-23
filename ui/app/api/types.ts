@@ -4,6 +4,8 @@ export interface HealthResponse {
   runners_stale: number
   runners_dead: number
   queued: number
+  /** Executions runners report in flight. Older servers omit it. */
+  running?: number
 }
 
 export interface VersionResponse {

@@ -40,6 +40,7 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     let runners_stale = reg.by_status_with_ttl(RunnerStatus::Stale, now, ttl).len();
     let runners_dead = reg.by_status_with_ttl(RunnerStatus::Dead, now, ttl).len();
     let queue_depth = queue.len();
+    let inflight = reg.total_inflight();
 
     let reload_success = state.reload_counters.success.load(Ordering::Relaxed);
     let reload_validation_err = state
@@ -73,6 +74,9 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          # HELP croniq_queue_depth Number of work items in the queue.\n\
          # TYPE croniq_queue_depth gauge\n\
          croniq_queue_depth {queue_depth}\n\
+         # HELP croniq_executions_inflight Executions runners report as in flight.\n\
+         # TYPE croniq_executions_inflight gauge\n\
+         croniq_executions_inflight {inflight}\n\
          # HELP croniq_config_reload_total Config reload attempts by outcome.\n\
          # TYPE croniq_config_reload_total counter\n\
          croniq_config_reload_total{{result=\"success\"}} {reload_success}\n\
@@ -376,6 +380,8 @@ mod tests {
 
         assert!(body.contains("croniq_runners_total"));
         assert!(body.contains("croniq_queue_depth"));
+        assert!(body.contains("# TYPE croniq_executions_inflight gauge"));
+        assert!(body.contains("croniq_executions_inflight 0"));
 
         // Watchdog counters are always emitted, starting at zero.
         assert!(body.contains("# TYPE croniq_watchdog_requeued_total counter"));

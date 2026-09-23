@@ -378,6 +378,7 @@ pub async fn handle_health(State(state): State<Arc<AppState>>) -> Json<HealthRes
             .by_status_with_ttl(RunnerStatus::Dead, now, state.lease_ttl_secs)
             .len(),
         queued: queue.len(),
+        running: reg.total_inflight(),
     };
 
     Json(response)
