@@ -557,7 +557,7 @@ FROM alpine:3.21
 RUN apk add --no-cache postgresql17-client
 
 # x86_64-unknown-linux-musl / aarch64-unknown-linux-musl are both published.
-ADD https://github.com/nuetzliches/croniq/releases/download/v0.40.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
+ADD https://github.com/nuetzliches/croniq/releases/download/v0.41.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
 RUN tar xzf /tmp/croniq.tar.gz -C /usr/local/bin croniq-shell-runner  && rm /tmp/croniq.tar.gz
 
 ENTRYPOINT ["croniq-shell-runner"]

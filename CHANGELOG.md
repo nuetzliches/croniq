@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-23
+
 ### Added
 
 - **The dashboard shows how much work is running.** A *Running* tile sits next
