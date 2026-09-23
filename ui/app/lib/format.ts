@@ -83,3 +83,18 @@ export function formatAbsolute(iso: string | null | undefined): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
 }
+
+/**
+ * The word a state is shown as.
+ *
+ * `claimed` is the store's name for a run a runner holds, and a runner holds a
+ * run for exactly as long as it executes it — the claim sets `started_at` in
+ * the same statement, so there is no "claimed but not yet started" to tell
+ * apart. "running" is what an operator is looking for, so that is the word on
+ * screen; the API, the filter value and the URL keep `claimed`.
+ *
+ * Every other state reads as itself.
+ */
+export function stateLabel(state: string): string {
+  return state === 'claimed' ? 'running' : state
+}

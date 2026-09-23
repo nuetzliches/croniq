@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchExecutions, useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
-import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
+import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
 
 /**
@@ -244,7 +244,12 @@ const hasFilters = computed(() =>
   ),
 )
 
-const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
+// Labelled through `stateLabel` so the filter says what the pill says; the
+// value stays the store's name, because that is what the API filters on.
+const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled'].map((value) => ({
+  label: stateLabel(value),
+  value,
+}))
 
 /**
  * Keyboard navigation — j/k to move, Enter to open, Escape to close.
@@ -293,6 +298,7 @@ function onKey(event: KeyboardEvent) {
       <USelectMenu
         :model-value="filters.state || undefined"
         :items="STATES"
+        value-key="value"
         placeholder="Any state"
         aria-label="Filter by state"
         class="w-40"

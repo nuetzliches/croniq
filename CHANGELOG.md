@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard shows an executing run as `running`, not `claimed`.** A
+  runner claims a run and starts it in the same step — the claim sets
+  `started_at` — so `claimed` was never a stage before running, only the
+  store's name for it. The pill and the state filter on Runs now say
+  `running`. The API, the `?state=claimed` filter value and existing links are
+  unchanged.
+
 ## [0.40.0] - 2026-09-18
 
 ### Security

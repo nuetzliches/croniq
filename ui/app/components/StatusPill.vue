@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { stateLabel } from '~/lib/format'
 
 /**
  * An execution's state, as a pill.
@@ -97,6 +98,6 @@ const tone = computed(() => {
       :class="tone.dot"
       aria-hidden="true"
     />
-    {{ state }}
+    {{ stateLabel(state) }}
   </UBadge>
 </template>
