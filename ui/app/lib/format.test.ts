@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAbsolute, formatDuration, formatRelative, shortId } from './format'
+import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from './format'
 
 const NOW = Date.parse('2026-09-11T12:00:00Z')
 const ago = (ms: number) => new Date(NOW - ms).toISOString()
@@ -85,5 +85,17 @@ describe('formatAbsolute', () => {
     expect(formatAbsolute(null)).toBe('')
     expect(formatAbsolute('not a date')).toBe('')
     expect(formatAbsolute('2026-09-11T12:00:00Z')).not.toBe('')
+  })
+})
+
+describe('stateLabel', () => {
+  it('shows a claimed run as running', () => {
+    expect(stateLabel('claimed')).toBe('running')
+  })
+
+  it('leaves every other state as it is', () => {
+    for (const state of ['queued', 'completed', 'failed', 'dead', 'cancelled', 'online']) {
+      expect(stateLabel(state)).toBe(state)
+    }
   })
 })
