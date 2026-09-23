@@ -4,9 +4,9 @@
 //! HTTP request to the server inline, which forces SDK-based runners that
 //! wrap long-running subprocesses to choose between two bad options:
 //!
-//! - **batch-at-end** (what `croniq-shell-runner` does): collect output
-//!   until the process exits and POST it in one shot — no live progress
-//!   in the UI for multi-minute jobs.
+//! - **batch-at-end** (what `croniq-shell-runner` did before it moved to
+//!   this writer): collect output until the process exits and POST it in
+//!   one shot — no live progress in the UI for multi-minute jobs.
 //! - **per-line `ctx.log().await`** in a stdout reader: live progress,
 //!   but a slow server backpressures the reader → the subprocess's
 //!   stdout pipe fills → the subprocess blocks on write, potentially
