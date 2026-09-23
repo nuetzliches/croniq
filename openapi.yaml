@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Croniq API
   description: Distributed job scheduling platform
-  version: 0.40.0
+  version: 0.41.0
   license:
     name: MIT OR Apache-2.0
 
@@ -35,6 +35,12 @@ components:
         runners_stale: { type: integer }
         runners_dead: { type: integer }
         queued: { type: integer }
+        running:
+          type: integer
+          description: >
+            Executions in flight on runners, summed from the in-flight lists
+            runners report on each poll. Can lag a poll interval and includes
+            ephemeral runs, which have no execution row. Absent before v0.41.0.
 
     VersionResponse:
       type: object

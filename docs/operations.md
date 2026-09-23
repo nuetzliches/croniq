@@ -201,11 +201,11 @@ services:
     depends_on: [ui, server]
 
   ui:
-    image: ghcr.io/nuetzliches/croniq-ui:0.40.0   # same tag as the server
+    image: ghcr.io/nuetzliches/croniq-ui:0.41.0   # same tag as the server
     restart: unless-stopped
 
   server:
-    image: ghcr.io/nuetzliches/croniq-server:0.40.0
+    image: ghcr.io/nuetzliches/croniq-server:0.41.0
     restart: unless-stopped
     volumes:
       - croniq-data:/var/lib/croniq
@@ -256,7 +256,7 @@ when the server can tell the page is on HTTPS, which it reads from `Origin`,
 
 All three images are published together under the same tags by the same
 workflow run, and they are meant to be deployed that way. Pinning
-`croniq-ui:0.40.0` against `croniq-server:0.39.1` gives you a dashboard calling
+`croniq-ui:0.41.0` against `croniq-server:0.40.0` gives you a dashboard calling
 endpoints its server may not have; the failure is a scattering of 404s rather
 than a clear message.
 
