@@ -151,6 +151,27 @@ jobs:
           # logs when diagnosing missing-file Trusted Publishing errors.
           verbose: true
 
+  verify-registry:
+    # A separate job so a slow registry can be re-checked with "Re-run failed
+    # jobs" without uploading again. PyPI serves a new version within
+    # seconds; ten minutes is headroom, not an expected wait (#784).
+    name: Verify PyPI serves the version
+    needs: [verify, publish-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The workflow's own commit, not the released tag, so a dispatched
+          # re-run of a tag older than the script still finds it.
+          sparse-checkout: .github/scripts
+      - name: Wait for the version on pypi.org
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          bash .github/scripts/wait-for-registry.sh PyPI 600 \
+            "https://pypi.org/pypi/croniq-runner/${VERSION}/json"
+
   github-release:
     name: Attach wheel/sdist to GitHub Release
     needs: [verify, build, publish-pypi]

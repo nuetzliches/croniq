@@ -7,9 +7,9 @@ name: Go SDK Release
 #   - `sdks/go/otel/v*`   — the OTel adapter sub-module
 #
 # For each tag, we re-run the tests at the tagged commit (defence in
-# depth — main CI already gated the merge), verify the module is
-# resolvable via the Go proxy after a short warm-up, and create a
-# GitHub Release with auto-generated notes. The actual "publish" is
+# depth — main CI already gated the merge), create a GitHub Release
+# with auto-generated notes, and fail the run if the Go proxy cannot
+# serve the version. The actual "publish" is
 # done by proxy.golang.org indexing the tag on first fetch; this
 # workflow just polishes the user-facing artefact.
 
@@ -92,7 +92,9 @@ jobs:
         if: needs.resolve.outputs.module == 'otel'
         run: |
           if grep -E '^\s*replace\s' sdks/go/otel/go.mod >/dev/null; then
-            echo "::error::sdks/go/otel/go.mod still contains a `replace` directive — see sdks/go/RELEASING.md"
+            # Single quotes: in double quotes the backticks run `replace` as a
+            # command and the message loses the word.
+            echo '::error::sdks/go/otel/go.mod still contains a `replace` directive — see sdks/go/RELEASING.md'
             grep -nE '^\s*replace\s' sdks/go/otel/go.mod
             exit 1
           fi
@@ -123,28 +125,28 @@ jobs:
         working-directory: sdks/go/conformance
         run: go test -race -timeout=120s ./...
 
-      - name: Warm up proxy.golang.org for ${{ needs.resolve.outputs.tag }}
-        # Triggering the Go module proxy to fetch the tag is what makes
-        # `go get` work for users instantly after release. Without this
-        # the first user to request the version pays a slow GitHub-API
-        # cold-start. We retry because the tag may take a few seconds
-        # to propagate to the proxy after the push.
+  verify-proxy:
+    # Requesting the version is what makes proxy.golang.org fetch the tag, so
+    # this both warms the proxy and confirms `go get` works. It used to be a
+    # 90-second warning inside `validate`; a module the proxy cannot serve
+    # (an unresolvable `require`, a malformed go.mod) is not released, so it
+    # now fails the run (#784). Runs beside `release`, which it does not gate,
+    # and a slow proxy can be re-checked with "Re-run failed jobs".
+    name: Verify proxy.golang.org serves ${{ needs.resolve.outputs.tag }}
+    needs: [resolve, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+      - name: Wait for the version on the proxy
+        env:
+          MODULE_PATH: ${{ needs.resolve.outputs.module_path }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          set -euo pipefail
-          MODULE="github.com/nuetzliches/croniq/${{ needs.resolve.outputs.module_path }}"
-          VERSION="${{ needs.resolve.outputs.version }}"
-          URL="https://proxy.golang.org/${MODULE}/@v/${VERSION}.info"
-          echo "Warming proxy: $URL"
-          for i in 1 2 3 4 5 6; do
-            if curl -fsSL "$URL" -o /tmp/proxy.json; then
-              cat /tmp/proxy.json
-              echo
-              exit 0
-            fi
-            echo "attempt $i failed; sleeping 15s"
-            sleep 15
-          done
-          echo "::warning::proxy.golang.org did not cache the tag within 90 s — users may see a slow first install."
+          bash .github/scripts/wait-for-registry.sh proxy.golang.org 600 \
+            "https://proxy.golang.org/github.com/nuetzliches/croniq/${MODULE_PATH}/@v/${VERSION}.info"
 
   release:
     name: Create GitHub Release
