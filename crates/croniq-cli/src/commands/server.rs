@@ -18,6 +18,7 @@ pub fn status(remote: &Remote) -> Result<()> {
 
     println!("Status:          {}", resp.status);
     println!("Queue depth:     {}", resp.queued);
+    println!("Running:         {}", resp.running);
     println!("Runners online:  {}", resp.runners_online);
     println!("Runners stale:   {}", resp.runners_stale);
     println!("Runners dead:    {}", resp.runners_dead);
