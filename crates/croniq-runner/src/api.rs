@@ -379,6 +379,9 @@ pub async fn handle_health(State(state): State<Arc<AppState>>) -> Json<HealthRes
             .len(),
         queued: queue.len(),
         running: reg.total_inflight(),
+        // The standalone runner API has no maintenance switch; the server's
+        // own `/health` fills this in.
+        maintenance: Default::default(),
     };
 
     Json(response)

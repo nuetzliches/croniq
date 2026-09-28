@@ -131,6 +131,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("027_dead_letter_execution_index", PG_MIGRATION_027),
     ("028_job_register_fires", PG_MIGRATION_028),
     ("029_concurrency_group", PG_MIGRATION_029),
+    ("030_maintenance_active_since", PG_MIGRATION_030),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -294,6 +295,10 @@ ALTER TABLE executions ADD COLUMN IF NOT EXISTS concurrency_group TEXT;
 CREATE INDEX IF NOT EXISTS idx_executions_concurrency_group_state
     ON executions(concurrency_group, state)
     WHERE concurrency_group IS NOT NULL;
+"#;
+
+const PG_MIGRATION_030: &str = r#"
+ALTER TABLE maintenance ADD COLUMN IF NOT EXISTS active_since TIMESTAMPTZ;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -3005,7 +3010,8 @@ impl MaintenanceStore for PgStore {
         let mut db = self.client.lock().unwrap();
         let rows = db
             .query(
-                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at
+                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at,
+                        active_since
                  FROM maintenance WHERE id = 1",
                 &[],
             )
@@ -3017,15 +3023,17 @@ impl MaintenanceStore for PgStore {
         let mut db = self.client.lock().unwrap();
         db.execute(
             "INSERT INTO maintenance
-                (id, manual_active, window_start, window_end, note, updated_by, updated_at)
-             VALUES (1, $1, $2, $3, $4, $5, $6)
+                (id, manual_active, window_start, window_end, note, updated_by, updated_at,
+                 active_since)
+             VALUES (1, $1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT(id) DO UPDATE SET
                 manual_active = EXCLUDED.manual_active,
                 window_start  = EXCLUDED.window_start,
                 window_end    = EXCLUDED.window_end,
                 note          = EXCLUDED.note,
                 updated_by    = EXCLUDED.updated_by,
-                updated_at    = EXCLUDED.updated_at",
+                updated_at    = EXCLUDED.updated_at,
+                active_since  = EXCLUDED.active_since",
             &[
                 &state.manual_active,
                 &state.window_start,
@@ -3033,6 +3041,7 @@ impl MaintenanceStore for PgStore {
                 &state.note,
                 &state.updated_by,
                 &state.updated_at,
+                &state.active_since,
             ],
         )
         .map_err(map_err)?;
@@ -3288,6 +3297,7 @@ fn row_to_maintenance(row: &postgres::Row) -> MaintenanceState {
         note: row.get(3),
         updated_by: row.get(4),
         updated_at: row.get(5),
+        active_since: row.get(6),
     }
 }
 

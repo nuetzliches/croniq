@@ -6,6 +6,8 @@ export interface HealthResponse {
   queued: number
   /** Executions runners report in flight. Older servers omit it. */
   running?: number
+  /** Global maintenance switch. Older servers omit it. */
+  maintenance?: { active: boolean; since: string | null }
 }
 
 export interface VersionResponse {
@@ -24,6 +26,8 @@ export interface MaintenanceResponse {
   note: string | null
   updated_by: string | null
   updated_at: string | null
+  /** Since when maintenance has been on without a break; null while off. Older servers omit it. */
+  active_since?: string | null
 }
 
 export interface JobDefinition {
@@ -458,7 +462,11 @@ export interface AlertChannelConfig {
   kind: AlertChannelKind
 }
 
-export type AlertRuleTrigger = 'job_failed' | 'job_sla_missed' | 'job_missed_fire'
+export type AlertRuleTrigger =
+  | 'job_failed'
+  | 'job_sla_missed'
+  | 'job_missed_fire'
+  | 'maintenance_active'
 
 export interface AlertRuleConfig {
   name: string

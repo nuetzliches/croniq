@@ -3233,3 +3233,82 @@ fn restore_api_key_clears_both_the_deadline_and_the_revocation() {
     store.restore_api_key("nope").unwrap();
     assert_eq!(store.list_api_keys("c1").unwrap().len(), 1);
 }
+
+// ─── MaintenanceStore ───
+
+#[test]
+fn maintenance_active_since_round_trips() {
+    let store = create_memory_store().unwrap();
+    let state = MaintenanceState {
+        manual_active: true,
+        note: Some("deploy".into()),
+        updated_at: Some(utc(2026, 9, 28, 10, 5)),
+        active_since: Some(utc(2026, 9, 28, 9, 0)),
+        ..Default::default()
+    };
+    store.set_maintenance(&state).unwrap();
+
+    let loaded = store.get_maintenance().unwrap();
+    assert_eq!(loaded.active_since, Some(utc(2026, 9, 28, 9, 0)));
+    // The stored activation wins over the later `updated_at`, which is only
+    // the last edit.
+    assert_eq!(
+        loaded.active_since(utc(2026, 9, 28, 11, 0)),
+        Some(utc(2026, 9, 28, 9, 0))
+    );
+}
+
+#[test]
+fn maintenance_active_since_is_none_while_inactive() {
+    let state = MaintenanceState {
+        manual_active: false,
+        active_since: Some(utc(2026, 9, 28, 9, 0)),
+        ..Default::default()
+    };
+    assert_eq!(state.active_since(utc(2026, 9, 28, 11, 0)), None);
+}
+
+#[test]
+fn maintenance_window_that_opened_by_itself_starts_at_window_start() {
+    // Written while the window was still in the future, so nothing was
+    // stored: the activation is the window opening.
+    let state = MaintenanceState {
+        window_start: Some(utc(2026, 9, 28, 2, 0)),
+        window_end: Some(utc(2026, 9, 28, 4, 0)),
+        updated_at: Some(utc(2026, 9, 27, 18, 0)),
+        ..Default::default()
+    };
+    assert_eq!(
+        state.active_since(utc(2026, 9, 28, 3, 0)),
+        Some(utc(2026, 9, 28, 2, 0))
+    );
+    assert_eq!(state.active_since(utc(2026, 9, 28, 4, 0)), None);
+}
+
+#[test]
+fn maintenance_next_active_since_carries_over_while_active() {
+    let t0 = utc(2026, 9, 28, 9, 0);
+    let later = utc(2026, 9, 28, 12, 0);
+    let off = MaintenanceState::default();
+    let on = MaintenanceState {
+        manual_active: true,
+        ..Default::default()
+    };
+
+    // Switching on starts the clock now.
+    assert_eq!(on.next_active_since(&off, t0), Some(t0));
+
+    // Rewording the note of an active switch keeps the original start.
+    let previous = MaintenanceState {
+        active_since: Some(t0),
+        ..on.clone()
+    };
+    let reworded = MaintenanceState {
+        note: Some("still migrating".into()),
+        ..on.clone()
+    };
+    assert_eq!(reworded.next_active_since(&previous, later), Some(t0));
+
+    // Switching off clears it.
+    assert_eq!(off.next_active_since(&previous, later), None);
+}

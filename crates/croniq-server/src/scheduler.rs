@@ -125,6 +125,11 @@ pub struct SchedulerHeartbeat {
     pub last_tick_unix: AtomicI64,
     /// Total successful ticks since process start.
     pub ticks_total: AtomicU64,
+    /// Scheduled fires skipped because maintenance was active, per job key,
+    /// since process start (issue #786). Rendered as
+    /// `croniq_maintenance_skipped_fires_total{job_key}`, so after a long
+    /// window an operator can tell which fires need a manual trigger.
+    pub maintenance_skipped: std::sync::Mutex<BTreeMap<String, u64>>,
 }
 
 impl SchedulerHeartbeat {
@@ -144,6 +149,26 @@ impl SchedulerHeartbeat {
     pub fn ticks_total(&self) -> u64 {
         self.ticks_total.load(Ordering::Relaxed)
     }
+
+    /// Fold one tick's maintenance skips into the per-job counters.
+    pub fn record_maintenance_skips(&self, skipped: &[SkippedFire]) {
+        if skipped.is_empty() {
+            return;
+        }
+        if let Ok(mut counts) = self.maintenance_skipped.lock() {
+            for skip in skipped {
+                *counts.entry(skip.job_key.clone()).or_default() += 1;
+            }
+        }
+    }
+
+    /// Per-job maintenance-skip counts, sorted by job key.
+    pub fn maintenance_skipped(&self) -> Vec<(String, u64)> {
+        self.maintenance_skipped
+            .lock()
+            .map(|c| c.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// The result of a single scheduler tick.
@@ -151,6 +176,16 @@ impl SchedulerHeartbeat {
 pub struct TickResult {
     /// Job keys that were fired in this tick.
     pub fired: Vec<FiredExecution>,
+    /// Scheduled fires that fell due while maintenance was active and were
+    /// skipped (issue #786). Not held: the schedule moved past them.
+    pub maintenance_skipped: Vec<SkippedFire>,
+}
+
+/// A scheduled fire skipped because global maintenance was active.
+#[derive(Debug, Clone)]
+pub struct SkippedFire {
+    pub job_key: String,
+    pub fire_at: DateTime<Utc>,
 }
 
 /// A single job execution fired by the scheduler.
@@ -591,10 +626,12 @@ impl SchedulerLoop {
     #[tracing::instrument(level = "trace", skip(self), fields(now = %now, trigger_count = self.triggers.len()))]
     pub async fn tick(&mut self, now: DateTime<Utc>) -> TickResult {
         let mut fired = Vec::new();
+        let mut maintenance_skipped = Vec::new();
 
-        // Global maintenance freezes dispatch. We still advance each due
-        // trigger's schedule below (mark_fired) so no catch-up backlog builds
-        // up, but emit no execution or work item while the switch is active.
+        // Global maintenance freezes dispatch. A scheduled fire that falls due
+        // meanwhile is *skipped*, not held: we still advance the trigger's
+        // schedule below so no catch-up backlog builds up, but emit no
+        // execution or work item while the switch is active.
         let maintenance_active = self
             .maintenance
             .read()
@@ -614,7 +651,48 @@ impl SchedulerLoop {
                 continue;
             };
 
+            if maintenance_active && self.jobs.contains_key(&trigger.job_key) {
+                let (last_fired_at, fire_count) = (trigger.last_fired_at, trigger.fire_count);
+                trigger.mark_fired(fire_at, now);
+                // The fire did not run, so it is not counted as one.
+                trigger.last_fired_at = last_fired_at;
+                trigger.fire_count = fire_count;
+
+                // Persist the advance (issue #786). Before, only memory moved
+                // on: `job_states` kept the skipped fire as `next_fire_at`, so
+                // the watchdog reported it as missed once the window outlasted
+                // the grace, and a restart during maintenance rebuilt the
+                // trigger from that stale time and caught up a fire the
+                // running process had already skipped. A failed write keeps
+                // the skip; it is logged, and the next skip or fire writes the
+                // row again.
+                let job_state = JobState {
+                    job_key: trigger.job_key.clone(),
+                    next_fire_at: trigger.next_fire_at,
+                    last_fired_at,
+                    fire_count,
+                    status: if trigger.state == TriggerState::Exhausted {
+                        JobStatus::Exhausted
+                    } else {
+                        JobStatus::Active
+                    },
+                    updated_at: now,
+                };
+                if let Err(e) = self.store.upsert_job_state(&job_state) {
+                    tracing::warn!(
+                        job_key = %trigger.job_key,
+                        error = %e,
+                        "failed to persist a fire skipped for maintenance"
+                    );
+                }
+                maintenance_skipped.push(SkippedFire {
+                    job_key: trigger.job_key.clone(),
+                    fire_at,
+                });
+                continue;
+            }
             if maintenance_active {
+                // Unknown job: there is no row to persist the advance into.
                 trigger.mark_fired(fire_at, now);
                 continue;
             }
@@ -823,7 +901,25 @@ impl SchedulerLoop {
             }
         }
 
-        TickResult { fired }
+        if !maintenance_skipped.is_empty() {
+            // One line per tick, not per fire: the list is what an operator
+            // needs after the window to decide what to trigger by hand.
+            let job_keys = maintenance_skipped
+                .iter()
+                .map(|s| s.job_key.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            tracing::info!(
+                count = maintenance_skipped.len(),
+                job_keys = %job_keys,
+                "maintenance active: skipped scheduled fires"
+            );
+        }
+
+        TickResult {
+            fired,
+            maintenance_skipped,
+        }
     }
 }
 
@@ -1445,6 +1541,70 @@ mod tests {
 
         maintenance.write().unwrap().manual_active = false;
         assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    fn active_maintenance() -> Arc<std::sync::RwLock<MaintenanceState>> {
+        Arc::new(std::sync::RwLock::new(MaintenanceState {
+            manual_active: true,
+            ..MaintenanceState::default()
+        }))
+    }
+
+    #[tokio::test]
+    async fn scheduled_fire_during_maintenance_is_skipped_and_persisted() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        let trigger = make_trigger_due_now("test:job");
+        let due = trigger.next_fire_at.unwrap();
+        triggers.insert("test:job".into(), trigger);
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        scheduler.set_maintenance_handle(active_maintenance());
+
+        let now = Utc::now();
+        let result = scheduler.tick(now).await;
+
+        assert!(result.fired.is_empty());
+        assert_eq!(result.maintenance_skipped.len(), 1);
+        assert_eq!(result.maintenance_skipped[0].job_key, "test:job");
+        assert_eq!(result.maintenance_skipped[0].fire_at, due);
+        assert_eq!(runner.queue.read().await.count_for_job("test:job"), 0);
+
+        // Memory and store agree on the advance, so the watchdog does not see
+        // the skipped fire as overdue and a restart does not catch it up.
+        let trigger = &scheduler.triggers["test:job"];
+        let next = trigger.next_fire_at.unwrap();
+        assert!(next > now, "the schedule moved past the skipped fire");
+        let row = store.get_job_state("test:job").unwrap().unwrap();
+        assert_eq!(row.next_fire_at, Some(next));
+
+        // A skipped fire is not a fire.
+        assert_eq!(trigger.fire_count, 0);
+        assert_eq!(trigger.last_fired_at, None);
+        assert_eq!(row.fire_count, 0);
+        assert_eq!(row.last_fired_at, None);
+        assert_eq!(row.status, JobStatus::Active);
+    }
+
+    #[test]
+    fn heartbeat_counts_maintenance_skips_per_job() {
+        let hb = SchedulerHeartbeat::default();
+        let at = Utc::now();
+        let skip = |k: &str| SkippedFire {
+            job_key: k.into(),
+            fire_at: at,
+        };
+        hb.record_maintenance_skips(&[skip("b:job"), skip("a:job")]);
+        hb.record_maintenance_skips(&[skip("b:job")]);
+        assert_eq!(
+            hb.maintenance_skipped(),
+            vec![("a:job".to_string(), 1), ("b:job".to_string(), 2)]
+        );
     }
 
     #[tokio::test]

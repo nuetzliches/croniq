@@ -31,6 +31,9 @@ pub struct MaintenanceResponse {
     pub note: Option<String>,
     pub updated_by: Option<String>,
     pub updated_at: Option<DateTime<Utc>>,
+    /// Since when maintenance has been effective without a break; `null`
+    /// while inactive. Survives edits that keep it on (issue #786).
+    pub active_since: Option<DateTime<Utc>>,
 }
 
 impl MaintenanceResponse {
@@ -43,6 +46,7 @@ impl MaintenanceResponse {
             note: s.note.clone(),
             updated_by: s.updated_by.clone(),
             updated_at: s.updated_at,
+            active_since: s.active_since(now),
         }
     }
 }
@@ -94,7 +98,12 @@ pub async fn handle_set_maintenance(
     };
 
     let now = Utc::now();
-    let new_state = MaintenanceState {
+    let previous = state
+        .maintenance
+        .read()
+        .map(|m| m.clone())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut new_state = MaintenanceState {
         manual_active: req.manual_active,
         window_start: req.window_start,
         window_end: req.window_end,
@@ -104,7 +113,11 @@ pub async fn handle_set_maintenance(
             .filter(|n| !n.is_empty()),
         updated_by: Some(ctx.user_id.clone().unwrap_or_else(|| ctx.caller_id.clone())),
         updated_at: Some(now),
+        active_since: None,
     };
+    // Carry the activation over an edit that keeps maintenance on, so a
+    // reworded note does not reset what `maintenance_active` alerts measure.
+    new_state.active_since = new_state.next_active_since(&previous, now);
 
     store
         .set_maintenance(&new_state)

@@ -90,6 +90,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "029_concurrency_group",
         include_str!("029_concurrency_group.sql"),
     ),
+    (
+        "030_maintenance_active_since",
+        include_str!("030_maintenance_active_since.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -842,5 +846,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(generation, 1);
+    }
+
+    #[test]
+    fn migration_030_adds_active_since_and_keeps_the_existing_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "029_concurrency_group").unwrap();
+
+        // Pre-condition: an older binary wrote the singleton row without the
+        // column.
+        conn.execute(
+            "INSERT INTO maintenance (id, manual_active, note, updated_at)
+             VALUES (1, 1, 'deploy', '2026-09-28T09:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "030_maintenance_active_since")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // The row survives untouched with a NULL activation, which the reader
+        // resolves through `updated_at`.
+        let (manual, note, since): (bool, String, Option<String>) = conn
+            .query_row(
+                "SELECT manual_active, note, active_since FROM maintenance WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!(manual);
+        assert_eq!(note, "deploy");
+        assert!(since.is_none(), "a legacy row has no recorded activation");
     }
 }

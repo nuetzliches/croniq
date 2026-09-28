@@ -201,12 +201,18 @@ function latency(delivery: AlertDelivery): string {
               {{ delivery.channel_name }}
             </td>
             <td class="max-w-[12rem] truncate px-[var(--cq-cell-x)]">
+              <!-- A maintenance alert is not about a job and carries no key. -->
               <RouterLink
+                v-if="delivery.job_key"
                 :to="`/jobs/${encodeURIComponent(delivery.job_key)}`"
                 class="font-mono text-primary hover:underline"
               >
                 {{ delivery.job_key }}
               </RouterLink>
+              <span
+                v-else
+                class="text-muted"
+              >—</span>
             </td>
             <td class="cq-num px-[var(--cq-cell-x)] font-mono text-muted">
               <!-- Into the run that caused it. This is the link the React

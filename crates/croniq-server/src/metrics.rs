@@ -64,6 +64,7 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     let wd_cancelled_stranded = wd.cancelled_stranded.load(Ordering::Relaxed);
     let wd_sla_missed = wd.sla_missed.load(Ordering::Relaxed);
     let wd_missed_fires = wd.missed_fires.load(Ordering::Relaxed);
+    let wd_maintenance_alerts = wd.maintenance_alerts.load(Ordering::Relaxed);
 
     let mut body = format!(
         "# HELP croniq_runners_total Number of known runners by status.\n\
@@ -99,7 +100,10 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          croniq_watchdog_sla_missed_total {wd_sla_missed}\n\
          # HELP croniq_watchdog_missed_fires_total Missed-fire alerts fired by the watchdog sweep.\n\
          # TYPE croniq_watchdog_missed_fires_total counter\n\
-         croniq_watchdog_missed_fires_total {wd_missed_fires}\n"
+         croniq_watchdog_missed_fires_total {wd_missed_fires}\n\
+         # HELP croniq_watchdog_maintenance_alerts_total Alerts fired because maintenance stayed active too long.\n\
+         # TYPE croniq_watchdog_maintenance_alerts_total counter\n\
+         croniq_watchdog_maintenance_alerts_total {wd_maintenance_alerts}\n"
     );
 
     // Scheduler liveness (issue #248). The scheduler updates the heartbeat
@@ -117,6 +121,7 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
             hb.last_tick_unix(),
             hb.ticks_total(),
         ));
+        render_maintenance_skips(&mut body, &hb.maintenance_skipped());
     }
 
     // Per-job series are derived from the executions store at scrape time
@@ -175,6 +180,25 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
 /// Append the per-job metric families to the exposition body. Each family
 /// gets a single `# HELP`/`# TYPE` header followed by all of its job samples,
 /// so the output stays valid Prometheus text regardless of job count.
+/// Scheduled fires skipped because maintenance was active (issue #786), per
+/// job. Emitted only for jobs that have skipped at least once; an absent
+/// series reads as zero.
+fn render_maintenance_skips(out: &mut String, skipped: &[(String, u64)]) {
+    if skipped.is_empty() {
+        return;
+    }
+    out.push_str(
+        "# HELP croniq_maintenance_skipped_fires_total Scheduled fires skipped while maintenance was active.\n\
+         # TYPE croniq_maintenance_skipped_fires_total counter\n",
+    );
+    for (job_key, count) in skipped {
+        let key = escape_label(job_key);
+        out.push_str(&format!(
+            "croniq_maintenance_skipped_fires_total{{job_key=\"{key}\"}} {count}\n"
+        ));
+    }
+}
+
 fn render_job_metrics(out: &mut String, jobs: &[JobExecutionMetrics]) {
     if jobs.is_empty() {
         return;
@@ -521,6 +545,49 @@ mod tests {
         assert!(body.contains("# TYPE croniq_scheduler_last_tick_timestamp gauge"));
         assert!(body.contains("croniq_scheduler_last_tick_timestamp 1700000000"));
         assert!(body.contains("croniq_scheduler_ticks_total 1"));
+        // No fire was skipped, so the per-job series is absent altogether.
+        assert!(!body.contains("croniq_maintenance_skipped_fires_total"));
+    }
+
+    #[tokio::test]
+    async fn metrics_counts_fires_skipped_for_maintenance_per_job() {
+        use crate::scheduler::{SchedulerHeartbeat, SkippedFire};
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::new(runner, tx);
+
+        let hb = Arc::new(SchedulerHeartbeat::default());
+        let skip = SkippedFire {
+            job_key: "billing:invoice".into(),
+            fire_at: Utc::now(),
+        };
+        hb.record_maintenance_skips(&[skip.clone(), skip]);
+        Arc::get_mut(&mut state).unwrap().scheduler_heartbeat = Some(Arc::clone(&hb));
+
+        let resp = metrics_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(body.contains("# TYPE croniq_maintenance_skipped_fires_total counter"));
+        assert!(
+            body.contains("croniq_maintenance_skipped_fires_total{job_key=\"billing:invoice\"} 2")
+        );
     }
 
     #[tokio::test]

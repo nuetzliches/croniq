@@ -46,6 +46,11 @@ pub const LEGACY_ENV_RULE_NAME: &str = "_legacy_env_hook";
 /// Matching sentinel channel name for the env-var path.
 pub const LEGACY_ENV_CHANNEL_NAME: &str = "_legacy_env_hook";
 
+/// `reason` of a `maintenance_active` alert (issue #786). Also what tells the
+/// channels apart from a job alert: there is no job key, the email subject and
+/// the webhook `event` say "maintenance" instead.
+pub const MAINTENANCE_ACTIVE_REASON: &str = "maintenance_active";
+
 /// Failure context the evaluator sees on every dead-letter / drop.
 ///
 /// Kept as a small owned struct rather than a borrow so the evaluator
@@ -514,7 +519,14 @@ async fn deliver_webhook(
     let delivery_id = Uuid::new_v4().to_string();
     let payload = WebhookPayload {
         rule: rule_name,
-        event: "job_failed",
+        // Every job-scoped trigger has always sent `job_failed` here (with
+        // `reason` telling them apart), and receivers match on it. The
+        // maintenance alert is not about a job, so it gets its own event.
+        event: if ctx.reason == MAINTENANCE_ACTIVE_REASON {
+            MAINTENANCE_ACTIVE_REASON
+        } else {
+            "job_failed"
+        },
         job_key: &ctx.job_key,
         execution_id: &ctx.execution_id,
         attempt: ctx.attempt,
@@ -702,6 +714,9 @@ fn hmac_sha256_hex(key: &[u8], body: &[u8]) -> String {
 /// preserve any greps / parsers operators may have built on top of
 /// the existing format.
 fn compose_email(rule_name: &str, ctx: &FailureContext, now: DateTime<Utc>) -> (String, String) {
+    if ctx.reason == MAINTENANCE_ACTIVE_REASON {
+        return compose_maintenance_email(rule_name, ctx, now);
+    }
     let subject = format!("[Croniq] {} failed (rule: {})", ctx.job_key, rule_name);
     let body = format!(
         "Croniq detected a permanent job failure.\n\
@@ -722,6 +737,31 @@ fn compose_email(rule_name: &str, ctx: &FailureContext, now: DateTime<Utc>) -> (
         reason = ctx.reason,
         attempt = ctx.attempt,
         execution_id = ctx.execution_id,
+        fired_at = now.to_rfc3339(),
+        error = ctx.error,
+        version = env!("CARGO_PKG_VERSION"),
+    );
+    (subject, body)
+}
+
+/// The `maintenance_active` variant of [`compose_email`]: there is no job,
+/// attempt or execution to report, and "failed" would be the wrong word.
+fn compose_maintenance_email(
+    rule_name: &str,
+    ctx: &FailureContext,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let subject = format!("[Croniq] maintenance still active (rule: {rule_name})");
+    let body = format!(
+        "Croniq is still in maintenance mode: no scheduled work is dispatched.\n\
+         \n\
+         Rule:          {rule_name}\n\
+         Fired at:      {fired_at}\n\
+         Details:\n\
+         {error}\n\
+         \n\
+         -- \n\
+         Sent by Croniq {version}.\n",
         fired_at = now.to_rfc3339(),
         error = ctx.error,
         version = env!("CARGO_PKG_VERSION"),
@@ -1779,6 +1819,25 @@ mod tests {
             fail_for: Some(bad_recipient.to_string()),
         });
         (sender, captured)
+    }
+
+    #[test]
+    fn compose_email_for_maintenance_names_no_job_and_no_failure() {
+        let ctx = FailureContext {
+            job_key: String::new(),
+            execution_id: String::new(),
+            error: "maintenance active since 2026-09-28T09:00:00Z, for 3600s".into(),
+            attempt: 0,
+            reason: MAINTENANCE_ACTIVE_REASON.into(),
+        };
+        let (subject, body) = compose_email("maintenance-too-long", &ctx, Utc::now());
+        assert_eq!(
+            subject,
+            "[Croniq] maintenance still active (rule: maintenance-too-long)"
+        );
+        assert!(body.contains("maintenance-too-long"));
+        assert!(body.contains("since 2026-09-28T09:00:00Z"));
+        assert!(!body.contains("Execution ID"));
     }
 
     #[test]

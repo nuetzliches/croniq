@@ -6,6 +6,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Maintenance mode is visible to health checks and alerting
+  ([#786](https://github.com/nuetzliches/croniq/issues/786)).** A deploy that
+  fails closed leaves maintenance on, and until now nothing said so except a
+  side effect. Now:
+  - `GET /health` carries `"maintenance": { "active", "since" }` next to
+    `status`, which stays `ok` — an image healthcheck must not restart a server
+    for being frozen on purpose. The operator note is not exposed there.
+    `croniq status` prints it.
+  - A new alert trigger, `when maintenance_active` with `expected_within`,
+    fires once maintenance has been on longer than that; with `throttle` it
+    repeats every window while it lasts. Webhooks get
+    `"event": "maintenance_active"`, shell channels
+    `CRONIQ_REASON=maintenance_active`.
+  - `GET /v1/maintenance` returns `active_since`. A `PUT` that keeps
+    maintenance on carries it over, so rewording the note does not restart
+    the clock. Stored in migration `030_maintenance_active_since`.
+  - Scheduled fires skipped during maintenance are logged once per tick at
+    `INFO` and counted in `croniq_maintenance_skipped_fires_total{job_key}`.
+
+### Changed
+
+- **`job_missed_fire` and `job_sla_missed` stand down while maintenance is
+  active ([#786](https://github.com/nuetzliches/croniq/issues/786)).** A
+  window longer than a rule's `expected_within` used to report a missed fire
+  for every active job. SLA breaches are deferred, not dropped: a run still
+  past its SLA alerts once maintenance clears. If you relied on those false
+  alarms to notice maintenance left on, add a `maintenance_active` rule.
+
+### Fixed
+
+- **A fire skipped for maintenance is now persisted
+  ([#786](https://github.com/nuetzliches/croniq/issues/786)).** Only the
+  in-memory schedule advanced; the stored `next_fire_at` kept the skipped
+  fire. That made it look overdue to the watchdog and the
+  `croniq_job_overdue` gauge, and a restart during maintenance rebuilt the
+  trigger from it and caught up a fire the running process had already
+  skipped. A skipped fire also no longer counts toward `fire_count` or sets
+  `last_fired_at`.
+- **The Croniqfile generator's alert rules are complete.** It offered
+  `job_sla_missed` and `job_missed_fire` but no field for `expected_within`,
+  which both require, so the rules it wrote were dropped at compile. It now
+  asks for the duration, and offers `maintenance_active`.
+- The alert-delivery list no longer renders an empty job link for a delivery
+  without a job.
+
 ## [0.41.0] - 2026-09-23
 
 ### Added

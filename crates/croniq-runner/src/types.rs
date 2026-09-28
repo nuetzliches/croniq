@@ -259,6 +259,25 @@ pub struct HealthResponse {
     /// Defaulted so a newer client still reads an older server's response.
     #[serde(default)]
     pub running: usize,
+    /// Global maintenance switch (issue #786). Reported next to `status`
+    /// rather than folded into it: a frozen server is up and answering, and an
+    /// image healthcheck must not restart it for doing what it was told. An
+    /// external probe can still alert on `maintenance.active` without an
+    /// authenticated call to `/v1/maintenance`. Defaulted so a newer client
+    /// still reads an older server's response.
+    #[serde(default)]
+    pub maintenance: HealthMaintenance,
+}
+
+/// The maintenance part of [`HealthResponse`]. Deliberately only the state and
+/// its start: `/health` is unauthenticated, and the operator note can carry
+/// anything.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HealthMaintenance {
+    /// Dispatch is frozen right now (manual toggle or an open window).
+    pub active: bool,
+    /// Since when, without a break; `None` while inactive.
+    pub since: Option<DateTime<Utc>>,
 }
 
 // ─── Admin API ────────────────────────────────────────────────────────────────

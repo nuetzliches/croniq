@@ -22,6 +22,12 @@ pub fn status(remote: &Remote) -> Result<()> {
     println!("Runners online:  {}", resp.runners_online);
     println!("Runners stale:   {}", resp.runners_stale);
     println!("Runners dead:    {}", resp.runners_dead);
+    if resp.maintenance.active {
+        match resp.maintenance.since {
+            Some(since) => println!("Maintenance:     active since {}", since.to_rfc3339()),
+            None => println!("Maintenance:     active"),
+        }
+    }
 
     Ok(())
 }

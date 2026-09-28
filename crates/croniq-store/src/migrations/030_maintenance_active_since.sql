@@ -1,0 +1,13 @@
+-- When the current maintenance activation began (issue #786).
+--
+-- `updated_at` cannot answer that: it moves on every PUT, so rewording the
+-- note of a window that has been on for three hours would make it look three
+-- seconds old to a `maintenance_active` alert rule and to `/health`. The PUT
+-- handler carries this value over while maintenance stays active across the
+-- change, sets it when the change switches maintenance on, and clears it when
+-- the change leaves it off.
+--
+-- Nullable, and NULL for the row an older binary wrote. The reader falls back
+-- to `window_start`, then `updated_at` — for a manual toggle set by an older
+-- binary that is the time of that PUT, which is the best record there is.
+ALTER TABLE maintenance ADD COLUMN active_since TEXT DEFAULT NULL;

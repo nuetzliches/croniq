@@ -43,7 +43,7 @@ pub use queue::WorkQueue;
 pub use registry::{RegisterOutcome, RunnerRegistry};
 pub use router::CapabilityRouter;
 pub use types::{
-    CompleteRequest, CompleteResponse, CompletionStatus, EphemeralTally, HealthResponse,
-    PollRequest, PollResponse, Runner, RunnerStatus, RunnerSummary, TriggerRequest,
+    CompleteRequest, CompleteResponse, CompletionStatus, EphemeralTally, HealthMaintenance,
+    HealthResponse, PollRequest, PollResponse, Runner, RunnerStatus, RunnerSummary, TriggerRequest,
     TriggerResponse, WorkAssignment, WorkItem,
 };

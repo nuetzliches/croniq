@@ -680,6 +680,8 @@ async fn main() -> Result<()> {
                     match tokio::time::timeout(TICK_TIMEOUT, scheduler_loop.tick(now)).await {
                         Ok(result) => {
                             scheduler_task_heartbeat.record_tick(now);
+                            scheduler_task_heartbeat
+                                .record_maintenance_skips(&result.maintenance_skipped);
                             ticks_since_heartbeat += 1;
                             if !result.fired.is_empty() {
                                 tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
@@ -905,6 +907,9 @@ async fn main() -> Result<()> {
     // metrics exporter filters on, kept in step with the scheduler's map by
     // `apply_command_synced` (issue #505).
     watchdog.set_trigger_snapshot(Arc::clone(&trigger_snapshot));
+    // So the liveness sweeps stand down during maintenance and
+    // `maintenance_active` rules can fire (issue #786).
+    watchdog.set_maintenance_handle(Arc::clone(&server_state.maintenance));
     let watchdog_store = Arc::clone(&store);
 
     // Age-based execution retention (issue #344). Parsed once at boot from
