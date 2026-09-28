@@ -54,7 +54,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Three triggers ship: `job_failed` (permanent failure: dead-letter or drop), `job_sla_missed` (in-flight execution exceeded its `expected_within`), and `job_missed_fire` (a scheduled fire never happened — `next_fire_at` overdue past the `expected_within` grace, catching a silently-stalled scheduler that a green success-rate would otherwise hide). Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Four triggers ship: `job_failed` (permanent failure: dead-letter or drop), `job_sla_missed` (in-flight execution exceeded its `expected_within`), `job_missed_fire` (a scheduled fire never happened — `next_fire_at` overdue past the `expected_within` grace, catching a silently-stalled scheduler that a green success-rate would otherwise hide), and `maintenance_active` (maintenance mode has stayed on longer than `expected_within` — see [Maintenance mode](docs/operations.md#maintenance-mode)). The two liveness triggers stand down while maintenance is on. Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -289,6 +289,16 @@ alerts {
     when job_missed_fire
     job_key "billing:backup"
     expected_within 10m   # grace past the scheduled time
+    throttle 1h
+    channels "ops-paging"
+  }
+
+  # Maintenance left on: fires once maintenance mode has been active for
+  # longer than expected_within (a failed deploy that failed closed), and
+  # again every throttle window while it lasts.
+  rule "maintenance-too-long" {
+    when maintenance_active
+    expected_within 30m
     throttle 1h
     channels "ops-paging"
   }

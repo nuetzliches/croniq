@@ -2619,7 +2619,8 @@ impl MaintenanceStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at
+                "SELECT manual_active, window_start, window_end, note, updated_by, updated_at,
+                        active_since
                  FROM maintenance WHERE id = 1",
             )
             .map_err(map_err)?;
@@ -2633,15 +2634,17 @@ impl MaintenanceStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO maintenance
-                (id, manual_active, window_start, window_end, note, updated_by, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+                (id, manual_active, window_start, window_end, note, updated_by, updated_at,
+                 active_since)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 manual_active = excluded.manual_active,
                 window_start  = excluded.window_start,
                 window_end    = excluded.window_end,
                 note          = excluded.note,
                 updated_by    = excluded.updated_by,
-                updated_at    = excluded.updated_at",
+                updated_at    = excluded.updated_at,
+                active_since  = excluded.active_since",
             params![
                 state.manual_active,
                 opt_dt_to_sql(&state.window_start),
@@ -2649,6 +2652,7 @@ impl MaintenanceStore for SqliteStore {
                 state.note,
                 state.updated_by,
                 opt_dt_to_sql(&state.updated_at),
+                opt_dt_to_sql(&state.active_since),
             ],
         )
         .map_err(map_err)?;
@@ -2760,6 +2764,7 @@ fn row_to_maintenance(row: &rusqlite::Row<'_>) -> Result<MaintenanceState, rusql
         note: row.get(3)?,
         updated_by: row.get(4)?,
         updated_at: sql_to_opt_dt(row.get(5)?),
+        active_since: sql_to_opt_dt(row.get(6)?),
     })
 }
 

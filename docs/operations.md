@@ -11,7 +11,7 @@ to pre-login UI and to external uptime probes; they return no secrets.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Liveness + queue/runner counters. Used by load balancers and the dashboard. |
+| `GET /health` | Liveness + queue/runner counters and the maintenance state (see [Maintenance mode](#maintenance-mode)). Used by load balancers and the dashboard. |
 | `GET /version` | Build and environment metadata (see below). |
 
 ### `GET /version`
@@ -1381,7 +1381,7 @@ What it does when something is in the way:
 | `calendar` / `window` closed, or `not_before` in the future | Deferred to the first permitted instant (the #391 rule), logged at `INFO` |
 | Past `not_after` | Skipped, logged at `WARN` — there is no later instant to defer to |
 | Job paused by an unresolved `calendar` reference (#361) | Not fired; nothing is recorded, so the reload that fixes the fault fires it |
-| Global maintenance active | *Held*, not advanced past — it fires when the freeze clears |
+| Global maintenance active | *Held*, not advanced past — it fires when the freeze clears. Scheduled fires, by contrast, are skipped; see [Maintenance mode](#maintenance-mode) |
 | Job's queue at its `max_queue_depth` | Held, retried each tick until the queue drains |
 
 Every dispatch is logged, with which of the two events caused it:
@@ -1488,6 +1488,107 @@ Is this a permanent change to how the rule should behave?
 
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
+
+## Maintenance mode
+
+`PUT /v1/maintenance` (admin) freezes dispatch: the scheduler emits no new
+work and the work poll hands out nothing. It is either a manual toggle
+(`manual_active: true`, on until turned off) or a scheduled
+`[window_start, window_end)` window that opens and clears by itself.
+`GET /v1/maintenance` returns the state, with `active` and `active_since`
+computed server-side, to any authenticated caller.
+
+```sh
+# Before the stack is recreated
+curl -X PUT https://croniq.example.com/v1/maintenance \
+  -H "Authorization: Bearer $CRONIQ_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"manual_active": true, "note": "deploy 2026-09-28"}'
+
+# Once the health checks pass
+curl -X PUT https://croniq.example.com/v1/maintenance \
+  -H "Authorization: Bearer $CRONIQ_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"manual_active": false}'
+```
+
+### What is held and what is skipped
+
+The freeze treats work differently depending on whether it already exists:
+
+| Work | During maintenance |
+| --- | --- |
+| Executions already running | Finish normally; completions and cancels are processed, and a retry they schedule is queued and held |
+| Work already queued | Held in the queue; handed out once maintenance clears |
+| `POST /v1/trigger`, event triggers | Accepted and queued; dispatched once maintenance clears |
+| `run_on_register` adoption fires | Held, fired once maintenance clears |
+| **Scheduled fires** | **Skipped.** The schedule moves past them; nothing catches up afterwards |
+
+Skipping is deliberate — a window of several hours must not end in a burst of
+every fire it covered — but it means a daily job due at 02:45 does not run
+that day if maintenance stays on overnight. Each skipped fire is:
+
+- logged once per scheduler tick at `INFO`:
+  `maintenance active: skipped scheduled fires count=2 job_keys=billing:invoice,ops:cleanup`;
+- counted in `croniq_maintenance_skipped_fires_total{job_key}` on `/metrics`,
+  so after the window you can tell which jobs need a manual trigger;
+- persisted: the job's `next_fire_at` in the store advances with the
+  in-memory schedule. A restart during maintenance therefore does not treat
+  the skipped fire as a misfire and catch it up, and the skipped fire does not
+  show up as overdue afterwards. It is not recorded as a fire: `fire_count`
+  and `last_fired_at` stay as they were.
+
+### Knowing that maintenance is still on
+
+A deploy that fails is often meant to leave maintenance on until someone has
+looked (fail-closed). Three signals say so:
+
+- **`GET /health`** reports it without authentication, next to — not instead
+  of — `status`, which stays `ok` so an image healthcheck does not restart a
+  server for doing what it was told:
+
+  ```json
+  { "status": "ok", "maintenance": { "active": true, "since": "2026-09-28T09:00:00Z" }, … }
+  ```
+
+  The operator note is not included; `/health` is public. `croniq status`
+  prints the same.
+- **A `maintenance_active` alert rule** fires once maintenance has been on
+  longer than `expected_within`:
+
+  ```
+  alerts {
+    rule "maintenance-too-long" {
+      when maintenance_active
+      expected_within 30m
+      throttle 1h        # optional: repeat every hour while it lasts
+      channels "ops"
+    }
+  }
+  ```
+
+  It fires once per activation; with `throttle` it repeats every throttle
+  window until maintenance clears. `job_key` does not apply. Channels see
+  `CRONIQ_REASON=maintenance_active` and an empty `CRONIQ_JOB_KEY`; webhooks
+  get `"event": "maintenance_active"`; the email subject reads
+  `[Croniq] maintenance still active (rule: …)`.
+- **`active_since`** on `GET /v1/maintenance` (and `since` on `/health`) is
+  the start of the current activation. A `PUT` that keeps maintenance on — to
+  reword the note, say — carries it over, so editing does not restart the
+  clock the alert measures against. A window that opens by itself starts at
+  its `window_start`.
+
+### Liveness alerts stand down
+
+While maintenance is active the watchdog does not evaluate `job_missed_fire`
+or `job_sla_missed` rules. Late fires are the point of the freeze, and a run
+whose runner was stopped for the deploy is not a scheduler fault. Neither is
+dropped: nothing is marked as alerted meanwhile, so a run still past its SLA
+alerts on the first sweep after maintenance clears. Skipped fires are
+persisted (above), so they do not alert as missed afterwards.
+
+Before this, a window longer than a rule's `expected_within` raised a false
+"missed fire" for every active job — which also made it the only sign that
+maintenance had been left on. The `maintenance_active` rule replaces that
+signal; add one before relying on the quieter behaviour.
 
 ## Runner identity ownership
 
@@ -2042,6 +2143,8 @@ exposes them as cumulative Prometheus counters (process lifetime):
   because their job was deleted with work still in flight.
 - `croniq_watchdog_sla_missed_total` / `croniq_watchdog_missed_fires_total` —
   `job_sla_missed` / `job_missed_fire` alerts fired by the sweep.
+- `croniq_watchdog_maintenance_alerts_total` — `maintenance_active` alerts
+  fired by the sweep (see [Maintenance mode](#maintenance-mode)).
 
 ## Data retention
 

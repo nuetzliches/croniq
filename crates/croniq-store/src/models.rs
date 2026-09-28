@@ -784,6 +784,14 @@ pub struct MaintenanceState {
     pub updated_by: Option<String>,
     /// When the switch was last changed; `None` on the never-set default.
     pub updated_at: Option<DateTime<Utc>>,
+    /// When the current activation began, as the `PUT` that wrote this row
+    /// saw it (issue #786). A `PUT` that keeps maintenance active carries the
+    /// old value over, so editing the note does not restart the clock an
+    /// alert measures against. `None` when the row was written inactive — a
+    /// window that opens later starts at its `window_start`, see
+    /// [`active_since`](MaintenanceState::active_since).
+    #[serde(default)]
+    pub active_since: Option<DateTime<Utc>>,
 }
 
 impl MaintenanceState {
@@ -804,6 +812,34 @@ impl MaintenanceState {
     /// scheduled window. The single check the dispatch gates call.
     pub fn is_active(&self, now: DateTime<Utc>) -> bool {
         self.manual_active || self.window_active(now)
+    }
+
+    /// Since when maintenance has been effective without a break, or `None`
+    /// when it is not active at `now`.
+    ///
+    /// The stored `active_since` wins when present. Without it the row was
+    /// written while inactive, so the activation is the scheduled window
+    /// opening on its own — its `window_start`, or `updated_at` for an
+    /// end-only window, which starts immediately.
+    pub fn active_since(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        if !self.is_active(now) {
+            return None;
+        }
+        self.active_since.or(self.window_start).or(self.updated_at)
+    }
+
+    /// The `active_since` to store for `self` when it replaces `previous` at
+    /// `now`: carried over while maintenance stays on across the change,
+    /// `now` when this change switches it on, `None` when it leaves it off.
+    pub fn next_active_since(
+        &self,
+        previous: &MaintenanceState,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        if !self.is_active(now) {
+            return None;
+        }
+        previous.active_since(now).or(Some(now))
     }
 }
 

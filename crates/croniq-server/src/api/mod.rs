@@ -2047,6 +2047,14 @@ async fn handle_list_executions(
 /// `GET /health`
 async fn handle_health(State(state): State<Arc<ServerState>>) -> Json<HealthResponse> {
     let now = Utc::now();
+    let maintenance = state
+        .maintenance
+        .read()
+        .map(|m| croniq_runner::HealthMaintenance {
+            active: m.is_active(now),
+            since: m.active_since(now),
+        })
+        .unwrap_or_default();
     let reg = state.runner.registry.read().await;
     let queue = state.runner.queue.read().await;
 
@@ -2063,6 +2071,7 @@ async fn handle_health(State(state): State<Arc<ServerState>>) -> Json<HealthResp
             .len(),
         queued: queue.len(),
         running: reg.total_inflight(),
+        maintenance,
     })
 }
 
@@ -2355,6 +2364,35 @@ mod tests {
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["queued"], 0);
         assert_eq!(resp["running"], 0);
+    }
+
+    #[tokio::test]
+    async fn health_reports_maintenance_without_changing_status() {
+        let (state, _rx) = make_state();
+
+        let health = get_json(server_router(Arc::clone(&state)), "/health").await;
+        assert_eq!(health["maintenance"]["active"], false);
+        assert!(health["maintenance"]["since"].is_null());
+
+        let since = Utc::now() - chrono::Duration::minutes(45);
+        *state.maintenance.write().unwrap() = MaintenanceState {
+            manual_active: true,
+            note: Some("internal note".into()),
+            updated_at: Some(Utc::now()),
+            active_since: Some(since),
+            ..Default::default()
+        };
+
+        let health = get_json(server_router(Arc::clone(&state)), "/health").await;
+        // Still "ok": a frozen server is doing what it was told, and an image
+        // healthcheck must not restart it for that.
+        assert_eq!(health["status"], "ok");
+        assert_eq!(health["maintenance"]["active"], true);
+        let reported: DateTime<Utc> =
+            serde_json::from_value(health["maintenance"]["since"].clone()).unwrap();
+        assert_eq!(reported, since);
+        // The endpoint is unauthenticated; the operator note stays off it.
+        assert!(!health.to_string().contains("internal note"));
     }
 
     #[tokio::test]

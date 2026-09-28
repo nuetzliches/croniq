@@ -320,14 +320,16 @@ pub struct RuleConfig {
     /// string (parsed by the server at boot, kept as a string in the
     /// DSL so the formatter can round-trip).
     pub throttle: Option<String>,
-    /// `job_sla_missed` and `job_missed_fire` only: a duration string
-    /// (`"10m"`, `"30s"`, `"1h"`) for DSL round-trip.
+    /// `job_sla_missed`, `job_missed_fire` and `maintenance_active` only: a
+    /// duration string (`"10m"`, `"30s"`, `"1h"`) for DSL round-trip.
     ///
     /// - `job_sla_missed`: max in-flight runtime before the rule fires.
     /// - `job_missed_fire`: grace period after a scheduled fire time
     ///   before the rule fires (how long the scheduler may be late).
+    /// - `maintenance_active`: how long maintenance may stay on before the
+    ///   rule fires.
     ///
-    /// Compile rejects (drops) either trigger when this directive is absent.
+    /// Compile rejects (drops) these triggers when this directive is absent.
     pub expected_within: Option<String>,
     /// Channel names this rule dispatches to. Compile validates that
     /// every name resolves; unknown names become a compile error
@@ -354,6 +356,12 @@ pub enum RuleTrigger {
     /// liveness signal that a silently-stalled scheduler (#248) would
     /// otherwise hide behind a 100%-success dashboard.
     JobMissedFire,
+    /// Global maintenance has been active for longer than `expected_within`
+    /// (issue #786). A deploy that fails closed leaves maintenance on on
+    /// purpose; this is what tells someone it is still on. The watchdog fires
+    /// once per activation, and again every `throttle` while it lasts when
+    /// the rule sets one. `job_key` does not apply: maintenance is global.
+    MaintenanceActive,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1466,6 +1474,7 @@ fn compile_rule(
                         "job_failed" => Some(RuleTrigger::JobFailed),
                         "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
                         "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
+                        "maintenance_active" => Some(RuleTrigger::MaintenanceActive),
                         // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
@@ -1516,13 +1525,13 @@ fn compile_rule(
     }
 
     let trigger = trigger?;
-    // SLA-miss / missed-fire without `expected_within` is meaningless —
-    // drop the rule so a typo doesn't silently turn into a "fire on every
-    // claimed execution" (SLA) or "fire the moment a job is one tick late"
-    // (missed-fire) rule.
+    // SLA-miss / missed-fire / maintenance without `expected_within` is
+    // meaningless — drop the rule so a typo doesn't silently turn into a
+    // "fire on every claimed execution" (SLA), "fire the moment a job is one
+    // tick late" (missed-fire) or "fire the moment maintenance starts" rule.
     if matches!(
         trigger,
-        RuleTrigger::JobSlaMissed | RuleTrigger::JobMissedFire
+        RuleTrigger::JobSlaMissed | RuleTrigger::JobMissedFire | RuleTrigger::MaintenanceActive
     ) && expected_within.is_none()
     {
         return None;
@@ -3441,6 +3450,49 @@ mod tests {
         assert_eq!(rule.job_key_glob, "billing:*");
         assert_eq!(rule.expected_within.as_deref(), Some("10m"));
         assert_eq!(rule.throttle.as_deref(), Some("1h"));
+    }
+
+    #[test]
+    fn compile_alerts_maintenance_active_with_duration() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "maintenance-too-long" {
+                    when maintenance_active
+                    expected_within 30m
+                    throttle 1h
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert!(matches!(rule.trigger, RuleTrigger::MaintenanceActive));
+        assert_eq!(rule.expected_within.as_deref(), Some("30m"));
+        assert_eq!(rule.throttle.as_deref(), Some("1h"));
+    }
+
+    #[test]
+    fn compile_alerts_maintenance_active_without_expected_within_drops() {
+        // Without a duration the rule would page the moment every planned
+        // window starts.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "x" { shell "/bin/true" }
+                rule "maintenance" {
+                    when maintenance_active
+                    channels "x"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        assert!(compile(&ast).alerts.rules.is_empty());
     }
 
     // ─── #140 PR-3 email channel ───────────────────────────────────

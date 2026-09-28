@@ -1389,10 +1389,17 @@ function renderAlertsEditor() {
     const row = document.createElement('div'); row.className = 'rule-row'
     const h = document.createElement('div'); h.className = 'rule-row-head'
     h.appendChild(textInput(r.name, 'name', (v) => { r.name = v }))
-    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire'], (v) => { r.when = v }))
+    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire', 'maintenance_active'], (v) => { r.when = v; renderConfigFields() }))
     h.appendChild(removeBtn(() => { A.rules.splice(idx, 1); renderConfigFields(); refreshConfig() }))
     row.appendChild(h)
-    row.appendChild(field('Job key glob', textInput(r.jobKey, 'billing:*', (v) => { r.jobKey = v })))
+    // Every trigger but job_failed needs a duration, or the compiler drops the rule.
+    if (r.when !== 'job_failed') {
+      row.appendChild(field('Expected within', textInput(r.expectedWithin, r.when === 'maintenance_active' ? '30m' : '10m', (v) => { r.expectedWithin = v })))
+    }
+    // Maintenance is global; a job key glob means nothing there.
+    if (r.when !== 'maintenance_active') {
+      row.appendChild(field('Job key glob', textInput(r.jobKey, 'billing:*', (v) => { r.jobKey = v })))
+    }
     row.appendChild(field('Channels (space-separated names)', textInput(r.channels, 'oncall', (v) => { r.channels = v })))
     cfgFieldsEl.appendChild(row)
   })
@@ -1425,7 +1432,8 @@ function buildAlertsDirectives() {
     const name = (r.name || '').trim()
     if (!name) return
     const children = [{ key: 'when', args: [r.when] }]
-    const jk = (r.jobKey || '').trim(); if (jk) children.push({ key: 'job_key', args: [jk] })
+    const jk = (r.jobKey || '').trim(); if (jk && r.when !== 'maintenance_active') children.push({ key: 'job_key', args: [jk] })
+    const ew = (r.expectedWithin || '').trim(); if (ew && r.when !== 'job_failed') children.push({ key: 'expected_within', args: [ew] })
     const ch = (r.channels || '').split(/\s+/).filter(Boolean); if (ch.length) children.push({ key: 'channels', args: ch })
     dirs.push({ key: 'rule', qualifier: name, quote_qualifier: true, children })
   })

@@ -25,6 +25,12 @@
 //!    but couldn't rebuild the WorkItem). Rows whose job no longer exists
 //!    anywhere are cancelled — nothing could ever dispatch them.
 //! ```
+//!
+//! While global maintenance is active the `job_sla_missed` and
+//! `job_missed_fire` sweeps stand down (issue #786): dispatch is frozen on
+//! purpose, so neither a late fire nor a run whose runner was stopped for the
+//! deploy is news. What is news is maintenance staying on, which the
+//! `maintenance_active` sweep reports instead.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -37,7 +43,7 @@ use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
 use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_scheduler::trigger::Trigger;
-use croniq_store::models::{ExecutionState, JobStatus};
+use croniq_store::models::{ExecutionState, JobStatus, MaintenanceState};
 
 /// Max execution rows deleted per prune DELETE statement. Bounds SQLite's
 /// whole-DB write-lock hold time; a backlog drains across ticks/batches.
@@ -109,6 +115,9 @@ pub struct WatchdogResult {
     /// the job's persisted `next_fire_at` went overdue past the rule's
     /// grace window while the trigger was still active.
     pub missed_fires: Vec<(String, String)>,
+    /// Names of the `maintenance_active` rules that fired this sweep
+    /// (issue #786): maintenance has been on for longer than the rule allows.
+    pub maintenance_alerts: Vec<String>,
     /// Rule names whose operational override expired and was auto-cleared
     /// this sweep (issue #231). Each emits an `alerts.override.cleared`
     /// audit event.
@@ -138,6 +147,8 @@ pub struct WatchdogCounters {
     pub sla_missed: AtomicU64,
     /// `job_missed_fire` alerts fired (issue #250).
     pub missed_fires: AtomicU64,
+    /// `maintenance_active` alerts fired (issue #786).
+    pub maintenance_alerts: AtomicU64,
 }
 
 impl WatchdogCounters {
@@ -162,6 +173,8 @@ impl WatchdogCounters {
             .fetch_add(result.sla_missed.len() as u64, Relaxed);
         self.missed_fires
             .fetch_add(result.missed_fires.len() as u64, Relaxed);
+        self.maintenance_alerts
+            .fetch_add(result.maintenance_alerts.len() as u64, Relaxed);
     }
 
     /// Count executions recovered by the inline-takeover requeue in the poll
@@ -319,6 +332,13 @@ pub fn empty_sla_fired_set() -> SlaFiredSet {
 /// is still overdue produces at most one duplicate alert.
 pub type MissedFiredSet = Arc<Mutex<HashSet<(String, String, DateTime<Utc>)>>>;
 
+/// When each `maintenance_active` rule last fired, keyed by `(rule_name,
+/// active_since)` so one activation fires once — or once per `throttle` when
+/// the rule sets one — and the next activation starts afresh (issue #786).
+/// Reset on process restart; the boot-seeded throttle map then keeps a restart
+/// from re-paging inside the throttle window.
+type MaintenanceFiredMap = Mutex<HashMap<(String, DateTime<Utc>), DateTime<Utc>>>;
+
 /// Periodically scans for dead runners and requeues their abandoned executions.
 pub struct WatchdogLoop {
     jobs: HashMap<String, JobConfig>,
@@ -358,6 +378,12 @@ pub struct WatchdogLoop {
     /// missed-fire alerts for exactly those (the #505 mistake). `None` reports
     /// everything, as [`LiveJobs::Unknown`] does.
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
+    /// Shared global maintenance switch (from `ServerState`). `None` reads as
+    /// "never active", which keeps the pre-#786 behaviour for callers that do
+    /// not wire it.
+    maintenance: Option<Arc<std::sync::RwLock<MaintenanceState>>>,
+    /// See [`MaintenanceFiredMap`].
+    maintenance_fired: MaintenanceFiredMap,
 }
 
 impl WatchdogLoop {
@@ -398,7 +424,29 @@ impl WatchdogLoop {
             email_sender,
             claim_sweep_limit: CLAIM_SWEEP_LIMIT,
             triggers: None,
+            maintenance: None,
+            maintenance_fired: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Wire the shared maintenance switch, so the liveness sweeps stand down
+    /// while dispatch is frozen on purpose and `maintenance_active` rules can
+    /// see how long it has been on (issue #786).
+    pub fn set_maintenance_handle(
+        &mut self,
+        maintenance: Arc<std::sync::RwLock<MaintenanceState>>,
+    ) {
+        self.maintenance = Some(maintenance);
+    }
+
+    /// Since when maintenance has been active at `now`, or `None` when it is
+    /// off (or not wired).
+    fn maintenance_since(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.maintenance
+            .as_ref()?
+            .read()
+            .ok()
+            .and_then(|m| m.active_since(now))
     }
 
     /// Wire the shared trigger snapshot, so the missed-fire sweep can tell a
@@ -557,26 +605,42 @@ impl WatchdogLoop {
         // 4. Expire queued executions that have exceeded their queue_ttl
         self.expire_queued_by_ttl(now, &mut result).await;
 
+        // While maintenance is active, dispatch is frozen on purpose: fires
+        // are skipped and a run's runner may be stopped for the deploy. The
+        // two liveness sweeps below would report exactly that as a stalled
+        // scheduler, so they stand down (issue #786). Nothing is marked as
+        // alerted meanwhile, so a run still over its SLA once maintenance
+        // clears alerts then; skipped fires are persisted by the scheduler
+        // and are not overdue afterwards.
+        let maintenance_since = self.maintenance_since(now);
+
         // 5. SLA-miss sweep (issue #140 PR-4). Fast-path: no
         //    `job_sla_missed` rules ⇒ skip the store query entirely.
-        if self
-            .alerts
-            .rules
-            .iter()
-            .any(|r| matches!(r.trigger, RuleTrigger::JobSlaMissed))
+        if maintenance_since.is_none()
+            && self
+                .alerts
+                .rules
+                .iter()
+                .any(|r| matches!(r.trigger, RuleTrigger::JobSlaMissed))
         {
             self.sweep_sla_missed(now, &mut result).await;
         }
 
         // 6. Missed-fire / liveness sweep (issue #250). Fast-path: no
         //    `job_missed_fire` rules ⇒ skip the job_states query.
-        if self
-            .alerts
-            .rules
-            .iter()
-            .any(|r| matches!(r.trigger, RuleTrigger::JobMissedFire))
+        if maintenance_since.is_none()
+            && self
+                .alerts
+                .rules
+                .iter()
+                .any(|r| matches!(r.trigger, RuleTrigger::JobMissedFire))
         {
             self.sweep_missed_fires(now, &mut result).await;
+        }
+
+        // 6b. Maintenance left on for too long (issue #786).
+        if let Some(since) = maintenance_since {
+            self.sweep_maintenance(now, since, &mut result).await;
         }
 
         // 7. Stale-claim reaper (issue #374): requeue claimed executions
@@ -730,6 +794,75 @@ impl WatchdogLoop {
                     .missed_fires
                     .push((rule.name.clone(), state.job_key.clone()));
             }
+        }
+    }
+
+    /// Fire `maintenance_active` rules once maintenance has been on for
+    /// longer than their `expected_within` (issue #786).
+    ///
+    /// A deploy that fails closed leaves maintenance on deliberately, and
+    /// nothing else says so: the liveness sweeps stand down meanwhile, and
+    /// `/health` stays `ok`. Each activation fires once; a rule with
+    /// `throttle` repeats every throttle window while it lasts.
+    async fn sweep_maintenance(
+        &self,
+        now: DateTime<Utc>,
+        since: DateTime<Utc>,
+        result: &mut WatchdogResult,
+    ) {
+        let active_secs = (now - since).num_seconds().max(0) as u64;
+        for rule in &self.alerts.rules {
+            if !matches!(rule.trigger, RuleTrigger::MaintenanceActive) {
+                continue;
+            }
+            let Some(limit_str) = rule.expected_within.as_deref() else {
+                continue; // compile path drops these, defensive
+            };
+            let Some(limit_secs) = crate::alerts::parse_throttle_secs(limit_str) else {
+                continue;
+            };
+            if active_secs < limit_secs {
+                continue;
+            }
+
+            let repeat_secs = rule
+                .throttle
+                .as_deref()
+                .and_then(crate::alerts::parse_throttle_secs);
+            {
+                let mut fired = self.maintenance_fired.lock().unwrap();
+                let key = (rule.name.clone(), since);
+                if let Some(&last) = fired.get(&key) {
+                    let since_last = (now - last).num_seconds().max(0) as u64;
+                    match repeat_secs {
+                        Some(repeat) if since_last >= repeat => {}
+                        _ => continue,
+                    }
+                }
+                fired.insert(key, now);
+            }
+
+            // Maintenance is global, so there is no job and no execution;
+            // `reason` tells channels what this is.
+            let ctx = crate::alerts::FailureContext {
+                job_key: String::new(),
+                execution_id: String::new(),
+                error: format!(
+                    "maintenance active since {since}, for {active_secs}s (expected within {limit_str}) — dispatch is still frozen"
+                ),
+                attempt: 0,
+                reason: crate::alerts::MAINTENANCE_ACTIVE_REASON.to_string(),
+            };
+            crate::alerts::dispatch_rule(
+                rule,
+                &self.alerts,
+                &ctx,
+                &self.alert_throttle,
+                &self.store,
+                &self.email_sender,
+            )
+            .await;
+            result.maintenance_alerts.push(rule.name.clone());
         }
     }
 
@@ -2795,5 +2928,172 @@ mod tests {
 
         assert_eq!(result.missed_fires.len(), 1);
         assert_eq!(result.missed_fires[0].1, "billing:backup");
+    }
+
+    // ─── Maintenance (issue #786) ─────────────────────────────────────────
+
+    fn maintenance_on_since(since: DateTime<Utc>) -> Arc<std::sync::RwLock<MaintenanceState>> {
+        Arc::new(std::sync::RwLock::new(MaintenanceState {
+            manual_active: true,
+            updated_at: Some(since),
+            active_since: Some(since),
+            ..MaintenanceState::default()
+        }))
+    }
+
+    fn maintenance_rule(name: &str, within: &str, throttle: Option<&str>) -> RuleConfig {
+        RuleConfig {
+            name: name.into(),
+            trigger: RuleTrigger::MaintenanceActive,
+            job_key_glob: "*".into(),
+            min_attempts: 1,
+            dead_letter_only: false,
+            throttle: throttle.map(Into::into),
+            expected_within: Some(within.into()),
+            channels: vec!["ops".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn missed_fire_and_sla_stand_down_while_maintenance_is_active() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+        let exec_id = seed_claimed_at(
+            &*store,
+            "billing:invoice",
+            "runner-1",
+            // Past the SLA, short of the stale-claim reaper (5m + grace).
+            now - ChronoDuration::minutes(4),
+        );
+
+        let alerts = alerts_with_sla(vec![
+            missed_fire_rule("backup-liveness", "billing:*", "10m", "ops"),
+            sla_rule("slow-billing", "billing:*", "2m", "ops"),
+        ]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let maintenance = maintenance_on_since(now - ChronoDuration::hours(1));
+        watchdog.set_maintenance_handle(Arc::clone(&maintenance));
+
+        let during = watchdog.sweep(now).await;
+        assert!(during.missed_fires.is_empty());
+        assert!(during.sla_missed.is_empty());
+        assert!(
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter::default())
+                .unwrap()
+                .is_empty()
+        );
+
+        // Deferred, not dropped: a run still over its SLA once maintenance
+        // clears alerts then. (The overdue row here was never advanced, so
+        // it alerts too — a skipped fire the scheduler persisted would not.)
+        maintenance.write().unwrap().manual_active = false;
+        let after = watchdog.sweep(now).await;
+        assert_eq!(
+            after.sla_missed,
+            vec![("slow-billing".to_string(), exec_id)]
+        );
+        assert_eq!(after.missed_fires.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn maintenance_rule_fires_once_the_limit_has_passed_and_only_once() {
+        let store = make_store();
+        let now = Utc::now();
+        let alerts = alerts_with_sla(vec![maintenance_rule("maintenance-too-long", "30m", None)]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        let maintenance = maintenance_on_since(now - ChronoDuration::minutes(20));
+        watchdog.set_maintenance_handle(Arc::clone(&maintenance));
+
+        assert!(
+            watchdog.sweep(now).await.maintenance_alerts.is_empty(),
+            "20m < 30m"
+        );
+
+        let late = now + ChronoDuration::minutes(15);
+        assert_eq!(
+            watchdog.sweep(late).await.maintenance_alerts,
+            vec!["maintenance-too-long".to_string()]
+        );
+        assert!(
+            watchdog
+                .sweep(late + ChronoDuration::hours(3))
+                .await
+                .maintenance_alerts
+                .is_empty(),
+            "without a throttle one activation alerts once"
+        );
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].rule_name, "maintenance-too-long");
+        assert_eq!(deliveries[0].job_key, "");
+
+        // A new activation starts afresh.
+        let next_since = late + ChronoDuration::hours(4);
+        *maintenance.write().unwrap() = MaintenanceState {
+            manual_active: true,
+            active_since: Some(next_since),
+            ..MaintenanceState::default()
+        };
+        assert_eq!(
+            watchdog
+                .sweep(next_since + ChronoDuration::minutes(31))
+                .await
+                .maintenance_alerts
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn maintenance_rule_with_throttle_repeats_while_it_lasts() {
+        let store = make_store();
+        let now = Utc::now();
+        let alerts = alerts_with_sla(vec![maintenance_rule("reminder", "30m", Some("1h"))]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        watchdog.set_maintenance_handle(maintenance_on_since(now - ChronoDuration::minutes(31)));
+
+        assert_eq!(watchdog.sweep(now).await.maintenance_alerts.len(), 1);
+        assert!(
+            watchdog
+                .sweep(now + ChronoDuration::minutes(30))
+                .await
+                .maintenance_alerts
+                .is_empty()
+        );
+        assert_eq!(
+            watchdog
+                .sweep(now + ChronoDuration::minutes(61))
+                .await
+                .maintenance_alerts
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn maintenance_rule_is_silent_while_maintenance_is_off() {
+        let store = make_store();
+        let alerts = alerts_with_sla(vec![maintenance_rule("maintenance-too-long", "1m", None)]);
+        let mut watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+        watchdog.set_maintenance_handle(Arc::new(std::sync::RwLock::new(
+            MaintenanceState::default(),
+        )));
+        assert!(
+            watchdog
+                .sweep(Utc::now())
+                .await
+                .maintenance_alerts
+                .is_empty()
+        );
     }
 }
