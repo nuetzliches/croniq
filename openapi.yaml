@@ -41,6 +41,19 @@ components:
             Executions in flight on runners, summed from the in-flight lists
             runners report on each poll. Can lag a poll interval and includes
             ephemeral runs, which have no execution row. Absent before v0.41.0.
+        maintenance:
+          type: object
+          description: >
+            Global maintenance switch. Reported next to `status`, which stays
+            `ok` while dispatch is frozen. The operator note is not included.
+            Absent before v0.42.0.
+          properties:
+            active: { type: boolean, description: Dispatch is frozen right now }
+            since:
+              type: string
+              format: date-time
+              nullable: true
+              description: Start of the current activation; null while inactive
 
     VersionResponse:
       type: object
