@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-09-28
+
 ### Added
 
 - **Maintenance mode is visible to health checks and alerting
