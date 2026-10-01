@@ -170,6 +170,7 @@ The same registered handler serves both its Croniqfile schedule (safety-net / re
 | `tags`                | `[]`                                                 | Free-form `key=value` tags. Filter-only.                                 |
 | `maxInflight`         | `5`                                                  | Max concurrent in-flight executions.                                     |
 | `pollTimeoutMs`       | `35_000`                                             | Per-request timeout on the long-poll.                                    |
+| `requestTimeoutMs`    | `30_000`                                             | Per-request timeout on ack, renew, log events and job registration.      |
 | `renewIntervalMs`     | `15_000`                                             | Heartbeat cadence for in-flight executions.                              |
 | `drainTimeoutMs`      | `30_000`                                             | Graceful shutdown budget before hard-cancel.                             |
 | `pollRetryDelayMs`    | `5_000`                                              | Back-off after a failed poll.                                            |

@@ -26,6 +26,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the browser's zone, the toolbar names that zone, and the hover title keeps
   the original UTC instant. Copy and NDJSON download still carry the raw UTC
   timestamp.
+- **Rust runner SDK: an ack can no longer hang forever and keep its execution
+  in flight ([#792](https://github.com/nuetzliches/croniq/issues/792)).**
+  `croniq-runner-sdk` sent ack, renew, log events and job registration with no
+  timeout. An ack stuck on a half-open connection kept the execution in the
+  runner's in-flight set, so every poll renewed its lease. They are now bounded
+  by `RunnerBuilder::request_timeout` / `CroniqClient::with_request_timeout`
+  (default 30 s). The .NET and TypeScript SDKs had the same gap and get the same
+  fix (see their changelogs). Go (10 s), Java (15 s) and Python (40 s read
+  timeout) were already bounded.
 - **An open dashboard tab picks up a server upgrade.** Restarting
   `croniq-server` on a new release reloaded nothing in a tab that was already
   open: navigation is client-side, so the operator kept working in the

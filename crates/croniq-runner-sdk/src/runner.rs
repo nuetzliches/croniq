@@ -150,6 +150,7 @@ pub struct RunnerBuilder {
     capacity_backoff: Duration,
     max_consecutive_poll_conflicts: u32,
     max_consecutive_auth_failures: u32,
+    request_timeout: Duration,
 }
 
 impl RunnerBuilder {
@@ -231,8 +232,21 @@ impl RunnerBuilder {
         self
     }
 
+    /// Bound on each ack, lease renewal, log-event push and job registration.
+    /// Default: 30 s ([`crate::client::DEFAULT_REQUEST_TIMEOUT`]). The long
+    /// poll keeps its own 35 s bound.
+    ///
+    /// An unbounded ack that hung on a half-open connection kept the
+    /// execution in the runner's in-flight set forever, so every poll
+    /// renewed its lease and the claim was never reaped (issue #792).
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
     pub fn build(self) -> CroniqRunner {
-        let mut client = CroniqClient::new(&self.server_url);
+        let mut client =
+            CroniqClient::new(&self.server_url).with_request_timeout(self.request_timeout);
         if let Some(key) = &self.api_key {
             client = client.with_api_key(key);
         }
@@ -292,6 +306,7 @@ impl CroniqRunner {
             capacity_backoff: Duration::from_millis(500),
             max_consecutive_poll_conflicts: 3,
             max_consecutive_auth_failures: 3,
+            request_timeout: crate::client::DEFAULT_REQUEST_TIMEOUT,
         }
     }
 

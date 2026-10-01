@@ -79,7 +79,12 @@ pub struct CroniqClient {
     http: Client,
     base_url: String,
     auth_header: Option<String>,
+    request_timeout: std::time::Duration,
 }
+
+/// Default bound on every runner request except the long poll (issue #792).
+/// Matches the trigger client's `DEFAULT_REQUEST_TIMEOUT`.
+pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Serialize)]
 pub struct PollRequest {
@@ -146,7 +151,22 @@ impl CroniqClient {
             http: Client::new(),
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_header: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
+    }
+
+    /// Bound on ack, renew, log-event and job-registration requests.
+    /// Default: [`DEFAULT_REQUEST_TIMEOUT`].
+    ///
+    /// Without one, an ack stuck on a half-open connection never returned, so
+    /// the execution never left the runner's in-flight set; every poll kept
+    /// reporting it, the server kept renewing its lease, and a `singleton` job
+    /// stalled behind it for days (issue #792). A timed-out ack is logged and
+    /// dropped like any other failed ack — the server's stale-claim reaper
+    /// recovers the claim.
+    pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.request_timeout = timeout;
+        self
     }
 
     pub fn with_api_key(mut self, key: &str) -> Self {
@@ -205,6 +225,7 @@ impl CroniqClient {
         let resp = self
             .add_auth(self.http.post(format!("{}/v1/work/ack", self.base_url)))
             .json(req)
+            .timeout(self.request_timeout)
             .send()
             .await?;
 
@@ -228,6 +249,7 @@ impl CroniqClient {
         let resp = self
             .add_auth(self.http.post(format!("{}/v1/work/renew", self.base_url)))
             .json(req)
+            .timeout(self.request_timeout)
             .send()
             .await?;
 
@@ -252,6 +274,7 @@ impl CroniqClient {
                     .post(format!("{}/v1/work/{}/events", self.base_url, execution_id)),
             )
             .json(events)
+            .timeout(self.request_timeout)
             .send()
             .await?;
 
@@ -272,6 +295,7 @@ impl CroniqClient {
                     .post(format!("{}/v1/jobs/register", self.base_url)),
             )
             .json(req)
+            .timeout(self.request_timeout)
             .send()
             .await?;
 
@@ -300,6 +324,38 @@ pub struct RegisterJobRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #792: an ack against a server that accepts the connection and
+    /// never answers used to wait forever, keeping the execution in the
+    /// runner's in-flight set. It gives up after `request_timeout` now.
+    #[tokio::test]
+    async fn ack_gives_up_on_a_server_that_never_answers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accept and hold the connection open without ever responding — the
+        // shape of a half-open socket from the client's side.
+        let _hold = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+
+        let client = CroniqClient::new(&format!("http://{addr}"))
+            .with_request_timeout(std::time::Duration::from_millis(200));
+        let req = AckRequest {
+            runner_id: "r1".into(),
+            execution_id: "e1".into(),
+            status: "success".into(),
+            error: None,
+            duration_ms: Some(1),
+            attempt: 1,
+        };
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), client.ack(&req))
+            .await
+            .expect("ack must give up on its own, well before the outer 5 s guard");
+        assert!(outcome.is_err());
+    }
 
     #[test]
     fn work_assignment_parses_scheduled_for() {

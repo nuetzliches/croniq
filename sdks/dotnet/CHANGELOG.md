@@ -4,6 +4,22 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Fixed
+
+- **An ack can no longer hang forever and keep its execution in flight
+  ([#792](https://github.com/nuetzliches/croniq/issues/792)).** The runner's
+  `HttpClient` has an infinite timeout (for the long poll), and the ack was sent
+  with `CancellationToken.None`. An ack stuck on a half-open connection never
+  returned, so the execution never left the in-flight set. Every poll kept
+  reporting it, the server kept renewing its lease, and a `singleton` job
+  stalled behind it for days. Ack, lease renewal, log-event push and job
+  self-registration are now bounded by the new
+  `CroniqRunnerOptions.RequestTimeout` (default 30 s). A timed-out ack is logged
+  and dropped like any other failed ack, and the server's stale-claim reaper
+  recovers the claim.
+
 ## [0.8.0] - 2026-09-18
 
 ### Added

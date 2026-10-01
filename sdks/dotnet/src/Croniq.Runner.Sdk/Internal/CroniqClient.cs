@@ -1,9 +1,11 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 
+using Croniq.Runner.Sdk.Configuration;
 using Croniq.Runner.Sdk.Protocol;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Runner.Sdk.Internal;
 
@@ -13,10 +15,27 @@ namespace Croniq.Runner.Sdk.Internal;
 /// are handled by linked <see cref="CancellationTokenSource"/>s so the
 /// underlying <see cref="HttpClient.Timeout"/> can stay infinite (which
 /// it must, to accommodate the 35 s long-poll on <c>/v1/work/poll</c>).
+/// Every other request is bounded by <see cref="CroniqRunnerOptions.RequestTimeout"/>
+/// (issue #792).
 /// </summary>
-internal sealed class CroniqClient(HttpClient http, ILogger<CroniqClient> logger) : ICroniqClient
+internal sealed class CroniqClient(
+    HttpClient http,
+    IOptions<CroniqRunnerOptions> options,
+    ILogger<CroniqClient> logger) : ICroniqClient
 {
     private static readonly JsonSerializerOptions JsonOptions = CroniqJsonContext.Default.Options;
+
+    /// <summary>
+    /// Send a non-poll request under <see cref="CroniqRunnerOptions.RequestTimeout"/>,
+    /// linked to the caller's token. A timeout surfaces as
+    /// <see cref="TaskCanceledException"/>, which the callers already log and drop.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendBoundedAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linked.CancelAfter(options.Value.RequestTimeout);
+        return await http.SendAsync(request, linked.Token).ConfigureAwait(false);
+    }
 
     public async Task<PollResponse> PollAsync(PollRequest request, TimeSpan timeout, CancellationToken ct)
     {
@@ -44,7 +63,7 @@ internal sealed class CroniqClient(HttpClient http, ILogger<CroniqClient> logger
         {
             Content = JsonContent.Create(request, CroniqJsonContext.Default.AckRequest),
         };
-        using var response = await http.SendAsync(requestMsg, ct).ConfigureAwait(false);
+        using var response = await SendBoundedAsync(requestMsg, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
     }
 
@@ -54,7 +73,7 @@ internal sealed class CroniqClient(HttpClient http, ILogger<CroniqClient> logger
         {
             Content = JsonContent.Create(request, CroniqJsonContext.Default.RenewRequest),
         };
-        using var response = await http.SendAsync(requestMsg, ct).ConfigureAwait(false);
+        using var response = await SendBoundedAsync(requestMsg, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
     }
 
@@ -69,7 +88,7 @@ internal sealed class CroniqClient(HttpClient http, ILogger<CroniqClient> logger
         {
             Content = JsonContent.Create(events, CroniqJsonContext.Default.IReadOnlyListWorkEvent),
         };
-        using var response = await http.SendAsync(requestMsg, ct).ConfigureAwait(false);
+        using var response = await SendBoundedAsync(requestMsg, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
     }
 
@@ -79,7 +98,7 @@ internal sealed class CroniqClient(HttpClient http, ILogger<CroniqClient> logger
         {
             Content = JsonContent.Create(request, CroniqJsonContext.Default.RegisterJobRequest),
         };
-        using var response = await http.SendAsync(requestMsg, ct).ConfigureAwait(false);
+        using var response = await SendBoundedAsync(requestMsg, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         try

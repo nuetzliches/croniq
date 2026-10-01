@@ -19,6 +19,11 @@ export interface CroniqClientOptions {
   /** Custom `fetch` implementation. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
   logger?: Logger | undefined;
+  /**
+   * Bound on every request except the long poll, which takes its own. Default
+   * 30 000 ms (issue #792).
+   */
+  requestTimeoutMs?: number;
 }
 
 export class HttpError extends Error {
@@ -138,6 +143,7 @@ export class CroniqClient {
   readonly #bearerToken: string | undefined;
   readonly #fetch: typeof fetch;
   readonly #logger: Logger | undefined;
+  readonly #requestTimeoutMs: number;
 
   constructor(opts: CroniqClientOptions) {
     this.#baseUrl = trimTrailingSlashes(opts.baseUrl);
@@ -145,6 +151,7 @@ export class CroniqClient {
     this.#bearerToken = opts.bearerToken;
     this.#fetch = opts.fetchImpl ?? fetch;
     this.#logger = opts.logger;
+    this.#requestTimeoutMs = opts.requestTimeoutMs ?? 30_000;
   }
 
   async poll(req: PollRequest, timeoutMs: number, signal: AbortSignal): Promise<PollResponse> {
@@ -153,21 +160,27 @@ export class CroniqClient {
   }
 
   async ack(req: AckRequest, signal: AbortSignal): Promise<void> {
-    await this.#send<void>('POST', '/v1/work/ack', req, signal);
+    await this.#send<void>('POST', '/v1/work/ack', req, signal, this.#requestTimeoutMs);
   }
 
   async renew(req: RenewRequest, signal: AbortSignal): Promise<void> {
-    await this.#send<void>('POST', '/v1/work/renew', req, signal);
+    await this.#send<void>('POST', '/v1/work/renew', req, signal, this.#requestTimeoutMs);
   }
 
   async pushEvents(executionId: string, events: WorkEvent[], signal: AbortSignal): Promise<void> {
     if (events.length === 0) return;
     const path = `/v1/work/${encodeURIComponent(executionId)}/events`;
-    await this.#send<void>('POST', path, events, signal);
+    await this.#send<void>('POST', path, events, signal, this.#requestTimeoutMs);
   }
 
   async registerJob(req: RegisterJobRequest, signal: AbortSignal): Promise<RegisterJobResponse | undefined> {
-    const body = await this.#send<RegisterJobResponse>('POST', '/v1/jobs/register', req, signal);
+    const body = await this.#send<RegisterJobResponse>(
+      'POST',
+      '/v1/jobs/register',
+      req,
+      signal,
+      this.#requestTimeoutMs,
+    );
     if (body?.status === 'skipped_dsl_precedence') {
       this.#logger?.info(
         `job ${body.job_key} is managed by the Croniqfile (DSL precedence) — schedule registration skipped`,
