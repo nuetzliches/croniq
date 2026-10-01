@@ -66,6 +66,7 @@ export class CroniqRunner {
       apiKey: this.#options.apiKey,
       bearerToken: this.#options.bearerToken,
       logger: this.#logger,
+      requestTimeoutMs: this.#options.requestTimeoutMs,
     });
   }
 

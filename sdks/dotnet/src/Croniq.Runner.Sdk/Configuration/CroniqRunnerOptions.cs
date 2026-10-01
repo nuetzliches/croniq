@@ -84,6 +84,22 @@ public sealed class CroniqRunnerOptions
     public TimeSpan PollTimeout { get; set; } = TimeSpan.FromSeconds(35);
 
     /// <summary>
+    /// Per-request timeout for every other runner request: ack, lease renewal,
+    /// log-event push and job self-registration.
+    /// </summary>
+    /// <remarks>
+    /// The runner's <see cref="System.Net.Http.HttpClient"/> has no timeout of
+    /// its own (it must not, for the long poll), and the ack used to be sent
+    /// with no cancellation at all. An ack stuck on a half-open connection then
+    /// never returned, the execution never left the in-flight set, every poll
+    /// kept reporting it, and the server kept renewing its lease — a
+    /// <c>singleton</c> job stalled behind it for days (issue #792). A timed-out
+    /// ack is logged and dropped like any other failed ack; the server's
+    /// stale-claim reaper recovers the claim.
+    /// </remarks>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Interval at which the runner sends lease-renewal heartbeats for each
     /// in-flight execution.
     /// </summary>

@@ -84,6 +84,19 @@ export interface CroniqRunnerOptions {
   /** Per-request timeout for the long-poll work endpoint. Default 35 000 ms. */
   pollTimeoutMs?: number;
 
+  /**
+   * Per-request timeout for every other runner request: ack, lease renewal,
+   * log-event push and job self-registration. Default 30 000 ms.
+   *
+   * The ack used to carry no timeout and a signal nothing ever aborted, so an
+   * ack stuck on a half-open connection never settled and the execution never
+   * left the in-flight set every poll reports. The server kept renewing its
+   * lease, and a `singleton` job stalled behind it (issue #792). A timed-out
+   * ack is logged and dropped like any other failed ack; the server's
+   * stale-claim reaper recovers the claim.
+   */
+  requestTimeoutMs?: number;
+
   /** Interval at which the runner sends lease-renewal heartbeats. Default 15 000 ms. */
   renewIntervalMs?: number;
 
@@ -141,6 +154,7 @@ export interface ResolvedRunnerOptions {
   tags: string[];
   maxInflight: number;
   pollTimeoutMs: number;
+  requestTimeoutMs: number;
   renewIntervalMs: number;
   drainTimeoutMs: number;
   pollRetryDelayMs: number;
@@ -223,6 +237,7 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     tags: [...(input.tags ?? [])],
     maxInflight,
     pollTimeoutMs: input.pollTimeoutMs ?? 35_000,
+    requestTimeoutMs: input.requestTimeoutMs ?? 30_000,
     renewIntervalMs: input.renewIntervalMs ?? 15_000,
     drainTimeoutMs: input.drainTimeoutMs ?? 30_000,
     pollRetryDelayMs: input.pollRetryDelayMs ?? 5_000,

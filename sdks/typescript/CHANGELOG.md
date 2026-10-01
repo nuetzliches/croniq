@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **An ack can no longer hang forever and keep its execution in flight
+  ([#792](https://github.com/nuetzliches/croniq/issues/792)).** The ack carried
+  no timeout and a signal nothing ever aborted. An ack stuck on a half-open
+  connection therefore never settled, the execution stayed in the in-flight set
+  every poll reports, and the server kept renewing its lease. Ack, lease
+  renewal, log-event push and job self-registration are now bounded by the new
+  `requestTimeoutMs` runner option (default 30 000 ms).
+
 ## 0.6.0 - 2026-09-18
 
 ### Added
