@@ -67,6 +67,16 @@ class RunnerOptions:
     poll_timeout_ms: int = 35_000
     """Per-request timeout for the long-poll work endpoint."""
 
+    request_timeout_ms: int = 30_000
+    """Whole-request bound on every other runner request: ack, lease renewal,
+    log-event push and job registration (issues #792, #795).
+
+    Applied per request, on top of the client's own httpx timeouts, so an
+    injected ``httpx.AsyncClient`` with ``timeout=None`` is bounded too. An ack
+    that never returned would keep its execution in the in-flight set every
+    poll reports, and the server renews the lease of everything in that set.
+    """
+
     renew_interval_ms: int = 15_000
     """Heartbeat interval for in-flight lease renewals."""
 

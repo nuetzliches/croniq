@@ -30,6 +30,7 @@ type RunnerConfigSpec struct {
 	APIKey            string   `yaml:"api_key"`
 	BearerToken       string   `yaml:"bearer_token"`
 	PollTimeoutMs     *int     `yaml:"poll_timeout_ms"`
+	RequestTimeoutMs  *int     `yaml:"request_timeout_ms"`
 	RenewIntervalMs   *int     `yaml:"renew_interval_ms"`
 	DrainTimeoutMs    *int     `yaml:"drain_timeout_ms"`
 	PollRetryDelayMs  *int     `yaml:"poll_retry_delay_ms"`
@@ -109,6 +110,9 @@ type HTTPExpectation struct {
 	MaxCount   *int              `yaml:"max_count,omitempty"`
 	Headers    map[string]string `yaml:"headers,omitempty"`
 	BodyMatch  any               `yaml:"body_match,omitempty"`
+	// BodyFilter narrows which requests the expectation counts: only those
+	// whose body subset-matches it (same rules as BodyMatch).
+	BodyFilter any `yaml:"body_filter,omitempty"`
 	// BodyAbsent lists top-level request-body keys that MUST NOT be present.
 	// It pins the omission of unset optionals — a producer must not emit a
 	// metadata/require/prefer/timeout/idempotency_key field it was never

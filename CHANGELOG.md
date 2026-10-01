@@ -14,6 +14,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still answers 400 (#789); case and blank entries are forgiven. A single
   value behaves as before, so existing links keep working.
   `ExecutionFilter.state` became `ExecutionFilter.states`.
+- **Conformance case 20: a hung ack is given up and leaves the in-flight set
+  ([#795](https://github.com/nuetzliches/croniq/issues/795)).** The first ack
+  is held for 5 s against a 300 ms runner request timeout, and the case
+  requires a later poll that reports an empty `inflight`. Two additions make
+  that expressible:
+  - `runner_config.request_timeout_ms`, mapped by every runner binding.
+  - `body_filter` on an HTTP expectation: a subset match that selects which
+    requests the count bounds apply to.
+
+  Mock delays now abort when the client hangs up (Go, TypeScript). The .NET
+  mock records a held request before its response is written. The Go SDK
+  gains `WithRequestTimeout`. It replaces its hard-coded 10 s ack/event and
+  5 s renew bounds, and the default is now 30 s, as in every other SDK. Java
+  and Python changes are in their changelogs. Rust has no runner-case binding,
+  so case 20 does not run there; the Rust SDK has been bounded since #792.
 
 ### Fixed
 

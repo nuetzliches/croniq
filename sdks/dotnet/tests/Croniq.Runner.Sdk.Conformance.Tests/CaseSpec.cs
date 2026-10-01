@@ -31,6 +31,7 @@ public sealed class RunnerConfigSpec
     public string? ApiKey { get; set; }
     public string? BearerToken { get; set; }
     public int? PollTimeoutMs { get; set; }
+    public int? RequestTimeoutMs { get; set; }
     public int? RenewIntervalMs { get; set; }
     public int? DrainTimeoutMs { get; set; }
     public int? PollRetryDelayMs { get; set; }
@@ -87,4 +88,7 @@ public sealed class HttpExpectation
     public int? MaxCount { get; set; }
     public Dictionary<string, string> Headers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public object? BodyMatch { get; set; }
+
+    /// <summary>Subset match selecting which requests the count bounds apply to.</summary>
+    public object? BodyFilter { get; set; }
 }

@@ -26,7 +26,7 @@ from tests.conformance.mock_server import MockServerHarness, RecordedRequest
 if TYPE_CHECKING:
     from pytest_httpserver import HTTPServer
 
-    from tests.conformance.case_spec import CaseSpec, ExpectationsSpec
+    from tests.conformance.case_spec import CaseSpec, ExpectationsSpec, HttpExpectation
 
 
 async def run_case(httpserver: HTTPServer, spec: CaseSpec) -> None:
@@ -107,6 +107,8 @@ def _build_options(spec: CaseSpec, server_url: str) -> RunnerOptions:
         opts.bearer_token = cfg.bearer_token
     if cfg.poll_timeout_ms is not None:
         opts.poll_timeout_ms = cfg.poll_timeout_ms
+    if cfg.request_timeout_ms is not None:
+        opts.request_timeout_ms = cfg.request_timeout_ms
     if cfg.renew_interval_ms is not None:
         opts.renew_interval_ms = cfg.renew_interval_ms
     if cfg.drain_timeout_ms is not None:
@@ -122,6 +124,17 @@ def _build_options(spec: CaseSpec, server_url: str) -> RunnerOptions:
     return opts
 
 
+def _matching(ex: HttpExpectation, recorded: list[RecordedRequest]) -> list[RecordedRequest]:
+    """Requests an expectation counts: method + path, then ``body_filter``."""
+    return [
+        r
+        for r in recorded
+        if r.method.upper() == ex.method.upper()
+        and r.path == ex.path
+        and (ex.body_filter is None or match_body(ex.body_filter, r.json_body()) is None)
+    ]
+
+
 def _expectations_met(
     expectations: ExpectationsSpec, recorded: list[RecordedRequest]
 ) -> bool:
@@ -130,9 +143,7 @@ def _expectations_met(
         # full deadline (see comment in run_case).
         if ex.max_count is not None:
             return False
-        matching = sum(
-            1 for r in recorded if r.method.upper() == ex.method.upper() and r.path == ex.path
-        )
+        matching = len(_matching(ex, recorded))
         if ex.exact_count is not None and matching < ex.exact_count:
             return False
         if ex.min_count is not None and matching < ex.min_count:
@@ -142,9 +153,7 @@ def _expectations_met(
 
 def _assert_expectations(spec: CaseSpec, recorded: list[RecordedRequest]) -> None:
     for ex in spec.expectations.http:
-        matches = [
-            r for r in recorded if r.method.upper() == ex.method.upper() and r.path == ex.path
-        ]
+        matches = _matching(ex, recorded)
         if ex.exact_count is not None:
             assert len(matches) == ex.exact_count, (
                 f"{ex.method} {ex.path}: expected exact_count={ex.exact_count}, "

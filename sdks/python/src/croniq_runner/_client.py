@@ -8,6 +8,7 @@ stay generous.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import TracebackType
 from typing import Any
@@ -89,6 +90,20 @@ class CroniqClient:
         if self._owns_client:
             await self._http.aclose()
 
+    async def _post(self, path: str, **kwargs: Any) -> httpx.Response:
+        """POST under :attr:`RunnerOptions.request_timeout_ms` (issue #795).
+
+        Two bounds, because httpx timeouts are per phase, not per request — a
+        server that trickles bytes never trips the read timeout — and because
+        an injected client may carry ``timeout=None``. The httpx timeout makes
+        a stalled phase fail fast; ``asyncio.wait_for`` caps the whole call.
+        """
+        seconds = self._options.request_timeout_ms / 1000.0
+        return await asyncio.wait_for(
+            self._http.post(path, timeout=httpx.Timeout(seconds), **kwargs),
+            timeout=seconds,
+        )
+
     async def poll(self, request: PollRequest, *, timeout_ms: int) -> PollResponse:
         # Long-poll: the server may hold the connection for up to ~poll_timeout
         # before returning an empty body. Allow a small read head-room so a
@@ -109,15 +124,11 @@ class CroniqClient:
         return PollResponse.model_validate(resp.json())
 
     async def ack(self, request: AckRequest) -> None:
-        resp = await self._http.post(
-            "/v1/work/ack", json=self._dump(request), headers=self._auth_headers()
-        )
+        resp = await self._post("/v1/work/ack", json=self._dump(request), headers=self._auth_headers())
         resp.raise_for_status()
 
     async def renew(self, request: RenewRequest) -> None:
-        resp = await self._http.post(
-            "/v1/work/renew", json=self._dump(request), headers=self._auth_headers()
-        )
+        resp = await self._post("/v1/work/renew", json=self._dump(request), headers=self._auth_headers())
         resp.raise_for_status()
 
     async def push_events(self, execution_id: str, events: list[WorkEvent]) -> None:
@@ -125,13 +136,11 @@ class CroniqClient:
             return
         body = [self._dump(ev) for ev in events]
         path = f"/v1/work/{quote(execution_id, safe='')}/events"
-        resp = await self._http.post(path, json=body, headers=self._auth_headers())
+        resp = await self._post(path, json=body, headers=self._auth_headers())
         resp.raise_for_status()
 
     async def register_job(self, request: RegisterJobRequest) -> RegisterJobResponse | None:
-        resp = await self._http.post(
-            "/v1/jobs/register", json=self._dump(request), headers=self._auth_headers()
-        )
+        resp = await self._post("/v1/jobs/register", json=self._dump(request), headers=self._auth_headers())
         resp.raise_for_status()
         # Some server versions return 200 with no body; treat empty as None.
         if not resp.content:

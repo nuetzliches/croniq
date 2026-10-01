@@ -51,6 +51,7 @@ final class CaseLoader {
             "api_key",
             "bearer_token",
             "poll_timeout_ms",
+            "request_timeout_ms",
             "renew_interval_ms",
             "drain_timeout_ms",
             "poll_retry_delay_ms",
@@ -102,6 +103,7 @@ final class CaseLoader {
                 stringOf(m, "api_key"),
                 stringOf(m, "bearer_token"),
                 intOf(m, "poll_timeout_ms"),
+                intOf(m, "request_timeout_ms"),
                 intOf(m, "renew_interval_ms"),
                 intOf(m, "drain_timeout_ms"),
                 intOf(m, "poll_retry_delay_ms"),
@@ -153,7 +155,8 @@ final class CaseLoader {
                         intOf(e, "min_count"),
                         intOf(e, "max_count"),
                         stringMapOf(e, "headers"),
-                        e.get("body_match")));
+                        e.get("body_match"),
+                        e.get("body_filter")));
             }
         }
         return new CaseSpec.Expectations(intOf(m, "duration_max_ms"), http);

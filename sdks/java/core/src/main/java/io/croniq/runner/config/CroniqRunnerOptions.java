@@ -20,6 +20,13 @@ public final class CroniqRunnerOptions {
     public static final String DEFAULT_RUNNER_ID_PREFIX = "runner";
     public static final int DEFAULT_MAX_INFLIGHT = 5;
     public static final Duration DEFAULT_POLL_TIMEOUT = Duration.ofSeconds(35);
+
+    /**
+     * Default bound on every non-poll request (ack, renew, log events, job registration). Same default as the .NET,
+     * Rust and TypeScript SDKs (issue #795).
+     */
+    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
     public static final Duration DEFAULT_RENEW_INTERVAL = Duration.ofSeconds(15);
     public static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(30);
     public static final Duration DEFAULT_POLL_RETRY_DELAY = Duration.ofSeconds(5);
@@ -39,6 +46,7 @@ public final class CroniqRunnerOptions {
     private final List<String> tags;
     private final int maxInflight;
     private final Duration pollTimeout;
+    private final Duration requestTimeout;
     private final Duration renewInterval;
     private final Duration drainTimeout;
     private final Duration pollRetryDelay;
@@ -59,6 +67,7 @@ public final class CroniqRunnerOptions {
         this.tags = List.copyOf(b.tags);
         this.maxInflight = b.maxInflight;
         this.pollTimeout = b.pollTimeout;
+        this.requestTimeout = b.requestTimeout;
         this.renewInterval = b.renewInterval;
         this.drainTimeout = b.drainTimeout;
         this.pollRetryDelay = b.pollRetryDelay;
@@ -121,6 +130,15 @@ public final class CroniqRunnerOptions {
 
     public Duration pollTimeout() {
         return pollTimeout;
+    }
+
+    /**
+     * Bound on each ack, lease renewal, log-event push and job registration. An unbounded ack would keep its execution
+     * in the in-flight set every poll reports, and the server renews the lease of everything in that set (issues
+     * #792, #795).
+     */
+    public Duration requestTimeout() {
+        return requestTimeout;
     }
 
     public Duration renewInterval() {
@@ -189,6 +207,7 @@ public final class CroniqRunnerOptions {
                 .tags(tags)
                 .maxInflight(maxInflight)
                 .pollTimeout(pollTimeout)
+                .requestTimeout(requestTimeout)
                 .renewInterval(renewInterval)
                 .drainTimeout(drainTimeout)
                 .pollRetryDelay(pollRetryDelay)
@@ -208,6 +227,7 @@ public final class CroniqRunnerOptions {
         private List<String> tags = new ArrayList<>();
         private int maxInflight = DEFAULT_MAX_INFLIGHT;
         private Duration pollTimeout = DEFAULT_POLL_TIMEOUT;
+        private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
         private Duration renewInterval = DEFAULT_RENEW_INTERVAL;
         private Duration drainTimeout = DEFAULT_DRAIN_TIMEOUT;
         private Duration pollRetryDelay = DEFAULT_POLL_RETRY_DELAY;
@@ -286,6 +306,15 @@ public final class CroniqRunnerOptions {
 
         public Builder pollTimeout(Duration v) {
             this.pollTimeout = Objects.requireNonNull(v, "pollTimeout");
+            return this;
+        }
+
+        public Builder requestTimeout(Duration v) {
+            Objects.requireNonNull(v, "requestTimeout");
+            if (v.isZero() || v.isNegative()) {
+                throw new IllegalArgumentException("requestTimeout must be positive, got " + v);
+            }
+            this.requestTimeout = v;
             return this;
         }
 

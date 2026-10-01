@@ -59,6 +59,7 @@ internal static class CaseLoader
         foreach (var ex in spec.Expectations.Http)
         {
             ex.BodyMatch = NormaliseYamlObject(ex.BodyMatch);
+            ex.BodyFilter = NormaliseYamlObject(ex.BodyFilter);
         }
 
         return spec;

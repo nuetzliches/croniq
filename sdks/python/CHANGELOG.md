@@ -5,6 +5,21 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`RunnerOptions.request_timeout_ms`
+  ([#795](https://github.com/nuetzliches/croniq/issues/795)).** A whole-request
+  bound (default 30 000 ms) on ack, lease renewal, log-event push and job
+  registration. It is applied per request with `asyncio.wait_for`, so it also
+  holds for an injected `httpx.AsyncClient` with `timeout=None`, and against a
+  server that trickles bytes, which per-phase httpx timeouts never catch.
+  Before, these requests used only the client's 40 s per-phase read timeout,
+  or none at all on an injected client. An ack that never returned would keep
+  its execution in the in-flight set every poll reports
+  ([#792](https://github.com/nuetzliches/croniq/issues/792)).
+
 ## [0.6.0] - 2026-09-18
 
 ### Added

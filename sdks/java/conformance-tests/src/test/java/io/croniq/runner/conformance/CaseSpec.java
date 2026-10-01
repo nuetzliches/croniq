@@ -30,6 +30,7 @@ public record CaseSpec(
             String apiKey,
             String bearerToken,
             Integer pollTimeoutMs,
+            Integer requestTimeoutMs,
             Integer renewIntervalMs,
             Integer drainTimeoutMs,
             Integer pollRetryDelayMs,
@@ -63,6 +64,7 @@ public record CaseSpec(
                 Integer minCount,
                 Integer maxCount,
                 Map<String, String> headers,
-                Object bodyMatch) {}
+                Object bodyMatch,
+                Object bodyFilter) {}
     }
 }

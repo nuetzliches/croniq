@@ -21,6 +21,7 @@ export interface RunnerConfig {
   api_key?: string;
   bearer_token?: string;
   poll_timeout_ms?: number;
+  request_timeout_ms?: number;
   renew_interval_ms?: number;
   drain_timeout_ms?: number;
   poll_retry_delay_ms?: number;
@@ -70,4 +71,6 @@ export interface HttpExpectation {
   max_count?: number;
   headers?: Record<string, string>;
   body_match?: unknown;
+  /** Subset match selecting which requests the count bounds apply to. */
+  body_filter?: unknown;
 }
