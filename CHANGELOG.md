@@ -9,9 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **A run's logs can be copied.** The Logs panel in the run detail has a copy
-  button that puts every event on the clipboard, one `timestamp LEVEL message`
-  line each. The timestamp is the full ISO one, not the clock time the panel
-  shows, because a pasted log has left the screen that said which day it was.
+  button that puts every event on the clipboard, one `HH:MM:SS LEVEL message`
+  line each: the same clock time (UTC) the panel shows, so what is pasted
+  reads as what was on screen.
 
 ### Changed
 

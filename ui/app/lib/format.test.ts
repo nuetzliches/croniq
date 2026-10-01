@@ -135,7 +135,7 @@ describe('formatLogLines', () => {
         { timestamp: '2026-09-30T08:00:01.250Z', level: 'info', message: 'pulling inbox' },
         { timestamp: '2026-09-30T08:00:02.000Z', level: 'error', message: 'timeout' },
       ]),
-    ).toBe('2026-09-30T08:00:01.250Z INFO pulling inbox\n2026-09-30T08:00:02.000Z ERROR timeout')
+    ).toBe('08:00:01 INFO pulling inbox\n08:00:02 ERROR timeout')
   })
 
   it('is empty for no events', () => {
