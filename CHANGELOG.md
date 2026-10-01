@@ -41,6 +41,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   seconds of the last one, so a broken deploy cannot loop. The version-skew
   warning stays silent in this case — it is for pairs pinned apart by hand,
   not for a page that is merely old.
+- **`timeout 4 hours` meant four seconds
+  ([#792](https://github.com/nuetzliches/croniq/issues/792)).** Duration
+  directives read only their first word, so the verbose form the schedule
+  grammar invites (`every 15 minutes`) compiled `timeout 4 hours` to `"4"` —
+  bare seconds. The runner's deadline, the retries and the stale-claim
+  reaper's threshold (`threshold_secs=124` = 4 s + 120 s grace) all inherited
+  it. The verbose form (`<n> milliseconds|seconds|minutes|hours|days`,
+  singular or plural) now compiles to the compact one (`4h`) for `timeout`,
+  `queue_ttl`, `retry` delays, alert `throttle` / `expected_within`,
+  `dead_letter` `retention` / `replay_max_age`, `lease_ttl`,
+  `trigger_dedup_window` and `execution_retention`.
+  **Behaviour change:** a job or `defaults` `timeout` / `queue_ttl` that does
+  not read as a duration (`timeout 5min`, `timeout 4 hours please`) is now a
+  validation error, so the server refuses to boot or reload with it instead
+  of running the job under a timeout nobody wrote. `croniq validate` shows
+  the offending line.
+- **A runner that keeps reporting a claim in flight no longer shields it
+  forever ([#792](https://github.com/nuetzliches/croniq/issues/792)).** Every
+  poll that lists an execution in `inflight` renews its lease, and a fresh
+  lease exempted the claim from the stale-claim reaper with no upper bound. A
+  runner whose ack hung on a half-open connection kept the id in its inflight
+  set, so a `singleton` job stalled for days and was released only when a
+  restart emptied the in-memory lease map. A renewal now buys at most one
+  more `timeout + grace`: past `2 × (timeout + grace)` the claim is reaped
+  with a `runner still reports the execution in flight` warning.
 
 ## [0.42.1] - 2026-10-01
 

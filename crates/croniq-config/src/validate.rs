@@ -108,6 +108,7 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     for item in &ast.items {
         match item {
             Item::Defaults(def) => {
+                validate_duration_directives(&def.directives, &mut diags);
                 for dob in &def.directives {
                     if let DirectiveOrBlock::Directive(dir) = dob {
                         match dir.key.value.as_str() {
@@ -176,6 +177,9 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 // Validate runner constraints
                 validate_runner_constraints(job, &mut diags);
 
+                // `timeout` / `queue_ttl` must read as a duration (issue #792)
+                validate_duration_directives(&job.directives, &mut diags);
+
                 // Validate singleton / max_concurrent (issue #278, #302) and
                 // the shared-budget reference (issue #546)
                 validate_concurrency(job, default_ephemeral, &group_names, &mut diags);
@@ -240,6 +244,60 @@ fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
 ///
 /// Placeholder values (`{vars.tz}`, `{env.TZ}`) resolve at compile time, so
 /// they count as declared and are not checked here.
+/// `timeout` / `queue_ttl` in a job or `defaults` block must read as one
+/// duration: compact (`4h`, `90s`, bare seconds) or verbose (`4 hours`).
+///
+/// Anything else used to compile to *something*: the first argument alone,
+/// so `timeout 4 hours` became four seconds before #792 taught the compiler
+/// the verbose form, and an unparseable `timeout 5min` fell back to the
+/// built-in default at run time. Either way the job ran under a timeout
+/// nobody wrote, and the stale-claim reaper judged it by that.
+fn validate_duration_directives(directives: &[DirectiveOrBlock], diags: &mut Vec<Diagnostic>) {
+    for dob in directives {
+        let DirectiveOrBlock::Directive(dir) = dob else {
+            continue;
+        };
+        let key = dir.key.value.as_str();
+        if !matches!(key, "timeout" | "queue_ttl") {
+            continue;
+        }
+        if dir.args.iter().any(|a| a.is_placeholder) {
+            continue;
+        }
+        let words: Vec<&str> = dir.args.iter().map(|a| a.value.as_str()).collect();
+        let readable = match words.as_slice() {
+            [value] => is_compact_duration(value) || (key == "queue_ttl" && *value == "none"),
+            [count, unit] => {
+                count.parse::<u64>().is_ok()
+                    && crate::compile::verbose_duration_unit(unit).is_some()
+            }
+            _ => false,
+        };
+        if !readable {
+            diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!(
+                    "`{key} {}` is not a duration — write e.g. `{key} 4h` or `{key} 4 hours` \
+                     (units: ms, s, m, h, d, or bare seconds)",
+                    words.join(" ")
+                ),
+                span: dir.span.into(),
+            });
+        }
+    }
+}
+
+/// `<n>`, `<n>ms`, `<n>s`, `<n>m`, `<n>h` or `<n>d` — the grammar of
+/// `croniq_execution::retry::parse_duration_checked`, which this crate does
+/// not depend on.
+fn is_compact_duration(value: &str) -> bool {
+    let digits = ["ms", "s", "m", "h", "d"]
+        .iter()
+        .find_map(|unit| value.strip_suffix(unit))
+        .unwrap_or(value);
+    !digits.is_empty() && digits.parse::<u64>().is_ok()
+}
+
 fn validate_timezone_value(dir: &Directive, diags: &mut Vec<Diagnostic>) -> bool {
     let Some(arg) = dir.args.first() else {
         return false;
@@ -1397,6 +1455,39 @@ mod tests {
     }
 
     // ── singleton / max_concurrent (issue #278) ───────────────────────────────
+
+    // ── duration directives (issue #792) ──────────────────────────────────────
+
+    #[test]
+    fn readable_timeouts_validate() {
+        for timeout in ["4h", "90s", "300", "4 hours", "1 minute", "2 days"] {
+            let src = format!("job a:b {{ every 5 minutes; timeout {timeout} }}");
+            assert!(errors(&validate_src(&src)).is_empty(), "timeout {timeout}");
+        }
+        let src = "defaults { queue_ttl none }\njob a:b { every 5 minutes; queue_ttl 2 hours }";
+        assert!(errors(&validate_src(src)).is_empty());
+    }
+
+    #[test]
+    fn unreadable_timeouts_are_errors() {
+        for timeout in ["5min", "4 lightyears", "4 hours please", "four hours"] {
+            let src = format!("job a:b {{ every 5 minutes; timeout {timeout} }}");
+            let diags = validate_src(&src);
+            assert!(
+                errors(&diags)
+                    .iter()
+                    .any(|d| d.message.contains("is not a duration")),
+                "timeout {timeout}: {diags:?}"
+            );
+        }
+        let diags = validate_src("defaults { timeout 5min }\njob a:b { every 5 minutes }");
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message.contains("`timeout 5min`")),
+            "{diags:?}"
+        );
+    }
 
     #[test]
     fn singleton_alone_is_valid() {
