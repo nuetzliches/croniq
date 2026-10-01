@@ -2005,9 +2005,22 @@ async fn handle_list_executions(
     // list would wait out its timeout on completed runs. `alerts/deliveries`
     // already validates its `state` the same way. Case is forgiven, and an
     // empty value is no filter, as `job_key_contains` treats one.
-    let exec_state = match params.get("state").map(|s| s.trim()) {
-        None | Some("") => None,
-        Some(raw) => Some(ExecutionState::parse(raw).ok_or_else(|| {
+    //
+    // Several states are comma-separated (`?state=queued,claimed`), and every
+    // one is validated: a single bad entry rejects the request for the same
+    // reason a single bad value does. Blank entries (`queued,`) are skipped.
+    let mut exec_states: Vec<ExecutionState> = Vec::new();
+    for raw in params
+        .get("state")
+        .map(String::as_str)
+        .unwrap_or("")
+        .split(',')
+    {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let parsed = ExecutionState::parse(raw).ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(calendars::ValidationError {
@@ -2019,8 +2032,11 @@ async fn handle_list_executions(
                 }),
             )
                 .into_response()
-        })?),
-    };
+        })?;
+        if !exec_states.contains(&parsed) {
+            exec_states.push(parsed);
+        }
+    }
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
         // The search the Runs screen types, as opposed to the exact `job_key`
@@ -2033,7 +2049,7 @@ async fn handle_list_executions(
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty()),
         runner_id: params.get("runner_id").cloned(),
-        state: exec_state,
+        states: exec_states,
         limit: params.get("limit").and_then(|l| l.parse().ok()),
         // `since` / `until` were in `ExecutionFilter` and in the SQL from the
         // start; this handler simply never read them, so the one HTTP entry
@@ -3695,6 +3711,19 @@ mod tests {
         // An empty value is no filter.
         let all = get_json(server_router(Arc::clone(&state)), "/v1/executions?state=").await;
         assert_eq!(states(&all).len(), 2);
+
+        // Several states are a comma-separated set; every entry is validated.
+        for uri in [
+            "/v1/executions?state=claimed,completed",
+            "/v1/executions?state=Claimed,%20completed,",
+        ] {
+            let both = get_json(server_router(Arc::clone(&state)), uri).await;
+            let mut got = states(&both);
+            got.sort();
+            assert_eq!(got, ["claimed", "completed"], "{uri}");
+        }
+        let resp = get("/v1/executions?state=claimed,bogus").await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     /// `GET /v1/executions` honours a time window (issue #621-adjacent, the

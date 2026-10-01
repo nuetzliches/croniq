@@ -262,7 +262,7 @@ pub async fn handle_failure_heatmap(
     let days = params.days.unwrap_or(28).clamp(7, 90);
     let since = Utc::now() - Duration::days(days as i64);
     let filter = ExecutionFilter {
-        state: Some(ExecutionState::Failed),
+        states: vec![ExecutionState::Failed],
         since: Some(since),
         limit: Some(100_000),
         ..Default::default()
@@ -273,7 +273,7 @@ pub async fn handle_failure_heatmap(
     // Also count dead-states as "failures" in the heatmap — they're
     // exhausted retries, which is the user-visible outcome.
     let dead_filter = ExecutionFilter {
-        state: Some(ExecutionState::Dead),
+        states: vec![ExecutionState::Dead],
         since: Some(since),
         limit: Some(100_000),
         ..Default::default()

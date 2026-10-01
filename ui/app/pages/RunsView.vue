@@ -246,6 +246,10 @@ const hasFilters = computed(() =>
 
 // Labelled through `stateLabel` so the filter says what the pill says; the
 // value stays the store's name, because that is what the API filters on.
+// The URL and the API both carry the selection as a comma-separated list
+// (`?state=queued,claimed`); the menu works on an array.
+const selectedStates = computed(() => (filters.value.state ? filters.value.state.split(',') : []))
+
 const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled'].map((value) => ({
   label: stateLabel(value),
   value,
@@ -296,14 +300,15 @@ function onKey(event: KeyboardEvent) {
          everything around it. -->
     <div class="flex flex-wrap items-center gap-2">
       <USelectMenu
-        :model-value="filters.state || undefined"
+        :model-value="selectedStates"
         :items="STATES"
         value-key="value"
+        multiple
         placeholder="Any state"
         aria-label="Filter by state"
         clear
-        class="w-40"
-        @update:model-value="(value: string) => setFilter('state', value ?? '')"
+        class="w-48"
+        @update:model-value="(value: string[]) => setFilter('state', (value ?? []).join(','))"
       />
       <UInput
         :model-value="filters.q"

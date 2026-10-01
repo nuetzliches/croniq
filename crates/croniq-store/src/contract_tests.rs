@@ -1081,6 +1081,42 @@ fn list_executions_with_filter() {
 }
 
 #[test]
+fn list_executions_filters_by_a_set_of_states() {
+    let store = create_memory_store().unwrap();
+
+    for (key, state) in [
+        ("a:queued", ExecutionState::Queued),
+        ("b:failed", ExecutionState::Failed),
+        ("c:dead", ExecutionState::Dead),
+    ] {
+        let mut e = make_execution(key, utc(2026, 3, 29, 2, 0));
+        e.state = state;
+        store.create_execution(&e).unwrap();
+    }
+
+    let found = |states: Vec<ExecutionState>| {
+        let mut keys: Vec<String> = store
+            .list_executions(&ExecutionFilter {
+                states,
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|e| e.job_key)
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    assert_eq!(found(vec![]).len(), 3);
+    assert_eq!(found(vec![ExecutionState::Failed]), ["b:failed"]);
+    assert_eq!(
+        found(vec![ExecutionState::Queued, ExecutionState::Dead]),
+        ["a:queued", "c:dead"]
+    );
+}
+
+#[test]
 fn list_executions_searches_the_job_key_by_substring() {
     // Issue #753: the Runs screen's typed filter. `job_key` stays exact — a
     // link from a job's detail must mean that job — so the search is its own

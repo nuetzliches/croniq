@@ -262,7 +262,10 @@ pub struct ExecutionFilter {
     /// is right for a search box and wrong for a deep link. Wildcards in the
     /// needle are escaped, so `%` and `_` match themselves.
     pub job_key_contains: Option<String>,
-    pub state: Option<ExecutionState>,
+    /// Match any of these states; empty means no state filter. A set rather
+    /// than one value so the Runs screen can show, say, `queued` and `claimed`
+    /// together without two requests.
+    pub states: Vec<ExecutionState>,
     pub runner_id: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,

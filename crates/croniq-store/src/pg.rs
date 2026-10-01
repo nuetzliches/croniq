@@ -880,10 +880,14 @@ impl ExecutionStore for PgStore {
             sql.push_str(&format!(" AND job_key ILIKE ${idx} ESCAPE '\\'"));
             idx += 1;
         }
-        if let Some(state) = filter.state {
-            params.push(Box::new(state_to_str(state).to_string()));
-            sql.push_str(&format!(" AND state = ${idx}"));
-            idx += 1;
+        if !filter.states.is_empty() {
+            let mut marks = Vec::with_capacity(filter.states.len());
+            for state in &filter.states {
+                params.push(Box::new(state_to_str(*state).to_string()));
+                marks.push(format!("${idx}"));
+                idx += 1;
+            }
+            sql.push_str(&format!(" AND state IN ({})", marks.join(", ")));
         }
         if let Some(ref rid) = filter.runner_id {
             params.push(Box::new(rid.clone()));

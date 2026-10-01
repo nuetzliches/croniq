@@ -1017,7 +1017,7 @@ impl CroniqMcp {
                 .job_key_contains
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty()),
-            state,
+            states: state.into_iter().collect(),
             limit: Some(p.limit.min(100)),
             ..Default::default()
         };

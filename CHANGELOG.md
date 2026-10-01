@@ -6,8 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The Runs screen can filter on several states at once.** The state menu is
+  now multi-select, and `GET /v1/executions` accepts a comma-separated list
+  (`?state=queued,claimed`). Every entry is validated, so one unknown state
+  still answers 400 (#789); case and blank entries are forgiven. A single
+  value behaves as before, so existing links keep working.
+  `ExecutionFilter.state` became `ExecutionFilter.states`.
+
 ### Fixed
 
+- **A filter on Runs can be cleared on its own.** Once a state or time
+  window was chosen on `/executions`, the only way back was "Clear", which
+  also dropped every other filter. Both menus now have a clear button.
 - **The console shows log times in your time zone.** `/console` printed the
   server's UTC timestamp sliced to `HH:mm:ss.SSS`, so it was the one screen
   not in the browser's zone and carried no zone label. Times now render in

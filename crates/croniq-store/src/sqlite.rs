@@ -327,9 +327,13 @@ impl ExecutionStore for SqliteStore {
                 param_values.len()
             ));
         }
-        if let Some(state) = filter.state {
-            param_values.push(Box::new(state_to_str(state).to_string()));
-            sql.push_str(&format!(" AND state = ?{}", param_values.len()));
+        if !filter.states.is_empty() {
+            let mut marks = Vec::with_capacity(filter.states.len());
+            for state in &filter.states {
+                param_values.push(Box::new(state_to_str(*state).to_string()));
+                marks.push(format!("?{}", param_values.len()));
+            }
+            sql.push_str(&format!(" AND state IN ({})", marks.join(", ")));
         }
         if let Some(ref rid) = filter.runner_id {
             param_values.push(Box::new(rid.clone()));
