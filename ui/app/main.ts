@@ -7,6 +7,7 @@ import ui from '@nuxt/ui/vue-plugin'
 
 import App from './App.vue'
 import { forgetLegacyTokens } from './api/session'
+import { reloadInto } from './lib/server-update'
 import { installAuthWatch, router } from './router'
 
 // Before anything else: a browser that used the pre-#454 dashboard still holds
@@ -14,6 +15,14 @@ import { installAuthWatch, router } from './router'
 // That is the exposure #454 removed, and the React tree cleaned up on sight
 // (issue #719).
 forgetLegacyTokens()
+
+// Vite's preload helper fires this when a chunk's dependency (a CSS file, a
+// shared module) is gone — after an upgrade, the previous release's hashes.
+// `router.onError` covers route chunks; this covers the rest. Prevented only
+// when we reload, so a refused reload still surfaces the original error.
+window.addEventListener('vite:preloadError', (event) => {
+  if (reloadInto(window.location.href)) event.preventDefault()
+})
 
 const app = createApp(App)
 

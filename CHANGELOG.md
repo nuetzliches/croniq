@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An open dashboard tab picks up a server upgrade.** Restarting
+  `croniq-server` on a new release reloaded nothing in a tab that was already
+  open: navigation is client-side, so the operator kept working in the
+  previous release's dashboard — with the previous version in the header —
+  across any number of page changes and actions, until a manual reload.
+  `/version` was fetched once per page load and never again. It is now polled
+  every minute and on returning to the tab; when the answer differs from the
+  one the page was loaded against (version, or build sha when both are
+  stamped), the shell shows a "Croniq has been updated" banner with a reload
+  button, and the next page change becomes a full load of its target. A route
+  chunk the old bundle can no longer fetch reloads the same way instead of
+  leaving the click without effect. Automatic reloads are refused within ten
+  seconds of the last one, so a broken deploy cannot loop. The version-skew
+  warning stays silent in this case — it is for pairs pinned apart by hand,
+  not for a page that is merely old.
+
 ## [0.42.1] - 2026-10-01
 
 ### Fixed

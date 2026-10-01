@@ -1,5 +1,6 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, START_LOCATION, type RouteRecordRaw } from 'vue-router'
 import { watch } from 'vue'
+import { isChunkLoadError, reloadInto, serverUpdate } from '~/lib/server-update'
 import { useAuthStore } from '~/stores/auth'
 
 /**
@@ -196,6 +197,33 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+/**
+ * Pick up a server upgrade at the next page change.
+ *
+ * Once `serverUpdate` is set the bundle running in this tab is the previous
+ * release's (see `~/lib/server-update`). A navigation is the least disruptive
+ * moment to swap it: the operator is leaving the screen anyway, so nothing
+ * half-typed is lost, and the reload lands exactly where they were going. The
+ * session survives it — a reload redeems the refresh cookie (ADR-0001).
+ *
+ * Registered before the auth guard so the reload happens first; the new page
+ * runs that guard itself.
+ */
+router.beforeEach((to, from) => {
+  if (!serverUpdate.value) return true
+  // The first navigation of a page load is the load itself.
+  if (from === START_LOCATION) return true
+  return reloadInto(router.resolve(to).href) ? false : true
+})
+
+/**
+ * A route chunk the server no longer has — the same upgrade, caught before
+ * the `/version` poll noticed it. Without this the click simply does nothing.
+ */
+router.onError((error, to) => {
+  if (isChunkLoadError(error)) reloadInto(router.resolve(to).href)
 })
 
 /**

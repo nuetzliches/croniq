@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiPost } from '~/api/client'
 import { useAuthConfig, useHealth, useVersion } from '~/api/queries'
 import { UI_VERSION, versionSkew } from '~/lib/build-version'
+import { serverUpdate } from '~/lib/server-update'
 import {
   isEnrollmentRequired,
   isMfaRequired,
@@ -51,7 +52,11 @@ const { data: version } = useVersion()
  * here rather than a second banner: this page is deliberately quiet, and an
  * operator who cannot get past it needs the two numbers, not a paragraph.
  */
-const skew = computed(() => versionSkew(UI_VERSION, version.value?.version))
+// Not while the server was upgraded under this tab: that mismatch is this page
+// being old, and signing in navigates — which reloads it (router guard).
+const skew = computed(() =>
+  serverUpdate.value ? null : versionSkew(UI_VERSION, version.value?.version),
+)
 
 type Step = 'credentials' | 'totp' | 'enrol'
 

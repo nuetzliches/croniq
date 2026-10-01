@@ -123,8 +123,14 @@ export function useHealth() {
 }
 
 /**
- * Build version. Public, and pinned forever — it cannot change without the
- * process restarting, at which point the page reloads anyway.
+ * Build version. Public.
+ *
+ * Polled, not pinned. It used to be `staleTime: Infinity` on the belief that a
+ * restart reloads the page — it does not: an open tab kept showing, and
+ * running, the release it was opened with for as long as nobody pressed F5.
+ * `App.vue` feeds every answer to `~/lib/server-update`, which is what notices
+ * the upgrade. A minute is plenty for something that changes on a deploy, and
+ * returning to the tab asks again sooner.
  *
  * Failures are expected against an older server that has no `/version`, so the
  * caller treats `undefined` as "hide the chip" rather than as an error.
@@ -133,7 +139,9 @@ export function useVersion() {
   return useQuery({
     queryKey: ['version'],
     queryFn: () => apiGet<VersionResponse>('/version'),
-    staleTime: Infinity,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 }

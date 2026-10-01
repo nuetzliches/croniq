@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useVersion } from '~/api/queries'
 import { UI_VERSION, skewDismissalKey, versionSkew } from '~/lib/build-version'
+import { serverUpdate } from '~/lib/server-update'
 
 /**
  * "This dashboard and this server were not released together."
@@ -42,6 +43,11 @@ function dismiss() {
 }
 
 const show = computed(() => {
+  // Upgraded under this tab: the mismatch is this page being old, not a pair
+  // pinned apart by hand, and `ServerUpdatedBanner` says so. Telling the
+  // operator to "match the two image tags" here would send them looking for a
+  // misconfiguration that does not exist.
+  if (serverUpdate.value) return false
   const current = skew.value
   if (!current) return false
   return dismissed.value !== skewDismissalKey(current)

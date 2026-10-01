@@ -417,6 +417,7 @@ async function signOut() {
              wherever you happen to be — maintenance pauses dispatch
              everywhere, and a version mismatch affects every screen — and
              `shrink-0` keeps them visible rather than scrolling away. -->
+        <ServerUpdatedBanner class="mb-5 shrink-0" />
         <VersionSkewBanner class="mb-5 shrink-0" />
         <MaintenanceBanner class="mb-5 shrink-0" />
 
