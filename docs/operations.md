@@ -2048,7 +2048,14 @@ complementary mechanisms — no operator action needed:
   `max(2 × lease_ttl, 120 s)` is requeued with the same attempt number,
   regardless of runner liveness — this also catches claims orphaned across a
   server restart. Claims with a **fresh lease** are exempt, so a
-  slow-but-alive handler is never double-run.
+  slow-but-alive handler is never double-run — but only up to **twice**
+  `timeout + grace` (issue #792). A runner that honours `timeout` cannot
+  hold a claim that long, so one that still reports it in flight is wedged
+  on its own bookkeeping (typically an ack stuck on a half-open connection),
+  and the claim is reaped with a
+  `runner still reports the execution in flight` warning. Before this cap
+  such a claim stayed exempt for as long as the runner kept polling, and a
+  `singleton` job behind it stalled until a server restart.
   Each reap logs a `watchdog: requeued stale claimed execution` warning and an
   `execution.stale_claim_requeued` audit event; recurring reaps for the same
   job are the signal to investigate that runner's stability.
@@ -2082,7 +2089,15 @@ inside the window (no starvation). The reconcile sweep likewise processes up
 to 500 rows per tick, oldest-due first; a larger backlog drains across ticks.
 
 A `singleton` job wedged by such an orphan therefore self-heals within one
-sweep after `timeout + grace` at the latest.
+sweep after `timeout + grace` at the latest — or `2 × (timeout + grace)`
+when its runner keeps reporting the claim in flight.
+
+The `timeout` these bounds are computed from is the one the job compiles to,
+so write it as a duration: `timeout 4h` or `timeout 4 hours`. Until #792
+the compiler read only the first word, so `timeout 4 hours` became `4` — four
+*seconds* — and the reaper's threshold showed up as `threshold_secs=124`
+(4 s + 120 s grace) in its log line. `croniq validate` now rejects a
+`timeout` or `queue_ttl` it cannot read.
 
 ### Removed jobs stop being reported
 

@@ -1085,14 +1085,35 @@ impl WatchdogLoop {
                 continue;
             }
 
-            if let Some(rid) = execution.runner_id.as_deref()
-                && leases.get(&execution.id.to_string()).is_some_and(|lease| {
+            let lease_fresh = execution.runner_id.as_deref().is_some_and(|rid| {
+                leases.get(&execution.id.to_string()).is_some_and(|lease| {
                     lease.runner_id == rid
                         && now.signed_duration_since(lease.renewed_at).num_seconds()
                             < grace_secs as i64
                 })
-            {
+            });
+            // A fresh lease buys one more `timeout + grace`, not unlimited
+            // time (issue #792). A runner that honours `timeout` cannot
+            // legitimately hold a claim that long; one that still reports it
+            // in flight is wedged on its own bookkeeping — an ack stuck on a
+            // half-open connection keeps the id in the SDK's inflight set, so
+            // every poll renewed the lease and a singleton stalled for days,
+            // released only when a restart emptied the lease map.
+            let renewal_cap_secs = threshold_secs.saturating_mul(2);
+            if lease_fresh && age <= renewal_cap_secs as i64 {
                 continue;
+            }
+            if lease_fresh {
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    execution_id = %execution.id,
+                    runner_id = execution.runner_id.as_deref().unwrap_or("<none>"),
+                    age_secs = age,
+                    renewal_cap_secs,
+                    "watchdog: runner still reports the execution in flight, but the claim \
+                     outlived twice its timeout + grace — reaping it; the runner's ack is \
+                     likely stuck"
+                );
             }
 
             // CAS: a completion / cancel racing this sweep wins — then we
@@ -1750,7 +1771,8 @@ mod tests {
             &*store,
             "test:job",
             "app-runner",
-            Utc::now() - ChronoDuration::hours(1),
+            // Past timeout (10m) + grace (240s), inside twice that (#792).
+            Utc::now() - ChronoDuration::minutes(20),
         );
 
         // The claim's own runner refreshed its lease recently — the effect
@@ -1772,6 +1794,39 @@ mod tests {
         assert_eq!(exec.state, ExecutionState::Claimed);
     }
 
+    /// Issue #792: a runner whose ack hung kept the execution in its
+    /// inflight set, so every poll renewed the lease and the claim was
+    /// exempt for days — a singleton stalled until a restart emptied the
+    /// lease map. A renewal now buys one more `timeout + grace`, no more.
+    #[tokio::test]
+    async fn stale_claim_reaper_caps_what_a_renewal_can_buy() {
+        let store = make_store();
+        let runner = make_runner();
+        let now = Utc::now();
+
+        // timeout 10m + grace 240s = 840s; twice that is 28 minutes.
+        let wedged = seed_claimed_at(
+            &*store,
+            "test:job",
+            "app-runner",
+            now - ChronoDuration::minutes(29),
+        );
+        runner
+            .touch_leases("app-runner", &[wedged.to_string()], now)
+            .await;
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(now).await;
+
+        assert_eq!(result.stale_claims, vec![wedged]);
+        let exec = store.get_execution(wedged).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Queued);
+    }
+
     /// Issue #438: the liveness exemption is per execution. A runner that
     /// keeps renewing ONE of its claims (which also keeps its registry
     /// heartbeat fresh, so it never goes Dead) no longer shields the claims
@@ -1786,13 +1841,13 @@ mod tests {
             &*store,
             "test:job",
             "app-runner",
-            now - ChronoDuration::hours(1),
+            now - ChronoDuration::minutes(20),
         );
         let wedged = seed_claimed_at(
             &*store,
             "test:job",
             "app-runner",
-            now - ChronoDuration::hours(1),
+            now - ChronoDuration::minutes(20),
         );
 
         // Registry state of a wedged runner: alive (fresh heartbeat, kept so

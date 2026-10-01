@@ -27,6 +27,40 @@ fn first_arg(d: &Directive, vars: &HashMap<String, String>) -> Option<String> {
     d.args.first().map(|a| resolve_str(a, vars))
 }
 
+/// The compact suffix for a unit word, as in `4 hours` → `h`. Covers the
+/// words `every N <unit>` accepts plus `days` and `milliseconds`, singular
+/// and plural.
+pub fn verbose_duration_unit(word: &str) -> Option<&'static str> {
+    match word {
+        "millisecond" | "milliseconds" => Some("ms"),
+        "second" | "seconds" => Some("s"),
+        "minute" | "minutes" => Some("m"),
+        "hour" | "hours" => Some("h"),
+        "day" | "days" => Some("d"),
+        _ => None,
+    }
+}
+
+/// Resolve a duration-valued directive into the compact form the runtime
+/// parses (`4h`).
+///
+/// The verbose form `timeout 4 hours` is accepted as well (issue #792). It is
+/// what the schedule grammar invites (`every 15 minutes`), and reading only
+/// the first argument turned it into `"4"` — a bare number, which every
+/// duration parser takes as *seconds*. A 4-hour job then ran under a
+/// 4-second timeout: the stale-claim reaper's threshold, the runner's
+/// deadline and every retry inherited it, reported by nothing.
+fn duration_arg(d: &Directive, vars: &HashMap<String, String>) -> Option<String> {
+    let first = first_arg(d, vars)?;
+    if let [_, unit] = d.args.as_slice()
+        && let Some(suffix) = verbose_duration_unit(&resolve_str(unit, vars))
+        && first.trim().parse::<u64>().is_ok()
+    {
+        return Some(format!("{}{suffix}", first.trim()));
+    }
+    Some(first)
+}
+
 /// Walk the top-level items and collect every `vars { … }` entry into a
 /// `HashMap` BEFORE compilation proper begins. This makes the order of
 /// `vars`/`defaults`/`calendar`/`job` blocks irrelevant — placeholders are
@@ -923,7 +957,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             }
                         }
                         "execution_retention" => {
-                            if let Some(v) = first_arg(d, &vars) {
+                            if let Some(v) = duration_arg(d, &vars) {
                                 server.execution_retention = Some(v);
                             }
                         }
@@ -946,12 +980,12 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             }
                         }
                         "lease_ttl" => {
-                            if let Some(v) = first_arg(d, &vars) {
+                            if let Some(v) = duration_arg(d, &vars) {
                                 cfg.lease_ttl = v;
                             }
                         }
                         "trigger_dedup_window" => {
-                            if let Some(v) = first_arg(d, &vars) {
+                            if let Some(v) = duration_arg(d, &vars) {
                                 cfg.trigger_dedup_window = v;
                             }
                         }
@@ -976,7 +1010,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 default_timezone = first_arg(dir, &vars);
                             }
                             "timeout" => {
-                                default_timeout = first_arg(dir, &vars);
+                                default_timeout = duration_arg(dir, &vars);
                             }
                             "execution_mode" => {
                                 if let Some(v) = first_arg(dir, &vars) {
@@ -996,7 +1030,8 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 }
                             }
                             "queue_ttl" => {
-                                default_queue_ttl = first_arg(dir, &vars).filter(|v| v != "none");
+                                default_queue_ttl =
+                                    duration_arg(dir, &vars).filter(|v| v != "none");
                             }
                             "max_queue_depth" => {
                                 default_max_queue_depth =
@@ -1386,11 +1421,8 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
                 }
             }
             "timeout" => {
-                if let Some(arg) = d.args.first() {
-                    let v = resolve_str(arg, vars);
-                    if let Some(secs) = parse_duration_secs(&v) {
-                        webhook_timeout_secs = secs.max(1);
-                    }
+                if let Some(secs) = duration_arg(d, vars).and_then(|v| parse_duration_secs(&v)) {
+                    webhook_timeout_secs = secs.max(1);
                 }
             }
             "email" => {
@@ -1502,16 +1534,8 @@ fn compile_rule(
                     dead_letter_only = matches!(v.as_str(), "true" | "yes" | "1" | "on");
                 }
             }
-            "throttle" => {
-                if let Some(arg) = d.args.first() {
-                    throttle = Some(resolve_str(arg, vars));
-                }
-            }
-            "expected_within" => {
-                if let Some(arg) = d.args.first() {
-                    expected_within = Some(resolve_str(arg, vars));
-                }
-            }
+            "throttle" => throttle = duration_arg(d, vars),
+            "expected_within" => expected_within = duration_arg(d, vars),
             "channels" => {
                 for arg in &d.args {
                     let v = resolve_str(arg, vars);
@@ -1616,7 +1640,7 @@ fn compile_job(
                 // before, which moved every wall-clock fire of the job by the
                 // zone's offset with a green `validate`.
                 "timezone" => timezone = first_arg(d, vars),
-                "timeout" => timeout = first_arg(d, vars),
+                "timeout" => timeout = duration_arg(d, vars),
                 "window" => window = first_arg(d, vars),
                 "execution_mode" => {
                     if let Some(v) = first_arg(d, vars) {
@@ -1636,7 +1660,7 @@ fn compile_job(
                     }
                 }
                 "queue_ttl" => {
-                    queue_ttl = first_arg(d, vars).filter(|v| v != "none");
+                    queue_ttl = duration_arg(d, vars).filter(|v| v != "none");
                 }
                 "max_queue_depth" => {
                     max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
@@ -1923,7 +1947,7 @@ fn compile_retry_block(
 
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
-            let val = first_arg(d, vars).unwrap_or_default();
+            let val = duration_arg(d, vars).unwrap_or_default();
             match d.key.value.as_str() {
                 // On a parse failure keep the inherited count rather than
                 // resetting to the built-in default (field-merge intent).
@@ -1969,9 +1993,9 @@ fn compile_dead_letter_block(
                         cfg.enabled = b;
                     }
                 }
-                "retention" => cfg.retention = first_arg(d, vars),
+                "retention" => cfg.retention = duration_arg(d, vars),
                 "operator_hint" => cfg.operator_hint = first_arg(d, vars),
-                "replay_max_age" => cfg.replay_max_age = first_arg(d, vars),
+                "replay_max_age" => cfg.replay_max_age = duration_arg(d, vars),
                 _ => {}
             }
         }
@@ -2224,6 +2248,35 @@ mod tests {
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
         assert_eq!(cfg.jobs[0].timeout.as_deref(), Some("5m"));
+    }
+
+    /// Issue #792: `timeout 4 hours` compiled to `"4"` — four *seconds* — so
+    /// a 4-hour job was reaped, and deadlined, by a 4-second timeout. The
+    /// verbose form compiles to the compact one now, everywhere a duration is
+    /// read.
+    #[test]
+    fn verbose_durations_compile_to_the_compact_form() {
+        let ast = Parser::parse(
+            r#"
+            defaults {
+                timeout 1 hour
+                queue_ttl 30 minutes
+            }
+            job example:nightly-verify {
+                every day at 02:30
+                timeout 4 hours
+                retry { base 10 seconds }
+            }
+            job example:inherits { every 5 minutes }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let job = &cfg.jobs[0];
+        assert_eq!(job.timeout.as_deref(), Some("4h"));
+        assert_eq!(job.queue_ttl.as_deref(), Some("30m"));
+        assert_eq!(job.retry.base.as_deref(), Some("10s"));
+        assert_eq!(cfg.jobs[1].timeout.as_deref(), Some("1h"));
     }
 
     // ── job-level `timezone` + precedence (issue #426) ────────────────────────
