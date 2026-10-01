@@ -84,6 +84,43 @@ export function formatAbsolute(iso: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
 }
 
+const clockFormatters = new Map<string, Intl.DateTimeFormat>()
+
+/**
+ * `HH:mm:ss.SSS` in the browser's zone — or in `timeZone`, which exists so a
+ * test does not depend on the machine it runs on.
+ *
+ * The console used to slice the UTC string, so it was the one screen not in
+ * the viewer's zone. The formatter is cached because the console formats up
+ * to 2000 rows on every filter change. An unparseable value falls back to the
+ * same slice, which is what the console showed before.
+ */
+export function formatClockTime(iso: string, timeZone?: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso.slice(11, 23)
+  const key = timeZone ?? ''
+  let formatter = clockFormatters.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      fractionalSecondDigits: 3,
+      hourCycle: 'h23',
+      timeZone,
+    })
+    clockFormatters.set(key, formatter)
+  }
+  const parts: Record<string, string> = {}
+  for (const p of formatter.formatToParts(date)) parts[p.type] = p.value
+  return `${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`
+}
+
+/** The IANA name of the browser's zone, for saying which zone times are in. */
+export function localTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
+
 /**
  * The word a state is shown as.
  *

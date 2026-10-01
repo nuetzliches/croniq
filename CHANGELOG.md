@@ -8,6 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The console shows log times in your time zone.** `/console` printed the
+  server's UTC timestamp sliced to `HH:mm:ss.SSS`, so it was the one screen
+  not in the browser's zone and carried no zone label. Times now render in
+  the browser's zone, the toolbar names that zone, and the hover title keeps
+  the original UTC instant. Copy and NDJSON download still carry the raw UTC
+  timestamp.
 - **An open dashboard tab picks up a server upgrade.** Restarting
   `croniq-server` on a new release reloaded nothing in a tab that was already
   open: navigation is client-side, so the operator kept working in the

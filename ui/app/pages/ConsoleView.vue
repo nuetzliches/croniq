@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useConsoleStream, type LogEvent } from '~/composables/useConsoleStream'
+import { formatClockTime, localTimeZone } from '~/lib/format'
 
 /**
  * The live console: the server's tracing feed, tailed.
@@ -30,6 +31,7 @@ const {
 const LEVELS = ['debug', 'info', 'warn', 'error'] as const
 const activeLevels = ref(new Set<string>(['info', 'warn', 'error']))
 const search = ref('')
+const timeZone = localTimeZone()
 
 /**
  * The rows on screen, with everything they need already computed.
@@ -53,7 +55,7 @@ const filtered = computed(() => {
     }
     rows.push({
       event,
-      time: event.ts.slice(11, 23),
+      time: formatClockTime(event.ts),
       fields: fieldText(event),
       gutter:
         event.level === 'error'
@@ -221,6 +223,10 @@ const fieldText = (event: LogEvent): string =>
           />
           {{ connected ? 'live' : forbidden || unavailable ? 'stopped' : 'reconnecting' }}
         </span>
+        <span
+          class="text-xs text-muted"
+          title="Times are shown in your browser's time zone. Copy and download keep UTC."
+        >{{ timeZone }}</span>
         <span class="cq-num text-xs text-muted">
           {{ filtered.length }} / {{ events.length }}
         </span>
@@ -337,7 +343,7 @@ const fieldText = (event: LogEvent): string =>
                by scanning the left edge, not by reading every row. -->
           <span
             class="cq-num shrink-0 text-dimmed"
-            :title="row.event.ts"
+            :title="`${row.event.ts} (UTC)`"
           >{{ row.time }}</span>
           <span
             class="w-11 shrink-0 font-medium uppercase"

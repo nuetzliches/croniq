@@ -1271,6 +1271,12 @@ resolved:
 - The job detail shows the effective job zone next to next-fire, and the
   calendars list shows each calendar's effective zone (`UTC` when unset).
 
+None of the above is a *display* zone. Timestamps are stored and sent as UTC;
+the dashboard renders them in the browser's zone. That includes the live
+console (`/console`), which names the zone in its toolbar and keeps the UTC
+instant in each row's hover title. Copying lines and the NDJSON download keep
+the raw UTC `ts`.
+
 ### Reload vs. restart
 
 A reload (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`) re-reads the

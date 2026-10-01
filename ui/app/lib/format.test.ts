@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from './format'
+import {
+  formatAbsolute,
+  formatClockTime,
+  formatDuration,
+  formatRelative,
+  shortId,
+  stateLabel,
+} from './format'
+
+describe('formatClockTime', () => {
+  it('renders the instant in the given zone, winter and summer', () => {
+    expect(formatClockTime('2026-01-15T12:34:56.789012Z', 'Europe/Berlin')).toBe('13:34:56.789')
+    expect(formatClockTime('2026-07-15T12:34:56.789012Z', 'Europe/Berlin')).toBe('14:34:56.789')
+  })
+
+  it('keeps UTC as UTC and pads milliseconds', () => {
+    expect(formatClockTime('2026-07-15T00:00:00.005Z', 'UTC')).toBe('00:00:00.005')
+  })
+
+  it('crosses midnight with the zone', () => {
+    expect(formatClockTime('2026-07-15T23:30:00.000Z', 'Europe/Berlin')).toBe('01:30:00.000')
+  })
+
+  it('falls back to the raw slice for an unparseable value', () => {
+    const raw = 'not a timestamp at all'
+    expect(formatClockTime(raw)).toBe(raw.slice(11, 23))
+  })
+})
 
 const NOW = Date.parse('2026-09-11T12:00:00Z')
 const ago = (ms: number) => new Date(NOW - ms).toISOString()
