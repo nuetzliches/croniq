@@ -1371,6 +1371,24 @@ paths:
         "503":
           description: Server was built without the Live Console hub (older binary or test mode)
 
+  /v1/executions/stream:
+    get:
+      summary: SSE stream of recent and in-flight executions (the dashboard's live timeline)
+      description: >
+        Requires `executions:read`. Each `executions` event carries the whole
+        window as JSON — `{ "now": <server time>, "runs": [...] }` — where
+        `runs` holds every queued or claimed execution plus those created or
+        finished in the last five and a half minutes, with `id`, `job_key`,
+        `state`, `attempt`, `runner_id`, `fire_at`, `claimed_at` and
+        `completed_at`. The window is re-read every 250 ms and a frame is sent
+        only when it changed, and at least every 5 s so clients can track the
+        server clock through `now`.
+      responses:
+        "200":
+          description: Server-Sent Events stream
+          content:
+            text/event-stream: {}
+
   /v1/executions/{id}/logs:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:

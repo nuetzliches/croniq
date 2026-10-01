@@ -12,8 +12,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   button that puts every event on the clipboard, one `HH:MM:SS LEVEL message`
   line each: the same clock time (UTC) the panel shows, so what is pasted
   reads as what was on screen.
+- **A live timeline on the dashboard.** One lane per job, runs sliding right
+  to left past a fixed "now" line: the wait from fire to claim as a thin bar,
+  the run as a thick one, coloured by outcome, each a link to the run. The
+  window is 5 s, 10 s, 30 s, 1 min or 5 min, remembered per browser; the
+  strip right of "now" shows next fires approaching. Lanes are ordered by next
+  fire, soonest first, and a job filter narrows them. Reduced motion steps
+  once a second instead of sliding.
+- **`GET /v1/executions/stream`** (scope `executions:read`), a server-sent
+  events feed of the runs in the last five and a half minutes plus everything
+  queued or running. Each `executions` frame is the whole window with the
+  server's `now`, sent only when it changed (checked every 250 ms) and at
+  least every 5 s.
 
 ### Changed
+
+- **The dashboard's "Next hour" rail is folded into the live timeline.** Each
+  job's next fire is on its lane label, an overdue job shows there in red,
+  and the hour's forecast histogram sits in the card's header. The timeline
+  spans the full width.
 
 - **CodeQL analyses only the languages a change touches.** GitHub's default
   setup ran all seven languages on every PR and again on every push to main,
