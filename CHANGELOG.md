@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /v1/executions` rejects an unknown `state` instead of ignoring it
+  ([#789](https://github.com/nuetzliches/croniq/issues/789)).** A value
+  outside `queued|claimed|completed|failed|dead|cancelled` used to drop the
+  filter, so `?state=running` (the dashboard's word for `claimed`) or a typo
+  answered with every execution — a plausible-looking list of the opposite of
+  what was asked. It is now a `400` with `"error": "invalid_state"` and a
+  message naming the accepted values, matching `GET /v1/alerts/deliveries`.
+  Matching is case-insensitive (`CLAIMED` works) and an empty `state=` is no
+  filter. The MCP `list_executions` tool returns an invalid-params error the
+  same way. `since`/`until`/`until_id`/`limit` keep their leniency.
+
 ## [0.42.0] - 2026-09-28
 
 ### Added

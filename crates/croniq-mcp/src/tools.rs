@@ -992,15 +992,21 @@ impl CroniqMcp {
             )
         })?;
 
-        let state = p.state.as_deref().and_then(|s| match s {
-            "queued" => Some(ExecutionState::Queued),
-            "claimed" => Some(ExecutionState::Claimed),
-            "completed" => Some(ExecutionState::Completed),
-            "failed" => Some(ExecutionState::Failed),
-            "dead" => Some(ExecutionState::Dead),
-            "cancelled" => Some(ExecutionState::Cancelled),
-            _ => None,
-        });
+        // An unknown state is an error, not an unfiltered list (issue #789):
+        // an agent asking for `running` would otherwise be handed every
+        // completed run as if it matched. Same rule as the HTTP endpoint.
+        let state = match p.state.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(raw) => Some(ExecutionState::parse(raw).ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Unknown execution state {raw:?}; expected one of: {}",
+                        ExecutionState::allowed_values()
+                    ),
+                    None,
+                )
+            })?),
+        };
 
         let filter = ExecutionFilter {
             job_key: p.job_key,
@@ -2288,6 +2294,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(keys(&out).len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_executions_rejects_an_unknown_state() {
+        // Issue #789: an unknown state used to mean "no filter", so an agent
+        // asking for `running` runs was handed every completed one.
+        use croniq_store::sqlite::SqliteStore;
+
+        let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
+        seed_execution(&store, "storage:copy");
+        let server = CroniqMcp::new_with_store(AppState::new(), store, vec![], false);
+
+        let with_state = |state: &str| ListExecutionsParams {
+            job_key: None,
+            job_key_contains: None,
+            state: Some(state.to_string()),
+            limit: 20,
+        };
+
+        let err = server
+            .list_executions(Parameters(with_state("running")))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("queued, claimed"), "{}", err.message);
+
+        // Case is forgiven; the seeded row is completed.
+        let out = server
+            .list_executions(Parameters(with_state("COMPLETED")))
+            .await
+            .unwrap();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]

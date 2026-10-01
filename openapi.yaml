@@ -227,6 +227,12 @@ components:
         field: { type: string, description: "The request field that failed to parse." }
         message: { type: string, description: "Names the offending value and the accepted grammar." }
 
+    InvalidStateError:
+      type: object
+      properties:
+        error: { type: string, enum: [invalid_state] }
+        message: { type: string, description: "Names the offending value and the accepted states." }
+
     InvalidTypeError:
       type: object
       description: >
@@ -1240,6 +1246,12 @@ paths:
           schema: { type: string }
         - name: state
           in: query
+          description: >
+            Only executions in this state. Case-insensitive; an empty value is
+            no filter. Any other value is rejected with `400` rather than
+            ignored — dropping it would answer with every execution, which
+            reads like a match. The dashboard's "Running" is `claimed`.
+            Unknown query *parameters* (e.g. `status=`) are still ignored.
           schema: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
         - name: runner_id
           in: query
@@ -1251,7 +1263,7 @@ paths:
           in: query
           description: >
             Lower bound on `created_at`, inclusive. RFC3339. An unparseable
-            value is ignored rather than rejected, as with `state` and `limit`.
+            value is ignored rather than rejected, as with `limit`.
           schema: { type: string, format: date-time }
         - name: until
           in: query
@@ -1291,7 +1303,7 @@ paths:
 
             Omitting it keeps the inclusive window behaviour, so a client
             written before this parameter existed is unaffected. An unparseable
-            value is ignored rather than rejected, as with `state` and `limit`.
+            value is ignored rather than rejected, as with `limit`.
           schema: { type: string, format: uuid }
       responses:
         "200":
@@ -1303,6 +1315,13 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Execution" }
+        "400":
+          description: >
+            `state` named no known execution state. The message lists the
+            accepted values.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvalidStateError" }
 
   /v1/events/stream:
     get:
