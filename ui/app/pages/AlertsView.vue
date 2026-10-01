@@ -124,6 +124,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   job_failed: 'a run fails',
   job_sla_missed: 'a run misses its SLA',
   job_missed_fire: 'a fire is missed',
+  job_blocked: 'a fire waits undispatched',
   maintenance_active: 'maintenance stays on',
 }
 

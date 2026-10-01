@@ -466,6 +466,7 @@ export type AlertRuleTrigger =
   | 'job_failed'
   | 'job_sla_missed'
   | 'job_missed_fire'
+  | 'job_blocked'
   | 'maintenance_active'
 
 export interface AlertRuleConfig {

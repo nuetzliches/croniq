@@ -51,6 +51,10 @@ pub const LEGACY_ENV_CHANNEL_NAME: &str = "_legacy_env_hook";
 /// the webhook `event` say "maintenance" instead.
 pub const MAINTENANCE_ACTIVE_REASON: &str = "maintenance_active";
 
+/// `reason` of a `job_blocked` alert (issue #796): a fire has waited in the
+/// queue, undispatched, longer than the rule allows.
+pub const JOB_BLOCKED_REASON: &str = "job_blocked";
+
 /// Failure context the evaluator sees on every dead-letter / drop.
 ///
 /// Kept as a small owned struct rather than a borrow so the evaluator
