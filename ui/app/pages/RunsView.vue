@@ -301,6 +301,7 @@ function onKey(event: KeyboardEvent) {
         value-key="value"
         placeholder="Any state"
         aria-label="Filter by state"
+        clear
         class="w-40"
         @update:model-value="(value: string) => setFilter('state', value ?? '')"
       />
@@ -336,6 +337,7 @@ function onKey(event: KeyboardEvent) {
         value-key="value"
         placeholder="Any time"
         aria-label="Filter by time window"
+        clear
         class="w-44"
         @update:model-value="(value: string) => setFilter('window', value ?? '')"
       />
