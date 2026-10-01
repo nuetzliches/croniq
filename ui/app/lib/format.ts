@@ -135,3 +135,17 @@ export function localTimeZone(): string {
 export function stateLabel(state: string): string {
   return state === 'claimed' ? 'running' : state
 }
+
+/**
+ * A run's log events as plain text, one line each: `timestamp LEVEL message`.
+ *
+ * The panel shows only the clock time, but a pasted log has left the screen
+ * that said which day it was, so the full timestamp goes on the clipboard.
+ */
+export function formatLogLines(
+  entries: ReadonlyArray<{ timestamp: string; level: string; message: string }>,
+): string {
+  return entries
+    .map((e) => `${e.timestamp} ${e.level.toUpperCase()} ${e.message}`)
+    .join('\n')
+}
