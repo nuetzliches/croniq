@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **CodeQL analyses only the languages a change touches.** GitHub's default
+  setup ran all seven languages on every PR and again on every push to main,
+  which is about 8 minutes and 7 runner slots each time. Nearly all of that
+  was the Rust job, and so far every finding has come from Rust. The new
+  `codeql.yml` checks which paths changed and builds its matrix from that. A
+  docs-only PR runs no analysis, and a Python SDK PR analyses only Python.
+  The weekly scheduled run, a manual dispatch, or an edit to the workflow
+  itself analyses everything. Analysis categories stay `/language:<id>`, so
+  existing alerts and dismissals carry over.
+
 ## [0.43.0] - 2026-10-01
 
 ### Added
