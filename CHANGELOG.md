@@ -35,9 +35,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (default 30 s). The .NET and TypeScript SDKs had the same gap and get the same
   fix (see their changelogs). Go (10 s), Java (15 s) and Python (40 s read
   timeout) were already bounded.
-
-### Fixed
-
 - **An open dashboard tab picks up a server upgrade.** Restarting
   `croniq-server` on a new release reloaded nothing in a tab that was already
   open: navigation is client-side, so the operator kept working in the
