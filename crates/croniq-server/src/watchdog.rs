@@ -43,7 +43,7 @@ use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
 use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_scheduler::trigger::Trigger;
-use croniq_store::models::{ExecutionState, JobStatus, MaintenanceState};
+use croniq_store::models::{Execution, ExecutionState, JobStatus, MaintenanceState};
 
 /// Max execution rows deleted per prune DELETE statement. Bounds SQLite's
 /// whole-DB write-lock hold time; a backlog drains across ticks/batches.
@@ -118,6 +118,10 @@ pub struct WatchdogResult {
     /// Names of the `maintenance_active` rules that fired this sweep
     /// (issue #786): maintenance has been on for longer than the rule allows.
     pub maintenance_alerts: Vec<String>,
+    /// `(rule_name, job_key)` pairs whose `job_blocked` alert fired this sweep
+    /// (issue #796): the job's oldest queued fire has waited longer than the
+    /// rule allows without being dispatched.
+    pub blocked_alerts: Vec<(String, String)>,
     /// Rule names whose operational override expired and was auto-cleared
     /// this sweep (issue #231). Each emits an `alerts.override.cleared`
     /// audit event.
@@ -149,6 +153,8 @@ pub struct WatchdogCounters {
     pub missed_fires: AtomicU64,
     /// `maintenance_active` alerts fired (issue #786).
     pub maintenance_alerts: AtomicU64,
+    /// `job_blocked` alerts fired (issue #796).
+    pub blocked_alerts: AtomicU64,
 }
 
 impl WatchdogCounters {
@@ -175,6 +181,8 @@ impl WatchdogCounters {
             .fetch_add(result.missed_fires.len() as u64, Relaxed);
         self.maintenance_alerts
             .fetch_add(result.maintenance_alerts.len() as u64, Relaxed);
+        self.blocked_alerts
+            .fetch_add(result.blocked_alerts.len() as u64, Relaxed);
     }
 
     /// Count executions recovered by the inline-takeover requeue in the poll
@@ -339,6 +347,33 @@ pub type MissedFiredSet = Arc<Mutex<HashSet<(String, String, DateTime<Utc>)>>>;
 /// from re-paging inside the throttle window.
 type MaintenanceFiredMap = Mutex<HashMap<(String, DateTime<Utc>), DateTime<Utc>>>;
 
+/// When each `job_blocked` rule last fired for a stuck execution, keyed by
+/// `(rule_name, execution_id)` (issue #796). One stuck execution fires once —
+/// or once per `throttle` when the rule sets one — and the next one to get
+/// stuck starts afresh. Entries for executions that are no longer queued are
+/// dropped every sweep, so the map stays bounded by the queue.
+type BlockedFiredMap = Mutex<HashMap<(String, uuid::Uuid), DateTime<Utc>>>;
+
+/// What a `job_blocked` alert says is holding the fire back (issue #796): the
+/// job's oldest claim when there is one — what an operator would cancel — and
+/// otherwise the two causes that leave no claim of the job's own behind.
+fn blocked_cause(holder: Option<&Execution>) -> String {
+    match holder {
+        Some(holder) => format!(
+            "slot held by execution {} on runner {} (claimed {})",
+            holder.id,
+            holder.runner_id.as_deref().unwrap_or("<none>"),
+            holder
+                .claimed_at
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_else(|| "at an unknown time".into()),
+        ),
+        None => "no execution of this job is running: no eligible runner took it, \
+                 or a concurrency_group slot is held by another job"
+            .to_string(),
+    }
+}
+
 /// Periodically scans for dead runners and requeues their abandoned executions.
 pub struct WatchdogLoop {
     jobs: HashMap<String, JobConfig>,
@@ -384,6 +419,8 @@ pub struct WatchdogLoop {
     maintenance: Option<Arc<std::sync::RwLock<MaintenanceState>>>,
     /// See [`MaintenanceFiredMap`].
     maintenance_fired: MaintenanceFiredMap,
+    /// See [`BlockedFiredMap`].
+    blocked_fired: BlockedFiredMap,
 }
 
 impl WatchdogLoop {
@@ -426,6 +463,7 @@ impl WatchdogLoop {
             triggers: None,
             maintenance: None,
             maintenance_fired: Mutex::new(HashMap::new()),
+            blocked_fired: Mutex::new(HashMap::new()),
         }
     }
 
@@ -638,6 +676,19 @@ impl WatchdogLoop {
             self.sweep_missed_fires(now, &mut result).await;
         }
 
+        // 6a. Fires stuck in the queue (issue #796). Stands down during
+        //     maintenance like the other liveness sweeps: nothing dispatches
+        //     then by design.
+        if maintenance_since.is_none()
+            && self
+                .alerts
+                .rules
+                .iter()
+                .any(|r| matches!(r.trigger, RuleTrigger::JobBlocked))
+        {
+            self.sweep_blocked(now, &mut result).await;
+        }
+
         // 6b. Maintenance left on for too long (issue #786).
         if let Some(since) = maintenance_since {
             self.sweep_maintenance(now, since, &mut result).await;
@@ -793,6 +844,144 @@ impl WatchdogLoop {
                 result
                     .missed_fires
                     .push((rule.name.clone(), state.job_key.clone()));
+            }
+        }
+    }
+
+    /// Fire `job_blocked` rules for jobs whose oldest queued fire has waited
+    /// longer than the rule's `expected_within` without being dispatched
+    /// (issue #796).
+    ///
+    /// The scheduler enqueued it, so `job_missed_fire` is satisfied; what is
+    /// stuck is dispatch. Typically a `singleton` (or `max_concurrent` /
+    /// `concurrency_group`) slot is held by a claim that does not finish —
+    /// in #792 five daily fires piled up behind one for 5.4 days without a
+    /// word — or no eligible runner is polling. The alert names the claim
+    /// holding the job's slot when there is one, so the operator knows what
+    /// to cancel.
+    ///
+    /// Only the job's OLDEST queued execution is judged: the ones behind it
+    /// are stuck for the same reason, and one alert per incident is the
+    /// point. The wait is measured from `max(created_at, fire_at)` so a retry
+    /// waiting out its backoff is not "stuck".
+    async fn sweep_blocked(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        // Oldest due first, so the bounded window holds the longest waiters.
+        let queued = match self
+            .store
+            .find_queued_executions(&[], self.claim_sweep_limit)
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    target: "croniq::alerts",
+                    error = %e,
+                    "watchdog: blocked-fire sweep failed to list queued executions"
+                );
+                return;
+            }
+        };
+
+        // Per job: its oldest-waiting queued execution, since when it has
+        // waited, and how many of the job's executions are queued.
+        let mut by_job: HashMap<&str, (&Execution, DateTime<Utc>, usize)> = HashMap::new();
+        for execution in &queued {
+            let waiting_since = execution.created_at.max(execution.fire_at);
+            by_job
+                .entry(execution.job_key.as_str())
+                .and_modify(|(oldest, since, count)| {
+                    *count += 1;
+                    if waiting_since < *since {
+                        *oldest = execution;
+                        *since = waiting_since;
+                    }
+                })
+                .or_insert((execution, waiting_since, 1));
+        }
+
+        // Forget executions that left the queue, so a later stuck one alerts.
+        let still_queued: HashSet<uuid::Uuid> = queued.iter().map(|e| e.id).collect();
+        self.blocked_fired
+            .lock()
+            .unwrap()
+            .retain(|(_, id), _| still_queued.contains(id));
+        if by_job.is_empty() {
+            return;
+        }
+
+        // The claim holding each job's slot, oldest first — the likely culprit.
+        // Only enriches the message, so a store error leaves the alert without it.
+        let mut holders: HashMap<String, Execution> = HashMap::new();
+        if let Ok(claimed) = self
+            .store
+            .list_claimed_older_than(now, self.claim_sweep_limit)
+        {
+            for execution in claimed {
+                holders
+                    .entry(execution.job_key.clone())
+                    .or_insert(execution);
+            }
+        }
+
+        for (job_key, (oldest, since, count)) in &by_job {
+            let waited = (now - *since).num_seconds();
+            if waited <= 0 {
+                continue;
+            }
+            let waited = waited as u64;
+
+            for rule in &self.alerts.rules {
+                if !matches!(rule.trigger, RuleTrigger::JobBlocked) {
+                    continue;
+                }
+                let Some(limit_str) = rule.expected_within.as_deref() else {
+                    continue; // compile path drops these, defensive
+                };
+                let Some(limit_secs) = crate::alerts::parse_throttle_secs(limit_str) else {
+                    continue;
+                };
+                if waited < limit_secs || !crate::alerts::glob_match(&rule.job_key_glob, job_key) {
+                    continue;
+                }
+
+                let repeat_secs = rule
+                    .throttle
+                    .as_deref()
+                    .and_then(crate::alerts::parse_throttle_secs);
+                {
+                    let mut fired = self.blocked_fired.lock().unwrap();
+                    let key = (rule.name.clone(), oldest.id);
+                    if let Some(&last) = fired.get(&key) {
+                        let since_last = (now - last).num_seconds().max(0) as u64;
+                        match repeat_secs {
+                            Some(repeat) if since_last >= repeat => {}
+                            _ => continue,
+                        }
+                    }
+                    fired.insert(key, now);
+                }
+
+                let cause = blocked_cause(holders.get(*job_key));
+                let ctx = crate::alerts::FailureContext {
+                    job_key: (*job_key).to_string(),
+                    execution_id: oldest.id.to_string(),
+                    error: format!(
+                        "fire queued since {since}, undispatched for {waited}s (expected within {limit_str}); {count} queued — {cause}"
+                    ),
+                    attempt: oldest.attempt,
+                    reason: crate::alerts::JOB_BLOCKED_REASON.to_string(),
+                };
+                crate::alerts::dispatch_rule(
+                    rule,
+                    &self.alerts,
+                    &ctx,
+                    &self.alert_throttle,
+                    &self.store,
+                    &self.email_sender,
+                )
+                .await;
+                result
+                    .blocked_alerts
+                    .push((rule.name.clone(), (*job_key).to_string()));
             }
         }
     }
@@ -3133,6 +3322,200 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    // ─── Blocked fires (issue #796) ───────────────────────────────────────
+
+    fn blocked_rule(name: &str, glob: &str, within: &str, throttle: Option<&str>) -> RuleConfig {
+        RuleConfig {
+            name: name.into(),
+            trigger: RuleTrigger::JobBlocked,
+            job_key_glob: glob.into(),
+            min_attempts: 1,
+            dead_letter_only: false,
+            throttle: throttle.map(Into::into),
+            expected_within: Some(within.into()),
+            channels: vec!["ops".into()],
+        }
+    }
+
+    /// The jobs are declared so the reconcile sweep keeps their queued rows
+    /// instead of cancelling them as stranded.
+    fn blocked_watchdog(store: &DynStore, rules: Vec<RuleConfig>, jobs: &[&str]) -> WatchdogLoop {
+        WatchdogLoop::with_alerts(
+            jobs.iter().map(|k| make_job(k)).collect(),
+            Arc::clone(store),
+            make_runner(),
+            alerts_with_sla(rules),
+            crate::alerts::empty_throttle_map(),
+            empty_sla_fired_set(),
+            Arc::new(crate::email::NoopSender),
+        )
+    }
+
+    /// The #792 shape: a singleton's claim does not finish and the daily
+    /// fires queue up behind it. One alert for the incident, naming the
+    /// claim that holds the slot and how many fires wait.
+    #[tokio::test]
+    async fn blocked_rule_fires_once_for_a_fire_stuck_behind_a_held_slot() {
+        let store = make_store();
+        let now = Utc::now();
+        let holder = seed_claimed_at(
+            &*store,
+            "example:nightly",
+            "runner-1",
+            now - ChronoDuration::minutes(5),
+        );
+        let oldest = seed_queued_at(
+            &*store,
+            "example:nightly",
+            now - ChronoDuration::minutes(40),
+        );
+        seed_queued_at(
+            &*store,
+            "example:nightly",
+            now - ChronoDuration::minutes(10),
+        );
+
+        let watchdog = blocked_watchdog(
+            &store,
+            vec![blocked_rule("stuck", "example:*", "30m", None)],
+            &["example:nightly"],
+        );
+
+        let result = watchdog.sweep(now).await;
+        assert_eq!(
+            result.blocked_alerts,
+            vec![("stuck".to_string(), "example:nightly".to_string())]
+        );
+        // Read before the later sweep, whose stale-claim reaper requeues it.
+        let holder_row = store.get_execution(holder).unwrap().unwrap();
+        assert!(
+            watchdog
+                .sweep(now + ChronoDuration::hours(3))
+                .await
+                .blocked_alerts
+                .is_empty(),
+            "without a throttle one stuck fire alerts once"
+        );
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].execution_id, Some(oldest.to_string()));
+
+        // The message names the claim to cancel.
+        let cause = blocked_cause(Some(&holder_row));
+        assert!(cause.contains(&holder.to_string()), "{cause}");
+        assert!(cause.contains("runner-1"), "{cause}");
+        assert!(blocked_cause(None).contains("no eligible runner"));
+    }
+
+    #[tokio::test]
+    async fn blocked_rule_ignores_a_short_wait_and_other_jobs() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_queued_at(
+            &*store,
+            "example:nightly",
+            now - ChronoDuration::minutes(10),
+        );
+        seed_queued_at(&*store, "billing:sync", now - ChronoDuration::hours(2));
+
+        let watchdog = blocked_watchdog(
+            &store,
+            vec![blocked_rule("stuck", "example:*", "30m", None)],
+            &["example:nightly", "billing:sync"],
+        );
+        assert!(watchdog.sweep(now).await.blocked_alerts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn blocked_rule_does_not_count_a_retry_waiting_out_its_backoff() {
+        // A retry row is created now with a `fire_at` in the future; until
+        // then it is waiting on purpose, not stuck.
+        let store = make_store();
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: "example:nightly".into(),
+                fire_at: now + ChronoDuration::minutes(20),
+                scheduled_for: now - ChronoDuration::hours(1),
+                attempt: 2,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now - ChronoDuration::hours(1),
+            })
+            .unwrap();
+
+        let watchdog = blocked_watchdog(
+            &store,
+            vec![blocked_rule("stuck", "*", "30m", None)],
+            &["example:nightly"],
+        );
+        assert!(watchdog.sweep(now).await.blocked_alerts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn blocked_rule_with_throttle_repeats_while_it_lasts() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_queued_at(
+            &*store,
+            "example:nightly",
+            now - ChronoDuration::minutes(31),
+        );
+        let watchdog = blocked_watchdog(
+            &store,
+            vec![blocked_rule("reminder", "*", "30m", Some("1h"))],
+            &["example:nightly"],
+        );
+
+        assert_eq!(watchdog.sweep(now).await.blocked_alerts.len(), 1);
+        assert!(
+            watchdog
+                .sweep(now + ChronoDuration::minutes(30))
+                .await
+                .blocked_alerts
+                .is_empty()
+        );
+        assert_eq!(
+            watchdog
+                .sweep(now + ChronoDuration::minutes(61))
+                .await
+                .blocked_alerts
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn blocked_rule_stands_down_while_maintenance_is_active() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_queued_at(&*store, "example:nightly", now - ChronoDuration::hours(2));
+        let mut watchdog = blocked_watchdog(
+            &store,
+            vec![blocked_rule("stuck", "*", "30m", None)],
+            &["example:nightly"],
+        );
+        let maintenance = maintenance_on_since(now - ChronoDuration::hours(3));
+        watchdog.set_maintenance_handle(Arc::clone(&maintenance));
+        assert!(watchdog.sweep(now).await.blocked_alerts.is_empty());
+
+        maintenance.write().unwrap().manual_active = false;
+        assert_eq!(watchdog.sweep(now).await.blocked_alerts.len(), 1);
     }
 
     #[tokio::test]

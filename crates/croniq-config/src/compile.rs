@@ -354,12 +354,15 @@ pub struct RuleConfig {
     /// string (parsed by the server at boot, kept as a string in the
     /// DSL so the formatter can round-trip).
     pub throttle: Option<String>,
-    /// `job_sla_missed`, `job_missed_fire` and `maintenance_active` only: a
-    /// duration string (`"10m"`, `"30s"`, `"1h"`) for DSL round-trip.
+    /// `job_sla_missed`, `job_missed_fire`, `job_blocked` and
+    /// `maintenance_active` only: a duration string (`"10m"`, `"30s"`, `"1h"`)
+    /// for DSL round-trip.
     ///
     /// - `job_sla_missed`: max in-flight runtime before the rule fires.
     /// - `job_missed_fire`: grace period after a scheduled fire time
     ///   before the rule fires (how long the scheduler may be late).
+    /// - `job_blocked`: how long a fire may wait in the queue, undispatched,
+    ///   before the rule fires.
     /// - `maintenance_active`: how long maintenance may stay on before the
     ///   rule fires.
     ///
@@ -396,6 +399,14 @@ pub enum RuleTrigger {
     /// once per activation, and again every `throttle` while it lasts when
     /// the rule sets one. `job_key` does not apply: maintenance is global.
     MaintenanceActive,
+    /// A fire has been `queued` for longer than `expected_within` without
+    /// being dispatched (issue #796): it waits behind a held `singleton` /
+    /// `max_concurrent` / `concurrency_group` slot, or no eligible runner
+    /// takes it. The scheduler *did* enqueue it, so `job_missed_fire` stays
+    /// silent; this is the signal for the fires piling up behind it. The
+    /// watchdog fires once per stuck execution (the job's oldest queued one),
+    /// and again every `throttle` while it stays stuck when the rule sets one.
+    JobBlocked,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1507,6 +1518,7 @@ fn compile_rule(
                         "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
                         "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
                         "maintenance_active" => Some(RuleTrigger::MaintenanceActive),
+                        "job_blocked" => Some(RuleTrigger::JobBlocked),
                         // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
@@ -1549,13 +1561,17 @@ fn compile_rule(
     }
 
     let trigger = trigger?;
-    // SLA-miss / missed-fire / maintenance without `expected_within` is
-    // meaningless — drop the rule so a typo doesn't silently turn into a
+    // SLA-miss / missed-fire / blocked / maintenance without `expected_within`
+    // is meaningless — drop the rule so a typo doesn't silently turn into a
     // "fire on every claimed execution" (SLA), "fire the moment a job is one
-    // tick late" (missed-fire) or "fire the moment maintenance starts" rule.
+    // tick late" (missed-fire), "fire on every queued execution" (blocked) or
+    // "fire the moment maintenance starts" rule.
     if matches!(
         trigger,
-        RuleTrigger::JobSlaMissed | RuleTrigger::JobMissedFire | RuleTrigger::MaintenanceActive
+        RuleTrigger::JobSlaMissed
+            | RuleTrigger::JobMissedFire
+            | RuleTrigger::JobBlocked
+            | RuleTrigger::MaintenanceActive
     ) && expected_within.is_none()
     {
         return None;
@@ -3503,6 +3519,37 @@ mod tests {
         assert_eq!(rule.job_key_glob, "billing:*");
         assert_eq!(rule.expected_within.as_deref(), Some("10m"));
         assert_eq!(rule.throttle.as_deref(), Some("1h"));
+    }
+
+    #[test]
+    fn compile_alerts_job_blocked_requires_expected_within() {
+        // Issue #796. Without a duration the rule would fire on every fire
+        // that is queued for even a second.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "stuck" {
+                    when job_blocked
+                    job_key "example:*"
+                    expected_within 30m
+                    channels "ops"
+                }
+                rule "no-window" {
+                    when job_blocked
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert_eq!(rule.name, "stuck");
+        assert!(matches!(rule.trigger, RuleTrigger::JobBlocked));
+        assert_eq!(rule.job_key_glob, "example:*");
+        assert_eq!(rule.expected_within.as_deref(), Some("30m"));
     }
 
     #[test]

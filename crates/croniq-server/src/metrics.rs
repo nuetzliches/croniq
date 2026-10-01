@@ -65,6 +65,7 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
     let wd_sla_missed = wd.sla_missed.load(Ordering::Relaxed);
     let wd_missed_fires = wd.missed_fires.load(Ordering::Relaxed);
     let wd_maintenance_alerts = wd.maintenance_alerts.load(Ordering::Relaxed);
+    let wd_blocked_alerts = wd.blocked_alerts.load(Ordering::Relaxed);
 
     let mut body = format!(
         "# HELP croniq_runners_total Number of known runners by status.\n\
@@ -103,7 +104,10 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
          croniq_watchdog_missed_fires_total {wd_missed_fires}\n\
          # HELP croniq_watchdog_maintenance_alerts_total Alerts fired because maintenance stayed active too long.\n\
          # TYPE croniq_watchdog_maintenance_alerts_total counter\n\
-         croniq_watchdog_maintenance_alerts_total {wd_maintenance_alerts}\n"
+         croniq_watchdog_maintenance_alerts_total {wd_maintenance_alerts}\n\
+         # HELP croniq_watchdog_blocked_alerts_total Alerts fired because a queued fire stayed undispatched too long.\n\
+         # TYPE croniq_watchdog_blocked_alerts_total counter\n\
+         croniq_watchdog_blocked_alerts_total {wd_blocked_alerts}\n"
     );
 
     // Scheduler liveness (issue #248). The scheduler updates the heartbeat

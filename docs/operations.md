@@ -1584,8 +1584,8 @@ looked (fail-closed). Three signals say so:
 
 ### Liveness alerts stand down
 
-While maintenance is active the watchdog does not evaluate `job_missed_fire`
-or `job_sla_missed` rules. Late fires are the point of the freeze, and a run
+While maintenance is active the watchdog does not evaluate `job_missed_fire`,
+`job_sla_missed` or `job_blocked` rules. Late fires are the point of the freeze, and a run
 whose runner was stopped for the deploy is not a scheduler fault. Neither is
 dropped: nothing is marked as alerted meanwhile, so a run still past its SLA
 alerts on the first sweep after maintenance clears. Skipped fires are
@@ -1837,6 +1837,40 @@ timeout.
 So the default is already the behaviour you want: a trigger arriving mid-run
 queues behind the run and starts a round-trip after it finishes. The guard
 never cancels it.
+
+### Alerting on a fire that waits too long
+
+Because a held slot queues fires silently, a run that never finishes stalls
+the job without any other alert firing: the scheduler *did* enqueue every fire,
+so `job_missed_fire` is satisfied, and nothing failed (issue #796). A
+`job_blocked` rule covers that gap:
+
+```
+alerts {
+  rule "stuck-queue" {
+    when job_blocked
+    job_key "example:*"
+    expected_within 2h   # how long a fire may wait undispatched
+    throttle 6h          # optional: repeat every 6h while it stays stuck
+    channels "ops"
+  }
+}
+```
+
+The watchdog judges each job's **oldest** queued execution, measured from when
+it became due (`max(created_at, fire_at)`, so a retry waiting out its backoff
+is not counted). Past `expected_within` the rule fires once for that execution
+— again every `throttle` window when the rule sets one — and once it leaves
+the queue the next stuck one starts afresh. The message names the claim holding
+the job's slot (execution id, runner, claim time), which is what to cancel, and
+how many fires are queued. With no claim of the job's own it says so: then no
+eligible runner is taking the work, or a `concurrency_group` slot is held by
+another job. Channels see `CRONIQ_REASON=job_blocked`; webhooks keep
+`"event": "job_failed"` with `"reason": "job_blocked"`, like the other
+job-scoped triggers. The rule stands down while maintenance is active.
+
+Pick `expected_within` above the job's normal queueing delay: for a `singleton`
+that is roughly its longest run plus one schedule interval.
 
 ### What the wait actually costs
 
@@ -2166,6 +2200,8 @@ exposes them as cumulative Prometheus counters (process lifetime):
   `job_sla_missed` / `job_missed_fire` alerts fired by the sweep.
 - `croniq_watchdog_maintenance_alerts_total` — `maintenance_active` alerts
   fired by the sweep (see [Maintenance mode](#maintenance-mode)).
+- `croniq_watchdog_blocked_alerts_total` — `job_blocked` alerts fired by the
+  sweep (see [Alerting on a fire that waits too long](#alerting-on-a-fire-that-waits-too-long)).
 
 ## Data retention
 

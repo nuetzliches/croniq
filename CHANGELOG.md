@@ -29,6 +29,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   5 s renew bounds, and the default is now 30 s, as in every other SDK. Java
   and Python changes are in their changelogs. Rust has no runner-case binding,
   so case 20 does not run there; the Rust SDK has been bounded since #792.
+- **`when job_blocked` alerts on a fire that waits too long
+  ([#796](https://github.com/nuetzliches/croniq/issues/796)).** A `singleton`
+  (or `max_concurrent` / `concurrency_group`) job whose slot is held by a run
+  that does not finish queued every later fire silently: the scheduler did
+  enqueue them, so `job_missed_fire` stayed quiet, and in #792 five daily fires
+  piled up for 5.4 days without a word. The new trigger fires once the job's
+  oldest queued fire has waited longer than `expected_within` (measured from
+  when it became due, so a retry in backoff does not count), once per stuck
+  execution and again every `throttle` while it stays stuck. The message names
+  the claim holding the slot and how many fires are queued, or says that no
+  execution of the job is running (no eligible runner, or a shared group slot).
+  `CRONIQ_REASON=job_blocked`; counted in
+  `croniq_watchdog_blocked_alerts_total`. Stands down during maintenance like
+  the other liveness triggers. Offered in the dashboard and the site generator.
 
 ### Fixed
 

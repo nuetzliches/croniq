@@ -1389,7 +1389,7 @@ function renderAlertsEditor() {
     const row = document.createElement('div'); row.className = 'rule-row'
     const h = document.createElement('div'); h.className = 'rule-row-head'
     h.appendChild(textInput(r.name, 'name', (v) => { r.name = v }))
-    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire', 'maintenance_active'], (v) => { r.when = v; renderConfigFields() }))
+    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire', 'job_blocked', 'maintenance_active'], (v) => { r.when = v; renderConfigFields() }))
     h.appendChild(removeBtn(() => { A.rules.splice(idx, 1); renderConfigFields(); refreshConfig() }))
     row.appendChild(h)
     // Every trigger but job_failed needs a duration, or the compiler drops the rule.

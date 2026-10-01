@@ -54,7 +54,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Four triggers ship: `job_failed` (permanent failure: dead-letter or drop), `job_sla_missed` (in-flight execution exceeded its `expected_within`), `job_missed_fire` (a scheduled fire never happened — `next_fire_at` overdue past the `expected_within` grace, catching a silently-stalled scheduler that a green success-rate would otherwise hide), and `maintenance_active` (maintenance mode has stayed on longer than `expected_within` — see [Maintenance mode](docs/operations.md#maintenance-mode)). The two liveness triggers stand down while maintenance is on. Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Five triggers ship: `job_failed` (permanent failure: dead-letter or drop), `job_sla_missed` (in-flight execution exceeded its `expected_within`), `job_missed_fire` (a scheduled fire never happened — `next_fire_at` overdue past the `expected_within` grace, catching a silently-stalled scheduler that a green success-rate would otherwise hide), `job_blocked` (a fire has waited in the queue, undispatched, longer than `expected_within` — typically behind a `singleton` slot whose run does not finish; the alert names the claim holding it), and `maintenance_active` (maintenance mode has stayed on longer than `expected_within` — see [Maintenance mode](docs/operations.md#maintenance-mode)). The three liveness triggers stand down while maintenance is on. Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -290,6 +290,16 @@ alerts {
     job_key "billing:backup"
     expected_within 10m   # grace past the scheduled time
     throttle 1h
+    channels "ops-paging"
+  }
+
+  # A fire stuck in the queue: fires once the job's oldest queued fire has
+  # waited longer than expected_within without being dispatched — behind a
+  # singleton slot whose run never finishes, or with no eligible runner.
+  rule "stuck-queue" {
+    when job_blocked
+    job_key "billing:*"
+    expected_within 2h
     channels "ops-paging"
   }
 
