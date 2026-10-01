@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-01
+
 ### Added
 
 - **A run's logs can be copied.** The Logs panel in the run detail has a copy
