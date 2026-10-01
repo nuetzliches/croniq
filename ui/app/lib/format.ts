@@ -137,15 +137,15 @@ export function stateLabel(state: string): string {
 }
 
 /**
- * A run's log events as plain text, one line each: `timestamp LEVEL message`.
+ * A run's log events as plain text, one line each: `HH:MM:SS LEVEL message`.
  *
- * The panel shows only the clock time, but a pasted log has left the screen
- * that said which day it was, so the full timestamp goes on the clipboard.
+ * The same clock time the panel shows (the UTC part of the ISO timestamp), so
+ * what is pasted reads as what was on screen.
  */
 export function formatLogLines(
   entries: ReadonlyArray<{ timestamp: string; level: string; message: string }>,
 ): string {
   return entries
-    .map((e) => `${e.timestamp} ${e.level.toUpperCase()} ${e.message}`)
+    .map((e) => `${e.timestamp.slice(11, 19)} ${e.level.toUpperCase()} ${e.message}`)
     .join('\n')
 }

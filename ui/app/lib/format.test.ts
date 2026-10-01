@@ -129,7 +129,7 @@ describe('stateLabel', () => {
 })
 
 describe('formatLogLines', () => {
-  it('writes one `timestamp LEVEL message` line per event', () => {
+  it('writes one `HH:MM:SS LEVEL message` line per event', () => {
     expect(
       formatLogLines([
         { timestamp: '2026-09-30T08:00:01.250Z', level: 'info', message: 'pulling inbox' },
