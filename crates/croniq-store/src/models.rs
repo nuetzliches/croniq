@@ -154,6 +154,45 @@ pub enum ExecutionState {
     Cancelled,
 }
 
+impl ExecutionState {
+    /// Every state, in lifecycle order — the list a rejected filter names.
+    pub const ALL: [Self; 6] = [
+        Self::Queued,
+        Self::Claimed,
+        Self::Completed,
+        Self::Failed,
+        Self::Dead,
+        Self::Cancelled,
+    ];
+
+    /// The wire name, as serialized.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Claimed => "claimed",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Dead => "dead",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse a state named by a caller (a query parameter, a tool argument).
+    /// ASCII case is ignored, so `CLAIMED` is `claimed`; anything else is
+    /// `None`, and the caller is expected to reject it rather than drop the
+    /// filter (issue #789).
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|state| state.as_str().eq_ignore_ascii_case(s))
+    }
+
+    /// The accepted names, comma-separated, for an error message.
+    pub fn allowed_values() -> String {
+        Self::ALL.map(Self::as_str).join(", ")
+    }
+}
+
 // ─── Runner ───
 
 /// A connected execution agent.

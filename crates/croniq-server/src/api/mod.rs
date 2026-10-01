@@ -1983,16 +1983,44 @@ fn parse_rfc3339(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 /// `GET /v1/executions` — list recent executions from the store.
+// The error is a full `Response` so a rejected `state` can carry a body; the
+// large Err is axum's, and boxing it would buy nothing in a handler.
+#[allow(clippy::result_large_err)]
 async fn handle_list_executions(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    require_scope(&ctx, Scope::EXECUTIONS_READ)?;
+) -> Result<Json<serde_json::Value>, axum::response::Response> {
+    use axum::response::IntoResponse;
+
+    require_scope(&ctx, Scope::EXECUTIONS_READ).map_err(IntoResponse::into_response)?;
     let store = state
         .store
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| StatusCode::SERVICE_UNAVAILABLE.into_response())?;
+    // `state` is the one filter here that is rejected rather than ignored
+    // (issue #789). Dropping an unknown value widens the query from "the few
+    // rows in state X" to "everything", and the answer still looks like a
+    // normal list — a deploy script polling `?state=running` for an empty
+    // list would wait out its timeout on completed runs. `alerts/deliveries`
+    // already validates its `state` the same way. Case is forgiven, and an
+    // empty value is no filter, as `job_key_contains` treats one.
+    let exec_state = match params.get("state").map(|s| s.trim()) {
+        None | Some("") => None,
+        Some(raw) => Some(ExecutionState::parse(raw).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(calendars::ValidationError {
+                    error: "invalid_state",
+                    message: format!(
+                        "unknown execution state {raw:?}; expected one of: {}",
+                        ExecutionState::allowed_values()
+                    ),
+                }),
+            )
+                .into_response()
+        })?),
+    };
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
         // The search the Runs screen types, as opposed to the exact `job_key`
@@ -2005,15 +2033,7 @@ async fn handle_list_executions(
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty()),
         runner_id: params.get("runner_id").cloned(),
-        state: params.get("state").and_then(|s| match s.as_str() {
-            "queued" => Some(croniq_store::models::ExecutionState::Queued),
-            "claimed" => Some(croniq_store::models::ExecutionState::Claimed),
-            "completed" => Some(croniq_store::models::ExecutionState::Completed),
-            "failed" => Some(croniq_store::models::ExecutionState::Failed),
-            "dead" => Some(croniq_store::models::ExecutionState::Dead),
-            "cancelled" => Some(croniq_store::models::ExecutionState::Cancelled),
-            _ => None,
-        }),
+        state: exec_state,
         limit: params.get("limit").and_then(|l| l.parse().ok()),
         // `since` / `until` were in `ExecutionFilter` and in the SQL from the
         // start; this handler simply never read them, so the one HTTP entry
@@ -2022,10 +2042,10 @@ async fn handle_list_executions(
         // the sort key — so `until` doubles as the cursor for paging back
         // through a history longer than one `limit`.
         //
-        // A malformed value is ignored rather than rejected: this endpoint has
-        // always ignored an unparseable `state` and `limit` the same way, and
-        // answering 400 here would be a new failure mode for callers that
-        // currently get a sane list.
+        // A malformed value is ignored rather than rejected, as an unparseable
+        // `limit` is: answering 400 here would be a new failure mode for
+        // callers that currently get a sane list. (`state` no longer belongs
+        // to that group — see above.)
         since: params.get("since").and_then(|v| parse_rfc3339(v)),
         until: params.get("until").and_then(|v| parse_rfc3339(v)),
         // The other half of the paging cursor (issue #654). Pass the `id` of
@@ -2040,7 +2060,7 @@ async fn handle_list_executions(
     };
     let executions = store
         .list_executions(&filter)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     Ok(Json(serde_json::to_value(&executions).unwrap_or_default()))
 }
 
@@ -3618,6 +3638,63 @@ mod tests {
             keys(&blank),
             ["mail:send", "storage:copy", "storage:copy-verify"]
         );
+    }
+
+    /// Issue #789: an unknown `state` used to drop the filter and answer with
+    /// every execution — `?state=running` listed completed runs as if they
+    /// matched. It is a 400 naming the accepted values now; case is forgiven.
+    #[tokio::test]
+    async fn listing_executions_rejects_an_unknown_state() {
+        let (state, store) = make_store_state();
+        let now = Utc::now();
+        seed_keyed_execution(&store, "a:job", "a", ExecutionState::Completed, now);
+        seed_keyed_execution(&store, "b:job", "b", ExecutionState::Claimed, now);
+
+        let get = |uri: &'static str| {
+            server_router(Arc::clone(&state)).oneshot(
+                Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
+
+        for uri in ["/v1/executions?state=running", "/v1/executions?state=bogus"] {
+            let resp = get(uri).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["error"], "invalid_state");
+            let message = body["message"].as_str().unwrap();
+            assert!(
+                message.contains("queued, claimed, completed, failed, dead, cancelled"),
+                "{message}"
+            );
+        }
+
+        let states = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["state"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        // A valid state still filters, whatever its case.
+        for uri in [
+            "/v1/executions?state=claimed",
+            "/v1/executions?state=CLAIMED",
+        ] {
+            let found = get_json(server_router(Arc::clone(&state)), uri).await;
+            assert_eq!(states(&found), ["claimed"], "{uri}");
+        }
+
+        // An empty value is no filter.
+        let all = get_json(server_router(Arc::clone(&state)), "/v1/executions?state=").await;
+        assert_eq!(states(&all).len(), 2);
     }
 
     /// `GET /v1/executions` honours a time window (issue #621-adjacent, the

@@ -678,7 +678,7 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | Schedules | `GET/POST /v1/schedules`, `GET/DELETE /v1/schedules/{id}` |
 | Runners | `GET /v1/runners`, `GET /v1/runners/stream` (SSE), `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
-| Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs`, `POST /v1/executions/{id}/cancel` |
+| Executions | `GET /v1/executions` (`?state=` takes `queued`, `claimed`, `completed`, `failed`, `dead`, `cancelled` — anything else is a `400`), `GET /v1/executions/{id}/logs`, `POST /v1/executions/{id}/cancel` |
 | Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay`, `POST .../bulk-delete` |
 | Calendars | `GET/POST /v1/calendars`, `GET/DELETE /v1/calendars/{id}` |
 | Live Console | `GET /v1/events/stream` (SSE — server tracing events, `admin` scope) |
