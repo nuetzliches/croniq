@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-10-01
+
 ### Fixed
 
 - **`GET /v1/executions` rejects an unknown `state` instead of ignoring it
