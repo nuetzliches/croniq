@@ -11,6 +11,7 @@ pub mod dead_letters;
 pub mod events_sse;
 pub mod execution_logs;
 pub mod executions;
+pub mod executions_sse;
 pub mod hardening;
 pub mod invitations;
 pub mod job_sync;
@@ -667,6 +668,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/tags", get(tags::handle_list_tags))
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
+        .route(
+            "/v1/executions/stream",
+            get(executions_sse::handle_executions_stream),
+        )
         .route(
             "/v1/executions/{id}/cancel",
             post(executions::handle_cancel),
