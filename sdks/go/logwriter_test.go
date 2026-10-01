@@ -54,7 +54,7 @@ func (m *mockPusher) totalEvents() int {
 }
 
 func spawnWriter(p pusher) *LogWriter {
-	return newLogWriter(p, "exec-1", "job:test", "runner-1", []string{"env=test"})
+	return newLogWriter(p, "exec-1", "job:test", "runner-1", []string{"env=test"}, 0)
 }
 
 func ev(msg string) WorkEvent {

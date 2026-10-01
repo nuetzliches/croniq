@@ -112,6 +112,7 @@ Any other exception's `str(exc)` is forwarded as the error message.
 | `tags` | `[]` | Free-form `key=value` tags |
 | `max_inflight` | `5` | Concurrent in-flight executions |
 | `poll_timeout_ms` | `35_000` | Per-request long-poll timeout |
+| `request_timeout_ms` | `30_000` | Whole-request bound on ack, renew, log events and job registration |
 | `renew_interval_ms` | `15_000` | Lease-renewal heartbeat interval |
 | `drain_timeout_ms` | `30_000` | Wait budget for handlers on shutdown |
 | `poll_retry_delay_ms` | `5_000` | Back-off after a failed poll |

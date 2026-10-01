@@ -76,6 +76,7 @@ runner_config:                         # → maps to CroniqRunnerOptions (or equ
   max_inflight: 1
   api_key: "croniq_testkey"
   poll_timeout_ms: 5000
+  request_timeout_ms: 30000            # bound on every non-poll request
   renew_interval_ms: 1000
   drain_timeout_ms: 5000
 
@@ -151,6 +152,13 @@ Subset-match with one wildcard symbol:
 
 This keeps cases readable. Cases that need JSONPath-style expressiveness
 should propose an extension before reaching for ad-hoc string matching.
+
+`body_match` (and `headers`) are checked against the **first** request with
+the method and path. To count only *some* of them, add `body_filter`, a subset
+match with the same rules: only requests whose body satisfies it count toward
+`exact_count` / `min_count` / `max_count`, and `body_match` then applies to the
+first of those. Case 20 uses it to require a second poll with `inflight: []`.
+Arrays match by length, so `[]` matches only an empty list.
 
 ### Scope: wire only, not handler context
 

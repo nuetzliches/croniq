@@ -101,7 +101,16 @@ export class MockServer {
     }
 
     if (rule.respond.delay_ms && rule.respond.delay_ms > 0) {
-      await new Promise((r) => setTimeout(r, rule.respond.delay_ms));
+      // Abortable: a client that gives up (request timeout, case 20) closes
+      // the socket, and the delay must not then hold `stop()` open.
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, rule.respond.delay_ms);
+        res.once('close', () => {
+          clearTimeout(timer);
+          r();
+        });
+      });
+      if (res.destroyed || res.writableEnded) return;
     }
 
     const resHeaders: Record<string, string> = { ...(rule.respond.headers ?? {}) };

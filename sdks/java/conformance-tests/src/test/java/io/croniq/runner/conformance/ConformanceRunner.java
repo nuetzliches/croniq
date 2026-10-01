@@ -116,6 +116,9 @@ final class ConformanceRunner {
         if (rc.pollTimeoutMs() != null) {
             b.pollTimeout(Duration.ofMillis(rc.pollTimeoutMs()));
         }
+        if (rc.requestTimeoutMs() != null) {
+            b.requestTimeout(Duration.ofMillis(rc.requestTimeoutMs()));
+        }
         if (rc.renewIntervalMs() != null) {
             b.renewInterval(Duration.ofMillis(rc.renewIntervalMs()));
         }
@@ -156,9 +159,7 @@ final class ConformanceRunner {
             return true;
         }
         for (var e : spec.expectations().http()) {
-            long n = recorded.stream()
-                    .filter(r -> r.matches(e.method(), e.path()))
-                    .count();
+            long n = recorded.stream().filter(r -> counted(e, r)).count();
             if (e.exactCount() != null && n < e.exactCount()) {
                 return false;
             }
@@ -174,9 +175,7 @@ final class ConformanceRunner {
             return;
         }
         for (var e : spec.expectations().http()) {
-            var matches = recorded.stream()
-                    .filter(r -> r.matches(e.method(), e.path()))
-                    .toList();
+            var matches = recorded.stream().filter(r -> counted(e, r)).toList();
             int n = matches.size();
             if (e.exactCount() != null && n != e.exactCount()) {
                 fail("Expected %s %s exact_count=%d, got %d. Recorded: %s"
@@ -230,6 +229,22 @@ final class ConformanceRunner {
                             .formatted(e.method(), e.path(), err, first.body()));
                 }
             }
+        }
+    }
+
+    /** Whether an expectation counts a request: method + path, then {@code body_filter}. */
+    private static boolean counted(CaseSpec.Expectations.HttpExpectation e, MockServerHarness.RecordedRequest r) {
+        if (!r.matches(e.method(), e.path())) {
+            return false;
+        }
+        if (e.bodyFilter() == null) {
+            return true;
+        }
+        try {
+            JsonNode body = r.body().isEmpty() ? JSON.nullNode() : JSON.readTree(r.body());
+            return BodyMatcher.match(e.bodyFilter(), body) == null;
+        } catch (Exception ex) {
+            return false;
         }
     }
 

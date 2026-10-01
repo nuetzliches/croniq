@@ -21,6 +21,12 @@ internal sealed class MockServerHarness : IAsyncDisposable
     private readonly WireMockServer _server;
     private readonly Dictionary<string, int> _hits = new(StringComparer.Ordinal);
     private readonly object _lock = new();
+
+    // Requests whose response is being held by a `delay_ms` rule. WireMock adds
+    // a request to LogEntries only once its response is written, so a held
+    // response — the hung ack of case 20 — would otherwise be invisible until
+    // the delay elapsed, or forever if the client gave up first.
+    private readonly List<WireMock.IRequestMessage> _held = [];
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -47,16 +53,41 @@ internal sealed class MockServerHarness : IAsyncDisposable
     /// <summary>
     /// Snapshot of every request the mock received, in order.
     /// </summary>
-    public IReadOnlyList<RecordedRequest> RecordedRequests => _server.LogEntries
-        .Select(e => new RecordedRequest(
-            e.RequestMessage.Method,
-            e.RequestMessage.AbsolutePath,
-            new Dictionary<string, string>(
-                (e.RequestMessage.Headers ?? new Dictionary<string, WireMockList<string>>())
-                    .ToDictionary(kv => kv.Key, kv => string.Join(",", kv.Value)),
-                StringComparer.OrdinalIgnoreCase),
-            e.RequestMessage.Body ?? ""))
-        .ToList();
+    public IReadOnlyList<RecordedRequest> RecordedRequests
+    {
+        get
+        {
+            List<WireMock.IRequestMessage> held;
+            lock (_lock)
+            {
+                held = [.. _held];
+            }
+            var logged = _server.LogEntries.Select(e => e.RequestMessage).ToList();
+            return logged
+                .Where(m => !held.Any(h => ReferenceEquals(h, m)))
+                .Concat(held)
+                .OrderBy(m => m.DateTime)
+                .Select(ToRecorded)
+                .ToList();
+        }
+    }
+
+    private static RecordedRequest ToRecorded(WireMock.IRequestMessage m) => new(
+        m.Method,
+        m.AbsolutePath,
+        new Dictionary<string, string>(
+            (m.Headers ?? new Dictionary<string, WireMockList<string>>())
+                .ToDictionary(kv => kv.Key, kv => string.Join(",", kv.Value)),
+            StringComparer.OrdinalIgnoreCase),
+        m.Body ?? "");
+
+    internal void Hold(WireMock.IRequestMessage request)
+    {
+        lock (_lock)
+        {
+            _held.Add(request);
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -119,6 +150,7 @@ internal sealed class MockServerHarness : IAsyncDisposable
 
             if (delayMs > 0)
             {
+                _owner.Hold(requestMessage);
                 await Task.Delay(delayMs).ConfigureAwait(false);
             }
 

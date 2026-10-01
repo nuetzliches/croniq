@@ -1,0 +1,69 @@
+name: "A hung ack is given up and the execution leaves the in-flight set"
+description: |
+  Issue #792 / #795. An ack stuck on a half-open connection must not keep the
+  execution in the runner's in-flight set: every poll reports that set, and the
+  server renews the lease of everything in it, so a stuck ack used to shield
+  its claim from the stale-claim reaper for as long as the runner kept polling.
+
+  The first ack is held for 5 s — longer than the case — while the runner's
+  request timeout is 300 ms. The runner must give the ack up and report an
+  empty `inflight` on a later poll. The first poll (before any assignment) is
+  the one expected empty poll; `min_count: 2` therefore requires at least one
+  more after the execution was dispatched. An SDK that waits for the ack
+  reports `["exec-hung"]` until the case ends and fails it.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  request_timeout_ms: 300
+  poll_retry_delay_ms: 100
+  capacity_backoff_ms: 100
+  drain_timeout_ms: 1000
+
+handlers:
+  - job_key: "hung:job"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-hung"
+            job_key: "hung:job"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    match_count: 1
+    respond:
+      status: 200
+      body: {}
+      delay_ms: 5000
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      min_count: 1
+      body_match:
+        execution_id: "exec-hung"
+        status: "success"
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+      body_filter:
+        inflight: []

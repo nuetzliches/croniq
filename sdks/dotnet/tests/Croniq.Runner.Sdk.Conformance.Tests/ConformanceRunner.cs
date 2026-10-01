@@ -137,6 +137,7 @@ internal static class ConformanceRunner
         if (cfg.ApiKey is not null) opts.ApiKey = cfg.ApiKey;
         if (cfg.BearerToken is not null) opts.BearerToken = cfg.BearerToken;
         if (cfg.PollTimeoutMs is int pt) opts.PollTimeout = TimeSpan.FromMilliseconds(pt);
+        if (cfg.RequestTimeoutMs is int rt) opts.RequestTimeout = TimeSpan.FromMilliseconds(rt);
         if (cfg.RenewIntervalMs is int ri) opts.RenewInterval = TimeSpan.FromMilliseconds(ri);
         if (cfg.DrainTimeoutMs is int dt) opts.DrainTimeout = TimeSpan.FromMilliseconds(dt);
         if (cfg.PollRetryDelayMs is int prd) opts.PollRetryDelay = TimeSpan.FromMilliseconds(prd);
@@ -156,15 +157,35 @@ internal static class ConformanceRunner
             // duration_max_ms in that case so the ceiling is observable.
             if (ex.MaxCount.HasValue) return false;
 
-            var matching = recorded.Count(r =>
-                r.Method.Equals(ex.Method, StringComparison.OrdinalIgnoreCase) &&
-                r.Path == ex.Path);
+            var matching = recorded.Count(r => Counts(ex, r));
 
             if (ex.ExactCount is int exact && matching < exact) return false;
             if (ex.MinCount is int min && matching < min) return false;
             // body_match and header checks happen post-hoc.
         }
         return true;
+    }
+
+    /// <summary>Whether an expectation counts a request: method + path, then <c>body_filter</c>.</summary>
+    private static bool Counts(HttpExpectation ex, RecordedRequest r)
+    {
+        if (!r.Method.Equals(ex.Method, StringComparison.OrdinalIgnoreCase) || r.Path != ex.Path)
+        {
+            return false;
+        }
+        if (ex.BodyFilter is null)
+        {
+            return true;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(r.Body);
+            return BodyMatcher.Match(ex.BodyFilter, doc.RootElement) is null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static void AssertExpectations(CaseSpec spec, IReadOnlyList<RecordedRequest> recorded, TimeSpan elapsed)
@@ -181,9 +202,7 @@ internal static class ConformanceRunner
 
         foreach (var ex in spec.Expectations.Http)
         {
-            var matches = recorded
-                .Where(r => r.Method.Equals(ex.Method, StringComparison.OrdinalIgnoreCase) && r.Path == ex.Path)
-                .ToList();
+            var matches = recorded.Where(r => Counts(ex, r)).ToList();
 
             if (ex.ExactCount is int exact)
             {

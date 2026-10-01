@@ -47,6 +47,7 @@ public class CroniqClient {
     private final URI baseUrl;
     private final String authHeader;
     private final String userAgent;
+    private final Duration requestTimeout;
 
     public CroniqClient(CroniqRunnerOptions options) {
         this(
@@ -65,6 +66,7 @@ public class CroniqClient {
         this.baseUrl = options.serverUrl();
         this.authHeader = buildAuthHeader(options);
         this.userAgent = "croniq-runner-java/" + sdkVersion();
+        this.requestTimeout = options.requestTimeout();
     }
 
     private static String buildAuthHeader(CroniqRunnerOptions options) {
@@ -87,12 +89,12 @@ public class CroniqClient {
     }
 
     public void ack(AckRequest request) throws IOException, InterruptedException {
-        HttpResponse<byte[]> resp = exchange("/v1/work/ack", request, Duration.ofSeconds(15));
+        HttpResponse<byte[]> resp = exchange("/v1/work/ack", request, requestTimeout);
         ensureSuccess(resp, "ack");
     }
 
     public void renew(RenewRequest request) throws IOException, InterruptedException {
-        HttpResponse<byte[]> resp = exchange("/v1/work/renew", request, Duration.ofSeconds(15));
+        HttpResponse<byte[]> resp = exchange("/v1/work/renew", request, requestTimeout);
         ensureSuccess(resp, "renew");
     }
 
@@ -100,12 +102,12 @@ public class CroniqClient {
         if (events.isEmpty()) {
             return;
         }
-        HttpResponse<byte[]> resp = exchange("/v1/work/" + executionId + "/events", events, Duration.ofSeconds(15));
+        HttpResponse<byte[]> resp = exchange("/v1/work/" + executionId + "/events", events, requestTimeout);
         ensureSuccess(resp, "pushEvents");
     }
 
     public void registerJob(RegisterJobRequest request) throws IOException, InterruptedException {
-        HttpResponse<byte[]> resp = exchange("/v1/jobs/register", request, Duration.ofSeconds(15));
+        HttpResponse<byte[]> resp = exchange("/v1/jobs/register", request, requestTimeout);
         ensureSuccess(resp, "registerJob");
     }
 

@@ -22,6 +22,7 @@
         "api_key": { "type": "string" },
         "bearer_token": { "type": "string" },
         "poll_timeout_ms": { "type": "integer", "minimum": 1 },
+        "request_timeout_ms": { "type": "integer", "minimum": 1, "description": "Per-request timeout for every non-poll request (ack, renew, log events, job registration)." },
         "renew_interval_ms": { "type": "integer", "minimum": 1 },
         "drain_timeout_ms": { "type": "integer", "minimum": 1 },
         "poll_retry_delay_ms": { "type": "integer", "minimum": 1 },
@@ -151,6 +152,9 @@
         },
         "body_match": {
           "description": "Subset match on the request JSON body. '*' wildcards any non-empty value."
+        },
+        "body_filter": {
+          "description": "Subset match (same semantics as body_match) that selects WHICH requests this expectation counts. Without it every request with the method and path counts. Lets a case assert e.g. 'at least two polls reported an empty inflight list'."
         }
       }
     }

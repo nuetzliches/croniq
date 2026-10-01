@@ -84,6 +84,8 @@ class HttpExpectation:
     max_count: int | None = None
     headers: dict[str, str] = field(default_factory=dict)
     body_match: Any = None
+    # Subset match that selects which requests count toward the bounds.
+    body_filter: Any = None
     # Top-level request-body keys that MUST NOT appear. Only the trigger
     # (producer) cases use this — runner cases leave it empty.
     body_absent: list[str] = field(default_factory=list)
@@ -105,6 +107,7 @@ class RunnerConfigSpec:
     api_key: str | None = None
     bearer_token: str | None = None
     poll_timeout_ms: int | None = None
+    request_timeout_ms: int | None = None
     renew_interval_ms: int | None = None
     drain_timeout_ms: int | None = None
     poll_retry_delay_ms: int | None = None
@@ -167,6 +170,7 @@ _RUNNER_CONFIG_KEYS = frozenset(
         "api_key",
         "bearer_token",
         "poll_timeout_ms",
+        "request_timeout_ms",
         "renew_interval_ms",
         "drain_timeout_ms",
         "poll_retry_delay_ms",
@@ -201,6 +205,7 @@ _HTTP_EXPECTATION_KEYS = frozenset(
         "max_count",
         "headers",
         "body_match",
+        "body_filter",
     }
 )
 # Trigger cases additionally pin the omission of unset optionals. Runner cases
@@ -256,6 +261,7 @@ def _to_runner_config(d: dict[str, Any]) -> RunnerConfigSpec:
         api_key=d.get("api_key"),
         bearer_token=d.get("bearer_token"),
         poll_timeout_ms=d.get("poll_timeout_ms"),
+        request_timeout_ms=d.get("request_timeout_ms"),
         renew_interval_ms=d.get("renew_interval_ms"),
         drain_timeout_ms=d.get("drain_timeout_ms"),
         poll_retry_delay_ms=d.get("poll_retry_delay_ms"),
@@ -328,5 +334,6 @@ def _to_http_expectation(
         max_count=d.get("max_count"),
         headers={k.lower(): v for k, v in (d.get("headers") or {}).items()},
         body_match=d.get("body_match"),
+        body_filter=d.get("body_filter"),
         body_absent=list(d.get("body_absent") or []),
     )

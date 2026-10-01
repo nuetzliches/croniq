@@ -66,6 +66,7 @@ See [`examples/quickstart`](examples/quickstart/main.go) for the full template.
 - **Catch-all handler** — `r.SetDefaultHandler(...)` for runners that handle any job_key.
 - **Middleware** — `croniq.WithMiddleware(...)` for tracing, recovery, metrics, etc.
 - **Persistent runner identity** — `ResolveRunnerID(prefix)` reads `RUNNER_ID` / `${CRONIQ_RUNNER_DATA_DIR}/runner-id` / generates and persists, matching the Rust shell-runner's volume behaviour.
+- **Bounded requests** — `WithRequestTimeout` (default 30 s) bounds every ack, lease renewal, log-event push and job registration, so a hung ack cannot keep its execution reported as in flight.
 - **Drain-on-shutdown** — cancelling `Run`'s context stops polling but lets in-flight handlers finish naturally up to `WithDrainTimeout`; past the budget remaining handlers are cancelled.
 - **On-demand triggering (producer)** — `croniq.NewTriggerClient(...)` wraps `POST /v1/trigger` with its own credentials (the `jobs:trigger` scope), independent of the runner. See [Triggering jobs](#triggering-jobs-producer).
 

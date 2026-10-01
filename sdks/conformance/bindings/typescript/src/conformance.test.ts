@@ -95,6 +95,7 @@ function buildOptions(cfg: RunnerConfig, serverUrl: string): CroniqRunnerOptions
   if (cfg.api_key !== undefined) opts.apiKey = cfg.api_key;
   if (cfg.bearer_token !== undefined) opts.bearerToken = cfg.bearer_token;
   if (cfg.poll_timeout_ms !== undefined) opts.pollTimeoutMs = cfg.poll_timeout_ms;
+  if (cfg.request_timeout_ms !== undefined) opts.requestTimeoutMs = cfg.request_timeout_ms;
   if (cfg.renew_interval_ms !== undefined) opts.renewIntervalMs = cfg.renew_interval_ms;
   if (cfg.drain_timeout_ms !== undefined) opts.drainTimeoutMs = cfg.drain_timeout_ms;
   if (cfg.poll_retry_delay_ms !== undefined) opts.pollRetryDelayMs = cfg.poll_retry_delay_ms;
@@ -110,11 +111,19 @@ function buildOptions(cfg: RunnerConfig, serverUrl: string): CroniqRunnerOptions
   return opts;
 }
 
+/** Requests an expectation counts: method + path, then `body_filter`. */
+function matching(ex: CaseSpec['expectations']['http'][number], recorded: RecordedRequest[]): RecordedRequest[] {
+  return recorded.filter((r) => {
+    if (r.method.toUpperCase() !== ex.method.toUpperCase() || r.path !== ex.path) return false;
+    if (ex.body_filter === undefined) return true;
+    const parsed = r.body.length > 0 ? JSON.parse(r.body) : null;
+    return matchBody(ex.body_filter, parsed) === null;
+  });
+}
+
 function expectationsAreMet(spec: CaseSpec, recorded: RecordedRequest[]): boolean {
   for (const ex of spec.expectations.http) {
-    const matches = recorded.filter(
-      (r) => r.method.toUpperCase() === ex.method.toUpperCase() && r.path === ex.path,
-    );
+    const matches = matching(ex, recorded);
     if (typeof ex.exact_count === 'number' && matches.length < ex.exact_count) return false;
     if (typeof ex.min_count === 'number' && matches.length < ex.min_count) return false;
   }
@@ -123,9 +132,7 @@ function expectationsAreMet(spec: CaseSpec, recorded: RecordedRequest[]): boolea
 
 function assertExpectations(spec: CaseSpec, recorded: RecordedRequest[]): void {
   for (const ex of spec.expectations.http) {
-    const matches = recorded.filter(
-      (r) => r.method.toUpperCase() === ex.method.toUpperCase() && r.path === ex.path,
-    );
+    const matches = matching(ex, recorded);
     const label = `${ex.method} ${ex.path}`;
 
     if (typeof ex.exact_count === 'number') {

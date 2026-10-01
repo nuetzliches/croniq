@@ -15,8 +15,12 @@ import (
 // Default tunables. Match the .NET SDK so the same conformance YAML
 // can drive both bindings.
 const (
-	DefaultMaxInflight     = 5
-	DefaultPollTimeout     = 35 * time.Second
+	DefaultMaxInflight = 5
+	DefaultPollTimeout = 35 * time.Second
+	// DefaultRequestTimeout bounds every non-poll request (ack, renew, log
+	// events, job registration). Same default as the .NET, Rust and
+	// TypeScript SDKs (issue #795).
+	DefaultRequestTimeout  = 30 * time.Second
 	DefaultRenewInterval   = 15 * time.Second
 	DefaultDrainTimeout    = 30 * time.Second
 	DefaultPollRetryDelay  = 5 * time.Second
@@ -46,7 +50,11 @@ type Options struct {
 	MaxInflight  int
 	InstanceID   string
 
-	PollTimeout     time.Duration
+	PollTimeout time.Duration
+	// RequestTimeout bounds each ack, lease renewal, log-event push and job
+	// registration. Defaults to [DefaultRequestTimeout]; set via
+	// [WithRequestTimeout].
+	RequestTimeout  time.Duration
 	RenewInterval   time.Duration
 	DrainTimeout    time.Duration
 	PollRetryDelay  time.Duration
@@ -124,6 +132,12 @@ func WithMaxInflight(n int) Option { return func(o *Options) { o.MaxInflight = n
 
 // WithPollTimeout sets the deadline applied to each /v1/work/poll call.
 func WithPollTimeout(d time.Duration) Option { return func(o *Options) { o.PollTimeout = d } }
+
+// WithRequestTimeout sets the deadline applied to each ack, lease renewal,
+// log-event push and job registration. An unbounded ack would keep its
+// execution in the in-flight set every poll reports — and the server renews
+// the lease of everything in that set (issues #792, #795).
+func WithRequestTimeout(d time.Duration) Option { return func(o *Options) { o.RequestTimeout = d } }
 
 // WithRenewInterval sets the cadence at which /v1/work/renew heartbeats
 // are sent while a handler is in flight.
@@ -207,6 +221,7 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 		RunnerID:        runnerID,
 		MaxInflight:     DefaultMaxInflight,
 		PollTimeout:     DefaultPollTimeout,
+		RequestTimeout:  DefaultRequestTimeout,
 		RenewInterval:   DefaultRenewInterval,
 		DrainTimeout:    DefaultDrainTimeout,
 		PollRetryDelay:  DefaultPollRetryDelay,
@@ -221,6 +236,9 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 	// A zero value here means "unset" — a struct-literal caller who never
 	// heard of the option would otherwise get a runner that bails on its
 	// first 409. Negative values are meaningless for the same reason.
+	if o.RequestTimeout <= 0 {
+		o.RequestTimeout = DefaultRequestTimeout
+	}
 	if o.MaxConsecutivePollConflicts <= 0 {
 		o.MaxConsecutivePollConflicts = DefaultMaxConsecutivePollConflicts
 	}
@@ -578,6 +596,8 @@ func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGrou
 		RunnerID:     r.opts.RunnerID,
 		RunnerTags:   append([]string(nil), r.opts.Tags...),
 		client:       r.client,
+
+		requestTimeout: r.opts.RequestTimeout,
 	}
 
 	go func() {
@@ -636,7 +656,7 @@ func (r *Runner) renewLoop(executionID string, done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), r.opts.RequestTimeout)
 			err := r.client.Renew(ctx, &RenewRequest{
 				RunnerID:    r.opts.RunnerID,
 				ExecutionID: executionID,
@@ -670,7 +690,7 @@ func (r *Runner) renewLoop(executionID string, done <-chan struct{}) {
 // ackResult posts the final ack. Uses a short, decoupled context so the
 // ack still goes through even if the runner's ctx was cancelled mid-drain.
 func (r *Runner) ackResult(a WorkAssignment, status, errStr string, durationMs int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.RequestTimeout)
 	defer cancel()
 	err := r.client.Ack(ctx, &AckRequest{
 		RunnerID:    r.opts.RunnerID,
@@ -710,7 +730,7 @@ func (r *Runner) registerSchedules(ctx context.Context) {
 			"job_key", s.jobKey,
 			"schedule", s.schedule,
 		)
-		reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		reqCtx, cancel := context.WithTimeout(ctx, r.opts.RequestTimeout)
 		err := r.client.RegisterJob(reqCtx, &RegisterJobRequest{
 			JobKey:       s.jobKey,
 			Schedule:     s.schedule,

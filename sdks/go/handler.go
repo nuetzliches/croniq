@@ -35,6 +35,9 @@ type ExecutionContext struct {
 	RunnerTags   []string
 
 	client *Client
+	// requestTimeout bounds each log-writer batch POST; the runner's
+	// RequestTimeout.
+	requestTimeout time.Duration
 
 	// Streaming log writer is lazily initialised on the first
 	// LogWriter() call so handlers that don't need streaming pay no
@@ -117,7 +120,7 @@ func (ec *ExecutionContext) PushEvents(ctx context.Context, events []WorkEvent) 
 // For strict ordering, pick one path per handler.
 func (ec *ExecutionContext) LogWriter() *LogWriter {
 	ec.logWriterOnce.Do(func() {
-		ec.logWriter = newLogWriter(ec.client, ec.ExecutionID, ec.JobKey, ec.RunnerID, ec.RunnerTags)
+		ec.logWriter = newLogWriter(ec.client, ec.ExecutionID, ec.JobKey, ec.RunnerID, ec.RunnerTags, ec.requestTimeout)
 	})
 	return ec.logWriter
 }

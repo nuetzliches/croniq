@@ -37,7 +37,7 @@ final class YamlSupport {
     static final Set<String> EXPECTATIONS_KEYS = Set.of("duration_max_ms", "http");
 
     static final Set<String> HTTP_EXPECTATION_KEYS =
-            Set.of("method", "path", "exact_count", "min_count", "max_count", "headers", "body_match");
+            Set.of("method", "path", "exact_count", "min_count", "max_count", "headers", "body_match", "body_filter");
 
     /**
      * Trigger cases additionally pin the omission of unset optionals. Runner

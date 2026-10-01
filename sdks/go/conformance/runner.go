@@ -97,6 +97,9 @@ func buildRunner(t *testing.T, spec *Spec, baseURL string) *croniq.Runner {
 	if cfg.PollTimeoutMs != nil {
 		opts = append(opts, croniq.WithPollTimeout(time.Duration(*cfg.PollTimeoutMs)*time.Millisecond))
 	}
+	if cfg.RequestTimeoutMs != nil {
+		opts = append(opts, croniq.WithRequestTimeout(time.Duration(*cfg.RequestTimeoutMs)*time.Millisecond))
+	}
 	if cfg.RenewIntervalMs != nil {
 		opts = append(opts, croniq.WithRenewInterval(time.Duration(*cfg.RenewIntervalMs)*time.Millisecond))
 	}
@@ -229,6 +232,9 @@ func filterMatching(e HTTPExpectation, recorded []RecordedRequest) []RecordedReq
 	out := make([]RecordedRequest, 0, len(recorded))
 	for _, r := range recorded {
 		if !strings.EqualFold(r.Method, e.Method) || r.Path != e.Path {
+			continue
+		}
+		if e.BodyFilter != nil && MatchBody(e.BodyFilter, r.Body) != "" {
 			continue
 		}
 		out = append(out, r)

@@ -37,6 +37,7 @@ export const RUNNER_CONFIG_KEYS = [
   'api_key',
   'bearer_token',
   'poll_timeout_ms',
+  'request_timeout_ms',
   'renew_interval_ms',
   'drain_timeout_ms',
   'poll_retry_delay_ms',
@@ -70,6 +71,7 @@ export const HTTP_EXPECTATION_KEYS = [
   'max_count',
   'headers',
   'body_match',
+  'body_filter',
 ] as const;
 
 /**

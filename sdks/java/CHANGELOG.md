@@ -4,6 +4,16 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`CroniqRunnerOptions.Builder.requestTimeout(Duration)`
+  ([#795](https://github.com/nuetzliches/croniq/issues/795)).** Bounds ack,
+  lease renewal, log-event push and job registration. It replaces the
+  hard-coded 15 s. The default is now 30 s, the same as the .NET, Rust,
+  TypeScript, Go and Python SDKs.
+
 ## [0.6.0] - 2026-09-18
 
 ### Added

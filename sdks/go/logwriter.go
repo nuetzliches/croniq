@@ -88,13 +88,16 @@ func NullLogWriter() *LogWriter {
 
 // newLogWriter spawns the background flusher and returns the public
 // handle.
-func newLogWriter(client pusher, executionID, jobKey, runnerID string, runnerTags []string) *LogWriter {
+func newLogWriter(client pusher, executionID, jobKey, runnerID string, runnerTags []string, requestTimeout time.Duration) *LogWriter {
+	if requestTimeout <= 0 {
+		requestTimeout = DefaultRequestTimeout
+	}
 	w := &LogWriter{
 		tx:       make(chan logCmd, logChannelCapacity),
 		shutdown: make(chan struct{}),
 		done:     make(chan struct{}),
 	}
-	go w.flusherLoop(client, executionID, jobKey, runnerID, serializeTags(runnerTags))
+	go w.flusherLoop(client, executionID, jobKey, runnerID, serializeTags(runnerTags), requestTimeout)
 	return w
 }
 
@@ -158,7 +161,7 @@ func (w *LogWriter) shutdownAndDrain() {
 	}
 }
 
-func (w *LogWriter) flusherLoop(client pusher, executionID, jobKey, runnerID, serializedTags string) {
+func (w *LogWriter) flusherLoop(client pusher, executionID, jobKey, runnerID, serializedTags string, requestTimeout time.Duration) {
 	defer close(w.done)
 
 	buffer := make([]WorkEvent, 0, logBatchSizeThreshold)
@@ -182,7 +185,7 @@ func (w *LogWriter) flusherLoop(client pusher, executionID, jobKey, runnerID, se
 			// Use a fresh context so individual POSTs aren't bound to
 			// any in-flight caller's ctx; the surrounding runner enforces
 			// the overall drain timeout.
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 			err := client.PushEvents(ctx, executionID, chunk)
 			cancel()
 			if err != nil {

@@ -84,7 +84,14 @@ func (m *MockServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if entry.Respond.DelayMs != nil && *entry.Respond.DelayMs > 0 {
-		time.Sleep(time.Duration(*entry.Respond.DelayMs) * time.Millisecond)
+		// Abortable: a client that gives up (request timeout, case 20)
+		// closes the connection, and the handler must not then hold
+		// httptest.Server.Close for the rest of the delay.
+		select {
+		case <-time.After(time.Duration(*entry.Respond.DelayMs) * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
 	}
 
 	for k, v := range entry.Respond.Headers {
