@@ -234,6 +234,21 @@ function close() {
   void router.push({ path: '/executions', query: route.query })
 }
 
+/**
+ * The exact filters a link brought in, shown as chips beside the controls.
+ *
+ * They used to be read-only inputs, which looked like a second search box with
+ * no label, truncated the key at the input's width, and could only be removed
+ * along with every other filter. A chip says what it is, sizes to the key, and
+ * comes off on its own — the way back from one job's runs to the full list.
+ */
+const pinned = computed(() =>
+  [
+    { key: 'job_key' as const, label: 'Job', noun: 'job', icon: 'i-lucide-clock', value: filters.value.job_key },
+    { key: 'runner_id' as const, label: 'Runner', noun: 'runner', icon: 'i-lucide-cpu', value: filters.value.runner_id },
+  ].filter((chip) => chip.value),
+)
+
 const hasFilters = computed(() =>
   Boolean(
     filters.value.state ||
@@ -318,24 +333,33 @@ function onKey(event: KeyboardEvent) {
         class="w-56"
         @update:model-value="(value: string) => setFilter('q', value)"
       />
-      <!-- The exact filter a link brought in. Read-only like the runner one:
-           it names one job, and widening it is what the search box is for. -->
-      <UInput
-        v-if="filters.job_key"
-        :model-value="filters.job_key"
-        readonly
-        aria-label="Filtered to one job"
-        icon="i-lucide-clock"
-        class="w-56 font-mono"
-      />
-      <UInput
-        v-if="filters.runner_id"
-        :model-value="filters.runner_id"
-        readonly
-        aria-label="Filtered to one runner"
-        icon="i-lucide-cpu"
-        class="w-56 font-mono"
-      />
+      <!-- Exact, unlike the box: a chip names one job or one runner, and
+           widening the list is what the box is for (issue #753). -->
+      <div
+        v-for="chip in pinned"
+        :key="chip.key"
+        role="group"
+        :aria-label="`Filtered to one ${chip.noun}`"
+        class="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 pr-0.5 pl-2 text-sm"
+      >
+        <UIcon
+          :name="chip.icon"
+          class="size-4 shrink-0 text-primary"
+        />
+        <span class="text-muted">{{ chip.label }}</span>
+        <span
+          class="max-w-[24rem] truncate font-mono text-highlighted"
+          :title="chip.value"
+        >{{ chip.value }}</span>
+        <UButton
+          variant="ghost"
+          color="neutral"
+          size="xs"
+          icon="i-lucide-x"
+          :aria-label="`Remove ${chip.noun} filter`"
+          @click="setFilter(chip.key, '')"
+        />
+      </div>
       <USelectMenu
         :model-value="filters.window || undefined"
         :items="WINDOWS"

@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The Runs screen shows a job or runner deep link as a chip.** A
+  `?job_key=` or `?runner_id=` filter used to appear as a second, unlabelled
+  read-only input next to the search box, cut off at its width and removable
+  only with every other filter. It is now a labelled chip ("Job",
+  "Runner") that sizes to the key, shows the full value on hover, and has its
+  own ✕ that drops just that filter. The filters themselves are unchanged:
+  `job_key` stays an exact match, the box stays a search.
+
 ## [0.44.0] - 2026-10-01
 
 ### Added
