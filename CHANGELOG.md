@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The Runs screen jumps to the next failure.** With no state filter set and
+  at least one failed or dead run loaded, a "Next failure" button in the
+  filter bar shows how many there are and scrolls to the next one below the
+  cursor, wrapping back to the top after the last. It moves the j/k cursor,
+  so Enter opens the run it landed on. It counts only the rows on screen; a
+  failure further back needs "Load older" first.
+
 ### Changed
 
 - **The Runs screen shows a job or runner deep link as a chip.** A

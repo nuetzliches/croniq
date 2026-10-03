@@ -5,6 +5,7 @@ import { fetchExecutions, useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
+import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 
 /**
  * Runs — the one list of executions.
@@ -283,10 +284,46 @@ watch(rows, (next) => {
   if (cursor.value >= next.length) cursor.value = next.length - 1
 })
 
+/**
+ * "Next failure" — scroll to the next failed or dead run below the cursor.
+ *
+ * Without a state filter the failures sit among hundreds of green rows, and
+ * finding them meant scanning for red pills. With one, every row is already
+ * the state asked for, so the button only shows when there is no state filter.
+ *
+ * It moves the j/k cursor rather than keeping a position of its own, so Enter
+ * opens the run it landed on and j/k carry on from there. It counts the rows
+ * on screen: a failure further back than the loaded pages needs "Load older"
+ * first.
+ */
+const listEl = ref<HTMLElement | null>(null)
+
+const failureCount = computed(
+  () => rows.value.filter((row) => FAILURE_STATES.has(row.state)).length,
+)
+const showNextFailure = computed(() => !filters.value.state && failureCount.value > 0)
+
+function scrollToNextFailure() {
+  const index = nextFailureIndex(
+    rows.value.map((row) => row.state),
+    cursor.value,
+  )
+  if (index < 0) return
+  cursor.value = index
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  // `center`, not `start`: the sticky header would cover a row scrolled to the top.
+  listEl.value
+    ?.querySelector(`[data-row-index="${index}"]`)
+    ?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+}
+
 function onKey(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   // Never steal keys from a field someone is typing in.
   if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+  // Nor Enter from a focused button or link: that Enter is its click, and
+  // opening the cursor row as well would act twice.
+  if (event.key === 'Enter' && target && ['BUTTON', 'A'].includes(target.tagName)) return
 
   if (event.key === 'j' || event.key === 'ArrowDown') {
     cursor.value = Math.min(cursor.value + 1, rows.value.length - 1)
@@ -371,6 +408,16 @@ function onKey(event: KeyboardEvent) {
         @update:model-value="(value: string) => setFilter('window', value ?? '')"
       />
       <UButton
+        v-if="showNextFailure"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-arrow-down-to-line"
+        title="Scroll to the next failed run"
+        @click="scrollToNextFailure"
+      >
+        Next failure <span class="cq-num">· {{ failureCount }}</span>
+      </UButton>
+      <UButton
         v-if="hasFilters"
         variant="ghost"
         color="neutral"
@@ -384,7 +431,10 @@ function onKey(event: KeyboardEvent) {
     </div>
 
     <div class="flex min-h-0 flex-1 gap-4">
-      <div class="cq-list min-w-0 flex-1">
+      <div
+        ref="listEl"
+        class="cq-list min-w-0 flex-1"
+      >
         <AppLoading
           v-if="isPending && rows.length === 0"
           label="Loading runs"
@@ -448,6 +498,7 @@ function onKey(event: KeyboardEvent) {
             <tr
               v-for="(row, index) in rows"
               :key="row.id"
+              :data-row-index="index"
               :class="[
                 'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
