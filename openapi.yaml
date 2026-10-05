@@ -1328,10 +1328,17 @@ paths:
       summary: Live Console SSE stream
       description: |
         Server-Sent Events stream of server tracing events powering the
-        Live Console UI (issue #141). On connect, replays a bounded
-        snapshot of recent events (default 200, max 1000) before
-        following the live tail. Each frame is `event: log` with a
-        JSON-encoded payload.
+        Live Console UI (issue #141). On connect, replays the startup
+        log, then a bounded snapshot of recent events (default 200, max
+        1000), before following the live tail. Each frame is `event: log`
+        with a JSON-encoded payload.
+
+        The startup log is everything the server logged before it began
+        serving: loading the Croniqfile, `configuration loaded`, the
+        alerting summary, boot diagnostics. It is kept apart from the
+        replay buffer, never evicted, and sent in full on every connect,
+        whatever `snapshot` says (issue #810). Its events carry
+        `"startup": true`.
 
         Filtering by `levels` happens server-side (cheap). Free-text
         search is performed in the dashboard.
@@ -1356,7 +1363,10 @@ paths:
         - name: snapshot
           in: query
           schema: { type: integer, default: 200, maximum: 1000 }
-          description: How many backfill events to ship before the live tail.
+          description: |
+            How many recent events to ship before the live tail. The
+            startup log is sent in addition and is not limited by this;
+            `snapshot=0` still sends it.
       responses:
         "200":
           description: SSE stream of `log` events
@@ -1367,7 +1377,8 @@ paths:
                 description: |
                   Each frame is `event: log\\ndata: {json}\\n\\n` where
                   `{json}` is a `ConsoleEvent` with fields
-                  `ts`, `level`, `target`, `message`, `fields`.
+                  `ts`, `level`, `target`, `message`, `fields`, and
+                  `startup: true` on startup-log events (absent otherwise).
         "503":
           description: Server was built without the Live Console hub (older binary or test mode)
 

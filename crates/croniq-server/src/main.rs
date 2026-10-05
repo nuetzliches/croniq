@@ -859,8 +859,15 @@ async fn main() -> Result<()> {
         tracing::info!(
             channels = alerts_cfg.channels.len(),
             rules = alerts_cfg.rules.len(),
+            // Names, not just a count: "did this instance start with the
+            // rules I expect?" is the post-deploy question (#810).
+            rule_names = ?alerts_cfg.rules.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             "failure-alert evaluator armed"
         );
+    } else {
+        // Said rather than left out: an absent line reads the same as a
+        // console that has scrolled past it.
+        tracing::info!("failure-alert evaluator idle: no alert rules configured");
     }
     // Watchdog gets its own clones of the config + throttle Arc so
     // the SLA-miss sweep dispatches through the same evaluator
@@ -1088,6 +1095,9 @@ async fn main() -> Result<()> {
 
     tracing::info!(address = %addr, "croniq-server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Everything logged so far is the startup log the Live Console pins and
+    // replays on every connect (#810); from here on it is the tail.
+    console_hub.seal_startup();
     // `into_make_service_with_connect_info` is what puts the socket peer
     // address in the request extensions; without it the per-IP login
     // throttle (issue #428) has nothing to key on and stays inert.

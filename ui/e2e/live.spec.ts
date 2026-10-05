@@ -54,6 +54,23 @@ test.describe('live surfaces', () => {
       )
       .toBeGreaterThan(0)
   })
+
+  /**
+   * The startup summary is what an operator checks after a deploy, and the
+   * tail cannot be trusted to still hold it (#810). The server pins it and
+   * replays it on every connect; the console shows it as its own section.
+   */
+  test('the console shows the startup log with the configuration summary', async ({ app }) => {
+    await app.goto('/console')
+    const section = app.getByRole('button', { name: /^Startup/ })
+    await expect(section).toBeVisible({ timeout: 20_000 })
+    await expect(section).toHaveAttribute('aria-expanded', 'true')
+    await expect(app.locator('#console-startup').getByText('configuration loaded').first()).toBeVisible()
+    await expect(app.locator('#console-startup').getByText('failure-alert evaluator armed').first()).toBeVisible()
+
+    await section.click()
+    await expect(app.locator('#console-startup')).toHaveCount(0)
+  })
 })
 
 test.describe('preferences survive a reload', () => {

@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The live console keeps the startup log.** Everything the server logs
+  before it starts serving — `loading Croniqfile`, `configuration loaded`,
+  the alert evaluator line, boot diagnostics — is pinned in its own buffer,
+  which the 1000-event ring cannot push out, and replayed on every console
+  connection. The console shows it as a collapsible "Startup" section above
+  the tail, not counted against the 2000-event buffer. A console that stays
+  open across a restart replaces it with the new process's. On the wire,
+  `GET /v1/events/stream` sends these events first, marked
+  `"startup": true`, also when `snapshot=0`. `failure-alert evaluator armed`
+  now names the rules it loaded, and a server with no rules says so
+  (`failure-alert evaluator idle`). Before this, the startup summary had
+  usually dropped out of the 200-event backfill within minutes of a
+  restart (#810).
+
 - **The Runs screen jumps to the next failure.** With no state filter set and
   at least one failed or dead run loaded, a "Next failure" button in the
   filter bar shows how many there are and scrolls to the next one below the
