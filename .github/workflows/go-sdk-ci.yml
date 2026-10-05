@@ -3,7 +3,9 @@ name: Go SDK CI
 # Branch-protection contract:
 # Mirror of dotnet-sdk-ci.yml. The `Go SDK CI required` aggregator job
 # at the bottom is the single required status check; it transitively
-# gates schema, build, conformance, and vet.
+# gates build, conformance, and vet.
+# The conformance case files are schema-checked once, in dotnet-sdk-ci.yml,
+# not here (#805).
 
 on:
   push:
@@ -56,24 +58,6 @@ jobs:
               - 'sdks/conformance/**'
               - 'openapi.yaml'
               - '.github/workflows/go-sdk-ci.yml'
-
-  schema:
-    name: Conformance YAML schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install check-jsonschema
-        run: pip install --user check-jsonschema==0.37.2
-      - name: Validate every case against case-schema.json
-        run: |
-          check-jsonschema --verbose \
-            --schemafile sdks/conformance/schema/case-schema.json \
-            sdks/conformance/cases/*.yaml
-      - name: Validate every trigger case against trigger-case-schema.json
-        run: |
-          check-jsonschema --verbose \
-            --schemafile sdks/conformance/schema/trigger-case-schema.json \
-            sdks/conformance/cases-trigger/*.yaml
 
   build:
     name: Build, vet, test (${{ matrix.os }})
@@ -162,7 +146,7 @@ jobs:
   conformance:
     name: Conformance suite
     runs-on: ubuntu-latest
-    needs: [schema, changes]
+    needs: changes
     if: needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -183,18 +167,17 @@ jobs:
   required:
     # Aggregator for branch-protection. Add ONE check to the protected
     # branch's required status list — `Go SDK CI required` — and the
-    # rule transitively gates schema, build, staticcheck, conformance.
+    # rule transitively gates build, staticcheck, conformance.
     name: Go SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [changes, schema, build, staticcheck, conformance]
+    needs: [changes, build, staticcheck, conformance]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
           echo "  changes:      ${{ needs.changes.result }}"
-          echo "  schema:       ${{ needs.schema.result }}"
           echo "  build:        ${{ needs.build.result }}"
           echo "  staticcheck:  ${{ needs.staticcheck.result }}"
           echo "  conformance:  ${{ needs.conformance.result }}"

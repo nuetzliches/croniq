@@ -489,7 +489,7 @@ jobs:
     # arm64 on amd64. The previous single-runner setup spent ~50 of its 60
     # minutes inside QEMU compiling Rust deps for arm64 — native runners
     # cut that to ~10 min per arch, run in parallel, and use independent
-    # GHA caches.
+    # layer caches.
     #
     # Pattern follows docker/build-push-action's official multi-platform
     # recipe: each matrix job pushes the per-arch image *by digest* (no
@@ -575,8 +575,23 @@ jobs:
           # targets have the rust-builder stage in common, and a per-variant
           # scope would recompile the whole workspace three times per
           # architecture for layers that are bit-identical.
-          cache-from: type=gha,scope=docker-${{ steps.plat.outputs.name }}
-          cache-to: type=gha,mode=max,scope=docker-${{ steps.plat.outputs.name }}
+          #
+          # In the registry, not in the Actions cache (#809). `mode=max` keeps
+          # every intermediate stage, and the four Docker scopes (this file's
+          # and release.yml's, two arches each) grew to 6.6 GB of the
+          # repository's 10 GB Actions cache. GitHub then evicted the Rust
+          # caches by least recent use, and a release built cold. Registry
+          # cache does not count against that limit and is not evicted.
+          #
+          # Tags in the image's own package rather than a separate cache
+          # package: a new package name starts private (a cache manifest
+          # carries no `org.opencontainers.image.source` label to link it to
+          # the repo), private storage is billed, and visibility can only be
+          # flipped by hand. `image-manifest=true` stores the cache as a
+          # regular OCI manifest, which GHCR accepts. `ignore-error` keeps a
+          # failed cache upload from failing a build that already succeeded.
+          cache-from: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-${{ steps.plat.outputs.name }}
+          cache-to: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-${{ steps.plat.outputs.name }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
           # …except `ca-provider`, which must never be served from cache.
           #
           # Its layer is keyed on the base digest plus the instruction text, so
@@ -616,7 +631,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx build --target server-runtime --load \
-            --cache-from type=gha,scope=docker-${{ steps.plat.outputs.name }} \
+            --cache-from type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-${{ steps.plat.outputs.name }} \
             --no-cache-filter ca-provider \
             -t croniq-ca-check:ci .
           shipped=$(docker run --rm --entrypoint sha256sum croniq-ca-check:ci \

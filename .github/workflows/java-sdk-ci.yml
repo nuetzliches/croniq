@@ -3,8 +3,10 @@ name: Java SDK CI
 # Branch-protection contract:
 # This workflow gates merges into main. Add the `Java SDK CI required` job
 # (at the bottom of this file) as the single required status check — it
-# aggregates schema, build, conformance, and publish-smoke into one signal,
+# aggregates build, conformance, and publish-smoke into one signal,
 # mirroring the .NET SDK CI pattern.
+# The conformance case files are schema-checked once, in dotnet-sdk-ci.yml,
+# not here (#805).
 #
 # Cost optimisation: the workflow still triggers on every PR (so the
 # required check is always reported), but the heavy build/conformance/
@@ -72,26 +74,6 @@ jobs:
               - 'openapi.yaml'
               - '.github/workflows/java-sdk-ci.yml'
 
-  schema:
-    name: Conformance YAML schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install check-jsonschema
-        # Same tool the .NET SDK CI uses; duplicated here so this workflow
-        # is self-contained and can be a required check on its own.
-        run: pip install --user check-jsonschema==0.37.2
-      - name: Validate every case against case-schema.json
-        run: |
-          check-jsonschema --verbose \
-            --schemafile sdks/conformance/schema/case-schema.json \
-            sdks/conformance/cases/*.yaml
-      - name: Validate every trigger case against trigger-case-schema.json
-        run: |
-          check-jsonschema --verbose \
-            --schemafile sdks/conformance/schema/trigger-case-schema.json \
-            sdks/conformance/cases-trigger/*.yaml
-
   build:
     name: Build & test (${{ matrix.os }})
     needs: changes
@@ -146,11 +128,9 @@ jobs:
   conformance:
     # Wire-level suite. Linux-only — the protocol is OS-agnostic and the
     # cross-platform compile concern is already covered by `build`.
-    # Depends on `schema` so a malformed case produces the JSON-Schema
-    # error first (more actionable than a Java deserialisation failure).
     name: Conformance suite
     runs-on: ubuntu-latest
-    needs: [schema, changes]
+    needs: changes
     if: needs.changes.outputs.java == 'true'
     defaults:
       run:
@@ -218,7 +198,7 @@ jobs:
   required:
     # Aggregator job for branch protection. Add ONE check to the protected
     # branch — `Java SDK CI required` — and the rule transitively gates
-    # schema, build, conformance, and publish-smoke. Mirrors the .NET SDK
+    # build, conformance, and publish-smoke. Mirrors the .NET SDK
     # CI's `required` job exactly so the protection-rule UI only ever
     # references one check per SDK.
     #
@@ -229,14 +209,13 @@ jobs:
     name: Java SDK CI required
     if: always()
     runs-on: ubuntu-latest
-    needs: [changes, schema, build, conformance, publish-smoke]
+    needs: [changes, build, conformance, publish-smoke]
     steps:
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
           echo "::error::A required job did not succeed:"
           echo "  changes:       ${{ needs.changes.result }}"
-          echo "  schema:        ${{ needs.schema.result }}"
           echo "  build:         ${{ needs.build.result }}"
           echo "  conformance:   ${{ needs.conformance.result }}"
           echo "  publish-smoke: ${{ needs.publish-smoke.result }}"
