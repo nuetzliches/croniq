@@ -6,6 +6,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The Runs screen jumps to the next failure.** With no state filter set and
+  at least one failed or dead run loaded, a "Next failure" button in the
+  filter bar shows how many there are and scrolls to the next one below the
+  cursor, wrapping back to the top after the last. It moves the j/k cursor,
+  so Enter opens the run it landed on. It counts only the rows on screen; a
+  failure further back needs "Load older" first.
+
+### Changed
+
+- **The Runs screen shows a job or runner deep link as a chip.** A
+  `?job_key=` or `?runner_id=` filter used to appear as a second, unlabelled
+  read-only input next to the search box, cut off at its width and removable
+  only with every other filter. It is now a labelled chip ("Job",
+  "Runner") that sizes to the key, shows the full value on hover, and has its
+  own ✕ that drops just that filter. The filters themselves are unchanged:
+  `job_key` stays an exact match, the box stays a search.
+
+## [0.44.0] - 2026-10-01
+
+### Added
+
+- **A run's logs can be copied.** The Logs panel in the run detail has a copy
+  button that puts every event on the clipboard, one `HH:MM:SS LEVEL message`
+  line each: the same clock time (UTC) the panel shows, so what is pasted
+  reads as what was on screen.
+- **A live timeline on the dashboard.** One lane per job, runs sliding right
+  to left past a fixed "now" line: the wait from fire to claim as a thin bar,
+  the run as a thick one, coloured by outcome, each a link to the run. The
+  window is 5 s, 10 s, 30 s, 1 min or 5 min, remembered per browser; the
+  strip right of "now" shows next fires approaching. Lanes are ordered by next
+  fire, soonest first, and a job filter narrows them. Reduced motion steps
+  once a second instead of sliding.
+- **`GET /v1/executions/stream`** (scope `executions:read`), a server-sent
+  events feed of the runs in the last five and a half minutes plus everything
+  queued or running. Each `executions` frame is the whole window with the
+  server's `now`, sent only when it changed (checked every 250 ms) and at
+  least every 5 s.
+
+### Changed
+
+- **The dashboard's "Next hour" rail is folded into the live timeline.** Each
+  job's next fire is on its lane label, an overdue job shows there in red,
+  and the hour's forecast histogram sits in the card's header. The timeline
+  spans the full width.
+
+- **CodeQL analyses only the languages a change touches.** GitHub's default
+  setup ran all seven languages on every PR and again on every push to main,
+  which is about 8 minutes and 7 runner slots each time. Nearly all of that
+  was the Rust job, and so far every finding has come from Rust. The new
+  `codeql.yml` checks which paths changed and builds its matrix from that. A
+  docs-only PR runs no analysis, and a Python SDK PR analyses only Python.
+  The weekly scheduled run, a manual dispatch, or an edit to the workflow
+  itself analyses everything. Analysis categories stay `/language:<id>`, so
+  existing alerts and dismissals carry over.
+
 ## [0.43.0] - 2026-10-01
 
 ### Added

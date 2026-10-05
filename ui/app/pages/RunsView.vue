@@ -5,6 +5,7 @@ import { fetchExecutions, useExecutions } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
+import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 
 /**
  * Runs — the one list of executions.
@@ -234,6 +235,21 @@ function close() {
   void router.push({ path: '/executions', query: route.query })
 }
 
+/**
+ * The exact filters a link brought in, shown as chips beside the controls.
+ *
+ * They used to be read-only inputs, which looked like a second search box with
+ * no label, truncated the key at the input's width, and could only be removed
+ * along with every other filter. A chip says what it is, sizes to the key, and
+ * comes off on its own — the way back from one job's runs to the full list.
+ */
+const pinned = computed(() =>
+  [
+    { key: 'job_key' as const, label: 'Job', noun: 'job', icon: 'i-lucide-clock', value: filters.value.job_key },
+    { key: 'runner_id' as const, label: 'Runner', noun: 'runner', icon: 'i-lucide-cpu', value: filters.value.runner_id },
+  ].filter((chip) => chip.value),
+)
+
 const hasFilters = computed(() =>
   Boolean(
     filters.value.state ||
@@ -268,10 +284,46 @@ watch(rows, (next) => {
   if (cursor.value >= next.length) cursor.value = next.length - 1
 })
 
+/**
+ * "Next failure" — scroll to the next failed or dead run below the cursor.
+ *
+ * Without a state filter the failures sit among hundreds of green rows, and
+ * finding them meant scanning for red pills. With one, every row is already
+ * the state asked for, so the button only shows when there is no state filter.
+ *
+ * It moves the j/k cursor rather than keeping a position of its own, so Enter
+ * opens the run it landed on and j/k carry on from there. It counts the rows
+ * on screen: a failure further back than the loaded pages needs "Load older"
+ * first.
+ */
+const listEl = ref<HTMLElement | null>(null)
+
+const failureCount = computed(
+  () => rows.value.filter((row) => FAILURE_STATES.has(row.state)).length,
+)
+const showNextFailure = computed(() => !filters.value.state && failureCount.value > 0)
+
+function scrollToNextFailure() {
+  const index = nextFailureIndex(
+    rows.value.map((row) => row.state),
+    cursor.value,
+  )
+  if (index < 0) return
+  cursor.value = index
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  // `center`, not `start`: the sticky header would cover a row scrolled to the top.
+  listEl.value
+    ?.querySelector(`[data-row-index="${index}"]`)
+    ?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+}
+
 function onKey(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   // Never steal keys from a field someone is typing in.
   if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+  // Nor Enter from a focused button or link: that Enter is its click, and
+  // opening the cursor row as well would act twice.
+  if (event.key === 'Enter' && target && ['BUTTON', 'A'].includes(target.tagName)) return
 
   if (event.key === 'j' || event.key === 'ArrowDown') {
     cursor.value = Math.min(cursor.value + 1, rows.value.length - 1)
@@ -318,24 +370,33 @@ function onKey(event: KeyboardEvent) {
         class="w-56"
         @update:model-value="(value: string) => setFilter('q', value)"
       />
-      <!-- The exact filter a link brought in. Read-only like the runner one:
-           it names one job, and widening it is what the search box is for. -->
-      <UInput
-        v-if="filters.job_key"
-        :model-value="filters.job_key"
-        readonly
-        aria-label="Filtered to one job"
-        icon="i-lucide-clock"
-        class="w-56 font-mono"
-      />
-      <UInput
-        v-if="filters.runner_id"
-        :model-value="filters.runner_id"
-        readonly
-        aria-label="Filtered to one runner"
-        icon="i-lucide-cpu"
-        class="w-56 font-mono"
-      />
+      <!-- Exact, unlike the box: a chip names one job or one runner, and
+           widening the list is what the box is for (issue #753). -->
+      <div
+        v-for="chip in pinned"
+        :key="chip.key"
+        role="group"
+        :aria-label="`Filtered to one ${chip.noun}`"
+        class="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 pr-0.5 pl-2 text-sm"
+      >
+        <UIcon
+          :name="chip.icon"
+          class="size-4 shrink-0 text-primary"
+        />
+        <span class="text-muted">{{ chip.label }}</span>
+        <span
+          class="max-w-[24rem] truncate font-mono text-highlighted"
+          :title="chip.value"
+        >{{ chip.value }}</span>
+        <UButton
+          variant="ghost"
+          color="neutral"
+          size="xs"
+          icon="i-lucide-x"
+          :aria-label="`Remove ${chip.noun} filter`"
+          @click="setFilter(chip.key, '')"
+        />
+      </div>
       <USelectMenu
         :model-value="filters.window || undefined"
         :items="WINDOWS"
@@ -346,6 +407,16 @@ function onKey(event: KeyboardEvent) {
         class="w-44"
         @update:model-value="(value: string) => setFilter('window', value ?? '')"
       />
+      <UButton
+        v-if="showNextFailure"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-arrow-down-to-line"
+        title="Scroll to the next failed run"
+        @click="scrollToNextFailure"
+      >
+        Next failure <span class="cq-num">· {{ failureCount }}</span>
+      </UButton>
       <UButton
         v-if="hasFilters"
         variant="ghost"
@@ -360,7 +431,10 @@ function onKey(event: KeyboardEvent) {
     </div>
 
     <div class="flex min-h-0 flex-1 gap-4">
-      <div class="cq-list min-w-0 flex-1">
+      <div
+        ref="listEl"
+        class="cq-list min-w-0 flex-1"
+      >
         <AppLoading
           v-if="isPending && rows.length === 0"
           label="Loading runs"
@@ -424,6 +498,7 @@ function onKey(event: KeyboardEvent) {
             <tr
               v-for="(row, index) in rows"
               :key="row.id"
+              :data-row-index="index"
               :class="[
                 'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',

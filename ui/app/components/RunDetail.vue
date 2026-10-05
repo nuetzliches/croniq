@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useCancelExecution, useExecutionLogs } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
-import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
+import { formatAbsolute, formatDuration, formatLogLines, formatRelative } from '~/lib/format'
 
 /**
  * One run, beside the list rather than instead of it.
@@ -35,6 +35,19 @@ const { error, attempt } = useActionError()
  */
 function doCancel(id: string) {
   void attempt(() => cancel.mutateAsync(id))
+}
+
+const copied = ref(false)
+
+async function copyLogs() {
+  if (!logs.value?.length) return
+  try {
+    await navigator.clipboard.writeText(formatLogLines(logs.value))
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  } catch {
+    // Clipboard access can be refused; the log is on screen and selectable.
+  }
 }
 
 /** Only a run that has not finished can be asked to stop. */
@@ -161,9 +174,21 @@ const facts = computed(() => {
         </div>
 
         <div class="mt-4">
-          <p class="cq-label mb-1.5">
-            Logs
-          </p>
+          <div class="mb-1.5 flex items-center justify-between">
+            <p class="cq-label">
+              Logs
+            </p>
+            <UButton
+              v-if="logs?.length"
+              :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              aria-label="Copy the logs"
+              title="Copy the logs"
+              @click="copyLogs"
+            />
+          </div>
           <AppLoading
             v-if="logsPending"
             size="tight"

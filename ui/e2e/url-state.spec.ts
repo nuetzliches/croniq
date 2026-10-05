@@ -103,13 +103,24 @@ test.describe('URL state', () => {
     await app.goto('/executions?q=eartbea')
     await expect(app.getByLabel('Search by job key')).toHaveValue('eartbea')
 
-    // A deep link names one job. It is shown as its own read-only filter, so
-    // the box stays free to widen the list rather than silently broadening
-    // what the link meant.
-    await app.goto('/executions?job_key=demo%3Aheartbeat')
+    // A deep link names one job. It is shown as its own chip, so the box stays
+    // free to widen the list rather than silently broadening what the link
+    // meant — and the chip comes off on its own, leaving the other filters.
+    await app.goto('/executions?state=completed&job_key=demo%3Aheartbeat')
     await expect(app).toHaveURL(/job_key=demo%3Aheartbeat/)
-    await expect(app.getByLabel('Filtered to one job')).toHaveValue('demo:heartbeat')
+    await expect(app.getByRole('group', { name: 'Filtered to one job' })).toContainText('demo:heartbeat')
     await expect(app.getByLabel('Search by job key')).toHaveValue('')
+    await app.getByRole('button', { name: 'Remove job filter' }).click()
+    await expect(app).not.toHaveURL(/job_key=/)
+    await expect(app).toHaveURL(/state=completed/)
+    await expect(app.getByRole('group', { name: 'Filtered to one job' })).toHaveCount(0)
+  })
+
+  test('a runner deep link shows a removable chip on the runs screen', async ({ app }) => {
+    await app.goto('/executions?runner_id=demo-runner')
+    await expect(app.getByRole('group', { name: 'Filtered to one runner' })).toContainText('demo-runner')
+    await app.getByRole('button', { name: 'Remove runner filter' }).click()
+    await expect(app).not.toHaveURL(/runner_id=/)
   })
 
   test('opening a detail keeps the list filters in the URL', async ({ app }) => {

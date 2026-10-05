@@ -3,6 +3,7 @@ import {
   formatAbsolute,
   formatClockTime,
   formatDuration,
+  formatLogLines,
   formatRelative,
   shortId,
   stateLabel,
@@ -124,5 +125,20 @@ describe('stateLabel', () => {
     for (const state of ['queued', 'completed', 'failed', 'dead', 'cancelled', 'online']) {
       expect(stateLabel(state)).toBe(state)
     }
+  })
+})
+
+describe('formatLogLines', () => {
+  it('writes one `HH:MM:SS LEVEL message` line per event', () => {
+    expect(
+      formatLogLines([
+        { timestamp: '2026-09-30T08:00:01.250Z', level: 'info', message: 'pulling inbox' },
+        { timestamp: '2026-09-30T08:00:02.000Z', level: 'error', message: 'timeout' },
+      ]),
+    ).toBe('08:00:01 INFO pulling inbox\n08:00:02 ERROR timeout')
+  })
+
+  it('is empty for no events', () => {
+    expect(formatLogLines([])).toBe('')
   })
 })

@@ -1,0 +1,129 @@
+name: CodeQL
+
+# Replaces GitHub's CodeQL "default setup", which analysed all seven
+# languages on every PR and every push to main (~7 jobs, ~8 min wall clock,
+# dominated by the Rust job) regardless of what the change touched. This
+# advanced setup analyses only the languages whose sources a change touches.
+# The weekly schedule still covers everything, so new CodeQL queries reach
+# untouched code too.
+#
+# The default setup must be disabled in the repository settings for this
+# workflow's uploads to be accepted (Settings → Code security → CodeQL).
+#
+# CodeQL is deliberately not a required status check: a PR that touches no
+# analysed language runs no Analyze job at all, and the code scanning PR
+# check compares against the latest main analysis per language. That means
+# main does not need a fresh analysis of every language on every push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  changes:
+    name: Detect languages to analyse
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      languages: ${{ steps.select.outputs.languages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          # Filter names are CodeQL language ids; the `changes` output is
+          # the JSON list of the ones that matched.
+          filters: |
+            actions:
+              - '.github/**'
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            javascript-typescript:
+              - 'ui/**'
+              - 'site/**'
+              - 'scripts/**'
+              - 'sdks/typescript/**'
+              - 'sdks/conformance/bindings/typescript/**'
+            python:
+              - 'sdks/python/**'
+            go:
+              - 'sdks/go/**'
+              - 'go.work'
+              - 'go.work.sum'
+            java-kotlin:
+              - 'sdks/java/**'
+            csharp:
+              - 'sdks/dotnet/**'
+            workflow:
+              - '.github/workflows/codeql.yml'
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          CHANGED: ${{ steps.filter.outputs.changes }}
+        # Scheduled and manual runs, and edits to this workflow, analyse
+        # every language.
+        run: |
+          all='["actions","rust","javascript-typescript","python","go","java-kotlin","csharp"]'
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != push ]; then
+            languages="$all"
+          elif echo "$CHANGED" | jq -e 'index("workflow")' > /dev/null; then
+            languages="$all"
+          else
+            languages=$(echo "${CHANGED:-[]}" | jq -c 'map(select(. != "workflow"))')
+          fi
+          echo "languages=$languages" >> "$GITHUB_OUTPUT"
+          echo "Analysing: $languages"
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: changes
+    if: needs.changes.outputs.languages != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.changes.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Go is the only language the default setup built (autobuild); every
+      # other one runs build-mode none, as before.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.language == 'go'
+        with:
+          go-version-file: sdks/go/go.mod
+          cache: false
+
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.language == 'go' && 'autobuild' || 'none' }}
+
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: /language:${{ matrix.language }}

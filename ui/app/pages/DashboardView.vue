@@ -17,8 +17,9 @@ import { formatDuration, formatRelative } from '~/lib/format'
  * The decision from docs/ui-screen-inventory.md is a status board plus a
  * failures-only excerpt — deliberately *not* the shipping dashboard's general
  * "recent executions" list, which would be a fourth rendering of the runs
- * table. What replaces it is the upcoming rail, which answers a question
- * nothing in the product answered before.
+ * table. What replaces it is the live timeline: what runs now, and — in its
+ * lane labels and header — what fires next, the question the "next hour"
+ * rail was added to answer before the timeline absorbed it.
  */
 const { data: health } = useHealth()
 const { data: jobs } = useJobs()
@@ -122,6 +123,10 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
       />
     </div>
 
+    <!-- What is running now and what fires next, full width: a timeline
+         reads by its length, and it absorbed the "next hour" rail. -->
+    <LiveTimeline />
+
     <div class="grid gap-4 lg:grid-cols-[1fr_22rem]">
       <div class="flex flex-col gap-4">
         <!-- Throughput, ok over failed. Stacked rather than two lines: what
@@ -216,8 +221,6 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
       </div>
 
       <div class="flex flex-col gap-4">
-        <UpcomingRail />
-
         <!-- Promoted out of the bottom-right corner, and labelled. It answers
              "is something wrong" better than any number here. -->
         <section class="rounded-xl border border-default bg-default p-4 shadow-sm">

@@ -138,12 +138,14 @@ jobs:
 
   verify-registry:
     # A separate job so a slow registry can be re-checked with "Re-run failed
-    # jobs" without publishing again. npm serves a new version within
-    # seconds; ten minutes is headroom, not an expected wait (#784).
+    # jobs" without publishing again (#784). npm usually serves a new version
+    # within seconds, but ts-sdk-v0.7.0 took about 20 minutes after an
+    # accepted upload ("Your package is being processed"), so the ten-minute
+    # window failed a release that was fine. An hour, as for Maven Central.
     name: Verify npm serves the version
     needs: publish
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -154,5 +156,5 @@ jobs:
         env:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
-          bash .github/scripts/wait-for-registry.sh npm 600 \
+          bash .github/scripts/wait-for-registry.sh npm 3600 \
             "https://registry.npmjs.org/@nuetzliches%2fcroniq-runner/${VERSION}"

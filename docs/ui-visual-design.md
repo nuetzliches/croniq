@@ -1114,3 +1114,51 @@ selection is empty, that the deleted items are gone) instead of a number that de
 failure rate of the demo. And where the basis is missing, **the step says so
 out loud** instead of ticking green: a skipped test over an empty
 table would be the worse outcome.
+
+## Pass 18 — the live timeline, and the rail it absorbed
+
+**The dashboard now has a live view.** One lane per job, bars sliding right to
+left past a fixed "now" line: the wait from fire to claim as a thin bar, the
+run as a thick one, coloured by outcome. A window of 5 s, 10 s, 30 s, 1 min or
+5 min, remembered per browser. Throughput answers "how much, over the day";
+this answers "what is happening", which no panel did at a glance.
+
+**The narrow windows needed a stream, not polling.** At 5 s the card crosses
+in five seconds; a list polled every 1–2 s would let a new run appear a fifth
+of the way across already. `GET /v1/executions/stream` re-reads the window
+every 250 ms per connection and sends a frame only when it changed — the
+latency is one tick. It does not hook the state transitions themselves:
+those live in the scheduler, the work protocol, the watchdog, cancel and
+replay, and threading a change bus through all of them was more than this
+view justifies.
+
+**Server time, not browser time.** Every frame carries the server's `now`.
+At a 5 s window, one second of skew between the two clocks misplaces every
+bar by a fifth of the width, so the client estimates the offset from those
+samples (the largest recent one — the frame that spent least time in flight)
+and places bars on the server's clock.
+
+**It moves without re-rendering.** Bars are laid out once against a fixed
+origin inside a layer that each animation frame only shifts; Vue re-renders
+when data arrives and once a second. A run still in progress is drawn far
+past "now" and clipped there, so it grows without being touched. Reduced
+motion steps once a second instead.
+
+**The "next hour" rail is gone, into this card.** Both showed the future, at
+two horizons, side by side. The lane labels now carry each job's next fire
+("in 22 min"), so every scheduled job has a lane, not only the busy ones; an
+overdue job reads as overdue in red, on the lane where nothing ran; the
+forecast histogram — the one thing with no counterpart — sits in the header.
+The rail's lessons came along: only jobs that still exist (state rows outlive
+the job, #470), and late is not upcoming. The card spans the full width now,
+since a timeline reads by its length.
+
+Lanes are listed by next fire, soonest first — the order the rail read in,
+and the one that puts the job about to start beside the strip where its tick
+approaches. The first draft was alphabetical, on the argument that a live view
+reordering its rows makes the eye chase a job; in use, "what is next" won.
+The price is that a lane drops down the list once its job fires. Jobs without
+a next fire follow A–Z. Urgency decides which jobs get one of the ten lanes —
+running, overdue, recent, soonest — and a job filter (a substring, as on the
+Runs screen) narrows the lanes before that cut, so it can reach the jobs the
+cut would hide.
