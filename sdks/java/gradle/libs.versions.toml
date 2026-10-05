@@ -65,6 +65,7 @@ opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref
 # --- Test ---
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 wiremock = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }

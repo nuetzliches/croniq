@@ -8,7 +8,6 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -195,21 +194,16 @@ class ServerUrlsTest {
     /**
      * Resolves the logback logger backing {@code type}.
      *
-     * <p>Not a plain cast of {@code LoggerFactory.getLogger(...)}: SLF4J 2 hands a
-     * {@code SubstituteLogger} to any thread that calls in while another thread is still
-     * initialising the binding, and Gradle runs this module's test classes concurrently —
-     * so the cast failed intermittently on CI. Wait for the real {@link LoggerContext}
-     * instead.
+     * <p>SLF4J is already bound when this runs: {@code BindSlf4jBeforeTests} binds it before
+     * any test class loads. Waiting for the binding here, as this helper used to, covered only
+     * the logger this test attaches to, not the one {@code ServerUrls} holds (#807).
      */
     private static Logger logbackLoggerFor(Class<?> type) {
-        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-        while (!(LoggerFactory.getILoggerFactory() instanceof LoggerContext)) {
-            if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("SLF4J did not bind logback-classic in time");
-            }
-            Thread.onSpinWait();
+        if (!(LoggerFactory.getILoggerFactory() instanceof LoggerContext context)) {
+            throw new IllegalStateException(
+                    "SLF4J is not bound to logback-classic; is BindSlf4jBeforeTests registered?");
         }
-        return ((LoggerContext) LoggerFactory.getILoggerFactory()).getLogger(type);
+        return context.getLogger(type);
     }
 
     private List<String> warnings() {
