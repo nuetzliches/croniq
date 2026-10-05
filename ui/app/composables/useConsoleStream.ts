@@ -21,6 +21,11 @@ export interface LogEvent {
   message: string
   fields: Record<string, unknown>
   /**
+   * Logged before the server started serving (issue #810). The server pins
+   * these and replays them on every connect; absent on tail events.
+   */
+  startup?: boolean
+  /**
    * A monotonic number assigned on arrival, so a row can be keyed by identity.
    *
    * The events themselves carry nothing unique — two log lines in the same
@@ -51,6 +56,17 @@ export function useConsoleStream() {
   let nextSeq = 0
 
   const events = shallowRef<LogEvent[]>([])
+  /**
+   * The server process's startup log, kept apart from `events`.
+   *
+   * Not subject to `MAX_BUFFER` and not held back by a pause: it is the answer
+   * to "did this instance start with the config I expect?", and that answer
+   * does not age. The server sends it again on every connect, so a reconnect
+   * replaces it — after a restart it describes the new process, not the old.
+   */
+  const startup = shallowRef<LogEvent[]>([])
+  /** Set on (re)connect: the next startup event starts a fresh list. */
+  let replaceStartup = false
   const connected = ref(false)
   /** 403: not an admin. A settled answer, not a blip — say so and stop. */
   const forbidden = ref(false)
@@ -87,8 +103,15 @@ export function useConsoleStream() {
   function flush() {
     frame = null
     if (batch.length === 0) return
-    const arrived = batch
+    let arrived = batch
     batch = []
+    if (arrived.some((event) => event.startup)) {
+      const boot = arrived.filter((event) => event.startup)
+      startup.value = replaceStartup ? boot : [...startup.value, ...boot]
+      replaceStartup = false
+      arrived = arrived.filter((event) => !event.startup)
+      if (arrived.length === 0) return
+    }
     if (paused.value) {
       pending.value = trim([...pending.value, ...arrived])
       return
@@ -130,7 +153,10 @@ export function useConsoleStream() {
     // A flat two seconds rather than the exponential default: somebody is
     // watching this, and a thirty-second gap after a blip reads as broken.
     backoff: () => 2000,
-    onOpen: () => (connected.value = true),
+    onOpen: () => {
+      connected.value = true
+      replaceStartup = true
+    },
     onClose: () => (connected.value = false),
     onData: (payload) => {
       try {
@@ -161,6 +187,7 @@ export function useConsoleStream() {
 
   function clear() {
     events.value = []
+    startup.value = []
     pending.value = []
     dropped.value = 0
   }
@@ -169,6 +196,7 @@ export function useConsoleStream() {
 
   return {
     events,
+    startup,
     connected,
     forbidden,
     unavailable,

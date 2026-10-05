@@ -1303,6 +1303,22 @@ by `POST /v1/admin/reload-config` as `pending_restart`, so a caller can report
 `alerts { }` block is compared as a fingerprint, never by value — a channel can
 carry an HMAC signing key, which must not reach the log.
 
+#### Checking what a process started with
+
+The live console (`/console`) opens with a **Startup** section: everything the
+server logged before it began serving. That includes `loading Croniqfile`,
+`configuration loaded jobs=… triggers=… calendar_faults=…`,
+`failure-alert evaluator armed` with the rule names (or `… idle` when there
+are none), and the boot diagnostics. The server keeps these lines apart from
+its 1000-event replay buffer and never evicts them, so they are still there
+days after a restart (issue #810). After a restart the section describes the
+new process, even in a console that stayed open across it.
+
+Reload lines (`Croniqfile reload requested`, the reload summary, the
+`pending_restart` warnings above) are not part of it. They come after startup
+and go to the regular tail, so the Startup section always shows what the
+process booted with, not what it has reloaded since.
+
 #### When a changed schedule takes effect
 
 A job that is already running carries a *pending fire time* — the instant its

@@ -18,6 +18,7 @@ import { formatClockTime, localTimeZone } from '~/lib/format'
  */
 const {
   events,
+  startup,
   connected,
   forbidden,
   unavailable,
@@ -41,10 +42,28 @@ const timeZone = localTimeZone()
  * console serialised every event's field map twice on every patch (issue
  * #671). Doing it here means once per event per filter change instead.
  */
-const filtered = computed(() => {
+const filtered = computed(() => toRows(events.value))
+
+/**
+ * The startup log, filtered the same way (issue #810).
+ *
+ * Its own section above the tail, collapsible, because it answers a different
+ * question: not "what is happening" but "what did this process start with".
+ * The tail cannot be trusted to still hold it once a few dozen jobs have run.
+ */
+const startupRows = computed(() => toRows(startup.value))
+const startupOpen = ref(true)
+const startedAt = computed(() => (startup.value[0] ? formatClockTime(startup.value[0].ts) : ''))
+
+/** What copy and download take: what is on screen, startup section included. */
+const visibleRows = computed(() =>
+  startupOpen.value ? [...startupRows.value, ...filtered.value] : filtered.value,
+)
+
+function toRows(list: LogEvent[]) {
   const needle = search.value.trim().toLowerCase()
   const rows = []
-  for (const event of events.value) {
+  for (const event of list) {
     if (!activeLevels.value.has(event.level)) continue
     if (
       needle &&
@@ -66,7 +85,7 @@ const filtered = computed(() => {
     })
   }
   return rows
-})
+}
 
 function toggleLevel(level: string) {
   const next = new Set(activeLevels.value)
@@ -110,7 +129,7 @@ function onScroll() {
   following.value = distance < 40
 }
 
-watch(filtered, async () => {
+watch([filtered, startupRows], async () => {
   if (!following.value) return
   await nextTick()
   const element = list.value
@@ -139,7 +158,7 @@ function asText(event: LogEvent): string {
 async function copyAll() {
   try {
     await navigator.clipboard.writeText(
-      filtered.value.map((row) => asText(row.event)).join('\n'),
+      visibleRows.value.map((row) => asText(row.event)).join('\n'),
     )
     copied.value = true
     setTimeout(() => (copied.value = false), 1500)
@@ -156,7 +175,7 @@ function downloadNdjson() {
   // pre-sliced timestamp alongside the real fields (issue #723). `seq` goes
   // too: it is assigned on arrival to key the rows and was never sent by the
   // server, so it has no business in an export.
-  const ndjson = filtered.value
+  const ndjson = visibleRows.value
     .map((row) => {
       const record: Partial<LogEvent> = { ...row.event }
       delete record.seq
@@ -228,7 +247,8 @@ const fieldText = (event: LogEvent): string =>
           title="Times are shown in your browser's time zone. Copy and download keep UTC."
         >{{ timeZone }}</span>
         <span class="cq-num text-xs text-muted">
-          {{ filtered.length }} / {{ events.length }}
+          <!-- Startup section included: the count is what the screen holds. -->
+          {{ filtered.length + startupRows.length }} / {{ events.length + startup.length }}
         </span>
         <UButton
           :icon="paused ? 'i-lucide-play' : 'i-lucide-pause'"
@@ -310,31 +330,83 @@ const fieldText = (event: LogEvent): string =>
         @scroll="onScroll"
       >
         <AppEmpty
-          v-if="filtered.length === 0"
+          v-if="filtered.length === 0 && startupRows.length === 0"
           size="tight"
           icon="i-lucide-terminal"
           :title="
             forbidden
               ? 'Nothing to show'
-              : events.length === 0
+              : events.length + startup.length === 0
                 ? 'Waiting for events'
                 : 'Nothing matches'
           "
           :description="
             forbidden
               ? 'The stream did not open for this session.'
-              : events.length === 0
+              : events.length + startup.length === 0
                 ? 'The stream is open and the server has not said anything yet. It will appear here as it happens.'
                 : 'Every event so far is filtered out by the level buttons or the search.'
           "
         />
+
+        <template v-else-if="startup.length">
+          <button
+            type="button"
+            class="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-default bg-elevated px-3 py-1.5 text-left font-sans text-muted hover:text-default"
+            :aria-expanded="startupOpen"
+            aria-controls="console-startup"
+            @click="startupOpen = !startupOpen"
+          >
+            <UIcon
+              :name="startupOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+              class="size-3.5"
+            />
+            <span class="font-medium text-default">Startup</span>
+            <span class="cq-num">
+              {{ startupRows.length }}{{ startupRows.length === startup.length ? '' : ` of ${startup.length}` }}
+              event{{ startup.length === 1 ? '' : 's' }}
+            </span>
+            <span
+              class="cq-num ml-auto text-dimmed"
+              title="When this server process logged its first line"
+            >started {{ startedAt }}</span>
+          </button>
+          <div
+            v-if="startupOpen"
+            id="console-startup"
+            class="border-b border-default bg-muted/40"
+          >
+            <div
+              v-for="row in startupRows"
+              :key="row.event.seq"
+              class="flex items-start gap-3 border-l-2 px-3 py-1 hover:bg-elevated"
+              :class="row.gutter"
+            >
+              <span
+                class="cq-num shrink-0 text-dimmed"
+                :title="`${row.event.ts} (UTC)`"
+              >{{ row.time }}</span>
+              <span
+                class="w-11 shrink-0 font-medium uppercase"
+                :class="levelClass(row.event.level)"
+              >{{ row.event.level }}</span>
+              <span class="w-52 shrink-0 truncate text-muted">{{ row.event.target }}</span>
+              <span class="min-w-0 flex-1 break-words">
+                {{ row.event.message }}
+                <span
+                  v-if="row.fields"
+                  class="ml-2 text-muted"
+                >{{ row.fields }}</span>
+              </span>
+            </div>
+          </div>
+        </template>
 
         <!-- Keyed by `seq`, not by index. With an index key every arrival
              shifts every key once the buffer is full, and Vue re-patches all
              2000 rows to show one new line (issue #671). -->
         <div
           v-for="row in filtered"
-          v-else
           :key="row.event.seq"
           class="flex items-start gap-3 border-l-2 px-3 py-1 hover:bg-elevated"
           :class="row.gutter"
@@ -363,7 +435,7 @@ const fieldText = (event: LogEvent): string =>
       <!-- Only while detached: it says both that you are not following and
            how to get back, in one control. -->
       <UButton
-        v-if="!following && filtered.length > 0"
+        v-if="!following && (filtered.length > 0 || startupRows.length > 0)"
         class="absolute right-4 bottom-4 shadow-lg"
         icon="i-lucide-arrow-down"
         size="xs"

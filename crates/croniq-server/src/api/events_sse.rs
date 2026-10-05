@@ -3,7 +3,8 @@
 //!
 //! Each event is emitted as an `event: log` frame with a JSON-encoded
 //! [`crate::live_console::ConsoleEvent`] payload. On connect, the server
-//! first replays a bounded snapshot of recent events so a freshly opened
+//! first replays the pinned startup log (#810, always, whatever `snapshot`
+//! says) and then a bounded snapshot of recent events, so a freshly opened
 //! console shows context; the live tail then continues from the next
 //! event the tracing subscriber observes.
 //!
@@ -41,8 +42,10 @@ pub struct EventStreamQuery {
     /// Valid values: `trace`, `debug`, `info`, `warn`, `error`.
     #[serde(default)]
     pub levels: Option<String>,
-    /// How many backfill events to ship before the live tail starts.
-    /// Capped at `SNAPSHOT_MAX`.
+    /// How many recent events to ship before the live tail starts.
+    /// Capped at `SNAPSHOT_MAX`. Does not count or limit the startup log,
+    /// which is replayed in full on every connect — `snapshot=0` too, so a
+    /// reconnecting dashboard learns about a server restart.
     #[serde(default)]
     pub snapshot: Option<usize>,
 }
@@ -106,12 +109,13 @@ pub async fn handle_events_stream(
         audit::record(store, &ctx, "console.opened", "console", None, None);
     }
 
-    let snapshot = hub.snapshot(snapshot_size);
+    let backfill = hub.backfill(snapshot_size);
     let mut rx = hub.subscribe();
 
     let stream = async_stream::stream! {
-        // Replay backfill first, filtered.
-        for ev in snapshot {
+        // Replay backfill first, filtered: the startup log, then the recent
+        // events that are not part of it.
+        for ev in backfill.startup.into_iter().chain(backfill.recent) {
             if level_matches(&level_filter, &ev.level) {
                 yield Ok(into_sse(&ev));
             }
