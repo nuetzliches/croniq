@@ -41,7 +41,18 @@ export default defineConfig({
     video: 'off',
   },
 
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        // CI runs on the runner image's preinstalled Google Chrome, so the job
+        // neither downloads a browser nor apt-installs its libraries (#808).
+        // Local runs keep Playwright's bundled Chromium.
+        ...(process.env.CI ? { channel: 'chrome' } : {}),
+      },
+    },
+  ],
 
   webServer: {
     command: 'node scripts/e2e-stack.mjs',
