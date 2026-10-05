@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The Runs screen jumps to the next failure.** With no state filter set and
+  at least one failed or dead run loaded, a "Next failure" button in the
+  filter bar shows how many there are and scrolls to the next one below the
+  cursor, wrapping back to the top after the last. It moves the j/k cursor,
+  so Enter opens the run it landed on. It counts only the rows on screen; a
+  failure further back needs "Load older" first.
+
+### Changed
+
+- **The Runs screen shows a job or runner deep link as a chip.** A
+  `?job_key=` or `?runner_id=` filter used to appear as a second, unlabelled
+  read-only input next to the search box, cut off at its width and removable
+  only with every other filter. It is now a labelled chip ("Job",
+  "Runner") that sizes to the key, shows the full value on hover, and has its
+  own ✕ that drops just that filter. The filters themselves are unchanged:
+  `job_key` stays an exact match, the box stays a search.
+
 ## [0.44.0] - 2026-10-01
 
 ### Added
