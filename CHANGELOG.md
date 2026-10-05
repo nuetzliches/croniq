@@ -17,6 +17,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The conformance schema check runs once, and only when a case changed.**
+  Each of the five SDK workflows carried its own copy of the
+  `Conformance YAML schema` job, and all five ran on every PR, including
+  PRs that touched no SDK. It now lives only in `dotnet-sdk-ci.yml`, whose
+  aggregator is a required check, and runs when `sdks/conformance/**`
+  changes. The required-check names are unchanged (#805).
+
 - **The e2e smoke job runs on the runner's Chrome.** CI no longer installs
   Playwright's Chromium; the suite uses the Google Chrome that ships with
   the ubuntu-latest image (`channel: 'chrome'`, CI only). The browser
