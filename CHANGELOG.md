@@ -17,6 +17,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Docker layer caches live in GHCR, not in the Actions cache.** The
+  `mode=max` buildx caches of `ci.yml` and `release.yml` had grown to
+  6.6 GB of the repository's 10 GB Actions cache, so GitHub evicted the
+  Rust caches and the v0.44.0 release built its Windows binary cold. They
+  are now registry caches, stored as `buildcache-<platform>` and
+  `buildcache-release-<platform>` tags in `ghcr.io/nuetzliches/croniq`.
+  Those tags are build cache, not images: they cannot be run (#809).
+
 - **The conformance schema check runs once, and only when a case changed.**
   Each of the five SDK workflows carried its own copy of the
   `Conformance YAML schema` job, and all five ran on every PR, including

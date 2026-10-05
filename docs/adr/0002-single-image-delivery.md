@@ -43,7 +43,8 @@ supported default for quickstart, demo and single-host deployments.
 - ~~**Any UI change rebuilds everything.** A CSS fix goes through the Rust
   release build, `wasm-pack`, and the npm install, per platform.~~
   **Corrected 2026-09-09 — this was wrong.** The buildx cache
-  (`type=gha, mode=max, scope=docker-<platform>`) keeps the `rust-builder`
+  (`mode=max`, one per platform; in the GHA cache then, in GHCR since #809)
+  keeps the `rust-builder`
   stage across runs, and a change under the dashboard tree invalidates only
   its `COPY` and what follows it. Measured across six consecutive `main` builds: a UI-only
   change costs **72–99 s**, a change under `crates/` costs **433 s**, and a

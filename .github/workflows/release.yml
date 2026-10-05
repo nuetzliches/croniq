@@ -201,7 +201,7 @@ jobs:
     # arm64 on amd64. The previous single-runner setup spent ~55 of its 65
     # minutes inside QEMU compiling Rust deps for arm64; native runners
     # cut that to <10 min cold and well under 1 min warm, with each arch
-    # using its own GHA cache scope.
+    # using its own layer cache.
     #
     # Same pattern as ci.yml::docker — each matrix job pushes the per-arch
     # image *by digest* (no tag), and docker-merge below stitches the
@@ -315,13 +315,15 @@ jobs:
           # are uploaded.
           target: ${{ steps.var.outputs.target }}
           outputs: type=image,name=${{ steps.var.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-          # Per-arch cache scopes so amd64 and arm64 don't fight over the
+          # Per-arch cache refs so amd64 and arm64 don't fight over the
           # same slot. The `release-` prefix keeps these distinct from
-          # ci.yml's `docker-<plat>` scope, since release builds embed a
+          # ci.yml's `buildcache-<plat>` refs, since release builds embed a
           # tag-driven Cargo.toml version bump and would otherwise pollute
-          # the main-branch CI cache (and vice versa).
-          cache-from: type=gha,scope=docker-release-${{ steps.plat.outputs.name }}
-          cache-to: type=gha,mode=max,scope=docker-release-${{ steps.plat.outputs.name }}
+          # the main-branch CI cache (and vice versa). Registry rather than
+          # Actions cache, and tags in the image's own package: see the
+          # comment on ci.yml's cache-from (#809).
+          cache-from: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-release-${{ steps.plat.outputs.name }}
+          cache-to: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-release-${{ steps.plat.outputs.name }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
           # …except `ca-provider`, for the reason ci.yml gives: its layer is
           # keyed on the base digest plus the instruction text, so a cached one
           # keeps whatever apt served on the day it was first built. On this
@@ -342,7 +344,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx build --target server-runtime --load \
-            --cache-from type=gha,scope=docker-release-${{ steps.plat.outputs.name }} \
+            --cache-from type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache-release-${{ steps.plat.outputs.name }} \
             --no-cache-filter ca-provider \
             -t croniq-ca-check:release .
           shipped=$(docker run --rm --entrypoint sha256sum croniq-ca-check:release \
