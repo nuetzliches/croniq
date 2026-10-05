@@ -386,34 +386,15 @@ jobs:
       - name: Build the dashboard
         run: npm run build
         working-directory: ui
-      # The browser is ~130 MB and identical for a given Playwright version, so
-      # downloading it on every run is 20s of the e2e job's 113s spent fetching
-      # a file that did not change (#680).
-      #
-      # Keyed on the resolved version rather than on the lockfile hash: any
-      # dependency bump changes the lockfile, and almost none of them change
-      # the browser.
-      - name: Resolve the Playwright version
-        id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-        working-directory: ui
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: pw-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
-      - name: Install Playwright browser
-        # `--with-deps` installs system libraries outside the cached directory,
-        # so it still runs on a hit — it is apt work, not a download, and it is
-        # the part that cannot be cached. On a miss this also populates the
-        # cache for the next run.
-        run: |
-          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
-            npx playwright install-deps chromium
-          else
-            npx playwright install --with-deps chromium
-          fi
-        working-directory: ui
+      # No browser install step: in CI the suite runs on the Google Chrome
+      # that the ubuntu-latest image ships, system libraries included
+      # (`channel: 'chrome'` in playwright.config.ts). Installing Playwright's
+      # own Chromium was cached since #680, but `install-deps` still ran apt
+      # against the Ubuntu mirrors on every run, and that step alone varied
+      # between 0 s and 6+ min (#808). The trade-off is that Chrome follows
+      # the runner image rather than the Playwright version, which is fine for
+      # a smoke suite. If the two ever stop getting along, the fallback is the
+      # mcr.microsoft.com/playwright:v<version>-noble job container.
       - name: Run the smoke suite
         run: npm run test:e2e
         working-directory: ui

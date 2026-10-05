@@ -17,6 +17,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The e2e smoke job runs on the runner's Chrome.** CI no longer installs
+  Playwright's Chromium; the suite uses the Google Chrome that ships with
+  the ubuntu-latest image (`channel: 'chrome'`, CI only). The browser
+  itself was cached, but its apt dependencies were installed on every run,
+  and that step alone took anywhere from a few seconds to over six minutes.
+  Local runs still use Playwright's bundled Chromium (#808).
+
 - **The Runs screen shows a job or runner deep link as a chip.** A
   `?job_key=` or `?runner_id=` filter used to appear as a second, unlabelled
   read-only input next to the search box, cut off at its width and removable
