@@ -40,4 +40,6 @@ dependencies {
   // On the compile classpath (not just runtime) so ServerUrlsTest can attach a
   // ListAppender and assert the insecure-transport warning is actually emitted.
   testImplementation(libs.logback.classic)
+  // For BindSlf4jBeforeTests, a LauncherSessionListener (#807).
+  testImplementation(libs.junit.platform.launcher)
 }
