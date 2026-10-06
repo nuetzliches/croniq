@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-06
+
 ### Added
 
 - **`coalesce schedule` folds scheduled fires into a queued run.** For a
