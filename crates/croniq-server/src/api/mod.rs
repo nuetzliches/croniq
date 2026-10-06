@@ -1015,6 +1015,44 @@ async fn handle_poll(
         }
     }
 
+    // A claim this runner holds but has stopped reporting was never started
+    // (issue #817): the response carrying it was lost on the way, or the
+    // runner discarded it. Release it now rather than after the stale-claim
+    // reaper's `timeout + grace`, which for a `singleton` job holds every
+    // later fire. Skipped on a takeover, which requeues all of the previous
+    // session's claims anyway. The candidates are found in memory, so a
+    // healthy runner's poll costs no store query here.
+    if !matches!(outcome, RegisterOutcome::TookOver { .. })
+        && let Some(ref store) = state.store
+    {
+        let dsl_jobs = state.dsl_jobs.clone();
+        let released = crate::watchdog::release_unreported_claims(
+            store,
+            &state.runner,
+            &req.runner_id,
+            &req.inflight,
+            Utc::now(),
+            |job_key| {
+                if let Some(jobs) = dsl_jobs.as_ref()
+                    && let Ok(jobs) = jobs.try_read()
+                    && let Some(c) = jobs.iter().find(|j| j.key == job_key)
+                {
+                    return Some(c.clone());
+                }
+                match store.get_job_definition(job_key) {
+                    Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                    _ => None,
+                }
+            },
+        )
+        .await;
+        if !released.is_empty() {
+            state
+                .watchdog_counters
+                .add_stale_claim_requeued(released.len() as u64);
+        }
+    }
+
     let capacity = (req.max_inflight as usize).saturating_sub(req.inflight.len());
 
     if capacity == 0 {
@@ -6259,6 +6297,155 @@ mod tests {
         .await;
         assert_eq!(status, 409);
         assert_eq!(body["renewed"], false);
+    }
+
+    // ─── #817: a claim the runner stopped reporting is released ───────────
+    //
+    // A work assignment whose poll response never reached the runner left the
+    // execution `claimed` until the stale-claim reaper's `timeout + grace`,
+    // holding every later fire of a `singleton` job. The runner's next polls
+    // already say it does not hold the execution; these tests pin that the
+    // poll handler acts on it, and only once the hand-off had time to land.
+
+    /// Record a lease for `exec` held by `runner_id`, last refreshed
+    /// `age_secs` ago — what a dispatch `age_secs` ago leaves behind when no
+    /// poll has reported the execution since.
+    async fn backdate_lease(
+        state: &Arc<ServerState>,
+        runner_id: &str,
+        exec: uuid::Uuid,
+        age_secs: i64,
+    ) {
+        state.runner.lease_renewals.write().await.insert(
+            exec.to_string(),
+            croniq_runner::LeaseRenewal {
+                runner_id: runner_id.to_string(),
+                renewed_at: Utc::now() - chrono::Duration::seconds(age_secs),
+            },
+        );
+    }
+
+    fn poll_reporting(runner_id: &str, inflight: &[uuid::Uuid]) -> serde_json::Value {
+        let mut body = poll_body(runner_id, "iid-1");
+        body["inflight"] =
+            serde_json::json!(inflight.iter().map(|id| id.to_string()).collect::<Vec<_>>());
+        body
+    }
+
+    #[tokio::test]
+    async fn poll_requeues_a_claim_its_runner_stopped_reporting() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        let lost = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        let held = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        backdate_lease(&state, "worker-1", lost, 90).await;
+        backdate_lease(&state, "worker-1", held, 90).await;
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_reporting("worker-1", &[held]),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        let requeued = store.get_execution(lost).unwrap().unwrap();
+        assert_eq!(requeued.state, ExecutionState::Queued);
+        assert_eq!(requeued.runner_id, None);
+        assert_eq!(
+            requeued.attempt, 1,
+            "a lost hand-off must not burn an attempt"
+        );
+        assert!(
+            !state
+                .runner
+                .lease_renewals
+                .read()
+                .await
+                .contains_key(&lost.to_string()),
+            "the lost claim's lease ends with it"
+        );
+        let logs = store.read_logs(lost, 10).unwrap();
+        assert_eq!(logs.len(), 1, "the lost claim stays visible in the log");
+        assert_eq!(logs[0].level, "warn");
+        assert_eq!(
+            logs[0].fields.get("runner_id").map(String::as_str),
+            Some("worker-1")
+        );
+
+        // The execution the runner still reports is left alone.
+        assert_eq!(
+            store.get_execution(held).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+    }
+
+    /// A claim younger than the grace window may simply not have reached the
+    /// runner yet — a poll sent before the assignment landed does not list it.
+    #[tokio::test]
+    async fn poll_keeps_a_recent_claim_the_runner_has_not_reported_yet() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        backdate_lease(&state, "worker-1", exec, 5).await;
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        assert_eq!(
+            store.get_execution(exec).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+    }
+
+    /// Only the claiming runner's own polls speak for its claims: another
+    /// runner's poll, which naturally does not list them, releases nothing.
+    #[tokio::test]
+    async fn poll_does_not_release_another_runners_claim() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        for runner_id in ["worker-1", "worker-2"] {
+            post_as(
+                server_router(Arc::clone(&state)),
+                "/v1/poll",
+                &owner,
+                poll_body(runner_id, "iid-1"),
+            )
+            .await;
+        }
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        backdate_lease(&state, "worker-1", exec, 90).await;
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-2", "iid-1"),
+        )
+        .await;
+        assert_eq!(
+            store.get_execution(exec).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
     }
 
     /// One credential shared by many runners — the pre-upgrade deployment

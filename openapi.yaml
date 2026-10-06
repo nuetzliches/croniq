@@ -1948,6 +1948,11 @@ paths:
         without polling and a `max_inflight=1` runner could never receive
         a cancel until the handler finished naturally — that limitation
         is now gone.
+
+        **`inflight` must list every execution the runner holds (issue
+        #817).** It is the runner's claim report: a claim of this runner
+        that no poll has listed (and no `POST /v1/work/renew` has named)
+        for 60 seconds is treated as lost in transit and requeued.
       requestBody:
         content:
           application/json:

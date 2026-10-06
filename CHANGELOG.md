@@ -61,6 +61,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   own ✕ that drops just that filter. The filters themselves are unchanged:
   `job_key` stays an exact match, the box stays a search.
 
+### Fixed
+
+- **A claim the runner never received no longer blocks a `singleton` job
+  for `timeout + grace`.** When a poll response carrying work did not reach
+  the runner (client-side poll timeout, dropped connection) or the runner
+  discarded it, the execution stayed `claimed` until the stale-claim reaper's
+  `timeout + grace` — seven minutes for a `timeout 5 minutes` job — and every
+  later fire of a `singleton` job queued behind it. Nothing logged the loss
+  on either side. The runner's own polls already said it did not hold the
+  execution: every poll lists what the runner has in flight. The poll handler
+  now requeues a claim its runner has not listed for 60 seconds, keeping the
+  attempt number, with a `requeued claimed execution its runner no longer
+  reports in flight` warning and an `execution.unreported_claim_requeued`
+  audit event. Both this path and the stale-claim reaper now write a `warn`
+  line into the execution's own log naming the runner and time of the lost
+  claim, which the second claim used to overwrite without a trace. The
+  requeues count towards
+  `croniq_watchdog_requeued_total{reason="stale_claim"}` (#817).
+
 ## [0.44.0] - 2026-10-01
 
 ### Added
