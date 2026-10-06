@@ -47,6 +47,12 @@ export interface JobDefinition {
   dead_letter_operator_hint: string | null
   dead_letter_replay_max_age: string | null
   tags: string[]
+  /**
+   * Dispatch priority (#819, #826): set only for the two non-default levels,
+   * absent for `normal`. Croniqfile jobs only — an API- or SDK-registered job
+   * is always `normal`. Older servers omit it.
+   */
+  priority?: 'low' | 'high'
 }
 
 export interface TagCount {
