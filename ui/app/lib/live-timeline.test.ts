@@ -230,3 +230,21 @@ describe('formatSpan', () => {
     expect(formatSpan(input)).toBe(expected)
   })
 })
+
+describe('queued lanes', () => {
+  it('remembers the oldest fire still waiting for a runner', () => {
+    const waiting = { state: 'queued', claimed_at: null, completed_at: null }
+    const { lanes } = buildLanes(
+      [
+        run({ id: 'w1', job_key: 'mail:receive', ...waiting, fire_at: iso(-3_000) }),
+        run({ id: 'w2', job_key: 'mail:receive', ...waiting, fire_at: iso(-1_000) }),
+        run({ id: 'done', job_key: 'sms:receive' }),
+      ],
+      [],
+      T,
+      60_000,
+    )
+    expect(lanes.find((l) => l.jobKey === 'mail:receive')!.queuedSince).toBe(T - 3_000)
+    expect(lanes.find((l) => l.jobKey === 'sms:receive')!.queuedSince).toBeNull()
+  })
+})

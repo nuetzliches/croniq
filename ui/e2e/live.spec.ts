@@ -81,6 +81,10 @@ test.describe('live surfaces', () => {
     await app.goto('/')
     const state = app.getByTestId('live-state')
     await expect(state).toHaveText(/live/i, { timeout: 20_000 })
+    // The strip reaches past "now" into the forecast: the demo jobs fire
+    // within its five minutes, so there is something to the right of the line.
+    await expect(app.getByTestId('live-range-now')).toBeVisible()
+    await expect(app.getByTestId('live-range-forecast').first()).toBeVisible({ timeout: 20_000 })
 
     await app.getByTestId('live-pause').click()
     await expect(state).toHaveText(/paused/i)

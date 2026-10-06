@@ -34,6 +34,13 @@ export interface LiveFrame {
  */
 export const SPAN_MS = 300_000
 
+/**
+ * How far the range selector's strip reaches past "now": the schedule's
+ * forecast, so the strip shows what is coming as well as what was, with
+ * "now" a line between them rather than its edge.
+ */
+export const FUTURE_SPAN_MS = 300_000
+
 /** The narrowest window: as narrow as a quarter-second tick still reads as live. */
 export const MIN_WINDOW = 5_000
 
@@ -133,6 +140,12 @@ export interface Lane {
   /** The job's next scheduled fire, wherever it falls. */
   next: number | null
   running: boolean
+  /**
+   * The fire time of the oldest run of this job still waiting for a runner,
+   * or `null`. A wait is often a second or two — a sliver at the "now" line —
+   * so the lane says so in words as well.
+   */
+  queuedSince: number | null
   overdue: boolean
   /** `active`, `paused`, … — `null` for a job known only from its runs. */
   status: string | null
@@ -183,6 +196,7 @@ export function buildLanes(
         bars: [],
         next: null,
         running: false,
+        queuedSince: null,
         overdue: false,
         status: null,
       }
@@ -201,6 +215,11 @@ export function buildLanes(
     entry.next = job.status === 'active' && !Number.isNaN(next) ? next : null
   }
   for (const run of runs) {
+    const fire = Date.parse(run.fire_at)
+    if (run.claimed_at === null && run.completed_at === null && fire <= now) {
+      const entry = lane(run.job_key)
+      entry.queuedSince = entry.queuedSince === null ? fire : Math.min(entry.queuedSince, fire)
+    }
     for (const bar of barsOf(run)) {
       if (bar.start > now) continue
       if (bar.end !== null && bar.end < from) continue

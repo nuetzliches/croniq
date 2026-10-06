@@ -38,6 +38,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to now. Hovering the track holds the motion, so tooltips can be read and
   short runs clicked (#829).
 
+  The strip also covers the next five minutes of forecast (the schedule's
+  fires, in outline), with "now" a marked line between the past and the
+  forecast instead of the strip's edge. For that,
+  `GET /v1/dashboard/forecast` takes an optional `bucket_seconds` (at least
+  5) for sub-minute buckets, and its response carries `bucket_seconds`.
+
+- **A run waiting for a runner is visible while it waits.** Its wait used to
+  show only afterwards: a second or two at the "now" line is a few pixels,
+  under the line's own pulse. While a run waits:
+  - its wait bar is solid and full height;
+  - a yellow marker sits on the line;
+  - the lane label reads `queued`.
+
+  The "Next hour" histogram no longer shifts sideways when the header's
+  status or counts change width.
+
 ## [0.45.0] - 2026-10-06
 
 ### Added

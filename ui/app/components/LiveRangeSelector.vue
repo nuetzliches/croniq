@@ -2,24 +2,31 @@
 import { computed, ref, useTemplateRef } from 'vue'
 import { useElementSize } from '@vueuse/core'
 import {
+  FUTURE_SPAN_MS,
   SPAN_MS,
   dragRange,
   formatOffset,
   formatSpan,
+  futureSpan,
   type DensityBucket,
   type ViewRange,
 } from '~/lib/live-timeline'
 
 /**
- * The live timeline's window, chosen on an overview of the whole span the
- * stream covers (issue #829). It replaced a select of five fixed widths,
- * which could neither pick a width in between nor look at a moment that had
- * already passed.
+ * The live timeline's window, chosen on an overview of the stream's past and
+ * the schedule's near future (issue #829). It replaced a select of five fixed
+ * widths, which could neither pick a width in between nor look at a moment
+ * that had already passed.
  *
- * The strip is a density map of the last five minutes; the selection on it
- * is the part the track above shows. Its edges resize it, its body moves it.
- * Moving it off the right edge leaves "now" behind, which the parent treats
- * as a pause — what it shows is then a past moment, held still.
+ * Left of the "now" line the strip is a density map of the last five minutes
+ * (runs started per slice, failures in red); right of it, the forecast — the
+ * fires the schedule has coming. "Now" is a line inside the strip, not its
+ * edge, so the strip reads the way the track above does.
+ *
+ * The selection is the part the track shows: its window in solid, and the
+ * strip of near future the track draws past its line in outline. Its edges
+ * resize the window, its body moves it. Moving it off "now" makes the view a
+ * past moment, which the parent holds still.
  *
  * Every drag is computed from where it started (`dragRange`), not summed per
  * pointer event, so a drag that runs into a limit and comes back lands
@@ -28,31 +35,72 @@ import {
 
 const props = defineProps<{
   range: ViewRange
+  /** Runs per slice of the past span, ending at `at`. */
   buckets: DensityBucket[]
+  /** Fires per slice of the future, by timestamp. */
+  forecast: { start: number; end: number; count: number }[]
+  /** The strip's "now": the live clock, or the moment the view froze. */
+  at: number
 }>()
 
 const emit = defineEmits<{
   'update:range': [range: ViewRange]
 }>()
 
+const TOTAL = SPAN_MS + FUTURE_SPAN_MS
+
 const strip = useTemplateRef<HTMLElement>('strip')
 const { width } = useElementSize(strip)
 
-const peak = computed(() => Math.max(1, ...props.buckets.map((b) => b.count)))
+/** Percent of the strip from its left edge, for an offset from "now". */
+const pct = (offsetMs: number) => ((SPAN_MS + offsetMs) / TOTAL) * 100
+const nowPct = pct(0)
 
-/** Percent of the strip from its left edge, for an offset from its right edge. */
-const pct = (offsetMs: number) => ((SPAN_MS + offsetMs) / SPAN_MS) * 100
 const left = computed(() => pct(props.range.endOffsetMs - props.range.windowMs))
 const right = computed(() => pct(props.range.endOffsetMs))
+const ahead = computed(() =>
+  Math.min(100, pct(props.range.endOffsetMs + futureSpan(props.range.windowMs))),
+)
 
-const ticks = [-5, -4, -3, -2, -1].map((m) => ({ at: pct(m * 60_000), label: formatOffset(m * 60_000) }))
+/** One scale for both halves, so a busy past and a busy future compare. */
+const peak = computed(() =>
+  Math.max(1, ...props.buckets.map((b) => b.count), ...props.forecast.map((b) => b.count)),
+)
+const height = (count: number) => `${count ? Math.max(12, (count / peak.value) * 100) : 0}%`
+
+const pastBars = computed(() =>
+  props.buckets.map((b) => ({
+    key: b.start,
+    left: pct(b.start - props.at),
+    width: (SPAN_MS / props.buckets.length / TOTAL) * 100,
+    count: b.count,
+    failed: b.failed,
+  })),
+)
+const futureBars = computed(() =>
+  props.forecast
+    .map((b) => ({
+      key: b.start,
+      left: pct(b.start - props.at),
+      width: ((b.end - b.start) / TOTAL) * 100,
+      count: b.count,
+    }))
+    // A forecast fetched a few seconds ago starts left of "now" by that much;
+    // what has passed is the past's to show.
+    .filter((b) => b.left >= nowPct && b.left < 100),
+)
+
+const ticks = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5].map((m) => ({
+  at: pct(m * 60_000),
+  label: m < 0 ? formatOffset(m * 60_000) : `+${m}m`,
+}))
 
 type Part = 'move' | 'start' | 'end'
 let drag: { part: Part; x: number; from: ViewRange } | null = null
 const dragging = ref<Part | null>(null)
 
 function msPerPx() {
-  return width.value > 0 ? SPAN_MS / width.value : 0
+  return width.value > 0 ? TOTAL / width.value : 0
 }
 
 function grab(part: Part, event: PointerEvent, from = props.range) {
@@ -73,11 +121,15 @@ function onUp() {
   dragging.value = null
 }
 
-/** A press on the strip outside the selection centres the selection there and keeps dragging it. */
+/**
+ * A press on the strip outside the selection puts the selection's end there
+ * and keeps dragging it. In the future half that is "now": the window cannot
+ * end in a future nothing has happened in yet.
+ */
 function onStripDown(event: PointerEvent) {
   if (!strip.value || event.button !== 0) return
   const box = strip.value.getBoundingClientRect()
-  const at = ((event.clientX - box.left) / box.width) * SPAN_MS - SPAN_MS
+  const at = ((event.clientX - box.left) / box.width) * TOTAL - SPAN_MS
   const centred = dragRange(props.range, 'move', at + props.range.windowMs / 2 - props.range.endOffsetMs)
   emit('update:range', centred)
   grab('move', event, centred)
@@ -102,86 +154,125 @@ const description = computed(() => {
 
 <template>
   <div class="mt-3 select-none">
-    <div
-      ref="strip"
-      class="relative h-9 cursor-crosshair overflow-hidden rounded-md border border-default bg-elevated/40"
-      @pointerdown.self="onStripDown"
-      @pointermove="onMove"
-      @pointerup="onUp"
-      @pointercancel="onUp"
-    >
-      <!-- Activity over the span: runs started per slice, failures on top. -->
-      <div class="pointer-events-none absolute inset-x-0 bottom-0 flex h-full items-end gap-px px-px pt-1">
+    <!-- Wrapper, so the "now" line can reach past the strip's clipped edges. -->
+    <div class="relative">
+      <div
+        ref="strip"
+        class="relative h-10 cursor-crosshair overflow-hidden rounded-md border border-default bg-elevated/40"
+        @pointerdown.self="onStripDown"
+        @pointermove="onMove"
+        @pointerup="onUp"
+        @pointercancel="onUp"
+      >
+        <!-- The future half, tinted, so the line has two sides. -->
         <div
-          v-for="bucket in buckets"
-          :key="bucket.start"
-          class="relative min-w-0 flex-1"
-          :style="{ height: `${bucket.count ? Math.max(12, (bucket.count / peak) * 100) : 0}%` }"
+          class="pointer-events-none absolute inset-y-0 right-0 bg-primary/5"
+          :style="{ left: `${nowPct}%` }"
+        />
+
+        <!-- The past: runs started per slice, failures on top. -->
+        <div
+          v-for="bar in pastBars"
+          :key="`p-${bar.key}`"
+          class="pointer-events-none absolute bottom-0"
+          :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
         >
           <div class="absolute inset-0 rounded-t-[1px] bg-primary/35" />
           <div
-            v-if="bucket.failed"
+            v-if="bar.failed"
             class="absolute inset-x-0 bottom-0 bg-error/70"
-            :style="{ height: `${(bucket.failed / bucket.count) * 100}%` }"
+            :style="{ height: `${(bar.failed / bar.count) * 100}%` }"
+          />
+        </div>
+
+        <!-- The forecast: fires the schedule has coming, outlined — not yet runs. -->
+        <div
+          v-for="bar in futureBars"
+          :key="`f-${bar.key}`"
+          class="pointer-events-none absolute bottom-0 rounded-t-[1px] border border-b-0 border-dashed border-primary/50 bg-primary/10"
+          :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
+          data-testid="live-range-forecast"
+        />
+
+        <!-- Outside the selection is dimmed, so the selection reads as the view. -->
+        <div
+          class="pointer-events-none absolute inset-y-0 left-0 bg-default/60"
+          :style="{ width: `${left}%` }"
+        />
+        <div
+          class="pointer-events-none absolute inset-y-0 right-0 bg-default/60"
+          :style="{ left: `${ahead}%` }"
+        />
+
+        <!-- The near future the track draws past its line, in outline. -->
+        <div
+          class="pointer-events-none absolute inset-y-0 border-y-2 border-r-2 border-dashed border-primary/40"
+          :style="{ left: `${right}%`, width: `${Math.max(0, ahead - right)}%` }"
+        />
+
+        <!-- The selection: body moves it, edges resize it. -->
+        <div
+          class="absolute inset-y-0 border-y-2 border-primary/70 bg-primary/5 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          :class="dragging === 'move' ? 'cursor-grabbing' : 'cursor-grab'"
+          :style="{ left: `${left}%`, width: `${right - left}%` }"
+          tabindex="0"
+          role="slider"
+          aria-label="Visible time range — arrow keys move it"
+          :aria-valuetext="description"
+          :aria-valuenow="range.endOffsetMs"
+          :aria-valuemin="range.windowMs - SPAN_MS"
+          :aria-valuemax="0"
+          data-testid="live-range-selection"
+          @pointerdown.stop="grab('move', $event)"
+          @keydown="onKey('move', $event)"
+        >
+          <span
+            v-for="part in (['start', 'end'] as const)"
+            :key="part"
+            class="absolute inset-y-0 w-2.5 cursor-ew-resize rounded-sm bg-primary/80 outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary"
+            :class="part === 'start' ? '-left-1.5' : '-right-1.5'"
+            tabindex="0"
+            role="slider"
+            :aria-label="part === 'start' ? 'Start of the visible range' : 'End of the visible range'"
+            :aria-valuetext="description"
+            :aria-valuenow="part === 'start' ? range.endOffsetMs - range.windowMs : range.endOffsetMs"
+            :aria-valuemin="-SPAN_MS"
+            :aria-valuemax="0"
+            :data-testid="`live-range-${part}`"
+            @pointerdown.stop="grab(part, $event)"
+            @keydown.stop="onKey(part, $event)"
           />
         </div>
       </div>
-
-      <!-- Outside the selection is dimmed, so the selection reads as the view. -->
+      <!-- Now: the one fixed line. Drawn last and in the strongest ink, past
+         the strip on both sides, because the live selection ends exactly
+         here and its handle would otherwise cover it. -->
       <div
-        class="pointer-events-none absolute inset-y-0 left-0 bg-default/60"
-        :style="{ width: `${left}%` }"
+        class="pointer-events-none absolute -top-1.5 -bottom-1.5 z-10 w-0.5 rounded-full bg-inverted ring-2 ring-default"
+        :style="{ left: `calc(${nowPct}% - 1px)` }"
+        data-testid="live-range-now"
       />
       <div
-        class="pointer-events-none absolute inset-y-0 right-0 bg-default/60"
-        :style="{ width: `${100 - right}%` }"
+        class="pointer-events-none absolute -top-2.5 z-10 size-2 rounded-full bg-inverted ring-2 ring-default"
+        :style="{ left: `calc(${nowPct}% - 4px)` }"
       />
-
-      <!-- The selection: body moves it, edges resize it. -->
-      <div
-        class="absolute inset-y-0 border-y-2 border-primary/70 bg-primary/5 outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        :class="dragging === 'move' ? 'cursor-grabbing' : 'cursor-grab'"
-        :style="{ left: `${left}%`, width: `${right - left}%` }"
-        tabindex="0"
-        role="slider"
-        aria-label="Visible time range — arrow keys move it"
-        :aria-valuetext="description"
-        :aria-valuenow="range.endOffsetMs"
-        :aria-valuemin="range.windowMs - SPAN_MS"
-        :aria-valuemax="0"
-        data-testid="live-range-selection"
-        @pointerdown.stop="grab('move', $event)"
-        @keydown="onKey('move', $event)"
-      >
-        <span
-          v-for="part in (['start', 'end'] as const)"
-          :key="part"
-          class="absolute inset-y-0 w-2.5 cursor-ew-resize rounded-sm bg-primary/80 outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary"
-          :class="part === 'start' ? '-left-1.5' : '-right-1.5'"
-          tabindex="0"
-          role="slider"
-          :aria-label="part === 'start' ? 'Start of the visible range' : 'End of the visible range'"
-          :aria-valuetext="description"
-          :aria-valuenow="part === 'start' ? range.endOffsetMs - range.windowMs : range.endOffsetMs"
-          :aria-valuemin="-SPAN_MS"
-          :aria-valuemax="0"
-          :data-testid="`live-range-${part}`"
-          @pointerdown.stop="grab(part, $event)"
-          @keydown.stop="onKey(part, $event)"
-        />
-      </div>
     </div>
 
-    <div class="relative mt-1 h-4">
+    <div class="relative mt-2 h-4">
       <span
         v-for="tick in ticks"
         :key="tick.label"
         class="cq-label absolute normal-case"
-        :class="tick.at === 0 ? '' : '-translate-x-1/2'"
+        :class="tick.at <= 0 ? '' : tick.at >= 100 ? '-translate-x-full' : '-translate-x-1/2'"
         :style="{ left: `${tick.at}%` }"
       >{{ tick.label }}</span>
-      <span class="cq-label absolute right-0 normal-case">now</span>
-      <span class="cq-num absolute left-1/2 hidden -translate-x-1/2 text-xs text-muted sm:block">{{ description }}</span>
+      <span
+        class="cq-label absolute -translate-x-1/2 font-semibold normal-case text-highlighted"
+        :style="{ left: `${nowPct}%` }"
+      >now</span>
     </div>
+    <p class="cq-num mt-0.5 hidden text-center text-xs text-muted sm:block">
+      {{ description }}
+    </p>
   </div>
 </template>

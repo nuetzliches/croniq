@@ -7,7 +7,9 @@
 
 use serde::Deserialize;
 
-pub use croniq_scheduler::forecast::{ForecastBucket, ForecastResponse, compute_forecast};
+pub use croniq_scheduler::forecast::{
+    ForecastBucket, ForecastResponse, compute_forecast, compute_forecast_seconds,
+};
 
 #[derive(Deserialize)]
 pub struct ForecastQuery {

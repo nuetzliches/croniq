@@ -392,7 +392,10 @@ export interface ForecastBucket {
 
 export interface ForecastResponse {
   window_minutes: number
+  /** Whole minutes per bucket; 0 for a sub-minute bucket. */
   bucket_minutes: number
+  /** The bucket size in seconds (#829). Older servers omit it. */
+  bucket_seconds?: number
   buckets: ForecastBucket[]
 }
 

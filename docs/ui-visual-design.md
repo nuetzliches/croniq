@@ -1192,6 +1192,36 @@ the track shows:
   Shift.
 - **Remembered.** Only the width persists. A reload starts at "now".
 
+**The strip does not end at "now".** Its right half is the forecast for the
+next five minutes: the schedule's fires per five-second slice, drawn in
+outline because they are not runs yet. That needed sub-minute buckets from
+`GET /v1/dashboard/forecast`, so the endpoint takes `bucket_seconds`.
+
+"Now" is a line in the middle, drawn in the strongest ink and past the strip
+on both sides. The live selection ends exactly there, and its handle would
+otherwise cover it. The selection also shows, in outline, the strip of near
+future the track draws past its own line, so the strip and the track read
+alike.
+
+**The header's centre does not move.** The "Next hour" histogram sat in a
+flex row between a left group whose width changes ("Live", "Paused",
+"Live · held", the Pause or Live button) and a right group whose counts
+change. Every change nudged it sideways. The header is now three columns with
+equal outer ones.
+
+**A run waiting for a runner shows while it waits.** The open part of a wait
+is usually a second or two, and it grows out of the "now" line. At a
+five-minute window that is a few pixels under the line's own pulse, so the
+yellow only became visible once the run had started and moved away. While a
+run waits:
+
+- its wait bar is drawn solid and full height;
+- a yellow marker sits on the line in its lane;
+- the lane label reads `queued` (with the time from one second on), in
+  yellow.
+
+Once claimed, the wait recedes to the thin line it was.
+
 **It holds still.** Pause freezes the picture at one moment: runs and schedule
 are copied then, because the stream keeps moving, and five minutes later the
 runs on screen would have aged out of its horizon. Moving the selection off

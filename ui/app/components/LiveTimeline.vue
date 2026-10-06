@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useElementSize, useIntervalFn, usePreferredReducedMotion } from '@vueuse/core'
-import { useForecast, useJobStates, useJobs } from '~/api/queries'
+import { useForecast, useJobStates, useJobs, useLiveForecast } from '~/api/queries'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
 import {
@@ -94,6 +94,15 @@ const { runs, connected, received, unavailable, offset } = useExecutionsStream()
 const { data: jobStates } = useJobStates()
 const { data: jobs } = useJobs()
 const { data: forecast } = useForecast(60, 5)
+const { data: liveForecast } = useLiveForecast()
+
+/** The forecast as slices on the server's clock, for the range selector's future half. */
+const forecastSlices = (data: typeof liveForecast.value) =>
+  (data?.buckets ?? []).map((b) => ({
+    start: Date.parse(b.start),
+    end: Date.parse(b.end),
+    count: b.count,
+  }))
 
 const serverNow = () => Date.now() + offset.value
 
@@ -103,12 +112,22 @@ const serverNow = () => Date.now() + offset.value
  * keeps moving — five minutes later the runs on screen would have aged out
  * of its horizon.
  */
-const frozen = shallowRef<{ at: number; runs: LiveRun[]; schedule: JobScheduleState[] } | null>(null)
+const frozen = shallowRef<{
+  at: number
+  runs: LiveRun[]
+  schedule: JobScheduleState[]
+  forecast: ReturnType<typeof forecastSlices>
+} | null>(null)
 const paused = computed(() => frozen.value !== null)
 
 function pause() {
   if (frozen.value) return
-  frozen.value = { at: serverNow(), runs: runs.value, schedule: jobStates.value ?? [] }
+  frozen.value = {
+    at: serverNow(),
+    runs: runs.value,
+    schedule: jobStates.value ?? [],
+    forecast: forecastSlices(liveForecast.value),
+  }
 }
 
 /** Back to live: unfreeze and put the window's end back on "now". */
@@ -169,8 +188,11 @@ const layout = computed(() =>
 const overflowing = computed(() => layout.value.lanes.length > COLLAPSED_LANES)
 
 /** The overview the range is chosen on: the whole span, ending at the freeze or now. */
-const overview = computed(() =>
-  densityBuckets(shownRuns.value, frozen.value ? frozen.value.at : coarseNow.value),
+/** The strip's "now": the moment the view froze, or the live clock. */
+const overviewAt = computed(() => (frozen.value ? frozen.value.at : coarseNow.value))
+const overview = computed(() => densityBuckets(shownRuns.value, overviewAt.value))
+const overviewForecast = computed(() =>
+  frozen.value ? frozen.value.forecast : forecastSlices(liveForecast.value),
 )
 
 /** The next fire, if it falls in the strip right of "now". */
@@ -185,6 +207,12 @@ function nextLabel(lane: Lane) {
   // Looking at the past, "in 55 s" would be relative to a moment that has
   // gone; the labels stay empty until the view is back at its freeze or live.
   if (range.value.endOffsetMs !== 0) return ''
+  if (lane.queuedSince !== null) {
+    // Under a second the count would flicker through milliseconds; the colour
+    // and the marker on the line already say it.
+    const waited = coarseNow.value - lane.queuedSince
+    return waited < 1_000 ? 'queued' : `queued ${formatDuration(waited)}`
+  }
   if (lane.overdue) return 'overdue'
   if (lane.status && lane.status !== 'active') return lane.status
   if (lane.next === null) return ''
@@ -231,6 +259,10 @@ function barStyle(bar: Bar) {
 }
 
 function barClass(bar: Bar) {
+  // A wait still open is the news — nothing has picked the run up — and it is
+  // usually a sliver at the line, so it is drawn full height and solid. Once
+  // claimed it is history, and recedes to a thin line before its run.
+  if (bar.kind === 'wait' && bar.end === null) return 'top-[5px] h-3 rounded-sm bg-warning'
   if (bar.kind === 'wait') return 'top-[9px] h-1 bg-warning/50'
   const tone =
     bar.state === 'claimed'
@@ -332,8 +364,10 @@ onBeforeUnmount(stopMotion)
 
 <template>
   <section class="rounded-xl border border-default bg-default p-4 shadow-sm">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-2">
+    <!-- Three columns, the outer two equal: the "Next hour" histogram stays
+         centred however wide "Live" / "Paused" or the counts get. -->
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3 sm:grid sm:grid-cols-[1fr_auto_1fr]">
+      <div class="flex min-w-0 items-center gap-2">
         <span
           class="size-2 rounded-full"
           :class="paused ? 'bg-warning' : connected ? 'animate-pulse bg-success' : 'bg-accented'"
@@ -370,7 +404,7 @@ onBeforeUnmount(stopMotion)
            lane labels, this keeps the shape — "and then it gets busy". -->
       <div
         v-if="hourBuckets.length"
-        class="hidden min-w-0 flex-1 items-center justify-center gap-2 sm:flex"
+        class="hidden items-center justify-center gap-2 sm:flex"
       >
         <span class="cq-label normal-case">Next hour</span>
         <div
@@ -389,7 +423,7 @@ onBeforeUnmount(stopMotion)
         </div>
         <span class="cq-num text-xs text-muted">{{ hourTotal }} fire{{ hourTotal === 1 ? '' : 's' }}</span>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex min-w-0 items-center justify-end gap-3 sm:col-start-3">
         <!-- Counts are of the moment shown; a past view has no such count. -->
         <span
           v-if="range.endOffsetMs === 0"
@@ -465,7 +499,8 @@ onBeforeUnmount(stopMotion)
               </span>
               <span
                 v-else
-                class="cq-num hidden shrink-0 text-muted sm:inline"
+                class="cq-num hidden shrink-0 sm:inline"
+                :class="lane.queuedSince !== null && range.endOffsetMs === 0 ? 'text-warning' : 'text-muted'"
                 :title="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
               >{{ nextLabel(lane) }}</span>
             </li>
@@ -572,6 +607,15 @@ onBeforeUnmount(stopMotion)
                 class="pointer-events-none absolute size-2 animate-ping rounded-full bg-primary"
                 :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
               />
+              <!-- Waiting for a runner: a marker on the line, so a wait of a
+                   second or two is seen while it lasts, not only afterwards. -->
+              <span
+                v-else-if="lane.queuedSince !== null && range.endOffsetMs === 0"
+                class="pointer-events-none absolute size-2.5 rounded-full bg-warning ring-2 ring-default"
+                :class="paused ? '' : 'animate-pulse'"
+                :style="{ left: `${nowX - 5}px`, top: `${index * LANE_HEIGHT + 6}px` }"
+                data-testid="live-queued-marker"
+              />
             </template>
 
             <p
@@ -620,6 +664,8 @@ onBeforeUnmount(stopMotion)
       <LiveRangeSelector
         v-model:range="range"
         :buckets="overview"
+        :forecast="overviewForecast"
+        :at="overviewAt"
       />
     </template>
   </section>

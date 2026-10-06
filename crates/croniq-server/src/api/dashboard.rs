@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
-use crate::dashboard::compute_forecast;
+use crate::dashboard::{compute_forecast, compute_forecast_seconds};
 
 #[derive(Deserialize)]
 pub struct ForecastQuery {
@@ -22,6 +22,10 @@ pub struct ForecastQuery {
     pub window_minutes: u32,
     #[serde(default = "default_bucket")]
     pub bucket_minutes: u32,
+    /// Sub-minute buckets (issue #829); takes precedence over
+    /// `bucket_minutes` when set.
+    #[serde(default)]
+    pub bucket_seconds: Option<u32>,
 }
 
 fn default_window() -> u32 {
@@ -43,6 +47,9 @@ pub async fn handle_forecast(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let triggers = triggers.read().await;
-    let result = compute_forecast(&triggers, Utc::now(), q.window_minutes, q.bucket_minutes);
+    let result = match q.bucket_seconds {
+        Some(secs) => compute_forecast_seconds(&triggers, Utc::now(), q.window_minutes, secs),
+        None => compute_forecast(&triggers, Utc::now(), q.window_minutes, q.bucket_minutes),
+    };
     Ok(Json(result))
 }
