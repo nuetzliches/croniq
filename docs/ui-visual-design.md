@@ -1231,6 +1231,28 @@ run waits:
 
 Once claimed, the wait recedes to the thin line it was.
 
+**It does not stutter in a burst.** With fifty jobs passing "now" together,
+the card used to stutter. Profiling it found two causes:
+
+- **Motion on the main thread.** The motion was a `requestAnimationFrame`
+  loop setting a transform sixty times a second. Each one re-ran style,
+  pre-paint and layerization for the whole page, which in the trace was the
+  largest native cost.
+- **Every bar re-rendered.** Each stream frame (four a second in a burst)
+  re-rendered every bar, each a `RouterLink` component.
+
+What changed:
+
+- The motion is a linear Web Animation per layer, restarted when its geometry
+  changes. The compositor plays it, so layerization dropped from ~360 ms to
+  ~15 ms per six seconds.
+- Bars and labels are plain anchors behind one delegated handler.
+- Each lane is memoised on a signature of its bars.
+- Open bars are drawn to a half-minute horizon rather than the clock, and
+  their tooltips say "since 14:03:21", so a lane re-renders only when its
+  runs change.
+- The markers on the line pulse as one layer.
+
 **It holds still.** Pause freezes the picture at one moment: runs and schedule
 are copied then, because the stream keeps moving, and five minutes later the
 runs on screen would have aged out of its horizon. Moving the selection off

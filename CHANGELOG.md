@@ -58,6 +58,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The "Next hour" histogram no longer shifts sideways when the header's
   status or counts change width.
 
+- **The live timeline no longer stutters when many jobs pass "now".** In a
+  burst the stream sends a frame every quarter second, and each one used to
+  re-render every bar of every lane, each bar a `RouterLink` component. The
+  motion also ran as a `requestAnimationFrame` loop that re-layered the page
+  sixty times a second. Now:
+  - The motion is a Web Animation the compositor plays off the main thread.
+  - Bars and lane labels are plain links behind one click handler.
+  - Each lane re-renders only when its runs change.
+  - The markers on the "now" line share one animation.
+
+  Measured at 4× CPU throttling during a burst: long tasks went from 7
+  (392 ms) to 3 (158 ms), and frame p95 from 67 to 50 ms, with almost twice
+  the runs in the window. Native rendering time halved.
+
 ## [0.45.0] - 2026-10-06
 
 ### Added

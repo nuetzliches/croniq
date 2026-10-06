@@ -100,6 +100,30 @@ test.describe('live surfaces', () => {
   })
 })
 
+test.describe('live timeline links', () => {
+  /**
+   * Lane labels and bars are plain anchors behind one delegated handler
+   * (they were `RouterLink`s, too heavy by the hundred). A click must still
+   * navigate inside the app, not reload the page.
+   */
+  test('a lane label opens its job without a page load', async ({ app }) => {
+    // A run of our own gives the card a lane now, rather than waiting up to a
+    // minute for the demo schedule (the pattern entity-links.spec.ts uses).
+    await app.goto('/jobs')
+    await app.locator('tbody tr').first().click()
+    await app.getByRole('button', { name: 'Run now' }).click()
+
+    await app.goto('/')
+    const label = app.getByTestId('live-lanes').locator('a[data-route^="/jobs/"]').first()
+    await expect(label).toBeVisible({ timeout: 20_000 })
+    const route = await label.getAttribute('data-route')
+    await app.evaluate(() => ((window as unknown as { __sameDocument: boolean }).__sameDocument = true))
+    await label.click()
+    await expect.poll(() => new URL(app.url()).pathname).toBe(route)
+    expect(await app.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument)).toBe(true)
+  })
+})
+
 test.describe('preferences survive a reload', () => {
   test('the live timeline keeps its lane order and window width', async ({ app }) => {
     await app.goto('/')

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useElementSize, useIntervalFn, usePreferredReducedMotion } from '@vueuse/core'
+import { useRouter } from 'vue-router'
 import { useForecast, useJobStates, useJobs, useLiveForecast } from '~/api/queries'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
@@ -255,6 +256,25 @@ const running = computed(
 )
 const queued = computed(() => shownRuns.value.filter((r) => r.state === 'queued').length)
 
+// ─── Links ──────────────────────────────────────────────────────────────────
+
+/**
+ * Bars and lane labels are plain anchors, not `RouterLink`s. A card with fifty
+ * lanes carries hundreds of them, re-rendered with every stream frame, and a
+ * component apiece was the largest single cost of a burst. One delegated
+ * handler gives them in-app navigation; a modified click (new tab, new
+ * window) is left to the browser, which the real `href` makes work.
+ */
+const router = useRouter()
+function onLinkClick(event: MouseEvent) {
+  if (event.defaultPrevented || event.button !== 0) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const link = (event.target as Element).closest<HTMLAnchorElement>('a[data-route]')
+  if (!link) return
+  event.preventDefault()
+  void router.push(link.dataset.route!)
+}
+
 // ─── Geometry ───────────────────────────────────────────────────────────────
 
 const track = useTemplateRef<HTMLElement>('track')
@@ -275,10 +295,19 @@ const nowX = computed(() => Math.round(pastMs.value * scale.value))
 const clipX = computed(() => Math.min(nowX.value, width.value))
 const nowVisible = computed(() => nowX.value <= width.value)
 
+/**
+ * How far an open bar is drawn: past the right edge of the view, rounded up
+ * to the next half minute so it changes twice a minute rather than with every
+ * stream frame. The clip, not the bar's end, is what the eye sees, and a lane
+ * whose only change is the clock does not have to re-render (see `v-memo`).
+ */
+const OPEN_STEP_MS = 30_000
+const openHorizon = computed(
+  () => Math.ceil((coarseNow.value + spanMs.value) / OPEN_STEP_MS) * OPEN_STEP_MS + OPEN_STEP_MS,
+)
+
 function barStyle(bar: Bar) {
-  // An open bar runs on past "now" by more than a second's worth of motion,
-  // so the clip — not its end — is what the eye sees until the next render.
-  const end = bar.end ?? coarseNow.value + spanMs.value
+  const end = bar.end ?? openHorizon.value
   const left = (bar.start - t0) * scale.value
   return {
     transform: `translateX(${left}px)`,
@@ -305,14 +334,19 @@ function barClass(bar: Bar) {
   return `top-[5px] h-3 rounded-sm ${tone}`
 }
 
+// A still-open bar names when it began rather than how long it has taken:
+// a duration would tie its tooltip to the clock and re-render its lane with
+// every frame.
+const since = (at: number) => `since ${new Date(at).toLocaleTimeString()}`
+
 function barTitle(bar: Bar) {
   const run = bar.run
   if (bar.kind === 'wait') {
-    const waited = (bar.end ?? coarseNow.value) - bar.start
-    return `${run.job_key} — waited ${formatDuration(waited)} before ${run.claimed_at ? 'it was claimed' : 'anything claimed it'}`
+    if (bar.end === null) return `${run.job_key} — waiting for a runner ${since(bar.start)}`
+    return `${run.job_key} — waited ${formatDuration(bar.end - bar.start)} before ${run.claimed_at ? 'it was claimed' : 'anything claimed it'}`
   }
-  const took = (bar.end ?? coarseNow.value) - bar.start
-  const parts = [run.job_key, stateLabel(run.state), formatDuration(took)]
+  const took = bar.end === null ? since(bar.start) : formatDuration(bar.end - bar.start)
+  const parts = [run.job_key, stateLabel(run.state), took]
   if (run.runner_id) parts.push(`on ${run.runner_id}`)
   if (run.attempt > 1) parts.push(`attempt ${run.attempt}`)
   return parts.join(' · ')
@@ -344,14 +378,64 @@ const futureLabel = computed(() => formatOffset(range.value.endMs))
 /** Pointer on the track: hold the motion so a tooltip can be read and a bar clicked. */
 const hovering = ref(false)
 
+/** The two moving layers and where each sits when no time has passed since `t0`. */
+function layers(): [HTMLElement, number][] {
+  const out: [HTMLElement, number][] = []
+  if (pastLayer.value) out.push([pastLayer.value, nowX.value])
+  if (futureLayer.value) out.push([futureLayer.value, 0])
+  return out
+}
+
+/** Place the layers for the current instant, without motion. */
 function shift() {
   const travelled = (viewNow() - t0) * scale.value
-  if (pastLayer.value) {
-    pastLayer.value.style.transform = `translate3d(${nowX.value - travelled}px,0,0)`
+  for (const [layer, base] of layers()) {
+    layer.style.transform = `translate3d(${base - travelled}px,0,0)`
   }
-  if (futureLayer.value) {
-    futureLayer.value.style.transform = `translate3d(${-travelled}px,0,0)`
+}
+
+/**
+ * The motion runs on the compositor, not the main thread. It used to be a
+ * `requestAnimationFrame` loop setting a transform sixty times a second, and
+ * every one of those re-ran style, pre-paint and layerization for the page.
+ * That kept the main thread busy all the time, and in a burst, when the
+ * stream sends a frame every quarter second and Vue has bars to patch, the
+ * two competed and the card stuttered.
+ *
+ * A linear Web Animation per layer, over a minute, is the same motion the
+ * loop drew. The compositor plays it without the main thread, which is then
+ * free between stream frames. It is restarted from the current instant
+ * whenever what it is drawn against changes (scale, position, a freeze, a new
+ * layer), and every minute.
+ */
+const LEG_MS = 60_000
+let animations: Animation[] = []
+let legTimer: ReturnType<typeof setTimeout> | undefined
+
+function stopAnimations() {
+  for (const animation of animations) animation.cancel()
+  animations = []
+  clearTimeout(legTimer)
+}
+
+function animate() {
+  stopAnimations()
+  shift()
+  if (frozen.value || hovering.value || scale.value <= 0) return
+  const travelled = (viewNow() - t0) * scale.value
+  const distance = LEG_MS * scale.value
+  for (const [layer, base] of layers()) {
+    animations.push(
+      layer.animate(
+        [
+          { transform: `translate3d(${base - travelled}px,0,0)` },
+          { transform: `translate3d(${base - travelled - distance}px,0,0)` },
+        ],
+        { duration: LEG_MS, easing: 'linear', fill: 'forwards' },
+      ),
+    )
   }
+  legTimer = setTimeout(animate, LEG_MS)
 }
 
 /**
@@ -360,13 +444,7 @@ function shift() {
  * is exactly the kind of movement that setting exists to stop.
  */
 const motion = usePreferredReducedMotion()
-let frame = 0
 let stepTimer: ReturnType<typeof setInterval> | undefined
-
-function loop() {
-  if (!hovering.value) shift()
-  frame = requestAnimationFrame(loop)
-}
 
 function start() {
   stopMotion()
@@ -376,25 +454,29 @@ function start() {
       if (!hovering.value) shift()
     }, 1000)
   } else {
-    frame = requestAnimationFrame(loop)
+    animate()
   }
 }
 
 function stopMotion() {
-  cancelAnimationFrame(frame)
+  stopAnimations()
   clearInterval(stepTimer)
 }
 
 onMounted(start)
-watch(motion, start)
-// A new scale moves every bar; shift the layer in the same tick so the two
-// never disagree for a frame.
-watch([scale, nowX, frozen, range], shift, { flush: 'post' })
+// A new scale or position moves every bar, and a freeze or a hover stops the
+// motion; restart it in the same tick so layer and bars never disagree.
+watch([motion, scale, nowX, frozen, range, hovering, pastLayer, futureLayer], start, {
+  flush: 'post',
+})
 onBeforeUnmount(stopMotion)
 </script>
 
 <template>
-  <section class="rounded-xl border border-default bg-default p-4 shadow-sm">
+  <section
+    class="rounded-xl border border-default bg-default p-4 shadow-sm"
+    @click="onLinkClick"
+  >
     <!-- Three columns, the outer two equal: the "Next hour" histogram stays
          centred however wide "Live" / "Paused" or the counts get. -->
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3 sm:grid sm:grid-cols-[1fr_auto_1fr]">
@@ -508,14 +590,15 @@ onBeforeUnmount(stopMotion)
               :key="lane.jobKey"
               class="flex h-[22px] items-center gap-2 text-xs"
             >
-              <RouterLink
-                :to="`/jobs/${encodeURIComponent(lane.jobKey)}`"
+              <a
+                :href="`/jobs/${encodeURIComponent(lane.jobKey)}`"
+                :data-route="`/jobs/${encodeURIComponent(lane.jobKey)}`"
                 class="min-w-0 flex-1 truncate font-mono hover:underline"
                 :class="lane.overdue ? 'text-error' : lane.running ? 'text-highlighted' : 'text-primary'"
                 :title="lane.jobKey"
               >
                 {{ lane.jobKey }}
-              </RouterLink>
+              </a>
               <!-- Late is not upcoming: an overdue job says so, in red, where
                    its lane shows nothing having run. -->
               <span
@@ -571,16 +654,21 @@ onBeforeUnmount(stopMotion)
                 ref="pastLayer"
                 class="absolute inset-0 will-change-transform"
               >
+                <!-- Memoised per lane: a frame re-renders the lanes it changed, a
+                     new scale or position re-renders all, and a lane with an
+                     open bar follows the half-minute horizon it is drawn to. -->
                 <div
                   v-for="(lane, index) in layout.lanes"
                   :key="lane.jobKey"
+                  v-memo="[lane.signature, index, scale, lane.open ? openHorizon : 0]"
                   class="absolute inset-x-0"
                   :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
                 >
-                  <RouterLink
+                  <a
                     v-for="bar in lane.bars"
                     :key="bar.id"
-                    :to="`/executions/${bar.run.id}`"
+                    :href="`/executions/${bar.run.id}`"
+                    :data-route="`/executions/${bar.run.id}`"
                     class="absolute left-0 origin-left hover:brightness-125"
                     :class="barClass(bar)"
                     :style="barStyle(bar)"
@@ -632,25 +720,34 @@ onBeforeUnmount(stopMotion)
               class="pointer-events-none absolute -top-2 size-0 border-x-[4px] border-t-[4px] border-x-transparent border-t-primary/60"
               :style="{ left: `${nowX - 4}px` }"
             />
-            <template
-              v-for="(lane, index) in layout.lanes"
-              :key="`pulse-${lane.jobKey}`"
+            <!-- Markers on the line: running (accent) and waiting for a runner
+                 (yellow), so a wait of a second or two is seen while it lasts.
+                 One animated container for all of them rather than an
+                 animation apiece: each animated element is its own compositor
+                 layer, and in a burst dozens of them made every frame re-layer
+                 the card. -->
+            <div
+              v-if="nowVisible"
+              class="pointer-events-none absolute inset-0"
+              :class="paused ? '' : 'animate-pulse'"
             >
-              <span
-                v-if="lane.running && !paused && nowVisible"
-                class="pointer-events-none absolute size-2 animate-ping rounded-full bg-primary"
-                :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
-              />
-              <!-- Waiting for a runner: a marker on the line, so a wait of a
-                   second or two is seen while it lasts, not only afterwards. -->
-              <span
-                v-else-if="lane.queuedSince !== null && !lookingBack && nowVisible"
-                class="pointer-events-none absolute size-2.5 rounded-full bg-warning ring-2 ring-default"
-                :class="paused ? '' : 'animate-pulse'"
-                :style="{ left: `${nowX - 5}px`, top: `${index * LANE_HEIGHT + 6}px` }"
-                data-testid="live-queued-marker"
-              />
-            </template>
+              <template
+                v-for="(lane, index) in layout.lanes"
+                :key="`pulse-${lane.jobKey}`"
+              >
+                <span
+                  v-if="lane.running && !paused"
+                  class="absolute size-2 rounded-full bg-primary ring-2 ring-default"
+                  :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
+                />
+                <span
+                  v-else-if="lane.queuedSince !== null && !lookingBack"
+                  class="absolute size-2.5 rounded-full bg-warning ring-2 ring-default"
+                  :style="{ left: `${nowX - 5}px`, top: `${index * LANE_HEIGHT + 6}px` }"
+                  data-testid="live-queued-marker"
+                />
+              </template>
+            </div>
 
             <p
               v-if="received && layout.lanes.length === 0"

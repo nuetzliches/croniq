@@ -137,6 +137,16 @@ export interface Lane {
   overdue: boolean
   /** `active`, `paused`, … — `null` for a job known only from its runs. */
   status: string | null
+  /**
+   * What the lane's bars look like, as a string that changes exactly when
+   * one of them does: which bars, in what state, ending where. The component
+   * memoises each lane on it, so a stream frame re-renders only the lanes it
+   * changed — in a burst a frame lands every quarter second, and patching
+   * every bar of every lane each time is what made the card stutter.
+   */
+  signature: string
+  /** Whether a bar is still open, and so grows with the clock between frames. */
+  open: boolean
 }
 
 /** What the lane labels need from `GET /v1/jobs/states`. */
@@ -187,6 +197,8 @@ export function buildLanes(
         queuedSince: null,
         overdue: false,
         status: null,
+        signature: '',
+        open: false,
       }
       byJob.set(jobKey, entry)
     }
@@ -213,6 +225,8 @@ export function buildLanes(
       if (bar.end !== null && bar.end < from) continue
       const entry = lane(run.job_key)
       entry.bars.push(bar)
+      entry.signature += `${bar.id}:${bar.state}:${bar.end ?? ''};`
+      if (bar.end === null) entry.open = true
       if (bar.kind === 'run' && bar.end === null) entry.running = true
     }
   }
