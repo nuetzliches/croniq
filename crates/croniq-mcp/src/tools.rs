@@ -2850,7 +2850,7 @@ mod tests {
     // ── job_trigger honours `coalesce` (issue #769) ───────────────────
 
     const COALESCING_JOB: &str = r#"
-        job soapneo:sync {
+        job inbox:sync {
             every 5 minutes
             singleton
             coalesce
@@ -2873,7 +2873,7 @@ mod tests {
         let server = make_server_with_jobs(COALESCING_JOB);
 
         let first = server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
         assert!(
@@ -2883,7 +2883,7 @@ mod tests {
 
         for i in 0..9 {
             let resp = server
-                .job_trigger(bare_trigger("soapneo:sync"))
+                .job_trigger(bare_trigger("inbox:sync"))
                 .await
                 .unwrap();
             assert!(
@@ -2902,7 +2902,7 @@ mod tests {
                 .queue
                 .read()
                 .await
-                .count_for_job("soapneo:sync"),
+                .count_for_job("inbox:sync"),
             1,
             "ten bare triggers must leave exactly one queued execution"
         );
@@ -2915,7 +2915,7 @@ mod tests {
         let server = make_server_with_jobs(COALESCING_JOB);
 
         server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
         let queued_id = server
@@ -2929,7 +2929,7 @@ mod tests {
             .clone();
 
         let folded = server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
         assert!(
@@ -2945,13 +2945,13 @@ mod tests {
         let server = make_server_with_jobs(COALESCING_JOB);
 
         server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
 
         let parameterised = server
             .job_trigger(Parameters(JobTriggerParams {
-                job_key: "soapneo:sync".into(),
+                job_key: "inbox:sync".into(),
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::json!({ "item": "42" }),
@@ -2970,7 +2970,7 @@ mod tests {
                 .queue
                 .read()
                 .await
-                .count_for_job("soapneo:sync"),
+                .count_for_job("inbox:sync"),
             2
         );
     }
@@ -2985,7 +2985,7 @@ mod tests {
 
         server
             .job_trigger(Parameters(JobTriggerParams {
-                job_key: "soapneo:sync".into(),
+                job_key: "inbox:sync".into(),
                 require: vec![],
                 prefer: vec![],
                 metadata: serde_json::json!({ "item": "42" }),
@@ -3006,7 +3006,7 @@ mod tests {
 
         // And a later bare signal must therefore enqueue its own run.
         let signal = server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
         assert!(
@@ -3019,19 +3019,19 @@ mod tests {
     async fn job_trigger_overriding_routing_or_timeout_is_not_folded() {
         let server = make_server_with_jobs(COALESCING_JOB);
         server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
 
         let overrides = [
-            (vec!["soapneo".to_string()], vec![], None),
+            (vec!["worker".to_string()], vec![], None),
             (vec![], vec!["fast".to_string()], None),
             (vec![], vec![], Some("30m".to_string())),
         ];
         for (require, prefer, timeout) in overrides {
             let resp = server
                 .job_trigger(Parameters(JobTriggerParams {
-                    job_key: "soapneo:sync".into(),
+                    job_key: "inbox:sync".into(),
                     require: require.clone(),
                     prefer: prefer.clone(),
                     metadata: serde_json::Value::Null,
@@ -3051,7 +3051,7 @@ mod tests {
         // The regression guard: a job that only declares `singleton` behaves
         // exactly as it did before #769.
         let dsl = r#"
-            job soapneo:sync {
+            job inbox:sync {
                 every 5 minutes
                 singleton
             }
@@ -3060,7 +3060,7 @@ mod tests {
 
         for _ in 0..5 {
             let resp = server
-                .job_trigger(bare_trigger("soapneo:sync"))
+                .job_trigger(bare_trigger("inbox:sync"))
                 .await
                 .unwrap();
             assert!(
@@ -3074,7 +3074,7 @@ mod tests {
                 .queue
                 .read()
                 .await
-                .count_for_job("soapneo:sync"),
+                .count_for_job("inbox:sync"),
             5
         );
     }
@@ -3085,13 +3085,13 @@ mod tests {
         // scheduler queued is a fold target here too — the same cross-path
         // agreement that was missing before #769.
         let server = make_server_with_jobs(COALESCING_JOB);
-        let job = server.jobs.get("soapneo:sync").unwrap().clone();
+        let job = server.jobs.get("inbox:sync").unwrap().clone();
 
         let scheduled_id = Uuid::new_v4();
         let now = Utc::now();
         server.state.queue.write().await.enqueue(WorkItem {
             execution_id: scheduled_id.to_string(),
-            job_key: "soapneo:sync".into(),
+            job_key: "inbox:sync".into(),
             fire_at: now,
             scheduled_for: now,
             attempt: 1,
@@ -3103,7 +3103,7 @@ mod tests {
         });
 
         let resp = server
-            .job_trigger(bare_trigger("soapneo:sync"))
+            .job_trigger(bare_trigger("inbox:sync"))
             .await
             .unwrap();
         assert!(
@@ -3116,7 +3116,7 @@ mod tests {
                 .queue
                 .read()
                 .await
-                .count_for_job("soapneo:sync"),
+                .count_for_job("inbox:sync"),
             1
         );
     }

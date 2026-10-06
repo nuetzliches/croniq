@@ -1954,10 +1954,10 @@ row changes, and something calls `POST /v1/trigger` to have the work done now
 instead of at the next tick:
 
 ```hcl
-job soapneo:sync {
+job inbox:sync {
   every 1 minute
   singleton
-  runner { require soapneo }
+  runner { require worker }
 }
 ```
 
@@ -2092,11 +2092,11 @@ slowly.
 ### `coalesce`: one run per burst
 
 ```hcl
-job soapneo:sync {
+job inbox:sync {
   every 5 minutes
   singleton
   coalesce
-  runner { require soapneo }
+  runner { require worker }
 }
 ```
 

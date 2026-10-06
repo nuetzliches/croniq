@@ -19,7 +19,7 @@ trigger_config:
 
 trigger_calls:
   - request:
-      job_key: "soapneo:sync"
+      job_key: "inbox:sync"
     expect:
       response:
         execution_id: "exec-900"
@@ -27,7 +27,7 @@ trigger_calls:
         deduplicated: false
         coalesced: false
   - request:
-      job_key: "soapneo:sync"
+      job_key: "inbox:sync"
     expect:
       response:
         execution_id: "exec-900"
@@ -61,7 +61,7 @@ expectations:
       path: /v1/trigger
       exact_count: 2
       body_match:
-        job_key: "soapneo:sync"
+        job_key: "inbox:sync"
       body_absent:
         - metadata
         - require

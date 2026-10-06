@@ -1775,7 +1775,7 @@ mod tests {
             coalesce: true,
             ..Default::default()
         };
-        let out = format_job_block_inner(&interval5(), "soapneo:sync", &o).unwrap();
+        let out = format_job_block_inner(&interval5(), "inbox:sync", &o).unwrap();
         // Bare like `singleton` and `run_on_register` — `coalesce true` would
         // be an unknown-directive error.
         assert!(out.contains("\n  coalesce\n"), "{out}");

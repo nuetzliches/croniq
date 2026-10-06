@@ -2913,7 +2913,7 @@ job a:b { every 5 minutes; priority urgent }",
     #[test]
     fn compile_coalesce_stamps_the_metadata_key() {
         let ast =
-            Parser::parse(r#"job soapneo:sync { every 5 minutes; singleton; coalesce }"#).unwrap();
+            Parser::parse(r#"job inbox:sync { every 5 minutes; singleton; coalesce }"#).unwrap();
         let cfg = compile(&ast);
         assert!(cfg.jobs[0].coalesce);
         assert_eq!(
@@ -3064,7 +3064,7 @@ job a:b { every 5 minutes; priority urgent }",
         let none = serde_json::Value::Null;
         assert!(!is_bare_trigger_signal(
             &none,
-            &["soapneo".into()],
+            &["worker".into()],
             &[],
             None
         ));

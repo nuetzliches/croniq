@@ -173,7 +173,7 @@ class CroniqTriggerClientTest {
         server.respond(200, "{\"execution_id\":\"exec-9\",\"queued\":2,\"deduplicated\":false,\"coalesced\":true}");
         CroniqTriggerClient client = client("croniq_trigger_key", null);
 
-        TriggerResult result = client.trigger("soapneo:sync");
+        TriggerResult result = client.trigger("inbox:sync");
 
         assertThat(result.coalesced()).isTrue();
         // The two flags are not interchangeable: a fold names an execution that
