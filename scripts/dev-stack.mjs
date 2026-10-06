@@ -17,6 +17,12 @@
 //   node scripts/dev-stack.mjs           API, runner and dashboard
 //   node scripts/dev-stack.mjs --api     API and runner only — bring your own
 //                                        dev server, or point a build at it
+//   node scripts/dev-stack.mjs --busy    Croniqfile.busy instead of the demo:
+//                                        fifty jobs firing every few seconds to
+//                                        minutes, for work on the dashboard's
+//                                        live views; its own data directory
+//
+// The flags combine (`--api --busy`).
 //
 // Ports default to 4230 / 4231 and are overridable when something else on the
 // machine already holds one:
@@ -48,6 +54,7 @@ import {
 
 const args = new Set(process.argv.slice(2));
 const withUi = !args.has("--api");
+const busy = args.has("--busy");
 
 const PORT = PORTS.api;
 const UI_PORT = PORTS.ui;
@@ -63,7 +70,11 @@ const API_KEY = "croniq_dev_stack_key_not_for_production_use";
  * an empty database, so a stale directory keeps its old admin password.
  */
 function dataDir() {
-  const dir = process.env.CRONIQ_DEV_DATA_DIR ?? path.join(os.tmpdir(), "croniq-dev-stack");
+  // The busy profile keeps its own directory: its fifty jobs' history would
+  // otherwise bury the demo's five the next time the plain stack starts.
+  const dir =
+    process.env.CRONIQ_DEV_DATA_DIR ??
+    path.join(os.tmpdir(), busy ? "croniq-dev-stack-busy" : "croniq-dev-stack");
   if (seed(dir, { user: USER, password: PASSWORD, apiKey: API_KEY })) {
     console.log(`[dev] seeded a fresh database in ${dir}`);
   }
@@ -82,7 +93,7 @@ run(
   bin("croniq-server"),
   [
     "--config",
-    path.join(ROOT, "Croniqfile.demo"),
+    path.join(ROOT, busy ? "Croniqfile.busy" : "Croniqfile.demo"),
     "--listen",
     `127.0.0.1:${PORT}`,
     "--data-dir",
@@ -103,6 +114,8 @@ run("runner", bin("croniq-demo-runner"), [], {
     CRONIQ_API_KEY: API_KEY,
     RUNNER_FAIL_RATE: process.env.RUNNER_FAIL_RATE ?? "0.05",
     RUNNER_TAGS: "env=dev,role=worker",
+    // Fifty jobs at a few-second cadence want more than the default four slots.
+    ...(busy ? { RUNNER_MAX_INFLIGHT: process.env.RUNNER_MAX_INFLIGHT ?? "8" } : {}),
     RUST_LOG: process.env.RUST_LOG ?? "warn",
   },
 });

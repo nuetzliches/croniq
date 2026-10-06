@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`node scripts/dev-stack.mjs --busy` starts a busy dashboard.**
+  `Croniqfile.busy` has 49 jobs firing every 10 seconds to every few
+  minutes, with `priority`, `singleton` + `coalesce schedule` and one
+  `disabled` job, so the live views have more lanes than fit and something to
+  show. It keeps its own data directory, and the demo runner gets 8 slots.
+
+### Changed
+
+- **The live timeline keeps every lane and orders them by job key.** It used
+  to show ten lanes, chosen by urgency and listed by next fire. A job that had
+  just fired dropped down the list, often out of the ten, at the moment its
+  run crossed "now", and `+39 more` led nowhere. Now:
+  - Past ten lanes the card scrolls, and Expand shows every lane.
+  - Lanes are listed by job key by default, so a lane stays put while its job
+    fires. A toggle switches to next-fire order.
+  - Both choices are remembered per browser (#828).
+
+- **The live timeline's window is chosen on a full-width range selector, and
+  the picture can be paused.** The `5 s … 5 min` select is replaced by an
+  overview strip of the stream's five minutes: runs started per slice, with
+  failures in red. The selection on it is the visible window:
+  - Its edges resize it to any width from 5 s.
+  - Its body moves it into the past, which pauses the view on that moment.
+  - The arrow keys move or resize it.
+
+  The Pause button freezes the picture, keeping a snapshot of runs and
+  schedule so it stays readable while the stream moves on, and "Live" returns
+  to now. Hovering the track holds the motion, so tooltips can be read and
+  short runs clicked (#829).
+
 ## [0.45.0] - 2026-10-06
 
 ### Added

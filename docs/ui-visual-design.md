@@ -1162,3 +1162,46 @@ a next fire follow A–Z. Urgency decides which jobs get one of the ten lanes �
 running, overdue, recent, soonest — and a job filter (a substring, as on the
 Runs screen) narrows the lanes before that cut, so it can reach the jobs the
 cut would hide.
+
+## Pass 19 — every lane, a range instead of a select, and a pause
+
+**Pass 18's ordering lost to a real deployment.** With 49 jobs, the ten-lane
+cut and the next-fire order worked against each other. A job that had just
+fired moved to the bottom of the list, and often out of the ten. The run that
+had just crossed "now" left the view at the moment someone was watching it,
+and `+39 more` was text, not a way to reach anything (#828). The card now
+keeps every lane:
+
+- **Scrolling and Expand.** Past ten lanes the track scrolls, with the labels
+  scrolling along. Expand grows the card to show every lane.
+- **Order by job key by default.** A lane stays where it is while its job
+  fires. "Next fire" is one click away, for the reading order Pass 18 argued
+  for; both choices are remembered per browser.
+- **No urgency ranking.** Without a cut, nothing needs choosing.
+
+**The window is chosen on an overview, not a select** (#829). The five fixed
+widths could neither pick a width in between nor look at a moment already
+gone. A strip under the axis now spans the stream's five minutes as a density
+map of runs started, with failures in red. A selection on the strip is what
+the track shows:
+
+- **Resize.** Its edges resize it, down to 5 s.
+- **Move.** Its body moves it, and a press elsewhere on the strip centres it
+  there.
+- **Keyboard.** The arrow keys move or resize it in 5 s steps, 30 s with
+  Shift.
+- **Remembered.** Only the width persists. A reload starts at "now".
+
+**It holds still.** Pause freezes the picture at one moment: runs and schedule
+are copied then, because the stream keeps moving, and five minutes later the
+runs on screen would have aged out of its horizon. Moving the selection off
+"now" pauses too, since a past moment only makes sense held still. While
+paused:
+
+- the line is labelled with its clock time;
+- the next-fire ticks are hidden;
+- the lane labels' "in 22 s" go quiet while the view is in the past.
+
+"Live" returns to now. Separately, the pointer on the track holds only the
+motion, so a tooltip can be read and a short run clicked; the header says
+`Live · held` while it does.

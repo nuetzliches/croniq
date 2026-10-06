@@ -28,17 +28,14 @@ export interface LiveFrame {
 }
 
 /**
- * The windows on offer. Five minutes is the widest the stream covers (its
- * horizon is five and a half); five seconds is as narrow as a quarter-second
- * tick still reads as live.
+ * How far back the range selector reaches (issue #829). The stream keeps five
+ * and a half minutes; the extra half minute is slack, so a bar at the left
+ * edge of the widest view is never cut short by the stream's own horizon.
  */
-export const WINDOWS = [
-  { label: '5 s', value: 5_000 },
-  { label: '10 s', value: 10_000 },
-  { label: '30 s', value: 30_000 },
-  { label: '1 min', value: 60_000 },
-  { label: '5 min', value: 300_000 },
-] as const
+export const SPAN_MS = 300_000
+
+/** The narrowest window: as narrow as a quarter-second tick still reads as live. */
+export const MIN_WINDOW = 5_000
 
 export const DEFAULT_WINDOW = 60_000
 
@@ -48,8 +45,17 @@ export const DEFAULT_WINDOW = 60_000
  */
 export const NOW_AT = 0.85
 
-/** Lanes shown before the rest collapse into "+N more". */
-export const MAX_LANES = 10
+/**
+ * Lanes visible before the track scrolls (issue #828). Every lane exists and
+ * is reachable — by scrolling, or by expanding the card to show all of them.
+ */
+export const COLLAPSED_LANES = 10
+
+/**
+ * How lanes are listed: by job key, so a lane keeps its place while its job
+ * fires, or by next fire, soonest first.
+ */
+export type LaneOrder = 'name' | 'next'
 
 /** How far into the future the strip right of "now" reaches. */
 export function futureSpan(windowMs: number): number {
@@ -148,26 +154,27 @@ export interface JobSchedule {
  * "next hour" rail: its labels carry each job's next fire, and a job that is
  * quiet right now is exactly the one whose "in 22 min" someone came to read.
  *
- * Lanes are listed by next fire, soonest first — the order the "next hour"
- * rail read in, and the one that puts the job about to start next to the
- * strip where its tick is approaching. Jobs with no next fire (paused,
- * manual-only, gone from the schedule) follow, alphabetically. The cost is
- * that a lane moves down the list once its job fires; ties and the tail are
- * alphabetical so nothing else shuffles.
+ * All of them, too (issue #828). The card used to keep ten, chosen by
+ * urgency, and list them by next fire: a job that had just fired moved down
+ * the list — and with enough jobs out of it — at the moment its run crossed
+ * "now", which was the moment someone was watching it. The card now scrolls
+ * instead of cutting, and the default order is by job key, so a lane stays
+ * where it is while its job fires.
  *
- * Urgency decides *which* jobs get a lane once there are more than
- * `maxLanes`: running, then overdue, then whatever ran most recently, then
- * whatever fires soonest.
+ * `order: 'next'` keeps the old reading order on request: soonest next fire
+ * first, the order that puts the job about to start next to the strip where
+ * its tick is approaching. Jobs with no next fire (paused, manual-only, gone
+ * from the schedule) follow; ties and the tail are alphabetical.
  */
 export function buildLanes(
   runs: readonly LiveRun[],
   schedule: readonly JobSchedule[],
   now: number,
   windowMs: number,
-  maxLanes = MAX_LANES,
-): { lanes: Lane[]; hidden: number } {
+  order: LaneOrder = 'name',
+): { lanes: Lane[] } {
   const from = now - windowMs
-  const byJob = new Map<string, Lane & { last: number }>()
+  const byJob = new Map<string, Lane>()
   const lane = (jobKey: string) => {
     let entry = byJob.get(jobKey)
     if (!entry) {
@@ -178,7 +185,6 @@ export function buildLanes(
         running: false,
         overdue: false,
         status: null,
-        last: -Infinity,
       }
       byJob.set(jobKey, entry)
     }
@@ -200,31 +206,101 @@ export function buildLanes(
       if (bar.end !== null && bar.end < from) continue
       const entry = lane(run.job_key)
       entry.bars.push(bar)
-      entry.last = Math.max(entry.last, bar.end ?? now)
       if (bar.kind === 'run' && bar.end === null) entry.running = true
     }
   }
 
   const soonest = (l: Lane) => (l.next === null ? Infinity : l.next)
-  const ranked = [...byJob.values()].sort(
-    (a, b) =>
-      Number(b.running) - Number(a.running) ||
-      Number(b.overdue) - Number(a.overdue) ||
-      b.last - a.last ||
-      soonest(a) - soonest(b),
+  const byName = (a: Lane, b: Lane) => a.jobKey.localeCompare(b.jobKey)
+  const lanes = [...byJob.values()].sort(
+    order === 'next' ? (a, b) => soonest(a) - soonest(b) || byName(a, b) : byName,
   )
-  const shown = ranked
-    .slice(0, maxLanes)
-    .sort((a, b) => soonest(a) - soonest(b) || a.jobKey.localeCompare(b.jobKey))
-    .map(({ jobKey, bars, next, running, overdue, status }) => ({
-      jobKey,
-      bars,
-      next,
-      running,
-      overdue,
-      status,
-    }))
-  return { lanes: shown, hidden: Math.max(0, ranked.length - maxLanes) }
+  return { lanes }
+}
+
+// ─── Range (issue #829) ─────────────────────────────────────────────────────
+
+/**
+ * What the track shows: a window `windowMs` wide that ends `endOffsetMs`
+ * before the view's "now" (0 or negative). An end of 0 is the live edge.
+ */
+export interface ViewRange {
+  windowMs: number
+  endOffsetMs: number
+}
+
+const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, value))
+
+/** Fit a range inside the selectable span: at least `min` wide, never past "now". */
+export function clampRange(range: ViewRange, span = SPAN_MS, min = MIN_WINDOW): ViewRange {
+  const windowMs = clamp(Math.round(range.windowMs), min, span)
+  const endOffsetMs = clamp(Math.round(range.endOffsetMs), windowMs - span, 0)
+  return { windowMs, endOffsetMs }
+}
+
+/**
+ * The range after dragging one part of the selection by `deltaMs`, measured
+ * from where the drag started rather than accumulated per pointer event, so
+ * a drag that runs into a limit and comes back lands where the pointer is.
+ *
+ * - `move` shifts the whole selection; its width stays.
+ * - `start` moves the left edge; the right edge stays.
+ * - `end` moves the right edge; the left edge stays.
+ */
+export function dragRange(
+  from: ViewRange,
+  part: 'move' | 'start' | 'end',
+  deltaMs: number,
+  span = SPAN_MS,
+  min = MIN_WINDOW,
+): ViewRange {
+  const startOffset = from.endOffsetMs - from.windowMs
+  if (part === 'move') {
+    const end = clamp(from.endOffsetMs + deltaMs, from.windowMs - span, 0)
+    return { windowMs: from.windowMs, endOffsetMs: Math.round(end) }
+  }
+  if (part === 'start') {
+    const start = clamp(startOffset + deltaMs, -span, from.endOffsetMs - min)
+    return { windowMs: Math.round(from.endOffsetMs - start), endOffsetMs: from.endOffsetMs }
+  }
+  const end = clamp(from.endOffsetMs + deltaMs, startOffset + min, 0)
+  return { windowMs: Math.round(end - startOffset), endOffsetMs: Math.round(end) }
+}
+
+/** One slice of the range selector's overview: how many runs started in it. */
+export interface DensityBucket {
+  start: number
+  count: number
+  failed: number
+}
+
+/**
+ * Runs per slice of the span ending at `end`, by when they started — the
+ * claim, or the fire for one nothing claimed yet. The overview the range is
+ * chosen on: where the activity was, and where it failed.
+ */
+export function densityBuckets(
+  runs: readonly LiveRun[],
+  end: number,
+  span = SPAN_MS,
+  count = 60,
+): DensityBucket[] {
+  const size = span / count
+  const from = end - span
+  const buckets = Array.from({ length: count }, (_, i) => ({ start: from + i * size, count: 0, failed: 0 }))
+  for (const run of runs) {
+    const at = Date.parse(run.claimed_at ?? run.fire_at)
+    if (Number.isNaN(at) || at < from || at >= end) continue
+    const bucket = buckets[Math.min(count - 1, Math.floor((at - from) / size))]!
+    bucket.count += 1
+    if (run.state === 'failed' || run.state === 'dead') bucket.failed += 1
+  }
+  return buckets
+}
+
+/** `5s`, `1m 30s`, `5m` — the width of a window. */
+export function formatSpan(spanMs: number): string {
+  return formatOffset(-Math.abs(spanMs)).replace('−', '')
 }
 
 /** `-30s`, `-1m`, `-2m 30s`, `+5s` — an axis label relative to now. */

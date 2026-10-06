@@ -1,19 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useElementSize, useIntervalFn, usePreferredReducedMotion } from '@vueuse/core'
 import { useForecast, useJobStates, useJobs } from '~/api/queries'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
 import {
+  COLLAPSED_LANES,
   DEFAULT_WINDOW,
+  MIN_WINDOW,
   NOW_AT,
-  WINDOWS,
+  SPAN_MS,
   buildLanes,
+  densityBuckets,
   formatOffset,
+  formatSpan,
   futureSpan,
   type Bar,
   type Lane,
+  type LaneOrder,
+  type LiveRun,
+  type ViewRange,
 } from '~/lib/live-timeline'
+import type { JobScheduleState } from '~/api/types'
 
 /**
  * What is running right now, and what just ran — one lane per job, sliding
@@ -34,30 +42,53 @@ import {
  * left. Vue re-renders when a frame arrives from the stream (at most four
  * times a second), never per animation frame. A bar still running is drawn on
  * well past "now" and cut off by the clip, so it grows without being touched.
+ *
+ * It can be held still (issue #829): the Pause button, or moving the range
+ * selector's window off "now", freezes the picture at one moment — runs and
+ * schedule are snapshotted then, so what was on screen stays readable while
+ * the stream moves on underneath. Hovering the track freezes only the motion,
+ * so a tooltip can be read and a short bar clicked.
  */
 
 const STORAGE_KEY = 'croniq_live_window'
+const ORDER_KEY = 'croniq_live_order'
+const EXPANDED_KEY = 'croniq_live_expanded'
 
-function readWindow(): number {
+/** Per-browser conveniences: a blocked storage just means the defaults. */
+function readStored(key: string): string | null {
   try {
-    const stored = Number(localStorage.getItem(STORAGE_KEY))
-    if (WINDOWS.some((w) => w.value === stored)) return stored
+    return localStorage.getItem(key)
   } catch {
-    // Storage blocked: the default is fine.
+    return null
   }
-  return DEFAULT_WINDOW
 }
-
-const windowMs = ref<number>(readWindow())
-watch(windowMs, (value) => {
+function writeStored(key: string, value: string) {
   try {
-    localStorage.setItem(STORAGE_KEY, String(value))
+    localStorage.setItem(key, value)
   } catch {
     // Remembering the choice is a convenience, not a requirement.
   }
-})
-const windowItems = WINDOWS.map((w) => ({ label: w.label, value: w.value }))
-const windowLabel = computed(() => WINDOWS.find((w) => w.value === windowMs.value)?.label ?? '')
+}
+
+/** Any width in range, not only the five the old select offered. */
+function readWindow(): number {
+  const stored = Number(readStored(STORAGE_KEY))
+  return Number.isFinite(stored) && stored >= MIN_WINDOW && stored <= SPAN_MS ? stored : DEFAULT_WINDOW
+}
+
+/**
+ * The visible window and where it ends. Only the width is remembered; a
+ * reload always starts at "now".
+ */
+const range = ref<ViewRange>({ windowMs: readWindow(), endOffsetMs: 0 })
+const windowMs = computed(() => range.value.windowMs)
+watch(windowMs, (value) => writeStored(STORAGE_KEY, String(value)))
+const windowLabel = computed(() => formatSpan(windowMs.value))
+
+const laneOrder = ref<LaneOrder>(readStored(ORDER_KEY) === 'next' ? 'next' : 'name')
+watch(laneOrder, (value) => writeStored(ORDER_KEY, value))
+const expanded = ref(readStored(EXPANDED_KEY) === '1')
+watch(expanded, (value) => writeStored(EXPANDED_KEY, value ? '1' : '0'))
 
 const { runs, connected, received, unavailable, offset } = useExecutionsStream()
 const { data: jobStates } = useJobStates()
@@ -67,13 +98,44 @@ const { data: forecast } = useForecast(60, 5)
 const serverNow = () => Date.now() + offset.value
 
 /**
+ * Held still: the moment the picture froze, with what was known then. `null`
+ * while live. Runs and schedule are copied at that moment because the stream
+ * keeps moving — five minutes later the runs on screen would have aged out
+ * of its horizon.
+ */
+const frozen = shallowRef<{ at: number; runs: LiveRun[]; schedule: JobScheduleState[] } | null>(null)
+const paused = computed(() => frozen.value !== null)
+
+function pause() {
+  if (frozen.value) return
+  frozen.value = { at: serverNow(), runs: runs.value, schedule: jobStates.value ?? [] }
+}
+
+/** Back to live: unfreeze and put the window's end back on "now". */
+function goLive() {
+  frozen.value = null
+  range.value = { ...range.value, endOffsetMs: 0 }
+}
+
+/** A window moved off "now" shows the past, which only makes sense held still. */
+watch(
+  () => range.value.endOffsetMs,
+  (end) => {
+    if (end !== 0) pause()
+  },
+)
+
+/** The instant the view's "now" line stands for. */
+const viewNow = () => (frozen.value ? frozen.value.at + range.value.endOffsetMs : serverNow())
+
+/**
  * A coarse clock for what *is* re-rendered: which bars are in the window, and
  * how far the open ones are drawn. Once a second is plenty for both — the
  * smooth motion is the layer shift, not this.
  */
-const coarseNow = ref(serverNow())
-useIntervalFn(() => (coarseNow.value = serverNow()), 1000)
-watch(runs, () => (coarseNow.value = serverNow()))
+const coarseNow = ref(viewNow())
+useIntervalFn(() => (coarseNow.value = viewNow()), 1000)
+watch([runs, frozen, range], () => (coarseNow.value = viewNow()))
 
 /**
  * Only jobs that still exist. `GET /v1/jobs/states` outlives the job on
@@ -84,30 +146,45 @@ watch(runs, () => (coarseNow.value = serverNow()))
 const schedule = computed(() => {
   if (!jobs.value) return []
   const live = new Set(jobs.value.map((job) => job.job_key))
-  return (jobStates.value ?? []).filter((state) => live.has(state.job_key))
+  const states = frozen.value ? frozen.value.schedule : (jobStates.value ?? [])
+  return states.filter((state) => live.has(state.job_key))
 })
+const sourceRuns = computed(() => (frozen.value ? frozen.value.runs : runs.value))
 
 /**
  * A substring of the job key, case-insensitive — the same match the Runs
- * screen's search uses. It narrows the lanes before they are chosen, so a
- * filtered view can show jobs the ten-lane cut would otherwise have hidden.
+ * screen's search uses.
  */
 const jobFilter = ref('')
 const needle = computed(() => jobFilter.value.trim().toLowerCase())
 const matches = (jobKey: string) => !needle.value || jobKey.toLowerCase().includes(needle.value)
-const shownRuns = computed(() => runs.value.filter((r) => matches(r.job_key)))
+const shownRuns = computed(() => sourceRuns.value.filter((r) => matches(r.job_key)))
 const shownSchedule = computed(() => schedule.value.filter((s) => matches(s.job_key)))
 
 const layout = computed(() =>
-  buildLanes(shownRuns.value, shownSchedule.value, coarseNow.value, windowMs.value),
+  buildLanes(shownRuns.value, shownSchedule.value, coarseNow.value, windowMs.value, laneOrder.value),
+)
+
+/** Past this many lanes the track scrolls, unless expanded (issue #828). */
+const overflowing = computed(() => layout.value.lanes.length > COLLAPSED_LANES)
+
+/** The overview the range is chosen on: the whole span, ending at the freeze or now. */
+const overview = computed(() =>
+  densityBuckets(shownRuns.value, frozen.value ? frozen.value.at : coarseNow.value),
 )
 
 /** The next fire, if it falls in the strip right of "now". */
 function nextInStrip(next: number | null) {
+  // Held still, the strip right of the line is the past's future: the
+  // snapshot's next fires would be stale, so it stays empty.
+  if (paused.value) return false
   return next !== null && next >= coarseNow.value && next <= coarseNow.value + futureSpan(windowMs.value)
 }
 
 function nextLabel(lane: Lane) {
+  // Looking at the past, "in 55 s" would be relative to a moment that has
+  // gone; the labels stay empty until the view is back at its freeze or live.
+  if (range.value.endOffsetMs !== 0) return ''
   if (lane.overdue) return 'overdue'
   if (lane.status && lane.status !== 'active') return lane.status
   if (lane.next === null) return ''
@@ -193,12 +270,19 @@ const axis = computed(() => {
   }))
   return [...past, { x: nowX.value, label: 'now' }]
 })
+/** What the line stands for: "now" while live, a clock time while held still. */
+const lineLabel = computed(() =>
+  frozen.value ? new Date(frozen.value.at + range.value.endOffsetMs).toLocaleTimeString() : 'now',
+)
 const futureLabel = computed(() => formatOffset(futureSpan(windowMs.value)))
 
 // ─── Motion ─────────────────────────────────────────────────────────────────
 
+/** Pointer on the track: hold the motion so a tooltip can be read and a bar clicked. */
+const hovering = ref(false)
+
 function shift() {
-  const travelled = (serverNow() - t0) * scale.value
+  const travelled = (viewNow() - t0) * scale.value
   if (pastLayer.value) {
     pastLayer.value.style.transform = `translate3d(${nowX.value - travelled}px,0,0)`
   }
@@ -217,7 +301,7 @@ let frame = 0
 let stepTimer: ReturnType<typeof setInterval> | undefined
 
 function loop() {
-  shift()
+  if (!hovering.value) shift()
   frame = requestAnimationFrame(loop)
 }
 
@@ -225,7 +309,9 @@ function start() {
   stopMotion()
   if (motion.value === 'reduce') {
     shift()
-    stepTimer = setInterval(shift, 1000)
+    stepTimer = setInterval(() => {
+      if (!hovering.value) shift()
+    }, 1000)
   } else {
     frame = requestAnimationFrame(loop)
   }
@@ -240,7 +326,7 @@ onMounted(start)
 watch(motion, start)
 // A new scale moves every bar; shift the layer in the same tick so the two
 // never disagree for a frame.
-watch([scale, nowX], shift, { flush: 'post' })
+watch([scale, nowX, frozen, () => range.value.endOffsetMs], shift, { flush: 'post' })
 onBeforeUnmount(stopMotion)
 </script>
 
@@ -250,12 +336,35 @@ onBeforeUnmount(stopMotion)
       <div class="flex items-center gap-2">
         <span
           class="size-2 rounded-full"
-          :class="connected ? 'animate-pulse bg-success' : 'bg-accented'"
-          :title="connected ? 'Live' : 'Reconnecting…'"
+          :class="paused ? 'bg-warning' : connected ? 'animate-pulse bg-success' : 'bg-accented'"
+          :title="paused ? 'Paused' : connected ? 'Live' : 'Reconnecting…'"
         />
-        <p class="cq-label">
-          Live
+        <p
+          class="cq-label"
+          data-testid="live-state"
+        >
+          {{ paused ? 'Paused' : hovering ? 'Live · held' : 'Live' }}
         </p>
+        <UButton
+          v-if="paused"
+          size="xs"
+          variant="soft"
+          icon="i-lucide-radio"
+          label="Live"
+          data-testid="live-resume"
+          @click="goLive"
+        />
+        <UButton
+          v-else
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-pause"
+          aria-label="Pause"
+          title="Hold the picture still"
+          data-testid="live-pause"
+          @click="pause"
+        />
       </div>
       <!-- The hour ahead, from the rail this card absorbed: names are in the
            lane labels, this keeps the shape — "and then it gets busy". -->
@@ -281,7 +390,11 @@ onBeforeUnmount(stopMotion)
         <span class="cq-num text-xs text-muted">{{ hourTotal }} fire{{ hourTotal === 1 ? '' : 's' }}</span>
       </div>
       <div class="flex items-center gap-3">
-        <span class="cq-num text-xs text-muted">
+        <!-- Counts are of the moment shown; a past view has no such count. -->
+        <span
+          v-if="range.endOffsetMs === 0"
+          class="cq-num text-xs text-muted"
+        >
           {{ running }} running · {{ queued }} queued
         </span>
         <UInput
@@ -292,12 +405,15 @@ onBeforeUnmount(stopMotion)
           aria-label="Filter jobs"
           class="w-40"
         />
-        <USelect
-          v-model="windowMs"
-          :items="windowItems"
+        <UButton
           size="xs"
-          class="w-24"
-          aria-label="Time window"
+          variant="ghost"
+          color="neutral"
+          :icon="laneOrder === 'name' ? 'i-lucide-arrow-down-a-z' : 'i-lucide-clock-arrow-up'"
+          :label="laneOrder === 'name' ? 'Name' : 'Next fire'"
+          :title="laneOrder === 'name' ? 'Lanes by job key — switch to next fire first' : 'Lanes by next fire — switch to job key'"
+          data-testid="live-order"
+          @click="laneOrder = laneOrder === 'name' ? 'next' : 'name'"
         />
       </div>
     </div>
@@ -310,163 +426,168 @@ onBeforeUnmount(stopMotion)
       description="This session cannot read executions, or the server predates the live stream."
     />
     <template v-else>
-      <div class="mt-3 flex">
-        <!-- Lane labels stay put; only the track to their right moves. -->
-        <ul class="w-32 shrink-0 pr-3 sm:w-56">
-          <li
-            v-for="lane in layout.lanes"
-            :key="lane.jobKey"
-            class="flex h-[22px] items-center gap-2 text-xs"
-          >
-            <RouterLink
-              :to="`/jobs/${encodeURIComponent(lane.jobKey)}`"
-              class="min-w-0 flex-1 truncate font-mono hover:underline"
-              :class="lane.overdue ? 'text-error' : lane.running ? 'text-highlighted' : 'text-primary'"
-              :title="lane.jobKey"
+      <!-- Every lane is here (#828): past ten the track scrolls, lane labels
+           with it, unless the card is expanded to show them all. The padding
+           keeps the "now" line's cap inside the scroll box. -->
+      <div
+        class="mt-1 pt-2 pb-1"
+        :class="!expanded && overflowing ? 'overflow-y-auto overscroll-contain' : ''"
+        :style="!expanded && overflowing ? { maxHeight: `${COLLAPSED_LANES * LANE_HEIGHT + 12}px` } : {}"
+        data-testid="live-lanes"
+      >
+        <div class="flex">
+          <!-- Lane labels stay put; only the track to their right moves. -->
+          <ul class="w-32 shrink-0 pr-3 sm:w-56">
+            <li
+              v-for="lane in layout.lanes"
+              :key="lane.jobKey"
+              class="flex h-[22px] items-center gap-2 text-xs"
             >
-              {{ lane.jobKey }}
-            </RouterLink>
-            <!-- Late is not upcoming: an overdue job says so, in red, where
-                 its lane shows nothing having run. -->
-            <span
-              v-if="lane.overdue"
-              class="hidden shrink-0 items-center gap-1 text-error sm:flex"
-              title="Should have fired and did not"
-            >
-              <UIcon
-                name="i-lucide-clock-alert"
-                class="size-3.5"
-              />overdue
-            </span>
-            <span
-              v-else
-              class="cq-num hidden shrink-0 text-muted sm:inline"
-              :title="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
-            >{{ nextLabel(lane) }}</span>
-          </li>
-        </ul>
+              <RouterLink
+                :to="`/jobs/${encodeURIComponent(lane.jobKey)}`"
+                class="min-w-0 flex-1 truncate font-mono hover:underline"
+                :class="lane.overdue ? 'text-error' : lane.running ? 'text-highlighted' : 'text-primary'"
+                :title="lane.jobKey"
+              >
+                {{ lane.jobKey }}
+              </RouterLink>
+              <!-- Late is not upcoming: an overdue job says so, in red, where
+                   its lane shows nothing having run. -->
+              <span
+                v-if="lane.overdue"
+                class="hidden shrink-0 items-center gap-1 text-error sm:flex"
+                title="Should have fired and did not"
+              >
+                <UIcon
+                  name="i-lucide-clock-alert"
+                  class="size-3.5"
+                />overdue
+              </span>
+              <span
+                v-else
+                class="cq-num hidden shrink-0 text-muted sm:inline"
+                :title="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
+              >{{ nextLabel(lane) }}</span>
+            </li>
+          </ul>
 
-        <div
-          ref="track"
-          class="relative min-w-0 flex-1"
-          :style="{ height: `${Math.max(1, layout.lanes.length) * LANE_HEIGHT}px` }"
-          role="img"
-          :aria-label="`${running} running and ${queued} queued; ${layout.lanes.length} jobs shown, window ${windowLabel}`"
-        >
-          <!-- Quarter gridlines, static: the axis is relative to now. -->
           <div
-            v-for="tick in axis.slice(1, -1)"
-            :key="tick.label"
-            class="absolute inset-y-0 w-px bg-elevated"
-            :style="{ left: `${tick.x}px` }"
-          />
-
-          <!-- Lane stripes, so a bar can be followed to its label. -->
-          <div
-            v-for="(lane, index) in layout.lanes"
-            :key="`stripe-${lane.jobKey}`"
-            class="absolute inset-x-0 border-b border-default/50"
-            :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
-          />
-
-          <!-- The past: clipped at "now". -->
-          <div
-            class="absolute inset-y-0 left-0 overflow-hidden"
-            :style="{ width: `${nowX}px` }"
+            ref="track"
+            class="relative min-w-0 flex-1"
+            :style="{ height: `${Math.max(1, layout.lanes.length) * LANE_HEIGHT}px` }"
+            role="img"
+            :aria-label="`${running} running and ${queued} queued; ${layout.lanes.length} jobs shown, window ${windowLabel}`"
+            @pointerenter="hovering = true"
+            @pointerleave="hovering = false"
           >
+            <!-- Quarter gridlines, static: the axis is relative to now. -->
             <div
-              ref="pastLayer"
-              class="absolute inset-0 will-change-transform"
+              v-for="tick in axis.slice(1, -1)"
+              :key="tick.label"
+              class="absolute inset-y-0 w-px bg-elevated"
+              :style="{ left: `${tick.x}px` }"
+            />
+
+            <!-- Lane stripes, so a bar can be followed to its label. -->
+            <div
+              v-for="(lane, index) in layout.lanes"
+              :key="`stripe-${lane.jobKey}`"
+              class="absolute inset-x-0 border-b border-default/50"
+              :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
+            />
+
+            <!-- The past: clipped at "now". -->
+            <div
+              class="absolute inset-y-0 left-0 overflow-hidden"
+              :style="{ width: `${nowX}px` }"
             >
               <div
-                v-for="(lane, index) in layout.lanes"
-                :key="lane.jobKey"
-                class="absolute inset-x-0"
-                :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
-              >
-                <RouterLink
-                  v-for="bar in lane.bars"
-                  :key="bar.id"
-                  :to="`/executions/${bar.run.id}`"
-                  class="absolute left-0 origin-left hover:brightness-125"
-                  :class="barClass(bar)"
-                  :style="barStyle(bar)"
-                  :title="barTitle(bar)"
-                />
-              </div>
-            </div>
-          </div>
-
-          <!-- The near future: next fires, approaching the line. -->
-          <div
-            class="absolute inset-y-0 right-0 overflow-hidden"
-            :style="{ left: `${nowX}px` }"
-          >
-            <div
-              ref="futureLayer"
-              class="absolute inset-0 will-change-transform"
-            >
-              <template
-                v-for="(lane, index) in layout.lanes"
-                :key="`next-${lane.jobKey}`"
+                ref="pastLayer"
+                class="absolute inset-0 will-change-transform"
               >
                 <div
-                  v-if="nextInStrip(lane.next)"
-                  class="absolute left-0 w-0 border-l-2 border-dashed border-primary/60"
-                  :style="{
-                    ...tickStyle(lane.next!),
-                    top: `${index * LANE_HEIGHT + 3}px`,
-                    height: `${LANE_HEIGHT - 6}px`,
-                  }"
-                  :title="`${lane.jobKey} — next fire`"
-                />
-              </template>
+                  v-for="(lane, index) in layout.lanes"
+                  :key="lane.jobKey"
+                  class="absolute inset-x-0"
+                  :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
+                >
+                  <RouterLink
+                    v-for="bar in lane.bars"
+                    :key="bar.id"
+                    :to="`/executions/${bar.run.id}`"
+                    class="absolute left-0 origin-left hover:brightness-125"
+                    :class="barClass(bar)"
+                    :style="barStyle(bar)"
+                    :title="barTitle(bar)"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          <!-- Now. A running lane gets a pulse where its bar meets the line. -->
-          <!-- The line is the one fixed thing in a moving picture, so it is
-               drawn in the accent colour and a little past the lanes, with a
-               small cap — findable at a glance without shouting over the bars. -->
-          <div
-            class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 rounded-full bg-primary/60"
-            :style="{ left: `${nowX - 1}px` }"
-          />
-          <div
-            class="pointer-events-none absolute -top-2 size-0 border-x-[4px] border-t-[4px] border-x-transparent border-t-primary/60"
-            :style="{ left: `${nowX - 4}px` }"
-          />
-          <template
-            v-for="(lane, index) in layout.lanes"
-            :key="`pulse-${lane.jobKey}`"
-          >
-            <span
-              v-if="lane.running"
-              class="pointer-events-none absolute size-2 animate-ping rounded-full bg-primary"
-              :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
+            <!-- The near future: next fires, approaching the line. -->
+            <div
+              class="absolute inset-y-0 right-0 overflow-hidden"
+              :style="{ left: `${nowX}px` }"
+            >
+              <div
+                ref="futureLayer"
+                class="absolute inset-0 will-change-transform"
+              >
+                <template
+                  v-for="(lane, index) in layout.lanes"
+                  :key="`next-${lane.jobKey}`"
+                >
+                  <div
+                    v-if="nextInStrip(lane.next)"
+                    class="absolute left-0 w-0 border-l-2 border-dashed border-primary/60"
+                    :style="{
+                      ...tickStyle(lane.next!),
+                      top: `${index * LANE_HEIGHT + 3}px`,
+                      height: `${LANE_HEIGHT - 6}px`,
+                    }"
+                    :title="`${lane.jobKey} — next fire`"
+                  />
+                </template>
+              </div>
+            </div>
+
+            <!-- Now. A running lane gets a pulse where its bar meets the line. -->
+            <!-- The line is the one fixed thing in a moving picture, so it is
+                 drawn in the accent colour and a little past the lanes, with a
+                 small cap — findable at a glance without shouting over the bars. -->
+            <div
+              class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 rounded-full bg-primary/60"
+              :style="{ left: `${nowX - 1}px` }"
             />
-          </template>
+            <div
+              class="pointer-events-none absolute -top-2 size-0 border-x-[4px] border-t-[4px] border-x-transparent border-t-primary/60"
+              :style="{ left: `${nowX - 4}px` }"
+            />
+            <template
+              v-for="(lane, index) in layout.lanes"
+              :key="`pulse-${lane.jobKey}`"
+            >
+              <span
+                v-if="lane.running && !paused"
+                class="pointer-events-none absolute size-2 animate-ping rounded-full bg-primary"
+                :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
+              />
+            </template>
 
-          <p
-            v-if="received && layout.lanes.length === 0"
-            class="absolute inset-y-0 left-0 flex items-center text-xs text-muted"
-            :style="{ width: `${nowX}px` }"
-          >
-            <template v-if="needle">
-              No job matches “{{ jobFilter.trim() }}”.
-            </template>
-            <template v-else>
-              No jobs defined, and nothing ran in the last {{ windowLabel }}.
-            </template>
-          </p>
+            <p
+              v-if="received && layout.lanes.length === 0"
+              class="absolute inset-y-0 left-0 flex items-center text-xs text-muted"
+              :style="{ width: `${nowX}px` }"
+            >
+              <template v-if="needle">
+                No job matches “{{ jobFilter.trim() }}”.
+              </template>
+              <template v-else>
+                No jobs defined, and nothing ran in the last {{ windowLabel }}.
+              </template>
+            </p>
+          </div>
         </div>
-      </div>
-
-      <div
-        v-if="layout.hidden"
-        class="mt-1 text-xs text-muted"
-      >
-        +{{ layout.hidden }} more
       </div>
 
       <!-- Axis, aligned under the track. -->
@@ -477,9 +598,29 @@ onBeforeUnmount(stopMotion)
           class="cq-label absolute -translate-x-1/2 normal-case"
           :class="tick.label === 'now' ? 'text-primary' : ''"
           :style="{ left: `${tick.x}px` }"
-        >{{ tick.label }}</span>
+        >{{ tick.label === 'now' ? lineLabel : tick.label }}</span>
         <span class="cq-label absolute right-0 normal-case">{{ futureLabel }}</span>
       </div>
+
+      <div
+        v-if="overflowing"
+        class="mt-1 flex items-center gap-2 text-xs text-muted"
+      >
+        <span>{{ layout.lanes.length }} jobs</span>
+        <UButton
+          size="xs"
+          variant="link"
+          :icon="expanded ? 'i-lucide-chevrons-down-up' : 'i-lucide-chevrons-up-down'"
+          :label="expanded ? 'Collapse' : 'Expand'"
+          data-testid="live-expand"
+          @click="expanded = !expanded"
+        />
+      </div>
+
+      <LiveRangeSelector
+        v-model:range="range"
+        :buckets="overview"
+      />
     </template>
   </section>
 </template>

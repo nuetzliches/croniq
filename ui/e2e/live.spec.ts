@@ -71,9 +71,54 @@ test.describe('live surfaces', () => {
     await section.click()
     await expect(app.locator('#console-startup')).toHaveCount(0)
   })
+
+  /**
+   * The dashboard timeline holds still on request (#829): the Pause button,
+   * or moving the range off "now", which the keyboard does in 5 s steps.
+   * "Live" puts both back.
+   */
+  test('the live timeline pauses, looks back, and returns to live', async ({ app }) => {
+    await app.goto('/')
+    const state = app.getByTestId('live-state')
+    await expect(state).toHaveText(/live/i, { timeout: 20_000 })
+
+    await app.getByTestId('live-pause').click()
+    await expect(state).toHaveText(/paused/i)
+    await app.getByTestId('live-resume').click()
+    await expect(state).toHaveText(/live/i)
+
+    // Moving the window into the past leaves "now" and pauses.
+    await app.getByTestId('live-range-selection').focus()
+    await app.keyboard.press('ArrowLeft')
+    await expect(state).toHaveText(/paused/i)
+    await app.getByTestId('live-resume').click()
+    await expect(state).toHaveText(/live/i)
+  })
 })
 
 test.describe('preferences survive a reload', () => {
+  test('the live timeline keeps its lane order and window width', async ({ app }) => {
+    await app.goto('/')
+    const order = app.getByTestId('live-order')
+    await expect(order).toHaveText(/name/i, { timeout: 20_000 })
+    await order.click()
+    await expect(order).toHaveText(/next fire/i)
+
+    // Widen by one keyboard step on the left edge: 1m → 1m 5s.
+    await app.getByTestId('live-range-start').focus()
+    await app.keyboard.press('ArrowLeft')
+    await expect(app.getByText('1m 5s up to now')).toBeVisible()
+
+    await app.reload()
+    await expect(app.getByTestId('live-order')).toHaveText(/next fire/i, { timeout: 20_000 })
+    await expect(app.getByText('1m 5s up to now')).toBeVisible()
+
+    // Restore the defaults for later tests.
+    await app.getByTestId('live-order').click()
+    await app.getByTestId('live-range-start').focus()
+    await app.keyboard.press('ArrowRight')
+  })
+
   test('the theme choice persists', async ({ app }) => {
     await pickTheme(app, 'light')
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light')
