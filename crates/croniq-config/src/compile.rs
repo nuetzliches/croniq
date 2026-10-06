@@ -492,6 +492,58 @@ pub enum CatchUpPolicy {
     None,
 }
 
+/// Dispatch rank of a job's queued executions (`priority low|normal|high`,
+/// issue #819).
+///
+/// Only consulted while executions are *waiting*: when a runner polls, the
+/// queue hands out the eligible item with the highest effective priority, and
+/// falls back to FIFO among equals. It does not pre-empt anything in flight,
+/// and it does not bypass `singleton` / `max_concurrent` /
+/// `concurrency_group` — a blocked high-priority item waits like any other.
+///
+/// Travels as [`PRIORITY_METADATA_KEY`] in the job's compiled metadata, which
+/// is what the queue actually reads; this field is the typed view of it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobPriority {
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+impl JobPriority {
+    /// Every spelling the directive accepts, in rank order — the error
+    /// message in `validate.rs` lists these.
+    pub const VALUES: &'static [&'static str] = &["low", "normal", "high"];
+
+    /// Parse a directive value. `None` for anything else.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "low" => Some(Self::Low),
+            "normal" => Some(Self::Normal),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
+    /// `serde(skip_serializing_if)` helper. Keeps a `normal` job's serialised
+    /// form — and therefore its `config_hash` — identical to what it was
+    /// before the field existed, so upgrading does not re-fire every
+    /// `run_on_register` job.
+    pub fn is_normal(&self) -> bool {
+        *self == Self::Normal
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JobConfig {
     pub key: String,
@@ -574,6 +626,11 @@ pub struct JobConfig {
     /// [`job_coalesces_scheduled_fires`].
     #[serde(default)]
     pub coalesce: bool,
+    /// Dispatch rank among waiting executions (`priority`, issue #819).
+    /// Non-`normal` values are also stamped into the job's metadata as
+    /// [`PRIORITY_METADATA_KEY`], which is what the queue reads.
+    #[serde(default, skip_serializing_if = "JobPriority::is_normal")]
+    pub priority: JobPriority,
     /// Free-form tags for filtering/grouping. NOT routing-relevant —
     /// runner capabilities handle routing. Convention: `key=value` strings.
     #[serde(default)]
@@ -679,6 +736,24 @@ pub const COALESCE_METADATA_KEY: &str = "__coalesce";
 /// Value of [`COALESCE_METADATA_KEY`] written for `coalesce schedule`
 /// (issue #818): scheduled fires fold as well as bare triggers.
 pub const COALESCE_SCHEDULE_VALUE: &str = "schedule";
+/// Metadata key carrying a job's dispatch priority (`priority`, issue #819).
+///
+/// Stamped by the compiler only for a non-default level (`"low"` or
+/// `"high"`), so it rides along with every execution row and work item exactly
+/// like [`MAX_CONCURRENT_METADATA_KEY`]: a scheduled fire, a trigger, a retry,
+/// a watchdog requeue and a dead-letter replay all carry the job's compiled
+/// metadata, so each of them is ranked without knowing the directive exists.
+/// An item without the key is `normal`.
+///
+/// The queue that reads it lives in `croniq-runner`, which does not depend on
+/// this crate; it keeps its own copy of the key
+/// (`croniq_runner::PRIORITY_METADATA_KEY`) and a test in `croniq-bridge`,
+/// which sees both, pins the two together.
+///
+/// In the reserved `__` namespace, so caller-supplied metadata can never set
+/// it (see [`is_reserved_metadata_key`]) — otherwise any client allowed to
+/// trigger a job could move its own run to the front of the queue.
+pub const PRIORITY_METADATA_KEY: &str = "__priority";
 
 /// Metadata key carrying the execution timeout that was in force when an
 /// execution was fired (issue #558).
@@ -952,6 +1027,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut default_queue_ttl: Option<String> = None;
     let mut default_max_queue_depth: Option<u32> = None;
     let mut default_keep_last: Option<u32> = None;
+    let mut default_priority = JobPriority::default();
     let mut jobs = Vec::new();
     let mut calendars = Vec::new();
 
@@ -1080,6 +1156,15 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 default_keep_last =
                                     first_arg(dir, &vars).and_then(|v| v.parse().ok());
                             }
+                            // Unknown values keep the running default;
+                            // validate.rs reports them.
+                            "priority" => {
+                                if let Some(p) =
+                                    first_arg(dir, &vars).and_then(|v| JobPriority::parse(&v))
+                                {
+                                    default_priority = p;
+                                }
+                            }
                             _ => {}
                         },
                         DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
@@ -1118,6 +1203,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         queue_ttl: default_queue_ttl.clone(),
                         max_queue_depth: default_max_queue_depth,
                         keep_last: default_keep_last,
+                        priority: default_priority,
                     },
                     &vars,
                     &group_limits,
@@ -1627,6 +1713,7 @@ struct JobDefaults {
     queue_ttl: Option<String>,
     max_queue_depth: Option<u32>,
     keep_last: Option<u32>,
+    priority: JobPriority,
 }
 
 fn compile_job(
@@ -1674,6 +1761,7 @@ fn compile_job(
     let mut concurrency_group: Option<String> = None;
     let mut coalesce = false;
     let mut coalesce_schedule = false;
+    let mut priority = defaults.priority;
     let mut tags: Vec<String> = Vec::new();
     let mut run_on_register = false;
 
@@ -1738,6 +1826,13 @@ fn compile_job(
                 "coalesce" => {
                     coalesce = true;
                     coalesce_schedule = first_arg(d, vars).as_deref() == Some("schedule");
+                }
+                // Dispatch rank (issue #819). An unknown value keeps the
+                // inherited one; validate.rs reports it.
+                "priority" => {
+                    if let Some(p) = first_arg(d, vars).and_then(|v| JobPriority::parse(&v)) {
+                        priority = p;
+                    }
                 }
                 // Bare directive (issue #555): no value, presence is the
                 // whole signal. The adoption fire itself lives in the
@@ -1875,6 +1970,19 @@ fn compile_job(
         metadata.insert(COALESCE_METADATA_KEY.into(), value.into());
     }
 
+    // And for the dispatch rank (issue #819): the queue orders by the stamp on
+    // the item, so every producer ranks its item without knowing the
+    // directive exists. `normal` is the absence of the key. Applies to
+    // ephemeral jobs too — their single queued item is still a queued item,
+    // and ranking it needs no persisted row.
+    //
+    // Removed first so the directive is the only spelling: a hand-written
+    // `metadata { __priority high }` must not outrank what `priority` says.
+    metadata.remove(PRIORITY_METADATA_KEY);
+    if priority != JobPriority::Normal {
+        metadata.insert(PRIORITY_METADATA_KEY.into(), priority.as_str().into());
+    }
+
     JobConfig {
         key: job.key.raw.clone(),
         namespace: job.key.namespace.clone(),
@@ -1901,6 +2009,7 @@ fn compile_job(
         max_concurrent,
         concurrency_group,
         coalesce,
+        priority,
         tags,
         run_on_register,
     }
@@ -2628,6 +2737,133 @@ mod tests {
         let ast = Parser::parse(r#"job etl:sync { every 15 minutes }"#).unwrap();
         let cfg = compile(&ast);
         assert!(cfg.jobs[0].tags.is_empty());
+    }
+
+    // ── priority (issue #819) ────────────────────────────────────────────────
+
+    fn only_job(src: &str) -> JobConfig {
+        let ast = Parser::parse(src).unwrap();
+        compile(&ast).jobs.remove(0)
+    }
+
+    #[test]
+    fn priority_defaults_to_normal_and_stamps_nothing() {
+        let job = only_job("job etl:sync { every 15 minutes }");
+        assert_eq!(job.priority, JobPriority::Normal);
+        assert!(!job.metadata.contains_key(PRIORITY_METADATA_KEY));
+        // A `normal` job serialises exactly as it did before the field
+        // existed, so `config_hash` does not move on upgrade.
+        let json = serde_json::to_value(&job).unwrap();
+        assert!(json.get("priority").is_none(), "{json}");
+    }
+
+    #[test]
+    fn priority_high_and_low_stamp_the_metadata_key() {
+        for (level, expected) in [("high", JobPriority::High), ("low", JobPriority::Low)] {
+            let job = only_job(&format!(
+                "job etl:sync {{ every 15 minutes; priority {level} }}"
+            ));
+            assert_eq!(job.priority, expected);
+            assert_eq!(
+                job.metadata.get(PRIORITY_METADATA_KEY).map(String::as_str),
+                Some(level),
+                "`priority {level}` must stamp __priority — the queue reads the item, \
+                 not the job config"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_priority_normal_stamps_nothing() {
+        let job = only_job("job etl:sync { every 15 minutes; priority normal }");
+        assert_eq!(job.priority, JobPriority::Normal);
+        assert!(!job.metadata.contains_key(PRIORITY_METADATA_KEY));
+    }
+
+    #[test]
+    fn priority_is_inherited_from_defaults_and_overridable() {
+        let ast = Parser::parse(
+            r#"
+            job early:job { every 15 minutes }
+            defaults { priority low }
+            job inherits:job { every 15 minutes }
+            job overrides:job { every 15 minutes; priority high }
+            job back:to-normal { every 15 minutes; priority normal }
+            "#,
+        )
+        .unwrap();
+        let jobs = compile(&ast).jobs;
+        let by_key = |k: &str| jobs.iter().find(|j| j.key == k).unwrap();
+        // `defaults { }` applies to jobs declared after it, like every
+        // other default.
+        assert_eq!(by_key("early:job").priority, JobPriority::Normal);
+        assert_eq!(by_key("inherits:job").priority, JobPriority::Low);
+        assert_eq!(
+            by_key("inherits:job")
+                .metadata
+                .get(PRIORITY_METADATA_KEY)
+                .map(String::as_str),
+            Some("low")
+        );
+        assert_eq!(by_key("overrides:job").priority, JobPriority::High);
+        assert_eq!(by_key("back:to-normal").priority, JobPriority::Normal);
+        assert!(
+            !by_key("back:to-normal")
+                .metadata
+                .contains_key(PRIORITY_METADATA_KEY)
+        );
+    }
+
+    #[test]
+    fn unknown_priority_keeps_the_inherited_level() {
+        // validate.rs reports it; the compiler stays lenient.
+        let job = only_job(
+            "defaults { priority high }
+job a:b { every 5 minutes; priority urgent }",
+        );
+        assert_eq!(job.priority, JobPriority::High);
+    }
+
+    #[test]
+    fn hand_written_priority_metadata_does_not_outrank_the_directive() {
+        let job = only_job("job a:b { every 5 minutes; metadata { __priority high } }");
+        assert_eq!(job.priority, JobPriority::Normal);
+        assert!(!job.metadata.contains_key(PRIORITY_METADATA_KEY));
+
+        let job =
+            only_job("job a:b { every 5 minutes; priority low; metadata { __priority high } }");
+        assert_eq!(
+            job.metadata.get(PRIORITY_METADATA_KEY).map(String::as_str),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn plain_priority_label_in_metadata_is_untouched() {
+        // `metadata { priority high }` was the label people used before the
+        // directive existed. It stays a label: it does not rank anything.
+        let job = only_job("job a:b { every 5 minutes; metadata { priority high } }");
+        assert_eq!(job.priority, JobPriority::Normal);
+        assert_eq!(
+            job.metadata.get("priority").map(String::as_str),
+            Some("high")
+        );
+        assert!(!job.metadata.contains_key(PRIORITY_METADATA_KEY));
+    }
+
+    #[test]
+    fn ephemeral_jobs_keep_their_priority() {
+        let job = only_job("job beat:tick { ephemeral every 30 seconds; priority high }");
+        assert_eq!(job.execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(
+            job.metadata.get(PRIORITY_METADATA_KEY).map(String::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn priority_key_is_reserved() {
+        assert!(is_reserved_metadata_key(PRIORITY_METADATA_KEY));
     }
 
     // ── run_on_register (issue #555) ─────────────────────────────────────────

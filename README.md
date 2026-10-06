@@ -226,6 +226,10 @@ defaults {
   # Per-job history cap: keep only the newest N terminal executions per job
   # (also settable per job). Applies on top of server.execution_retention.
   # keep_last 500
+
+  # Dispatch rank for jobs declared below (also settable per job):
+  # low | normal (default) | high. See the `priority` note on etl:sync.
+  # priority normal
 }
 
 calendar business-days {
@@ -376,6 +380,14 @@ job etl:sync {
   # it, so a stall leaves one run waiting instead of one per missed tick.
   # Includes the trigger fold above.
   # coalesce schedule
+
+  # Which waiting execution a runner gets next when a backlog drains:
+  # low | normal (default) | high, FIFO among equals. Each five minutes of
+  # waiting counts as one level up, so `low` is delayed, never starved.
+  # Nothing in flight is pre-empted, and a guard (`singleton` above) still
+  # holds a high-priority run back. Croniqfile-only: API- and SDK-registered
+  # jobs are `normal`. See docs/operations.md, "Dispatch order and priority".
+  # priority high
 }
 
 # Reconcile-on-deploy job: fires once when croniq adopts the definition,

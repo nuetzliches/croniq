@@ -1655,6 +1655,79 @@ protocol* section for the semantics and the
   work requests get `503` rather than being waved through. Runners retry, so
   this self-heals when the store recovers.
 
+## Dispatch order and `priority`
+
+When a runner polls, the server hands it the queued executions it may run in
+this order:
+
+1. **Highest effective priority first.** A job declares `priority low`,
+   `normal` (the default) or `high` (issue #819); `defaults { priority … }`
+   sets it for the jobs declared after the block.
+2. **Queue position among equals** — FIFO, which is all there was before
+   `priority` existed and all there still is for a Croniqfile that never
+   uses it.
+
+```hcl
+job orders:sync      { every 1 minute;  priority high }
+job reports:rebuild  { every 15 minutes }
+job orders:reconcile { every 1 hour;    priority low }   # safety net
+```
+
+This matters when a **backlog drains**: after a runner restart, a stall or a
+saturated pool, the fires that piled up used to be dispatched in fire order, so
+an hourly safety-net reconcile competed on equal terms with the job whose
+latency someone cares about. With the levels above, the backlog drains
+`orders:sync` first, `orders:reconcile` last. Nothing in flight is pre-empted —
+priority only decides which waiting execution goes next.
+
+**Aging bounds starvation.** An execution's effective level is its declared
+level plus one for every **five minutes** it has been waiting since its
+`fire_at` (capped at a day's worth). A `low` execution that has waited ten
+minutes competes as a fresh `high` one and wins the tie on queue position. Put
+the other way round: each level is a five-minute head start. A steady stream of
+`high` work can delay a `low` job, but not indefinitely. Because every item in
+a backlog ages at the same rate, a backlog that formed during one long stall
+still drains by level — aging only reorders items whose wait differs by more
+than five minutes per level.
+
+Aging applies whether or not any job declares a priority. In a Croniqfile that
+never uses the directive the queue is still FIFO, with one exception: an
+execution that has waited more than five minutes longer than the ones queued
+ahead of it goes first. In practice that is an execution the watchdog requeued
+to the *back* of the queue (a stale claim, a runner takeover) — it keeps its
+original `fire_at`, so it no longer waits behind work that fired after it.
+
+What it composes with:
+
+- **The concurrency guards still win.** A `high` execution held back by its
+  own `singleton` / `max_concurrent` or by its `concurrency_group` is skipped
+  in place, exactly like before: it keeps its queue position, it does not hold
+  back the lower-priority work behind it, and it goes first once its slot
+  frees. Priority orders the executions that *may* run; it never lets one past
+  a guard.
+- **Capabilities still filter first.** A runner is only ever offered work it
+  can execute, so a `high` item requiring `gpu` does not delay anything for a
+  runner without that capability.
+- **Every fire path carries it.** The level is stamped into the job's compiled
+  metadata as the reserved `__priority` key, so scheduled fires, `POST
+  /v1/trigger`, MCP fires, retries, watchdog requeues and dead-letter replays
+  are all ranked alike. Caller-supplied metadata cannot set it — the `__`
+  namespace is stripped at every ingress — so a client cannot move its own
+  trigger to the front. `metadata { priority high }`, the label some
+  Croniqfiles used before the directive existed, stays a plain label and ranks
+  nothing.
+- **`coalesce` is unaffected.** A trigger folds into the *oldest* queued
+  execution of its job, as before.
+- **`ephemeral` jobs are ranked too.** Their single queued item is a queued
+  item like any other; priority needs no persisted row.
+- **Jobs created via the API or registered by an SDK
+  (`POST /v1/jobs/register`) are `normal`.** `priority` is a Croniqfile
+  directive only, for now.
+
+A server restart rebuilds the queue from the store, so queue position among
+equals is not preserved across it (see the caveats below) — but the levels
+are, because they travel on each execution row.
+
 ## Serializing jobs against a shared upstream limit
 
 `singleton` / `max_concurrent` are **per job**: they cap how many executions of
@@ -1696,7 +1769,8 @@ queue is FIFO and the poll hands out at most one item at a time, so a job
 enqueued after another one runs after it. That is a stronger property than the
 rate limit you were reaching for, and it is worth knowing you have it — it is
 what lets a status-push job be ordered after the sync job whose row it would
-otherwise overwrite.
+otherwise overwrite. It holds among jobs of equal [`priority`](#dispatch-order-and-priority):
+give the set one level, or a `high` member enqueued later overtakes the rest.
 
 Pinning a set of jobs to a saturated pool does **not** stall anything else.
 An item the requesting runner cannot execute is skipped in place rather than
@@ -1723,8 +1797,10 @@ here rather than left to be discovered:
 - **FIFO means *enqueue* order, not `scheduled_for` order.** A watchdog
   requeue of a stale claim, or a runner takeover that requeues a lost
   session's claims, puts the execution at the *back* of the queue. So a
-  retried job can land after work that was scheduled later than it. If you
-  need ordering by logical time, this recipe does not give it.
+  retried job can land after work that was scheduled later than it — unless
+  it has been waiting five minutes longer than that work, at which point
+  [aging](#dispatch-order-and-priority) moves it ahead again. If you need
+  ordering by logical time, this recipe does not give it.
 - **`ephemeral` jobs do not belong in such a pool.** They are subject to the
   runner's capacity like anything else, but an ephemeral job keeps only its
   latest fire: when the next one fires, any earlier still-unclaimed item for
@@ -1806,6 +1882,9 @@ by a test (`concurrency_group_releases_in_enqueue_order`), but it is
   runner that cannot execute the head item claims the one behind it.
 - **No member may be blocked by another guard.** A member held back by its own
   `singleton` is skipped the same way, and the next member goes first.
+- **Every member must share one `priority`.** A higher-priority member is
+  handed out ahead of members queued before it (see
+  [Dispatch order and `priority`](#dispatch-order-and-priority)).
 - **Nothing may have been requeued in between.** A watchdog requeue or a runner
   takeover moves an execution to the *back* of the queue, and a server restart
   rebuilds the queue from the store without preserving cross-job order at all
@@ -1890,7 +1969,8 @@ that is roughly its longest run plus one schedule interval.
 
 ### What the wait actually costs
 
-The queue is FIFO and the trigger joins at the back:
+The queue is FIFO among equal [`priority`](#dispatch-order-and-priority) and the
+trigger joins at the back:
 
 ```
 wait ≈ remaining run time + (scheduled fires already queued × run duration)

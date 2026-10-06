@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-10-06a'
+const WASM_VERSION = '2026-10-06b'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-06a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-06b'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -77,6 +77,9 @@ const schState = {
     // Fold scheduled fires too (#818) — `coalesce schedule`, a superset of
     // the trigger fold above.
     coalesceSchedule: false,
+    // Dispatch rank among waiting executions (#819). 'normal' is the
+    // implicit default and emits nothing.
+    priority: 'normal',       // 'low' | 'normal' | 'high'
     // Job-level `timezone` — distinct from `schedTimezone`, which is the
     // schedule-option spelling and is dropped on once/disabled.
     jobTimezone: '',
@@ -290,6 +293,7 @@ bindCheckbox('sch-opt-coalesce', () => O.coalesce, (v) => { O.coalesce = v })
 bindCheckbox('sch-opt-coalesce-schedule', () => O.coalesceSchedule, (v) => { O.coalesceSchedule = v })
 bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
 bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
+bindSelect('sch-opt-priority', () => O.priority, (v) => { O.priority = v })
 
 // Dead letter. `enabled false` drops the letter entirely, so the detail
 // fields below it stop meaning anything — hide them rather than emit
@@ -389,6 +393,8 @@ function buildJobOptions() {
   // Bare directive, like run_on_register below.
   if (O.coalesce) opts.coalesce = true
   if (O.coalesceSchedule) opts.coalesce_schedule = true
+  // `normal` is the implicit default, so only emit the other two.
+  if (O.priority !== 'normal') opts.priority = O.priority
 
   // Recurring-only scheduling constraints — the schedule-options block is
   // invalid on once/disabled, so don't emit them there (the wasm bridge
@@ -1165,6 +1171,7 @@ const CONFIG_SCHEMA = {
     { key: 'queue_ttl', label: 'Queue TTL', placeholder: '1h · none' },
     { key: 'max_queue_depth', label: 'Max queue depth', type: 'number', placeholder: '10' },
     { key: 'keep_last', label: 'Keep last N runs', type: 'number', placeholder: '500' },
+    { key: 'priority', label: 'Priority', type: 'select', options: ['', 'low', 'normal', 'high'] },
     // `linear` is a real strategy in croniq-execution (base/step/cap); it and
     // its `step` were simply never offered by a form.
     { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'linear', 'fixed'] }, fields: [

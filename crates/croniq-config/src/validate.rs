@@ -2,6 +2,7 @@
 
 use crate::ast::*;
 use crate::calendar_args;
+use crate::compile::JobPriority;
 use miette::SourceSpan;
 use std::collections::HashSet;
 
@@ -109,6 +110,7 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
         match item {
             Item::Defaults(def) => {
                 validate_duration_directives(&def.directives, &mut diags);
+                validate_priority_directives(&def.directives, &mut diags);
                 for dob in &def.directives {
                     if let DirectiveOrBlock::Directive(dir) = dob {
                         match dir.key.value.as_str() {
@@ -179,6 +181,9 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
 
                 // `timeout` / `queue_ttl` must read as a duration (issue #792)
                 validate_duration_directives(&job.directives, &mut diags);
+
+                // `priority low|normal|high` (issue #819)
+                validate_priority_directives(&job.directives, &mut diags);
 
                 // Validate singleton / max_concurrent (issue #278, #302) and
                 // the shared-budget reference (issue #546)
@@ -280,6 +285,36 @@ fn validate_duration_directives(directives: &[DirectiveOrBlock], diags: &mut Vec
                     "`{key} {}` is not a duration — write e.g. `{key} 4h` or `{key} 4 hours` \
                      (units: ms, s, m, h, d, or bare seconds)",
                     words.join(" ")
+                ),
+                span: dir.span.into(),
+            });
+        }
+    }
+}
+
+/// `priority` in a job or `defaults` block must name one of the three levels
+/// (issue #819).
+///
+/// The compiler keeps the inherited level on anything else, so without this a
+/// `priority urgent` would compile green and silently dispatch as `normal` —
+/// the one outcome the operator wrote the directive to avoid.
+fn validate_priority_directives(directives: &[DirectiveOrBlock], diags: &mut Vec<Diagnostic>) {
+    for dob in directives {
+        let DirectiveOrBlock::Directive(dir) = dob else {
+            continue;
+        };
+        if dir.key.value != "priority" || dir.args.iter().any(|a| a.is_placeholder) {
+            continue;
+        }
+        let words: Vec<&str> = dir.args.iter().map(|a| a.value.as_str()).collect();
+        let valid = matches!(words.as_slice(), [value] if JobPriority::parse(value).is_some());
+        if !valid {
+            diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!(
+                    "`priority {}` is not a priority — write one of: {} (default: normal)",
+                    words.join(" "),
+                    JobPriority::VALUES.join(", ")
                 ),
                 span: dir.span.into(),
             });
@@ -1506,6 +1541,58 @@ mod tests {
             errors(&diags)
                 .iter()
                 .any(|d| d.message.contains("`timeout 5min`")),
+            "{diags:?}"
+        );
+    }
+
+    // ── priority (issue #819) ─────────────────────────────────────────────
+
+    #[test]
+    fn priority_levels_are_valid_in_job_and_defaults() {
+        for level in ["low", "normal", "high"] {
+            let src = format!(
+                "defaults {{ priority {level} }}
+job a:b {{ every 5 minutes; priority {level} }}"
+            );
+            let diags = validate_src(&src);
+            assert!(errors(&diags).is_empty(), "priority {level}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_priority_is_an_error_naming_the_levels() {
+        for value in ["urgent", "HIGH", "high now", "1"] {
+            let src = format!("job a:b {{ every 5 minutes; priority {value} }}");
+            let diags = validate_src(&src);
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "priority {value}: {diags:?}");
+            assert_eq!(
+                errs[0].message,
+                format!(
+                    "`priority {value}` is not a priority — write one of: low, normal, high \
+                     (default: normal)"
+                )
+            );
+        }
+        let diags = validate_src(
+            "defaults { priority urgent }
+job a:b { every 5 minutes }",
+        );
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message.contains("`priority urgent`")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn bare_priority_is_an_error() {
+        let diags = validate_src("job a:b { every 5 minutes; priority }");
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message.contains("is not a priority")),
             "{diags:?}"
         );
     }

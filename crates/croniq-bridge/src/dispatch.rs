@@ -162,6 +162,7 @@ mod tests {
             max_concurrent: None,
             concurrency_group: None,
             coalesce: false,
+            priority: croniq_config::compile::JobPriority::Normal,
             tags: vec![],
             run_on_register: false,
         }
@@ -411,5 +412,46 @@ mod tests {
         } else {
             panic!("expected RetryAfter");
         }
+    }
+
+    // ── priority (issue #819) ─────────────────────────────────────────────────
+
+    #[test]
+    fn priority_key_is_the_same_on_both_sides() {
+        // The compiler stamps one, the queue reads the other; neither crate
+        // can see both, so this is where they are held together.
+        assert_eq!(
+            croniq_config::compile::PRIORITY_METADATA_KEY,
+            croniq_runner::PRIORITY_METADATA_KEY
+        );
+    }
+
+    #[test]
+    fn compiled_priority_reaches_the_queue_rank() {
+        use croniq_config::parser::Parser;
+        use croniq_runner::queue::base_priority;
+
+        let src = r#"
+            job a:low { every 5 minutes; priority low }
+            job a:normal { every 5 minutes }
+            job a:high { every 5 minutes; priority high }
+        "#;
+        let cfg = croniq_config::compile::compile(&Parser::parse(src).unwrap());
+        let now = Utc::now();
+        let ranks: Vec<u32> = cfg
+            .jobs
+            .iter()
+            .map(|job| base_priority(&job_to_work_item(job, "e", now, now, 1)))
+            .collect();
+        assert_eq!(ranks, vec![0, 1, 2]);
+
+        // The execution row carries it too, which is what retries, watchdog
+        // requeues and dead-letter replays rebuild their items from.
+        let row = job_execution_metadata(&cfg.jobs[2]);
+        assert_eq!(
+            row.get(croniq_runner::PRIORITY_METADATA_KEY)
+                .map(String::as_str),
+            Some("high")
+        );
     }
 }

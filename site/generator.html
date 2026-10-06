@@ -732,7 +732,21 @@
               </div>
               <div class="field-row">
                 <div class="field"><label for="sch-opt-keep-last">Keep last N runs</label><input id="sch-opt-keep-last" type="number" min="1" placeholder="unlimited"></div>
+                <div class="field">
+                  <label for="sch-opt-priority">Priority</label>
+                  <select id="sch-opt-priority">
+                    <option value="low">low</option>
+                    <option value="normal" selected>normal (default)</option>
+                    <option value="high">high</option>
+                  </select>
+                </div>
               </div>
+              <p class="opt-hint">
+                <code>priority</code> &mdash; when a backlog drains, waiting
+                executions of higher-priority jobs are dispatched first. Each
+                five minutes of waiting counts as one level up, so nothing
+                waits forever.
+              </p>
 
               <div class="field">
                 <label class="opt-check"><input type="checkbox" id="sch-opt-coalesce"> Collapse a burst of triggers</label>
@@ -874,6 +888,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-10-06a"></script>
+  <script type="module" src="./generator.js?v=2026-10-06b"></script>
 </body>
 </html>
