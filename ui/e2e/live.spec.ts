@@ -91,9 +91,9 @@ test.describe('live surfaces', () => {
     await app.getByTestId('live-resume').click()
     await expect(state).toHaveText(/live/i)
 
-    // Moving the window into the past leaves "now" and pauses.
-    await app.getByTestId('live-range-selection').focus()
-    await app.keyboard.press('ArrowLeft')
+    // Pulling the range's end before "now" is a look back, and pauses.
+    await app.getByTestId('live-range-end').focus()
+    await app.keyboard.press('Shift+ArrowLeft')
     await expect(state).toHaveText(/paused/i)
     await app.getByTestId('live-resume').click()
     await expect(state).toHaveText(/live/i)
@@ -108,14 +108,14 @@ test.describe('preferences survive a reload', () => {
     await order.click()
     await expect(order).toHaveText(/next fire/i)
 
-    // Widen by one keyboard step on the left edge: 1m → 1m 5s.
+    // Widen by one keyboard step on the left edge: 1m → 1m 5s back.
     await app.getByTestId('live-range-start').focus()
     await app.keyboard.press('ArrowLeft')
-    await expect(app.getByText('1m 5s up to now')).toBeVisible()
+    await expect(app.getByText('1m 5s back · 10s ahead')).toBeVisible()
 
     await app.reload()
     await expect(app.getByTestId('live-order')).toHaveText(/next fire/i, { timeout: 20_000 })
-    await expect(app.getByText('1m 5s up to now')).toBeVisible()
+    await expect(app.getByText('1m 5s back · 10s ahead')).toBeVisible()
 
     // Restore the defaults for later tests.
     await app.getByTestId('live-order').click()

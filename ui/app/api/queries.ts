@@ -419,13 +419,13 @@ export function useForecast(windowMinutes = 60, bucketMinutes = 5) {
 }
 
 /**
- * The next few minutes in five-second slices, for the live timeline's range
+ * The next minute in five-second slices, for the live timeline's range
  * selector (#829), which draws the future at the resolution it draws the
  * past. Refetched every five seconds: the slices are anchored at the moment
  * of the request, and the strip places them by their timestamps, so a fresh
  * answer only has to arrive before the current one has scrolled off.
  */
-export function useLiveForecast(windowMinutes = 5, bucketSeconds = 5) {
+export function useLiveForecast(windowMinutes = 1, bucketSeconds = 5) {
   return useQuery({
     queryKey: ['forecast-live', windowMinutes, bucketSeconds],
     queryFn: () =>

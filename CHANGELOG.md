@@ -25,24 +25,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     fires. A toggle switches to next-fire order.
   - Both choices are remembered per browser (#828).
 
-- **The live timeline's window is chosen on a full-width range selector, and
+- **The live timeline's span is chosen on a full-width range selector, and
   the picture can be paused.** The `5 s … 5 min` select is replaced by an
-  overview strip of the stream's five minutes: runs started per slice, with
-  failures in red. The selection on it is the visible window:
-  - Its edges resize it to any width from 5 s.
-  - Its body moves it into the past, which pauses the view on that moment.
-  - The arrow keys move or resize it.
+  overview strip of the last five minutes and the next one, with "now" a
+  marked line at five sixths. Left of the line are runs started per slice,
+  failures in red; right of it the forecast, the schedule's fires in outline.
+  The selection on the strip is exactly what the track shows, and the track
+  draws its "now" line where now falls in it:
+  - Its left edge reaches back up to five minutes.
+  - Its right edge reaches up to a minute into the forecast.
+  - Pulling the right edge before "now" looks back, which pauses the view on
+    that moment.
+  - Its body moves both edges, and the arrow keys move or resize it.
+  - The range is remembered per browser; a look back is not.
 
   The Pause button freezes the picture, keeping a snapshot of runs and
   schedule so it stays readable while the stream moves on, and "Live" returns
   to now. Hovering the track holds the motion, so tooltips can be read and
   short runs clicked (#829).
 
-  The strip also covers the next five minutes of forecast (the schedule's
-  fires, in outline), with "now" a marked line between the past and the
-  forecast instead of the strip's edge. For that,
-  `GET /v1/dashboard/forecast` takes an optional `bucket_seconds` (at least
-  5) for sub-minute buckets, and its response carries `bucket_seconds`.
+  For the forecast, `GET /v1/dashboard/forecast` takes an optional
+  `bucket_seconds` (at least 5) for sub-minute buckets, and its response
+  carries `bucket_seconds`.
 
 - **A run waiting for a runner is visible while it waits.** Its wait used to
   show only afterwards: a second or two at the "now" line is a few pixels,

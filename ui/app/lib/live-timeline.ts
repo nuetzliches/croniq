@@ -35,22 +35,14 @@ export interface LiveFrame {
 export const SPAN_MS = 300_000
 
 /**
- * How far the range selector's strip reaches past "now": the schedule's
- * forecast, so the strip shows what is coming as well as what was, with
- * "now" a line between them rather than its edge.
+ * How far past "now" the view can reach: the schedule's forecast. A fifth of
+ * the past span, so "now" sits at five sixths of the range selector's strip —
+ * about where the track has always drawn it — instead of being its edge.
  */
-export const FUTURE_SPAN_MS = 300_000
+export const FUTURE_SPAN_MS = 60_000
 
-/** The narrowest window: as narrow as a quarter-second tick still reads as live. */
+/** The narrowest view: as narrow as a quarter-second tick still reads as live. */
 export const MIN_WINDOW = 5_000
-
-export const DEFAULT_WINDOW = 60_000
-
-/**
- * Where the "now" line sits, as a fraction of the track. Left of it is the
- * window; right of it a strip of the near future, where the next fires wait.
- */
-export const NOW_AT = 0.85
 
 /**
  * Lanes visible before the track scrolls (issue #828). Every lane exists and
@@ -64,10 +56,6 @@ export const COLLAPSED_LANES = 10
  */
 export type LaneOrder = 'name' | 'next'
 
-/** How far into the future the strip right of "now" reaches. */
-export function futureSpan(windowMs: number): number {
-  return (windowMs * (1 - NOW_AT)) / NOW_AT
-}
 
 /**
  * Server clock minus browser clock.
@@ -240,21 +228,52 @@ export function buildLanes(
 // ─── Range (issue #829) ─────────────────────────────────────────────────────
 
 /**
- * What the track shows: a window `windowMs` wide that ends `endOffsetMs`
- * before the view's "now" (0 or negative). An end of 0 is the live edge.
+ * What the track shows, as offsets from "now": from `startMs` (at most 0 —
+ * the view always reaches back to now at least) to `endMs`, which may lie in
+ * the forecast past "now" or, for a look at the past, before it. The track
+ * draws its "now" line where now falls in that span.
  */
 export interface ViewRange {
-  windowMs: number
-  endOffsetMs: number
+  startMs: number
+  endMs: number
+}
+
+/**
+ * One minute back and ten seconds ahead: the shape the track had before the
+ * range could reach into the future, with "now" at about 85 %.
+ */
+export const DEFAULT_RANGE: ViewRange = { startMs: -60_000, endMs: 10_000 }
+
+/** A view ending before "now" shows the past, which the timeline holds still. */
+export function looksBack(range: ViewRange): boolean {
+  return range.endMs < 0
 }
 
 const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, value))
 
-/** Fit a range inside the selectable span: at least `min` wide, never past "now". */
-export function clampRange(range: ViewRange, span = SPAN_MS, min = MIN_WINDOW): ViewRange {
-  const windowMs = clamp(Math.round(range.windowMs), min, span)
-  const endOffsetMs = clamp(Math.round(range.endOffsetMs), windowMs - span, 0)
-  return { windowMs, endOffsetMs }
+/**
+ * Fit a range inside what can be shown: back to `past`, ahead to `future`,
+ * starting no later than now, and at least `min` wide.
+ */
+export function clampRange(
+  range: ViewRange,
+  past = SPAN_MS,
+  future = FUTURE_SPAN_MS,
+  min = MIN_WINDOW,
+): ViewRange {
+  const endMs = clamp(Math.round(range.endMs), min - past, future)
+  const startMs = clamp(Math.round(range.startMs), -past, Math.min(0, endMs - min))
+  return { startMs, endMs }
+}
+
+/**
+ * The same view, back at "now": its width kept, its end moved to where the
+ * default puts it relative to that width. Used when leaving a look at the past.
+ */
+export function backToNow(range: ViewRange): ViewRange {
+  const width = range.endMs - range.startMs
+  const ahead = Math.round((width * DEFAULT_RANGE.endMs) / (DEFAULT_RANGE.endMs - DEFAULT_RANGE.startMs))
+  return clampRange({ startMs: ahead - width, endMs: ahead })
 }
 
 /**
@@ -270,20 +289,21 @@ export function dragRange(
   from: ViewRange,
   part: 'move' | 'start' | 'end',
   deltaMs: number,
-  span = SPAN_MS,
+  past = SPAN_MS,
+  future = FUTURE_SPAN_MS,
   min = MIN_WINDOW,
 ): ViewRange {
-  const startOffset = from.endOffsetMs - from.windowMs
   if (part === 'move') {
-    const end = clamp(from.endOffsetMs + deltaMs, from.windowMs - span, 0)
-    return { windowMs: from.windowMs, endOffsetMs: Math.round(end) }
+    // Both edges move together, so the tightest limit on either one bounds it.
+    const delta = clamp(deltaMs, -past - from.startMs, Math.min(future - from.endMs, -from.startMs))
+    return { startMs: Math.round(from.startMs + delta), endMs: Math.round(from.endMs + delta) }
   }
   if (part === 'start') {
-    const start = clamp(startOffset + deltaMs, -span, from.endOffsetMs - min)
-    return { windowMs: Math.round(from.endOffsetMs - start), endOffsetMs: from.endOffsetMs }
+    const start = clamp(from.startMs + deltaMs, -past, Math.min(0, from.endMs - min))
+    return { startMs: Math.round(start), endMs: from.endMs }
   }
-  const end = clamp(from.endOffsetMs + deltaMs, startOffset + min, 0)
-  return { windowMs: Math.round(end - startOffset), endOffsetMs: Math.round(end) }
+  const end = clamp(from.endMs + deltaMs, from.startMs + min, future)
+  return { startMs: from.startMs, endMs: Math.round(end) }
 }
 
 /** One slice of the range selector's overview: how many runs started in it. */

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   ClockOffset,
+  DEFAULT_RANGE,
+  FUTURE_SPAN_MS,
   MIN_WINDOW,
   SPAN_MS,
+  backToNow,
   barsOf,
   buildLanes,
   clampRange,
@@ -10,6 +13,7 @@ import {
   dragRange,
   formatOffset,
   formatSpan,
+  looksBack,
   type LiveRun,
 } from './live-timeline'
 
@@ -155,49 +159,62 @@ describe('formatOffset', () => {
 
 describe('clampRange', () => {
   it('keeps a range that fits', () => {
-    expect(clampRange({ windowMs: 60_000, endOffsetMs: -30_000 })).toEqual({ windowMs: 60_000, endOffsetMs: -30_000 })
+    expect(clampRange({ startMs: -60_000, endMs: 10_000 })).toEqual({ startMs: -60_000, endMs: 10_000 })
   })
 
-  it('never ends after now and never starts before the span', () => {
-    expect(clampRange({ windowMs: 60_000, endOffsetMs: 5_000 }).endOffsetMs).toBe(0)
-    expect(clampRange({ windowMs: 60_000, endOffsetMs: -SPAN_MS })).toEqual({
-      windowMs: 60_000,
-      endOffsetMs: 60_000 - SPAN_MS,
+  it('reaches back to the span and ahead to the forecast, no further', () => {
+    expect(clampRange({ startMs: -10 * SPAN_MS, endMs: 10 * FUTURE_SPAN_MS })).toEqual({
+      startMs: -SPAN_MS,
+      endMs: FUTURE_SPAN_MS,
     })
   })
 
-  it('bounds the width', () => {
-    expect(clampRange({ windowMs: 1, endOffsetMs: 0 }).windowMs).toBe(MIN_WINDOW)
-    expect(clampRange({ windowMs: 10 * SPAN_MS, endOffsetMs: 0 }).windowMs).toBe(SPAN_MS)
+  it('always starts at now or before, and is at least the minimum wide', () => {
+    expect(clampRange({ startMs: 20_000, endMs: 40_000 }).startMs).toBe(0)
+    // Too narrow: the end stays, the start gives way.
+    expect(clampRange({ startMs: -10_000, endMs: -9_000 })).toEqual({ startMs: -9_000 - MIN_WINDOW, endMs: -9_000 })
   })
 })
 
 describe('dragRange', () => {
-  const live = { windowMs: 60_000, endOffsetMs: 0 }
+  const live = { startMs: -60_000, endMs: 10_000 }
 
-  it('moves the whole selection into the past, keeping its width', () => {
-    expect(dragRange(live, 'move', -90_000)).toEqual({ windowMs: 60_000, endOffsetMs: -90_000 })
+  it('pulls the right edge past now into the forecast, up to its end (#829)', () => {
+    expect(dragRange(live, 'end', 30_000)).toEqual({ startMs: -60_000, endMs: 40_000 })
+    expect(dragRange(live, 'end', 10 * FUTURE_SPAN_MS)).toEqual({ startMs: -60_000, endMs: FUTURE_SPAN_MS })
   })
 
-  it('stops a move at now and at the start of the span', () => {
-    expect(dragRange(live, 'move', 30_000)).toEqual(live)
-    expect(dragRange(live, 'move', -10 * SPAN_MS)).toEqual({ windowMs: 60_000, endOffsetMs: 60_000 - SPAN_MS })
+  it('pulls the right edge before now, which is a look back', () => {
+    const back = dragRange(live, 'end', -30_000)
+    expect(back).toEqual({ startMs: -60_000, endMs: -20_000 })
+    expect(looksBack(back)).toBe(true)
+    expect(looksBack(live)).toBe(false)
   })
 
-  it('widens and narrows from the left edge without moving the right one', () => {
-    expect(dragRange(live, 'start', -60_000)).toEqual({ windowMs: 120_000, endOffsetMs: 0 })
-    expect(dragRange(live, 'start', 59_999)).toEqual({ windowMs: MIN_WINDOW, endOffsetMs: 0 })
+  it('keeps the minimum width against either edge', () => {
+    expect(dragRange(live, 'end', -10 * SPAN_MS)).toEqual({ startMs: -60_000, endMs: -60_000 + MIN_WINDOW })
+    expect(dragRange(live, 'start', 10 * SPAN_MS)).toEqual({ startMs: 0, endMs: 10_000 })
   })
 
-  it('moves the right edge without moving the left one', () => {
-    expect(dragRange(live, 'end', -20_000)).toEqual({ windowMs: 40_000, endOffsetMs: -20_000 })
-    expect(dragRange(live, 'end', -70_000)).toEqual({ windowMs: MIN_WINDOW, endOffsetMs: -55_000 })
+  it('moves the whole selection, keeping its width, within both limits', () => {
+    expect(dragRange(live, 'move', -90_000)).toEqual({ startMs: -150_000, endMs: -80_000 })
+    // The forecast's end stops it on the right …
+    expect(dragRange(live, 'move', 10 * SPAN_MS)).toEqual({ startMs: -10_000, endMs: FUTURE_SPAN_MS })
+    // … or now, if the start would otherwise pass it first.
+    expect(dragRange({ startMs: -20_000, endMs: 30_000 }, 'move', 60_000)).toEqual({ startMs: 0, endMs: 50_000 })
+    expect(dragRange(live, 'move', -10 * SPAN_MS)).toEqual({ startMs: -SPAN_MS, endMs: -230_000 })
   })
 
   it('measures from where the drag started, so coming back from a limit lands on the pointer', () => {
-    const pinned = dragRange(live, 'move', 50_000)
-    expect(pinned).toEqual(live)
-    expect(dragRange(live, 'move', -10_000)).toEqual({ windowMs: 60_000, endOffsetMs: -10_000 })
+    expect(dragRange(live, 'move', 500_000)).toEqual(dragRange(live, 'move', 60_000))
+    expect(dragRange(live, 'move', -10_000)).toEqual({ startMs: -70_000, endMs: 0 })
+  })
+})
+
+describe('backToNow', () => {
+  it('keeps the width and puts the end where the default share puts it', () => {
+    const back = { startMs: -200_000, endMs: -130_000 }
+    expect(backToNow(back)).toEqual(DEFAULT_RANGE)
   })
 })
 

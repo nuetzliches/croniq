@@ -1179,29 +1179,38 @@ keeps every lane:
   for; both choices are remembered per browser.
 - **No urgency ranking.** Without a cut, nothing needs choosing.
 
-**The window is chosen on an overview, not a select** (#829). The five fixed
+**The span is chosen on an overview, not a select** (#829). The five fixed
 widths could neither pick a width in between nor look at a moment already
-gone. A strip under the axis now spans the stream's five minutes as a density
-map of runs started, with failures in red. A selection on the strip is what
-the track shows:
+gone.
 
-- **Resize.** Its edges resize it, down to 5 s.
-- **Move.** Its body moves it, and a press elsewhere on the strip centres it
-  there.
-- **Keyboard.** The arrow keys move or resize it in 5 s steps, 30 s with
-  Shift.
-- **Remembered.** Only the width persists. A reload starts at "now".
-
-**The strip does not end at "now".** Its right half is the forecast for the
-next five minutes: the schedule's fires per five-second slice, drawn in
-outline because they are not runs yet. That needed sub-minute buckets from
+A strip under the axis covers the last five minutes and the next one. Left of
+"now" it is a density map of runs started, with failures in red. Right of it
+is the forecast: the schedule's fires per five-second slice, drawn in outline
+because they are not runs yet. The forecast needed sub-minute buckets from
 `GET /v1/dashboard/forecast`, so the endpoint takes `bucket_seconds`.
 
-"Now" is a line in the middle, drawn in the strongest ink and past the strip
-on both sides. The live selection ends exactly there, and its handle would
-otherwise cover it. The selection also shows, in outline, the strip of near
-future the track draws past its own line, so the strip and the track read
-alike.
+"Now" is a line at five sixths of the strip, about where the track has always
+drawn it. A first version put it in the middle, with five minutes of forecast
+the same width as the past, and kept the selection's end at "now". In review
+both were wrong: the handle sat in front of the forecast and could not be
+pulled into it, and half the strip showed a future too far out to act on.
+
+The selection is exactly the span the track shows, and the track draws its
+"now" line wherever now falls in that span:
+
+- **Left edge.** Reaches back up to five minutes, down to a 5 s span.
+- **Right edge.** Reaches up to a minute into the forecast. Pulled before
+  "now", the view looks back, and a look back is held still.
+- **Body.** Moves both edges, and a press elsewhere on the strip centres the
+  selection there.
+- **Keyboard.** The arrow keys move or resize it in 5 s steps, 30 s with
+  Shift.
+- **Remembered.** The range persists per browser, but a look back does not:
+  a reload is live.
+
+The handles sit inside the selection's edges, so at either end of the strip
+they are not clipped. The "now" line is drawn in the strongest ink, past the
+strip on both sides.
 
 **The header's centre does not move.** The "Next hour" histogram sat in a
 flex row between a left group whose width changes ("Live", "Paused",

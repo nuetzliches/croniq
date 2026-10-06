@@ -6,15 +6,14 @@ import { useExecutionsStream } from '~/composables/useExecutionsStream'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
 import {
   COLLAPSED_LANES,
-  DEFAULT_WINDOW,
-  MIN_WINDOW,
-  NOW_AT,
-  SPAN_MS,
+  DEFAULT_RANGE,
+  backToNow,
   buildLanes,
+  clampRange,
   densityBuckets,
   formatOffset,
   formatSpan,
-  futureSpan,
+  looksBack,
   type Bar,
   type Lane,
   type LaneOrder,
@@ -43,14 +42,20 @@ import type { JobScheduleState } from '~/api/types'
  * times a second), never per animation frame. A bar still running is drawn on
  * well past "now" and cut off by the clip, so it grows without being touched.
  *
- * It can be held still (issue #829): the Pause button, or moving the range
- * selector's window off "now", freezes the picture at one moment — runs and
+ * What it shows is a span around "now" chosen on the range selector below
+ * (issue #829): some of the past, and up to a minute of forecast. The "now"
+ * line sits wherever now falls in that span.
+ *
+ * It can be held still: the Pause button, or moving the range's end before
+ * "now", freezes the picture at one moment — runs and
  * schedule are snapshotted then, so what was on screen stays readable while
  * the stream moves on underneath. Hovering the track freezes only the motion,
  * so a tooltip can be read and a short bar clicked.
  */
 
-const STORAGE_KEY = 'croniq_live_window'
+const RANGE_KEY = 'croniq_live_range'
+/** The width-only setting of the first range selector, read once to carry it over. */
+const LEGACY_WINDOW_KEY = 'croniq_live_window'
 const ORDER_KEY = 'croniq_live_order'
 const EXPANDED_KEY = 'croniq_live_expanded'
 
@@ -70,20 +75,33 @@ function writeStored(key: string, value: string) {
   }
 }
 
-/** Any width in range, not only the five the old select offered. */
-function readWindow(): number {
-  const stored = Number(readStored(STORAGE_KEY))
-  return Number.isFinite(stored) && stored >= MIN_WINDOW && stored <= SPAN_MS ? stored : DEFAULT_WINDOW
+/** The remembered range, or the default. A look back is never remembered. */
+function readRange(): ViewRange {
+  try {
+    const stored = JSON.parse(readStored(RANGE_KEY) ?? 'null') as Partial<ViewRange> | null
+    if (stored && Number.isFinite(stored.startMs) && Number.isFinite(stored.endMs)) {
+      const range = clampRange(stored as ViewRange)
+      return looksBack(range) ? backToNow(range) : range
+    }
+  } catch {
+    // Unreadable: fall through to the older setting or the default.
+  }
+  const legacy = Number(readStored(LEGACY_WINDOW_KEY))
+  if (Number.isFinite(legacy) && legacy > 0) return backToNow({ startMs: -legacy, endMs: 0 })
+  return DEFAULT_RANGE
 }
 
-/**
- * The visible window and where it ends. Only the width is remembered; a
- * reload always starts at "now".
- */
-const range = ref<ViewRange>({ windowMs: readWindow(), endOffsetMs: 0 })
-const windowMs = computed(() => range.value.windowMs)
-watch(windowMs, (value) => writeStored(STORAGE_KEY, String(value)))
-const windowLabel = computed(() => formatSpan(windowMs.value))
+/** The visible span, as offsets from "now". */
+const range = ref<ViewRange>(readRange())
+watch(range, (value) => {
+  if (!looksBack(value)) writeStored(RANGE_KEY, JSON.stringify(value))
+})
+/** How much of the past the view reaches back to. */
+const pastMs = computed(() => -range.value.startMs)
+/** The whole span the track is wide. */
+const spanMs = computed(() => range.value.endMs - range.value.startMs)
+const windowLabel = computed(() => formatSpan(spanMs.value))
+const lookingBack = computed(() => looksBack(range.value))
 
 const laneOrder = ref<LaneOrder>(readStored(ORDER_KEY) === 'next' ? 'next' : 'name')
 watch(laneOrder, (value) => writeStored(ORDER_KEY, value))
@@ -94,7 +112,7 @@ const { runs, connected, received, unavailable, offset } = useExecutionsStream()
 const { data: jobStates } = useJobStates()
 const { data: jobs } = useJobs()
 const { data: forecast } = useForecast(60, 5)
-const { data: liveForecast } = useLiveForecast()
+const { data: liveForecast } = useLiveForecast(1)
 
 /** The forecast as slices on the server's clock, for the range selector's future half. */
 const forecastSlices = (data: typeof liveForecast.value) =>
@@ -130,22 +148,29 @@ function pause() {
   }
 }
 
-/** Back to live: unfreeze and put the window's end back on "now". */
+/**
+ * The range as it was before a look back began, so "Live" returns to the
+ * span someone was watching rather than one shaped by how far they dragged.
+ */
+let lastLive: ViewRange | null = null
+watch(range, (value, previous) => {
+  if (looksBack(value) && !looksBack(previous)) lastLive = previous
+})
+
+/** Back to live: unfreeze, and end a look back where it started. */
 function goLive() {
   frozen.value = null
-  range.value = { ...range.value, endOffsetMs: 0 }
+  if (looksBack(range.value)) range.value = lastLive ?? backToNow(range.value)
+  lastLive = null
 }
 
-/** A window moved off "now" shows the past, which only makes sense held still. */
-watch(
-  () => range.value.endOffsetMs,
-  (end) => {
-    if (end !== 0) pause()
-  },
-)
+/** A range ending before "now" shows the past, which only makes sense held still. */
+watch(lookingBack, (back) => {
+  if (back) pause()
+})
 
-/** The instant the view's "now" line stands for. */
-const viewNow = () => (frozen.value ? frozen.value.at + range.value.endOffsetMs : serverNow())
+/** The instant the "now" line stands for: the live clock, or the moment the view froze. */
+const viewNow = () => (frozen.value ? frozen.value.at : serverNow())
 
 /**
  * A coarse clock for what *is* re-rendered: which bars are in the window, and
@@ -181,13 +206,12 @@ const shownRuns = computed(() => sourceRuns.value.filter((r) => matches(r.job_ke
 const shownSchedule = computed(() => schedule.value.filter((s) => matches(s.job_key)))
 
 const layout = computed(() =>
-  buildLanes(shownRuns.value, shownSchedule.value, coarseNow.value, windowMs.value, laneOrder.value),
+  buildLanes(shownRuns.value, shownSchedule.value, coarseNow.value, pastMs.value, laneOrder.value),
 )
 
 /** Past this many lanes the track scrolls, unless expanded (issue #828). */
 const overflowing = computed(() => layout.value.lanes.length > COLLAPSED_LANES)
 
-/** The overview the range is chosen on: the whole span, ending at the freeze or now. */
 /** The strip's "now": the moment the view froze, or the live clock. */
 const overviewAt = computed(() => (frozen.value ? frozen.value.at : coarseNow.value))
 const overview = computed(() => densityBuckets(shownRuns.value, overviewAt.value))
@@ -195,18 +219,18 @@ const overviewForecast = computed(() =>
   frozen.value ? frozen.value.forecast : forecastSlices(liveForecast.value),
 )
 
-/** The next fire, if it falls in the strip right of "now". */
+/** The next fire, if it falls in the part of the view right of "now". */
 function nextInStrip(next: number | null) {
   // Held still, the strip right of the line is the past's future: the
   // snapshot's next fires would be stale, so it stays empty.
   if (paused.value) return false
-  return next !== null && next >= coarseNow.value && next <= coarseNow.value + futureSpan(windowMs.value)
+  return next !== null && next >= coarseNow.value && next <= coarseNow.value + range.value.endMs
 }
 
 function nextLabel(lane: Lane) {
   // Looking at the past, "in 55 s" would be relative to a moment that has
   // gone; the labels stay empty until the view is back at its freeze or live.
-  if (range.value.endOffsetMs !== 0) return ''
+  if (lookingBack.value) return ''
   if (lane.queuedSince !== null) {
     // Under a second the count would flicker through milliseconds; the colour
     // and the marker on the line already say it.
@@ -243,14 +267,18 @@ const MIN_BAR = 3
 
 /** The origin all positions are measured from; fixed for the component's life. */
 const t0 = serverNow()
-const nowX = computed(() => Math.round(width.value * NOW_AT))
 /** Pixels per millisecond. */
-const scale = computed(() => (nowX.value > 0 ? nowX.value / windowMs.value : 0))
+const scale = computed(() => (spanMs.value > 0 ? width.value / spanMs.value : 0))
+/** Where "now" falls on the track — past its right edge on a look back. */
+const nowX = computed(() => Math.round(pastMs.value * scale.value))
+/** The past is clipped at "now", or at the track's edge if now lies beyond it. */
+const clipX = computed(() => Math.min(nowX.value, width.value))
+const nowVisible = computed(() => nowX.value <= width.value)
 
 function barStyle(bar: Bar) {
   // An open bar runs on past "now" by more than a second's worth of motion,
   // so the clip — not its end — is what the eye sees until the next render.
-  const end = bar.end ?? coarseNow.value + windowMs.value
+  const end = bar.end ?? coarseNow.value + spanMs.value
   const left = (bar.start - t0) * scale.value
   return {
     transform: `translateX(${left}px)`,
@@ -294,19 +322,22 @@ function tickStyle(at: number) {
   return { transform: `translateX(${(at - t0) * scale.value}px)` }
 }
 
-/** Static labels: the time is relative, so the axis itself never moves. */
+/**
+ * Static labels: the time is relative, so the axis itself never moves. Five
+ * evenly spaced from the left edge, minus any that would crowd the "now"
+ * label, plus "now" itself where it falls.
+ */
 const axis = computed(() => {
-  const past = [-1, -0.75, -0.5, -0.25].map((f) => ({
-    x: nowX.value + f * nowX.value,
-    label: formatOffset(f * windowMs.value),
-  }))
-  return [...past, { x: nowX.value, label: 'now' }]
+  const ticks = [0, 0.2, 0.4, 0.6, 0.8]
+    .map((f) => ({ x: f * width.value, label: formatOffset(range.value.startMs + f * spanMs.value) }))
+    .filter((t) => !nowVisible.value || Math.abs(t.x - nowX.value) > 48)
+  return nowVisible.value ? [...ticks, { x: nowX.value, label: 'now' }] : ticks
 })
 /** What the line stands for: "now" while live, a clock time while held still. */
 const lineLabel = computed(() =>
-  frozen.value ? new Date(frozen.value.at + range.value.endOffsetMs).toLocaleTimeString() : 'now',
+  frozen.value ? new Date(frozen.value.at).toLocaleTimeString() : 'now',
 )
-const futureLabel = computed(() => formatOffset(futureSpan(windowMs.value)))
+const futureLabel = computed(() => formatOffset(range.value.endMs))
 
 // ─── Motion ─────────────────────────────────────────────────────────────────
 
@@ -358,7 +389,7 @@ onMounted(start)
 watch(motion, start)
 // A new scale moves every bar; shift the layer in the same tick so the two
 // never disagree for a frame.
-watch([scale, nowX, frozen, () => range.value.endOffsetMs], shift, { flush: 'post' })
+watch([scale, nowX, frozen, range], shift, { flush: 'post' })
 onBeforeUnmount(stopMotion)
 </script>
 
@@ -426,7 +457,7 @@ onBeforeUnmount(stopMotion)
       <div class="flex min-w-0 items-center justify-end gap-3 sm:col-start-3">
         <!-- Counts are of the moment shown; a past view has no such count. -->
         <span
-          v-if="range.endOffsetMs === 0"
+          v-if="!lookingBack"
           class="cq-num text-xs text-muted"
         >
           {{ running }} running · {{ queued }} queued
@@ -500,7 +531,7 @@ onBeforeUnmount(stopMotion)
               <span
                 v-else
                 class="cq-num hidden shrink-0 sm:inline"
-                :class="lane.queuedSince !== null && range.endOffsetMs === 0 ? 'text-warning' : 'text-muted'"
+                :class="lane.queuedSince !== null && !lookingBack ? 'text-warning' : 'text-muted'"
                 :title="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
               >{{ nextLabel(lane) }}</span>
             </li>
@@ -534,7 +565,7 @@ onBeforeUnmount(stopMotion)
             <!-- The past: clipped at "now". -->
             <div
               class="absolute inset-y-0 left-0 overflow-hidden"
-              :style="{ width: `${nowX}px` }"
+              :style="{ width: `${clipX}px` }"
             >
               <div
                 ref="pastLayer"
@@ -561,6 +592,7 @@ onBeforeUnmount(stopMotion)
 
             <!-- The near future: next fires, approaching the line. -->
             <div
+              v-if="nowVisible"
               class="absolute inset-y-0 right-0 overflow-hidden"
               :style="{ left: `${nowX}px` }"
             >
@@ -591,10 +623,12 @@ onBeforeUnmount(stopMotion)
                  drawn in the accent colour and a little past the lanes, with a
                  small cap — findable at a glance without shouting over the bars. -->
             <div
+              v-if="nowVisible"
               class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 rounded-full bg-primary/60"
               :style="{ left: `${nowX - 1}px` }"
             />
             <div
+              v-if="nowVisible"
               class="pointer-events-none absolute -top-2 size-0 border-x-[4px] border-t-[4px] border-x-transparent border-t-primary/60"
               :style="{ left: `${nowX - 4}px` }"
             />
@@ -603,14 +637,14 @@ onBeforeUnmount(stopMotion)
               :key="`pulse-${lane.jobKey}`"
             >
               <span
-                v-if="lane.running && !paused"
+                v-if="lane.running && !paused && nowVisible"
                 class="pointer-events-none absolute size-2 animate-ping rounded-full bg-primary"
                 :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
               />
               <!-- Waiting for a runner: a marker on the line, so a wait of a
                    second or two is seen while it lasts, not only afterwards. -->
               <span
-                v-else-if="lane.queuedSince !== null && range.endOffsetMs === 0"
+                v-else-if="lane.queuedSince !== null && !lookingBack && nowVisible"
                 class="pointer-events-none absolute size-2.5 rounded-full bg-warning ring-2 ring-default"
                 :class="paused ? '' : 'animate-pulse'"
                 :style="{ left: `${nowX - 5}px`, top: `${index * LANE_HEIGHT + 6}px` }"
@@ -621,7 +655,7 @@ onBeforeUnmount(stopMotion)
             <p
               v-if="received && layout.lanes.length === 0"
               class="absolute inset-y-0 left-0 flex items-center text-xs text-muted"
-              :style="{ width: `${nowX}px` }"
+              :style="{ width: `${clipX}px` }"
             >
               <template v-if="needle">
                 No job matches “{{ jobFilter.trim() }}”.

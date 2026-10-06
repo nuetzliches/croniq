@@ -7,26 +7,25 @@ import {
   dragRange,
   formatOffset,
   formatSpan,
-  futureSpan,
+  looksBack,
   type DensityBucket,
   type ViewRange,
 } from '~/lib/live-timeline'
 
 /**
- * The live timeline's window, chosen on an overview of the stream's past and
+ * The live timeline's span, chosen on an overview of the stream's past and
  * the schedule's near future (issue #829). It replaced a select of five fixed
  * widths, which could neither pick a width in between nor look at a moment
  * that had already passed.
  *
- * Left of the "now" line the strip is a density map of the last five minutes
- * (runs started per slice, failures in red); right of it, the forecast — the
- * fires the schedule has coming. "Now" is a line inside the strip, not its
- * edge, so the strip reads the way the track above does.
+ * Five minutes back and one ahead, so "now" is a line at five sixths of the
+ * strip — about where the track draws it — rather than its edge. Left of it,
+ * runs started per slice (failures in red); right of it, the forecast: the
+ * fires the schedule has coming, in outline because they are not runs yet.
  *
- * The selection is the part the track shows: its window in solid, and the
- * strip of near future the track draws past its line in outline. Its edges
- * resize the window, its body moves it. Moving it off "now" makes the view a
- * past moment, which the parent holds still.
+ * The selection is exactly what the track shows. Its left edge reaches back,
+ * its right edge reaches into the forecast — or before "now", which makes the
+ * view a past moment that the parent holds still — and its body moves both.
  *
  * Every drag is computed from where it started (`dragRange`), not summed per
  * pointer event, so a drag that runs into a limit and comes back lands
@@ -56,11 +55,8 @@ const { width } = useElementSize(strip)
 const pct = (offsetMs: number) => ((SPAN_MS + offsetMs) / TOTAL) * 100
 const nowPct = pct(0)
 
-const left = computed(() => pct(props.range.endOffsetMs - props.range.windowMs))
-const right = computed(() => pct(props.range.endOffsetMs))
-const ahead = computed(() =>
-  Math.min(100, pct(props.range.endOffsetMs + futureSpan(props.range.windowMs))),
-)
+const left = computed(() => pct(props.range.startMs))
+const right = computed(() => pct(props.range.endMs))
 
 /** One scale for both halves, so a busy past and a busy future compare. */
 const peak = computed(() =>
@@ -90,10 +86,11 @@ const futureBars = computed(() =>
     .filter((b) => b.left >= nowPct && b.left < 100),
 )
 
-const ticks = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5].map((m) => ({
-  at: pct(m * 60_000),
-  label: m < 0 ? formatOffset(m * 60_000) : `+${m}m`,
-}))
+const ticks = [
+  ...[-5, -4, -3, -2, -1].map((m) => ({ at: pct(m * 60_000), label: formatOffset(m * 60_000) })),
+  { at: pct(30_000), label: '+30s' },
+  { at: 100, label: '+1m' },
+]
 
 type Part = 'move' | 'start' | 'end'
 let drag: { part: Part; x: number; from: ViewRange } | null = null
@@ -121,16 +118,13 @@ function onUp() {
   dragging.value = null
 }
 
-/**
- * A press on the strip outside the selection puts the selection's end there
- * and keeps dragging it. In the future half that is "now": the window cannot
- * end in a future nothing has happened in yet.
- */
+/** A press on the strip outside the selection centres the selection there and keeps dragging it. */
 function onStripDown(event: PointerEvent) {
   if (!strip.value || event.button !== 0) return
   const box = strip.value.getBoundingClientRect()
   const at = ((event.clientX - box.left) / box.width) * TOTAL - SPAN_MS
-  const centred = dragRange(props.range, 'move', at + props.range.windowMs / 2 - props.range.endOffsetMs)
+  const centre = (props.range.startMs + props.range.endMs) / 2
+  const centred = dragRange(props.range, 'move', at - centre)
   emit('update:range', centred)
   grab('move', event, centred)
 }
@@ -145,10 +139,12 @@ function onKey(part: Part, event: KeyboardEvent) {
 }
 
 const description = computed(() => {
-  const span = formatSpan(props.range.windowMs)
-  return props.range.endOffsetMs === 0
-    ? `${span} up to now`
-    : `${span} ending ${formatOffset(props.range.endOffsetMs)} ago`.replace('−', '')
+  const { startMs, endMs } = props.range
+  if (looksBack(props.range)) {
+    return `${formatSpan(endMs - startMs)} ending ${formatSpan(endMs)} ago`
+  }
+  const back = startMs === 0 ? 'from now' : `${formatSpan(startMs)} back`
+  return endMs === 0 ? `${back}, up to now` : `${back} · ${formatSpan(endMs)} ahead`
 })
 </script>
 
@@ -164,7 +160,7 @@ const description = computed(() => {
         @pointerup="onUp"
         @pointercancel="onUp"
       >
-        <!-- The future half, tinted, so the line has two sides. -->
+        <!-- The future, tinted, so the line has two sides. -->
         <div
           class="pointer-events-none absolute inset-y-0 right-0 bg-primary/5"
           :style="{ left: `${nowPct}%` }"
@@ -201,16 +197,12 @@ const description = computed(() => {
         />
         <div
           class="pointer-events-none absolute inset-y-0 right-0 bg-default/60"
-          :style="{ left: `${ahead}%` }"
+          :style="{ left: `${right}%` }"
         />
 
-        <!-- The near future the track draws past its line, in outline. -->
-        <div
-          class="pointer-events-none absolute inset-y-0 border-y-2 border-r-2 border-dashed border-primary/40"
-          :style="{ left: `${right}%`, width: `${Math.max(0, ahead - right)}%` }"
-        />
-
-        <!-- The selection: body moves it, edges resize it. -->
+        <!-- The selection: body moves it, edges resize it. The handles sit
+             inside its edges, so at either end of the strip they are not
+             clipped and are still what a press on them grabs. -->
         <div
           class="absolute inset-y-0 border-y-2 border-primary/70 bg-primary/5 outline-none focus-visible:ring-2 focus-visible:ring-primary"
           :class="dragging === 'move' ? 'cursor-grabbing' : 'cursor-grab'"
@@ -219,9 +211,9 @@ const description = computed(() => {
           role="slider"
           aria-label="Visible time range — arrow keys move it"
           :aria-valuetext="description"
-          :aria-valuenow="range.endOffsetMs"
-          :aria-valuemin="range.windowMs - SPAN_MS"
-          :aria-valuemax="0"
+          :aria-valuenow="range.endMs"
+          :aria-valuemin="-SPAN_MS"
+          :aria-valuemax="FUTURE_SPAN_MS"
           data-testid="live-range-selection"
           @pointerdown.stop="grab('move', $event)"
           @keydown="onKey('move', $event)"
@@ -229,24 +221,24 @@ const description = computed(() => {
           <span
             v-for="part in (['start', 'end'] as const)"
             :key="part"
-            class="absolute inset-y-0 w-2.5 cursor-ew-resize rounded-sm bg-primary/80 outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary"
-            :class="part === 'start' ? '-left-1.5' : '-right-1.5'"
+            class="absolute inset-y-0 z-20 w-2.5 cursor-ew-resize rounded-sm bg-primary/80 outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary"
+            :class="part === 'start' ? 'left-0' : 'right-0'"
             tabindex="0"
             role="slider"
             :aria-label="part === 'start' ? 'Start of the visible range' : 'End of the visible range'"
             :aria-valuetext="description"
-            :aria-valuenow="part === 'start' ? range.endOffsetMs - range.windowMs : range.endOffsetMs"
+            :aria-valuenow="part === 'start' ? range.startMs : range.endMs"
             :aria-valuemin="-SPAN_MS"
-            :aria-valuemax="0"
+            :aria-valuemax="part === 'start' ? 0 : FUTURE_SPAN_MS"
             :data-testid="`live-range-${part}`"
             @pointerdown.stop="grab(part, $event)"
             @keydown.stop="onKey(part, $event)"
           />
         </div>
       </div>
-      <!-- Now: the one fixed line. Drawn last and in the strongest ink, past
-         the strip on both sides, because the live selection ends exactly
-         here and its handle would otherwise cover it. -->
+
+      <!-- Now: the one fixed line, in the strongest ink and past the strip on
+           both sides, so it reads through the selection drawn over it. -->
       <div
         class="pointer-events-none absolute -top-1.5 -bottom-1.5 z-10 w-0.5 rounded-full bg-inverted ring-2 ring-default"
         :style="{ left: `calc(${nowPct}% - 1px)` }"
