@@ -333,7 +333,7 @@ fn render_job_state_metrics(
     }
 
     out.push_str(
-        "# HELP croniq_job_overdue Whether an active job's next scheduled fire is in the past (1) or not (0). A stuck 1 signals a stalled scheduler.\n\
+        "# HELP croniq_job_overdue Whether an active job's next scheduled fire is more than 30 s in the past (1) or not (0). A stuck 1 signals a stalled scheduler.\n\
          # TYPE croniq_job_overdue gauge\n",
     );
     for s in states.iter() {
@@ -342,7 +342,11 @@ fn render_job_state_metrics(
         }
         if let Some(ts) = s.next_fire_at {
             let key = escape_label(&s.job_key);
-            let overdue = if ts < now { 1 } else { 0 };
+            let overdue = if crate::dashboard::is_overdue(ts, now) {
+                1
+            } else {
+                0
+            };
             out.push_str(&format!(
                 "croniq_job_overdue{{job_key=\"{key}\"}} {overdue}\n"
             ));
@@ -699,6 +703,16 @@ mod tests {
                 status: JobStatus::Active,
                 updated_at: now,
             },
+            JobState {
+                // Due a second ago: the scheduler has not taken it yet. That
+                // is its tick, not a stall.
+                job_key: "mail:poll".into(),
+                next_fire_at: Some(now - chrono::Duration::seconds(1)),
+                last_fired_at: None,
+                fire_count: 0,
+                status: JobStatus::Active,
+                updated_at: now,
+            },
         ];
         let mut out = String::new();
         render_job_state_metrics(&mut out, &states, now, &LiveJobs::Unknown, &HashSet::new());
@@ -715,6 +729,10 @@ mod tests {
         // Overdue: the backup's next fire is in the past, etl:sync's is not.
         assert!(out.contains("croniq_job_overdue{job_key=\"billing:backup\"} 1"));
         assert!(out.contains("croniq_job_overdue{job_key=\"etl:sync\"} 0"));
+        assert!(
+            out.contains("croniq_job_overdue{job_key=\"mail:poll\"} 0"),
+            "a fire only just due is inside the grace, not overdue"
+        );
     }
 
     #[test]
