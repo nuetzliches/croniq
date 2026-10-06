@@ -4,6 +4,21 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Fixed
+
+- **Work delivered on an at-capacity poll is run instead of silently dropped
+  ([#817](https://github.com/nuetzliches/croniq/issues/817)).** The poll loop
+  decided "at capacity" from `_inflight.Count` but sent `_inflight.Keys` read
+  a moment later. A handler finishing in between made the request report a
+  free slot, the server claimed an execution for it, and the loop then took
+  its at-capacity branch, which skipped `response.Work`. The execution stayed
+  `claimed` until its timeout plus grace with nothing logged — for a
+  `singleton` job, every later run waited behind it. The loop now takes one
+  snapshot for both the request and the decision, and dispatches every
+  assignment the server returns before applying `CapacityBackoff`.
+
 ## [0.9.0] - 2026-10-01
 
 ### Fixed

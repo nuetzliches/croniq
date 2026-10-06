@@ -285,8 +285,13 @@ public sealed class CroniqRunner : IAsyncDisposable
 
         while (!ct.IsCancellationRequested)
         {
-            var atCapacity = _inflight.Count >= _options.MaxInflight;
+            // One snapshot drives both the request and the capacity decision
+            // below. Reading the count and the ids separately let a handler
+            // finish in between: the request then reported a free slot, the
+            // server handed out work, and the loop still believed it was full
+            // (issue #817).
             var inflightIds = _inflight.Keys.ToArray();
+            var atCapacity = inflightIds.Length >= _options.MaxInflight;
             var request = new PollRequest(
                 _resolvedRunnerId!,
                 _options.Capabilities.AsReadOnlyList(),
@@ -386,26 +391,6 @@ public sealed class CroniqRunner : IAsyncDisposable
 
             HandleCancellations(response.Cancel);
 
-            // Control-slot polling (issue #176): at capacity we still poll
-            // so the server can deliver cancels via PollResponse.cancel
-            // (handled above), but we don't pick up new work. The server
-            // returns immediately on the capacity=0 branch, so without
-            // this back-off the loop would hammer the endpoint. Settling
-            // on CapacityBackoff (default 500 ms) gives sub-second cancel
-            // latency without a stampede.
-            if (atCapacity)
-            {
-                try
-                {
-                    await Task.Delay(_options.CapacityBackoff, ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                continue;
-            }
-
             foreach (var assignment in response.Work)
             {
                 // Ingest guard (#441): an assignment carrying a control
@@ -446,6 +431,31 @@ public sealed class CroniqRunner : IAsyncDisposable
                             }
                         },
                         TaskScheduler.Default);
+            }
+
+            // Control-slot polling (issue #176): at capacity we still poll
+            // so the server can deliver cancels via PollResponse.cancel
+            // (handled above). The server returns immediately on the
+            // capacity=0 branch, so without this back-off the loop would
+            // hammer the endpoint. Settling on CapacityBackoff (default
+            // 500 ms) gives sub-second cancel latency without a stampede.
+            //
+            // Work the server delivered is always dispatched above, even on
+            // an at-capacity poll: by the time the response arrives the server
+            // has committed the claim, so dropping an assignment strands it as
+            // `claimed` until timeout + grace — for a singleton job that blocks
+            // every later run (issue #817). Briefly running over MaxInflight is
+            // the lesser evil.
+            if (atCapacity)
+            {
+                try
+                {
+                    await Task.Delay(_options.CapacityBackoff, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }

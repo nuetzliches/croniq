@@ -190,13 +190,18 @@ export class CroniqRunner {
       // so the server can deliver cancels via PollResponse.cancel. The
       // server returns immediately on capacity=0 (no long-poll), so
       // capacityBackoffMs paces the loop and prevents a stampede.
-      const atCapacity = this.#inflight.size >= this.#options.maxInflight;
+      //
+      // One snapshot drives both the request and the capacity decision, so
+      // the two can never disagree about how full the runner is (the
+      // .NET/Go/Java SDKs once read them separately and raced — issue #817).
+      const inflightIds = [...this.#inflight.keys()];
+      const atCapacity = inflightIds.length >= this.#options.maxInflight;
 
       const request: PollRequest = {
         runner_id: this.#runnerId!,
         capabilities: this.#options.capabilities,
         max_inflight: this.#options.maxInflight,
-        inflight: [...this.#inflight.keys()],
+        inflight: inflightIds,
         instance_id: this.#instanceId,
         tags: this.#options.tags,
       };
@@ -305,17 +310,11 @@ export class CroniqRunner {
 
       this.#handleCancellations(response.cancel);
 
-      if (atCapacity) {
-        // Work is always empty in this branch (server-side capacity
-        // check); cancels above are already processed. Pace the loop.
-        try {
-          await sleep(this.#options.capacityBackoffMs, signal);
-        } catch {
-          return;
-        }
-        continue;
-      }
-
+      // Delivered work is dispatched on an at-capacity poll too. By the time
+      // the response arrives the server has committed the claim, so dropping
+      // an assignment strands it as claimed until timeout + grace; for a
+      // singleton job that blocks every later run (issue #817). Briefly
+      // running over maxInflight is the lesser evil.
       for (const assignment of response.work) {
         // Ingest guard: an assignment carrying a control character in either
         // identifier never reaches a handler, a log record or a telemetry
@@ -335,6 +334,16 @@ export class CroniqRunner {
           .finally(() => {
             this.#inflight.delete(assignment.execution_id);
           });
+      }
+
+      if (atCapacity) {
+        // The server returned immediately (no long-poll). Cancels and any
+        // delivered work above are already processed; pace the loop.
+        try {
+          await sleep(this.#options.capacityBackoffMs, signal);
+        } catch {
+          return;
+        }
       }
     }
   }

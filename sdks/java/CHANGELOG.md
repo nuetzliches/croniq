@@ -4,6 +4,21 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Work delivered on an at-capacity poll is run instead of silently dropped
+  ([#817](https://github.com/nuetzliches/croniq/issues/817)).** The poll loop
+  decided "at capacity" from `inflightCount()` but sent `inflightIds()` read a
+  moment later. A handler finishing in between made the request report a free
+  slot, the server claimed an execution for it, and the loop then took its
+  at-capacity branch, which skipped `response.work()`. The execution stayed
+  `claimed` until its timeout plus grace with nothing logged — for a
+  `singleton` job, every later run waited behind it. The loop now takes one
+  snapshot for both the request and the decision, and dispatches every
+  assignment the server returns before applying `capacityBackoff()`.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added

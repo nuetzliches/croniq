@@ -5,6 +5,21 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Work delivered on an at-capacity poll is run instead of dropped
+  ([#817](https://github.com/nuetzliches/croniq/issues/817)).** The poll loop
+  skipped `response.work` whenever it was at `max_inflight`, assuming the
+  server never hands out work then. The server had already claimed whatever
+  it returned, so a dropped assignment stayed `claimed` until its timeout plus
+  grace — for a `singleton` job, every later run waited behind it. The Python
+  SDK did not trigger this itself (its count and in-flight list come from the
+  same event-loop step), but now dispatches every assignment the server
+  returns before applying `capacity_backoff_ms`, and derives the decision from
+  the same snapshot the request carries.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added

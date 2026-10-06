@@ -80,6 +80,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   requeues count towards
   `croniq_watchdog_requeued_total{reason="stale_claim"}` (#817).
 
+- **Runner SDKs run work delivered on an at-capacity poll instead of
+  dropping it ([#817](https://github.com/nuetzliches/croniq/issues/817)).**
+  A runner at `max_inflight` still polls so cancels can reach it (#176), and
+  every SDK skipped `response.work` on such a poll, assuming it was empty.
+  The .NET, Go and Java SDKs made that assumption false themselves: they
+  decided "at capacity" from the in-flight count but sent a separately read
+  in-flight id list, so a handler finishing in between made the request
+  report a free slot. The server then claimed an execution, the runner threw
+  it away without a log line, and the execution stayed `claimed` until its
+  timeout plus grace — for a `singleton` job, blocking every later run. All
+  six SDKs now take one in-flight snapshot for both the request and the
+  capacity decision, and dispatch every assignment the server returns before
+  applying the capacity back-off. Go SDK: fixed in `sdks/go`. Rust SDK
+  (`croniq-runner-sdk`): it already used one snapshot, but dropped work the
+  same way; covered by a new integration test, since Rust has no runner-case
+  binding. .NET, Java, Python and TypeScript changes are in their
+  changelogs. New conformance case 21 delivers work on an at-capacity poll
+  and requires it to be acked.
+
 ## [0.44.0] - 2026-10-01
 
 ### Added

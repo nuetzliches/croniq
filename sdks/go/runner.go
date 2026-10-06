@@ -358,13 +358,19 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 		// The server's poll handler returns immediately on capacity=0
 		// (no long-poll), so CapacityBackoff paces the loop and prevents
 		// a stampede after this at-capacity iteration.
-		atCapacity := r.inflightCount() >= r.opts.MaxInflight
+		//
+		// One snapshot drives both the request and the capacity decision.
+		// Reading the count and the ids separately let a handler finish in
+		// between: the request then reported a free slot, the server handed
+		// out work, and the loop still believed it was full (issue #817).
+		inflight := r.inflightIDs()
+		atCapacity := len(inflight) >= r.opts.MaxInflight
 
 		req := &PollRequest{
 			RunnerID:     r.opts.RunnerID,
 			Capabilities: r.opts.Capabilities,
 			MaxInflight:  r.opts.MaxInflight,
-			Inflight:     r.inflightIDs(),
+			Inflight:     inflight,
 			InstanceID:   r.opts.InstanceID,
 			Tags:         r.opts.Tags,
 		}
@@ -509,19 +515,12 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 			r.cancelInflight(id)
 		}
 
-		// At capacity: server returned immediately (work always empty);
-		// back off so we don't busy-poll. Cancels above are already
-		// processed.
-		if atCapacity {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(r.opts.CapacityBackoff):
-				continue
-			}
-		}
-
-		// Dispatch each assignment in its own goroutine.
+		// Dispatch each assignment in its own goroutine — on an at-capacity
+		// poll too. By the time the response arrives the server has
+		// committed the claim, so dropping an assignment strands it as
+		// `claimed` until timeout + grace; for a singleton job that blocks
+		// every later run (issue #817). Briefly running over MaxInflight is
+		// the lesser evil.
 		for _, assignment := range resp.Work {
 			// Ingest guard: an assignment carrying a control character in
 			// either identifier never reaches a handler, a log attribute or a
@@ -533,6 +532,17 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 			}
 			wg.Add(1)
 			r.dispatch(ctx, assignment, wg)
+		}
+
+		// At capacity: the server returned immediately (no long-poll); back
+		// off so we don't busy-poll. Cancels and any delivered work above
+		// are already processed.
+		if atCapacity {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(r.opts.CapacityBackoff):
+			}
 		}
 	}
 }

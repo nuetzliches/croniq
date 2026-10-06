@@ -99,17 +99,18 @@ public final class CroniqRunner implements AutoCloseable {
                 // computes capacity = max - inflight.size() and returns
                 // immediately when zero. capacityBackoff() paces the loop
                 // and prevents a stampede after this at-capacity iteration.
-                int slotsFree = options.maxInflight() - dispatcher.inflightCount();
-                boolean atCapacity = slotsFree <= 0;
+                //
+                // One snapshot drives both the request and the capacity
+                // decision. Reading the count and the ids separately let a
+                // handler finish in between: the request then reported a free
+                // slot, the server handed out work, and the loop still
+                // believed it was full (issue #817).
+                java.util.List<String> inflightIds = java.util.List.copyOf(dispatcher.inflightIds());
+                boolean atCapacity = inflightIds.size() >= options.maxInflight();
                 PollResponse response;
                 try {
                     PollRequest request = new PollRequest(
-                            runnerId,
-                            options.capabilities(),
-                            options.maxInflight(),
-                            java.util.List.copyOf(dispatcher.inflightIds()),
-                            null,
-                            options.tags());
+                            runnerId, options.capabilities(), options.maxInflight(), inflightIds, null, options.tags());
                     response = client.poll(request, options.pollTimeout());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -210,16 +211,22 @@ public final class CroniqRunner implements AutoCloseable {
                         dispatcher.cancel(id);
                     }
                 }
-                if (atCapacity) {
-                    // Work is always empty in this branch (server-side
-                    // capacity check); cancels above are already processed.
-                    sleep(options.capacityBackoff());
-                    continue;
-                }
+                // Delivered work is dispatched on an at-capacity poll too. By
+                // the time the response arrives the server has committed the
+                // claim, so dropping an assignment strands it as claimed until
+                // timeout + grace; for a singleton job that blocks every later
+                // run (issue #817). Briefly running over maxInflight() is the
+                // lesser evil.
                 if (response != null && response.work() != null) {
                     for (var work : response.work()) {
                         dispatcher.dispatch(work);
                     }
+                }
+                if (atCapacity) {
+                    // The server returned immediately (no long-poll); back off
+                    // so we don't busy-poll. Cancels and any delivered work
+                    // above are already processed.
+                    sleep(options.capacityBackoff());
                 }
             }
         } finally {

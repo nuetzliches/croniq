@@ -1,0 +1,105 @@
+name: "Work delivered on an at-capacity poll is run, never dropped"
+description: |
+  Issue #817. A runner that is at `max_inflight` still polls (control-slot
+  polling, case 04a), and the server answers such a poll with whatever it
+  decided to hand out. By the time that response arrives the server has
+  already committed the claim: an assignment the SDK ignores stays `claimed`
+  until its timeout plus grace, and for a singleton job that blocks every
+  later run. Nothing on the runner side logs it.
+
+  The SDKs used to take a `backoff; continue` branch whenever their own view
+  said "at capacity", skipping `response.work` on the assumption that it was
+  always empty there. Two things broke that assumption: the .NET, Go and Java
+  SDKs derived "at capacity" from the in-flight count but sent a separately
+  read in-flight id list, so a handler finishing in between made the request
+  report a free slot while the loop still believed it was full; and the
+  server's own capacity check is not a contract the runner may rely on to
+  discard work.
+
+  The script provokes the second form directly: `max_inflight` is 1, the
+  first poll delivers `exec-a` (a handler that sleeps 800 ms), and the second
+  poll — sent while `exec-a` is still in flight, so it reports
+  `inflight: ["exec-a"]` — is answered with `exec-b`. The runner must dispatch
+  `exec-b` and ack it as a success. An SDK that drops work on an at-capacity
+  poll never acks `exec-b` and fails the case.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 500
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 3000
+  # Short so the at-capacity polls after exec-b don't stretch the case.
+  capacity_backoff_ms: 50
+
+handlers:
+  - job_key: "slow:job"
+    behavior: sleep
+    duration_ms: 800             # keeps the single slot full across poll 2
+  - job_key: "fast:job"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-a"
+            job_key: "slow:job"
+            fire_at: "2026-10-06T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    # Second poll — sent at capacity (exec-a is still sleeping). The server
+    # hands out work anyway; the runner must not throw it away.
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-b"
+            job_key: "fast:job"
+            fire_at: "2026-10-06T10:00:01Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      # The at-capacity poll that exec-b is delivered on.
+      min_count: 1
+      body_filter:
+        inflight: ["exec-a"]
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_filter:
+        execution_id: "exec-b"
+      body_match:
+        execution_id: "exec-b"
+        status: "success"
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_filter:
+        execution_id: "exec-a"
+      body_match:
+        execution_id: "exec-a"
+        status: "success"
