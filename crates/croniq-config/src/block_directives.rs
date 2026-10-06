@@ -77,6 +77,7 @@ const DEFAULTS: &[&str] = &[
     "queue_ttl",
     "max_queue_depth",
     "keep_last",
+    "priority",
 ];
 
 /// `defaults { retry … { } }` / `defaults { dead_letter { } }`.
@@ -117,6 +118,7 @@ const JOB: &[&str] = &[
     "max_concurrent",
     "concurrency_group",
     "coalesce",
+    "priority",
     "tags",
     "run_on_register",
 ];

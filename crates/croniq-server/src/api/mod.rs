@@ -1138,6 +1138,11 @@ async fn handle_poll(
 /// neither get dropped nor starve other jobs' items behind them) and are
 /// picked up by a later poll once a slot frees.
 ///
+/// Among the items that pass, the queue hands out the highest effective
+/// `priority` first (issue #819, see `WorkQueue::dequeue_for_where_at`), so a
+/// blocked high-priority item does not hold back the lower-priority ones the
+/// guard lets through.
+///
 /// The guard check, the dequeue, and the store-side claim all happen under
 /// the queue write lock, so two concurrent polls cannot both observe a free
 /// slot and double-claim a singleton job. The registry lock is only taken
@@ -1166,9 +1171,12 @@ async fn try_dequeue_for(
     let mut group_inflight_cache: HashMap<String, u64> = HashMap::new();
     let mut group_batch_claims: HashMap<String, u64> = HashMap::new();
 
+    // One clock reading for the whole batch, so priority aging (issue #819)
+    // ranks every pick of this poll against the same instant.
+    let dispatch_now = Utc::now();
     let mut items: Vec<WorkItem> = Vec::new();
     while items.len() < capacity {
-        let next = q.dequeue_for_where(capabilities, |item| {
+        let next = q.dequeue_for_where_at(dispatch_now, capabilities, |item| {
             // Per-job limit first: it is the cheaper check and the more
             // common one, and a job already at its own limit must not
             // consume a group slot in the caches below.
@@ -5017,6 +5025,116 @@ mod tests {
         );
     }
 
+    /// Persist a queued execution of `job_key` that fired `fire_at` with the
+    /// given metadata, and enqueue its work item — what a scheduler fire
+    /// leaves behind. Returns the execution id.
+    async fn seed_backlog_item(
+        state: &Arc<ServerState>,
+        store: &DynStore,
+        job_key: &str,
+        metadata: HashMap<String, String>,
+        fire_at: chrono::DateTime<Utc>,
+    ) -> String {
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: job_key.into(),
+                fire_at,
+                scheduled_for: fire_at,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: metadata.clone(),
+                created_at: fire_at,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: id.to_string(),
+            job_key: job_key.into(),
+            fire_at,
+            scheduled_for: fire_at,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!(metadata),
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+        id.to_string()
+    }
+
+    /// Issue #819: after a runner stall, the backlog drains by `priority`
+    /// rather than in fire order, and a high-priority item held back by its
+    /// own concurrency guard neither blocks the rest nor loses its place.
+    #[tokio::test]
+    async fn poll_drains_a_mixed_backlog_by_priority() {
+        use croniq_config::compile::{MAX_CONCURRENT_METADATA_KEY, PRIORITY_METADATA_KEY};
+
+        let (state, store, _rx) = make_guard_state();
+        // Everything fired during the same stall, in this order. Equal age
+        // means aging lifts every item alike, so the levels decide.
+        let fired = Utc::now() - chrono::TimeDelta::minutes(30);
+        let stamp = |level: Option<&str>| -> HashMap<String, String> {
+            level
+                .map(|l| HashMap::from([(PRIORITY_METADATA_KEY.to_string(), l.to_string())]))
+                .unwrap_or_default()
+        };
+
+        // A high-priority singleton with a run already in flight: blocked.
+        let mut guarded = stamp(Some("high"));
+        guarded.insert(MAX_CONCURRENT_METADATA_KEY.into(), "1".into());
+        let running =
+            seed_backlog_item(&state, &store, "ops:guarded", guarded.clone(), fired).await;
+        store
+            .claim_execution(running.parse().unwrap(), "other-runner", Utc::now())
+            .unwrap();
+        state.runner.queue.write().await.remove(&running);
+        let blocked = seed_backlog_item(&state, &store, "ops:guarded", guarded, fired).await;
+
+        let safety_net =
+            seed_backlog_item(&state, &store, "ops:safety-net", stamp(Some("low")), fired).await;
+        let routine = seed_backlog_item(&state, &store, "ops:routine", stamp(None), fired).await;
+        let urgent =
+            seed_backlog_item(&state, &store, "ops:urgent", stamp(Some("high")), fired).await;
+
+        let poll = |max_inflight: u32| {
+            let app = server_router(Arc::clone(&state));
+            async move {
+                let resp = post_json(
+                    app,
+                    "/v1/poll",
+                    serde_json::json!({
+                        "runner_id": "r1", "capabilities": [],
+                        "max_inflight": max_inflight, "inflight": []
+                    }),
+                )
+                .await;
+                resp["work"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| w["execution_id"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        // One slot: the high-priority item, though it fired last.
+        assert_eq!(poll(1).await, vec![urgent]);
+        // The rest by level; the blocked high item is skipped in place.
+        assert_eq!(poll(5).await, vec![routine, safety_net]);
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.peek().unwrap().execution_id, blocked);
+    }
+
     #[tokio::test]
     async fn trigger_inherits_dsl_max_concurrent_metadata() {
         // POST /v1/trigger inherits the DSL job's compiled metadata, so a
@@ -5073,6 +5191,64 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("1"),
             "__max_concurrent must be present in the triggered WorkItem metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_inherits_priority_and_callers_cannot_set_it() {
+        // Issue #819: a triggered run is ranked like a scheduled one, because
+        // it inherits the compiled `__priority` stamp — and a caller cannot
+        // promote its own run, because the key is in the reserved namespace.
+        use crate::loader::load_str;
+        use croniq_config::compile::PRIORITY_METADATA_KEY;
+
+        let dsl = r#"
+            job test:urgent { every 1 hour; priority high }
+            job test:plain { every 1 hour }
+        "#;
+        let jobs = load_str(dsl).unwrap().runtime.jobs;
+        let (mut state, _store, _rx) = make_guard_state();
+        {
+            let s = Arc::get_mut(&mut state).expect("fresh state has one ref");
+            s.dsl_jobs = Some(Arc::new(tokio::sync::RwLock::new(jobs)));
+        }
+
+        for (job_key, caller_metadata) in [
+            ("test:urgent", serde_json::json!({})),
+            (
+                "test:plain",
+                serde_json::json!({ PRIORITY_METADATA_KEY: "high" }),
+            ),
+        ] {
+            let resp = post_json(
+                server_router(Arc::clone(&state)),
+                "/v1/trigger",
+                serde_json::json!({ "job_key": job_key, "metadata": caller_metadata }),
+            )
+            .await;
+            assert!(resp["execution_id"].is_string(), "trigger failed: {resp}");
+        }
+
+        let q = state.runner.queue.read().await;
+        let stamps: Vec<(String, Option<String>)> = q
+            .peek_n(2)
+            .into_iter()
+            .map(|i| {
+                (
+                    i.job_key.clone(),
+                    i.metadata
+                        .get(PRIORITY_METADATA_KEY)
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                )
+            })
+            .collect();
+        assert_eq!(
+            stamps,
+            vec![
+                ("test:urgent".to_string(), Some("high".to_string())),
+                ("test:plain".to_string(), None),
+            ]
         );
     }
 

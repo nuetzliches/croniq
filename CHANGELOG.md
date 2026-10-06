@@ -21,6 +21,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fold. `validate` rejects any other argument to `coalesce`, and the DSL
   generator offers it as "Fold scheduled fires too" (#818).
 
+- **`priority` orders dispatch when a backlog drains.** A job now declares
+  `priority low|normal|high` (default `normal`, also settable in
+  `defaults { }`). When a runner polls, it is handed the waiting execution
+  with the highest effective priority, FIFO among equals — so after a runner
+  restart or stall the latency-sensitive jobs leave the backlog first and an
+  hourly safety-net schedule last, instead of everything going out in fire
+  order. Aging bounds starvation: every five minutes an execution has waited
+  since its `fire_at` counts as one level up, so a `low` run that has waited
+  ten minutes competes as a fresh `high` one. Nothing in flight is
+  pre-empted, and `singleton` / `max_concurrent` / `concurrency_group` still
+  hold a high-priority run back; it keeps its queue position without blocking
+  the work behind it. The level travels in the reserved `__priority` metadata
+  key, so scheduled fires, triggers, retries, watchdog requeues and
+  dead-letter replays are ranked alike, and a caller cannot set it. An unknown
+  value is a validation error. `metadata { priority high }` stays a plain
+  label; jobs created through the API or registered by an SDK are `normal`
+  for now. Without the directive, the one visible change is aging itself: an
+  execution that has waited more than five minutes longer than the ones
+  queued ahead of it — typically one the watchdog requeued to the back of the
+  queue — now goes first. The DSL generator offers the directive in the job
+  form and the `defaults` tab (#819).
+
 - **The live console keeps the startup log.** Everything the server logs
   before it starts serving — `loading Croniqfile`, `configuration loaded`,
   the alert evaluator line, boot diagnostics — is pinned in its own buffer,

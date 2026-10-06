@@ -2,14 +2,75 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use chrono::{DateTime, Utc};
+
 use crate::types::WorkItem;
 
-/// FIFO queue of pending work items.
+/// Metadata key carrying a work item's dispatch priority (`priority`, issue
+/// #819): `"low"` or `"high"`; absent (or anything else) means `normal`.
 ///
-/// `dequeue_for` respects required capabilities: it returns the first item
-/// the requesting runner is eligible to execute. Items that don't match are
-/// left in place (not re-ordered), preserving fairness across runners with
-/// different capability sets.
+/// The DSL compiler stamps it into the job's metadata, so every producer of a
+/// work item carries it without knowing it exists. The canonical definition is
+/// `croniq_config::compile::PRIORITY_METADATA_KEY`; this crate does not depend
+/// on the DSL, so it keeps its own copy, and a test in `croniq-bridge` (which
+/// sees both) pins the two together.
+pub const PRIORITY_METADATA_KEY: &str = "__priority";
+
+/// How long an item has to wait to climb one priority level (issue #819).
+///
+/// Aging is what bounds starvation: an item's *effective* level is its base
+/// level (`low` = 0, `normal` = 1, `high` = 2) plus one for every full step it
+/// has waited since its `fire_at`. A `low` item that has waited ten minutes
+/// therefore competes as a fresh `high` one, and wins against it on queue
+/// position if it was enqueued first. Equivalently: each level is a five-minute
+/// head start — of two items, the higher-priority one goes first unless the
+/// other has been waiting more than five minutes per level longer.
+pub const PRIORITY_AGING_STEP_SECS: i64 = 5 * 60;
+
+/// Upper bound on the levels aging can add (288 steps = 24 h of waiting).
+///
+/// Only there to keep the arithmetic bounded. Items that have waited longer
+/// than a day compare by base level and then queue position — and every one of
+/// them already outranks anything that has waited less than a day.
+pub const MAX_PRIORITY_AGING_STEPS: u32 = 288;
+
+/// Base rank of a work item: `low` = 0, `normal` = 1, `high` = 2, read from
+/// [`PRIORITY_METADATA_KEY`].
+///
+/// An unknown value ranks `normal` rather than failing: the compiler only ever
+/// stamps the two non-default levels, so anything else on an item came from a
+/// path that should not have set it, and the safe reading is "no preference".
+pub fn base_priority(item: &WorkItem) -> u32 {
+    match item
+        .metadata
+        .get(PRIORITY_METADATA_KEY)
+        .and_then(|v| v.as_str())
+    {
+        Some("low") => 0,
+        Some("high") => 2,
+        _ => 1,
+    }
+}
+
+/// Effective rank of `item` at `now`: [`base_priority`] plus one level per
+/// [`PRIORITY_AGING_STEP_SECS`] waited since `fire_at`, capped at
+/// [`MAX_PRIORITY_AGING_STEPS`]. An item whose `fire_at` lies in the future
+/// has not started waiting and gets no aging.
+pub fn effective_priority(item: &WorkItem, now: DateTime<Utc>) -> u32 {
+    let waited = now.signed_duration_since(item.fire_at).num_seconds().max(0);
+    let steps = (waited / PRIORITY_AGING_STEP_SECS).min(i64::from(MAX_PRIORITY_AGING_STEPS));
+    base_priority(item) + steps as u32
+}
+
+/// Queue of pending work items, dispatched by priority and then FIFO.
+///
+/// `dequeue_for` respects required capabilities: among the items the
+/// requesting runner is eligible to execute, it returns the one with the
+/// highest [`effective_priority`], and the earliest-queued one among equals.
+/// With every item at the same level — any deployment that does not use
+/// `priority`, as long as its backlog does not span an aging step — that is
+/// plain FIFO. Items that are not picked are left in place (not re-ordered),
+/// preserving fairness across runners with different capability sets.
 ///
 /// Maintains an O(1) per-`job_key` counter (`per_job_count`) so the scheduler
 /// can enforce `max_queue_depth` without scanning the queue on every tick.
@@ -51,43 +112,86 @@ impl WorkQueue {
         true
     }
 
-    /// Remove and return the first item this runner can execute, based on
-    /// required capabilities.
+    /// Remove and return the highest-priority item this runner can execute,
+    /// based on required capabilities (FIFO among equal priority).
     ///
     /// Returns `None` if no eligible item exists.
     pub fn dequeue_for(&mut self, capabilities: &[String]) -> Option<WorkItem> {
-        self.dequeue_for_where(capabilities, |_| true)
+        self.dequeue_for_where_at(Utc::now(), capabilities, |_| true)
+    }
+
+    /// [`Self::dequeue_for_where_at`] with the wall clock as `now`.
+    pub fn dequeue_for_where(
+        &mut self,
+        capabilities: &[String],
+        eligible: impl FnMut(&WorkItem) -> bool,
+    ) -> Option<WorkItem> {
+        self.dequeue_for_where_at(Utc::now(), capabilities, eligible)
     }
 
     /// Like [`Self::dequeue_for`], but additionally requires `eligible` to
-    /// return `true` for the item. Ineligible items are skipped in place —
-    /// the same semantics as a capability mismatch — so a blocked item keeps
-    /// its FIFO position without starving items queued behind it.
+    /// return `true` for the item, and ranks by [`effective_priority`] as of
+    /// `now`. Ineligible items are skipped in place — the same semantics as a
+    /// capability mismatch — so a blocked item keeps its queue position
+    /// without starving items queued behind it, whatever their priority.
     ///
     /// Used by the per-job concurrency guard (issue #278): the server passes
     /// a predicate that rejects items whose job already has `max_concurrent`
     /// executions in flight, and the item simply stays queued.
-    pub fn dequeue_for_where(
+    ///
+    /// `eligible` is only asked about an item that would beat the best
+    /// eligible one found so far: the scan walks the queue in order, and an
+    /// item is a candidate only when its effective priority is strictly
+    /// higher than the current best's (an equal one sits later in the queue,
+    /// so it loses the tie). With uniform priorities that is exactly the
+    /// FIFO call pattern from before priorities existed — the predicate runs
+    /// up to the first eligible item and never after it. The server's
+    /// predicate reads in-flight counts from the store (memoised per poll),
+    /// so this matters.
+    ///
+    /// One scan, no allocation: the queue is small in practice, but this runs
+    /// on every poll.
+    pub fn dequeue_for_where_at(
         &mut self,
+        now: DateTime<Utc>,
         capabilities: &[String],
         mut eligible: impl FnMut(&WorkItem) -> bool,
     ) -> Option<WorkItem> {
-        let pos = self.items.iter().position(|item| {
-            item.require.iter().all(|req| capabilities.contains(req)) && eligible(item)
-        });
+        // Nothing can rank above this, so finding an eligible item at this
+        // level ends the scan.
+        const CEILING: u32 = 2 + MAX_PRIORITY_AGING_STEPS;
 
-        pos.map(|i| {
+        let mut best: Option<(u32, usize)> = None;
+        for (i, item) in self.items.iter().enumerate() {
+            if !item.require.iter().all(|req| capabilities.contains(req)) {
+                continue;
+            }
+            let rank = effective_priority(item, now);
+            if best.is_some_and(|(best_rank, _)| rank <= best_rank) {
+                continue;
+            }
+            if eligible(item) {
+                best = Some((rank, i));
+                if rank == CEILING {
+                    break;
+                }
+            }
+        }
+
+        best.map(|(_, i)| {
             let item = self.items.remove(i).expect("index just found");
             self.dec_count(&item.job_key);
             item
         })
     }
 
-    /// Remove up to `limit` eligible items for a runner in one call.
+    /// Remove up to `limit` eligible items for a runner in one call, in
+    /// dispatch order (see [`Self::dequeue_for`]).
     pub fn dequeue_many_for(&mut self, capabilities: &[String], limit: usize) -> Vec<WorkItem> {
+        let now = Utc::now();
         let mut result = Vec::with_capacity(limit);
         while result.len() < limit {
-            match self.dequeue_for(capabilities) {
+            match self.dequeue_for_where_at(now, capabilities, |_| true) {
                 Some(item) => result.push(item),
                 None => break,
             }
@@ -95,12 +199,13 @@ impl WorkQueue {
         result
     }
 
-    /// Peek at the first item without removing it.
+    /// Peek at the first item in queue (FIFO) order without removing it.
+    /// Not necessarily the next one dispatched — see [`Self::dequeue_for`].
     pub fn peek(&self) -> Option<&WorkItem> {
         self.items.front()
     }
 
-    /// Peek at the first `n` items without removing them.
+    /// Peek at the first `n` items in queue (FIFO) order without removing them.
     pub fn peek_n(&self, n: usize) -> Vec<&WorkItem> {
         self.items.iter().take(n).collect()
     }
@@ -133,6 +238,11 @@ impl WorkQueue {
     /// guarantee: `try_dequeue_for` removes an item and persists its claim
     /// under the same write lock a fold decides under, so an execution that
     /// has already started can never be found by this method.
+    ///
+    /// Deliberately queue order, not dispatch order: `priority` (issue #819)
+    /// ranks what a runner is handed next, but every item of one job carries
+    /// the same base priority, so between fold candidates only age differs —
+    /// and the oldest is the first.
     ///
     /// Linear, like [`Self::enqueue`]'s duplicate scan, and for the same
     /// reason: the queue is small and this runs once per trigger.
@@ -532,5 +642,209 @@ mod tests {
     fn find_for_job_on_an_empty_queue_is_none() {
         let q = WorkQueue::new();
         assert!(q.find_for_job("soapneo:sync", |_| true).is_none());
+    }
+
+    // ── priority (issue #819) ─────────────────────────────────────────────────
+
+    use chrono::{DateTime, TimeDelta};
+
+    fn t0() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-10-06T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// An item of job `job:<id>` fired `waited_secs` before [`t0`], with the
+    /// given `__priority` stamp (`None` = normal).
+    fn prio(id: &str, priority: Option<&str>, waited_secs: i64) -> WorkItem {
+        let fire_at = t0() - TimeDelta::seconds(waited_secs);
+        WorkItem {
+            fire_at,
+            scheduled_for: fire_at,
+            metadata: match priority {
+                Some(p) => serde_json::json!({ PRIORITY_METADATA_KEY: p }),
+                None => serde_json::json!({}),
+            },
+            ..item(id, vec![])
+        }
+    }
+
+    fn drain_order(q: &mut WorkQueue, caps: &[String]) -> Vec<String> {
+        std::iter::from_fn(|| q.dequeue_for_where_at(t0(), caps, |_| true))
+            .map(|i| i.execution_id)
+            .collect()
+    }
+
+    #[test]
+    fn base_priority_reads_the_stamp() {
+        assert_eq!(base_priority(&prio("a", Some("low"), 0)), 0);
+        assert_eq!(base_priority(&prio("a", None, 0)), 1);
+        assert_eq!(base_priority(&prio("a", Some("normal"), 0)), 1);
+        assert_eq!(base_priority(&prio("a", Some("high"), 0)), 2);
+        // Anything unrecognised is "no preference", never an error.
+        assert_eq!(base_priority(&prio("a", Some("urgent"), 0)), 1);
+        assert_eq!(base_priority(&item("a", vec![])), 1, "null metadata");
+    }
+
+    #[test]
+    fn effective_priority_ages_one_level_per_step() {
+        let step = PRIORITY_AGING_STEP_SECS;
+        assert_eq!(effective_priority(&prio("a", Some("low"), 0), t0()), 0);
+        assert_eq!(
+            effective_priority(&prio("a", Some("low"), step - 1), t0()),
+            0
+        );
+        assert_eq!(effective_priority(&prio("a", Some("low"), step), t0()), 1);
+        assert_eq!(
+            effective_priority(&prio("a", Some("low"), 2 * step), t0()),
+            2
+        );
+        // Not yet due: no negative aging.
+        assert_eq!(effective_priority(&prio("a", Some("high"), -3600), t0()), 2);
+        // Capped.
+        assert_eq!(
+            effective_priority(&prio("a", None, 365 * 86_400), t0()),
+            1 + MAX_PRIORITY_AGING_STEPS
+        );
+    }
+
+    #[test]
+    fn higher_priority_is_dispatched_first() {
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("low", Some("low"), 0));
+        q.enqueue(prio("normal", None, 0));
+        q.enqueue(prio("high", Some("high"), 0));
+
+        assert_eq!(drain_order(&mut q, &[]), vec!["high", "normal", "low"]);
+        assert!(q.is_empty());
+        assert_eq!(q.count_for_job("job:high"), 0);
+    }
+
+    #[test]
+    fn equal_priority_stays_fifo() {
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("h1", Some("high"), 0));
+        q.enqueue(prio("n1", None, 0));
+        q.enqueue(prio("h2", Some("high"), 0));
+        q.enqueue(prio("n2", None, 0));
+        q.enqueue(prio("h3", Some("high"), 0));
+
+        assert_eq!(drain_order(&mut q, &[]), vec!["h1", "h2", "h3", "n1", "n2"]);
+    }
+
+    #[test]
+    fn aging_lets_a_waiting_low_item_overtake() {
+        let step = PRIORITY_AGING_STEP_SECS;
+        let mut q = WorkQueue::new();
+        // Waited two steps: competes as `high`, and was queued first, so it
+        // wins the tie against a fresh `high`.
+        q.enqueue(prio("old-low", Some("low"), 2 * step));
+        q.enqueue(prio("fresh-high", Some("high"), 0));
+        assert_eq!(drain_order(&mut q, &[]), vec!["old-low", "fresh-high"]);
+
+        // One step short of that, the fresh `high` still goes first.
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("old-low", Some("low"), 2 * step - 1));
+        q.enqueue(prio("fresh-high", Some("high"), 0));
+        assert_eq!(drain_order(&mut q, &[]), vec!["fresh-high", "old-low"]);
+
+        // Three steps: strictly above a fresh `high`, regardless of position.
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("fresh-high", Some("high"), 0));
+        q.enqueue(prio("older-low", Some("low"), 3 * step));
+        assert_eq!(drain_order(&mut q, &[]), vec!["older-low", "fresh-high"]);
+    }
+
+    #[test]
+    fn a_backlog_of_equal_age_still_drains_by_priority() {
+        // The case issue #819 is about: a runner stall leaves a backlog in
+        // which everything has waited a long time. Aging lifts every item by
+        // the same amount, so the levels still decide.
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("safety-net", Some("low"), 1800));
+        q.enqueue(prio("routine", None, 1800));
+        q.enqueue(prio("latency-sensitive", Some("high"), 1800));
+        assert_eq!(
+            drain_order(&mut q, &[]),
+            vec!["latency-sensitive", "routine", "safety-net"]
+        );
+    }
+
+    #[test]
+    fn blocked_high_item_does_not_block_lower_ones_and_keeps_its_place() {
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("normal", None, 0));
+        q.enqueue(prio("blocked-high", Some("high"), 0));
+        q.enqueue(prio("low", Some("low"), 0));
+
+        let got = q
+            .dequeue_for_where_at(t0(), &[], |i| i.execution_id != "blocked-high")
+            .unwrap();
+        assert_eq!(got.execution_id, "normal");
+        // Still queued, still counted, still in front of `low` once free.
+        assert_eq!(q.count_for_job("job:blocked-high"), 1);
+        assert_eq!(drain_order(&mut q, &[]), vec!["blocked-high", "low"]);
+    }
+
+    #[test]
+    fn high_item_the_runner_cannot_take_is_skipped() {
+        let mut q = WorkQueue::new();
+        q.enqueue(WorkItem {
+            require: vec!["gpu".into()],
+            ..prio("gpu-high", Some("high"), 0)
+        });
+        q.enqueue(prio("open-low", Some("low"), 0));
+
+        assert_eq!(drain_order(&mut q, &[]), vec!["open-low"]);
+        assert_eq!(drain_order(&mut q, &["gpu".into()]), vec!["gpu-high"]);
+    }
+
+    #[test]
+    fn predicate_is_only_asked_about_items_that_could_win() {
+        // Uniform priorities: the FIFO call pattern — stop at the first
+        // eligible item, never look past it.
+        let mut q = WorkQueue::new();
+        for id in ["a", "b", "c", "d"] {
+            q.enqueue(prio(id, None, 0));
+        }
+        let mut asked = Vec::new();
+        let got = q.dequeue_for_where_at(t0(), &[], |i| {
+            asked.push(i.execution_id.clone());
+            i.execution_id != "a"
+        });
+        assert_eq!(got.unwrap().execution_id, "b");
+        assert_eq!(asked, vec!["a", "b"]);
+
+        // Mixed: once `high` is found eligible, the `normal`/`low` items
+        // behind it cannot beat it and are not asked.
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("n1", None, 0));
+        q.enqueue(prio("h1", Some("high"), 0));
+        q.enqueue(prio("n2", None, 0));
+        q.enqueue(prio("l1", Some("low"), 0));
+        q.enqueue(prio("h2", Some("high"), 0));
+        let mut asked = Vec::new();
+        let got = q.dequeue_for_where_at(t0(), &[], |i| {
+            asked.push(i.execution_id.clone());
+            true
+        });
+        assert_eq!(got.unwrap().execution_id, "h1");
+        assert_eq!(asked, vec!["n1", "h1"]);
+    }
+
+    #[test]
+    fn dequeue_many_for_follows_priority_order() {
+        let mut q = WorkQueue::new();
+        q.enqueue(prio("n1", None, 0));
+        q.enqueue(prio("l1", Some("low"), 0));
+        q.enqueue(prio("h1", Some("high"), 0));
+        // Fire times are fixed in the past here, but they are equal, so the
+        // wall clock `dequeue_many_for` uses ages them all alike.
+        let ids: Vec<String> = q
+            .dequeue_many_for(&[], 2)
+            .into_iter()
+            .map(|i| i.execution_id)
+            .collect();
+        assert_eq!(ids, vec!["h1", "n1"]);
     }
 }

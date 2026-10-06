@@ -141,7 +141,13 @@ job billing:invoice-generate {
   # month-late replay would otherwise bill the wrong period. Handlers read the
   # logical time from the execution's scheduled_for, not wall-clock now.
   dead_letter { retention 60d; replay_max_age 7d; operator_hint "Billing-DB pruefen" }
-  metadata { team billing; priority high }
+  # Dispatch rank when a backlog drains (low | normal | high, default normal):
+  # waiting executions of higher-priority jobs are handed to runners first,
+  # FIFO among equals. Every five minutes of waiting counts as one level up,
+  # so a low-priority job is delayed, never starved. Also settable in
+  # `defaults { }`. A `priority` key inside `metadata { }` is only a label.
+  priority high
+  metadata { team billing }
 }
 
 job etl:data-sync {

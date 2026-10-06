@@ -1052,6 +1052,7 @@ mod tests {
             max_concurrent: None,
             concurrency_group: None,
             coalesce: false,
+            priority: croniq_config::compile::JobPriority::Normal,
             tags: vec![],
             run_on_register: false,
         }

@@ -375,6 +375,11 @@ pub struct JobOptions {
     /// `coalesce`.
     #[serde(default)]
     pub coalesce_schedule: bool,
+    /// Dispatch rank among waiting executions — `low` | `normal` | `high`
+    /// (`priority`, issue #819). `None`/empty emits nothing, which is
+    /// `normal`.
+    #[serde(default)]
+    pub priority: Option<String>,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -546,6 +551,9 @@ fn format_job_block_inner(
         lines.push("  coalesce schedule".into());
     } else if o.coalesce {
         lines.push("  coalesce".into());
+    }
+    if let Some(p) = opt_str(&o.priority) {
+        lines.push(format!("  priority {p}"));
     }
     if o.run_on_register {
         lines.push("  run_on_register".into());
@@ -1792,6 +1800,32 @@ mod tests {
             croniq_config::compile::job_coalesces_scheduled_fires(&cfg.jobs[0].metadata),
             "{out}"
         );
+    }
+
+    #[test]
+    fn job_block_priority_round_trips() {
+        let o = JobOptions {
+            priority: Some("high".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(out.contains("\n  priority high\n"), "{out}");
+        let cfg = croniq_config::compile::compile(&Parser::parse(&out).unwrap());
+        assert_eq!(
+            cfg.jobs[0].priority,
+            croniq_config::compile::JobPriority::High,
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn job_block_priority_unset_emits_nothing() {
+        let o = JobOptions {
+            priority: Some(String::new()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "a:b", &o).unwrap();
+        assert!(!out.contains("priority"), "{out}");
     }
 
     #[test]

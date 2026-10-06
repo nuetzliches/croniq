@@ -1008,6 +1008,11 @@ pub fn job_config_from_definition(
         // `__coalesce` metadata stamp — so an API-registered job that wants
         // the fold carries it there, exactly like `__max_concurrent`.
         coalesce: false,
+        // `priority` is a Croniqfile directive (issue #819). API- and
+        // SDK-registered jobs dispatch as `normal`: `POST /v1/jobs` strips the
+        // reserved `__priority` key like every `__` key, and
+        // `/v1/jobs/register` accepts no metadata at all.
+        priority: croniq_config::compile::JobPriority::Normal,
         tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).
@@ -1084,6 +1089,11 @@ pub fn job_config_from_job_def(
         // `__coalesce` metadata stamp — so an API-registered job that wants
         // the fold carries it there, exactly like `__max_concurrent`.
         coalesce: false,
+        // `priority` is a Croniqfile directive (issue #819). API- and
+        // SDK-registered jobs dispatch as `normal`: `POST /v1/jobs` strips the
+        // reserved `__priority` key like every `__` key, and
+        // `/v1/jobs/register` accepts no metadata at all.
+        priority: croniq_config::compile::JobPriority::Normal,
         tags: job_def.tags.clone(),
         // `run_on_register` is a Croniqfile directive; an API/runner-registered
         // job has no Croniqfile definition to be adopted from (issue #555).
