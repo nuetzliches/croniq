@@ -195,6 +195,17 @@ const facts = computed(() => {
     ...(state.value?.execution_mode === 'ephemeral'
       ? [{ label: 'Execution mode', value: 'ephemeral — no run history is kept' }]
       : []),
+    // Only when it says something, like the execution mode: `normal` is the
+    // default and the absence of the field (#826).
+    ...(job.priority
+      ? [{
+          label: 'Priority',
+          value: job.priority === 'high'
+            ? 'high — dispatched before normal and low work when a backlog drains'
+            : 'low — dispatched after normal and high work when a backlog drains',
+          wrap: true,
+        }]
+      : []),
     ...(job.assigned_runner_id
       ? [{ label: 'Pinned runner', value: job.assigned_runner_id, mono: true }]
       : []),

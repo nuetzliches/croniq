@@ -235,11 +235,41 @@ async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
     dsl.read().await.iter().any(|j| j.key == job_key)
 }
 
+/// A job as `GET /v1/jobs` and `GET /v1/jobs/{key}` return it: the stored
+/// (or Croniqfile-synthesised) definition, plus what the dashboard should not
+/// have to dig out of reserved metadata itself.
+#[derive(Serialize)]
+pub struct JobView {
+    #[serde(flatten)]
+    pub definition: JobDefinition,
+    /// Dispatch priority (`priority`, issues #819, #826): `"low"` or
+    /// `"high"`, absent for `normal`. Read off the reserved `__priority`
+    /// stamp the compiler writes, so the dashboard need not know that key.
+    /// Jobs created through the API or registered by an SDK carry no stamp
+    /// and are always `normal`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+}
+
+impl From<JobDefinition> for JobView {
+    fn from(definition: JobDefinition) -> Self {
+        let priority = definition
+            .metadata
+            .get(croniq_config::compile::PRIORITY_METADATA_KEY)
+            .filter(|p| matches!(p.as_str(), "low" | "high"))
+            .cloned();
+        Self {
+            definition,
+            priority,
+        }
+    }
+}
+
 /// `GET /v1/jobs`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
-) -> Result<Json<Vec<JobDefinition>>, StatusCode> {
+) -> Result<Json<Vec<JobView>>, StatusCode> {
     require_scope(&ctx, Scope::JOBS_READ)?;
     let store = state
         .store
@@ -260,7 +290,7 @@ pub async fn handle_list(
         }
     }
 
-    Ok(Json(jobs))
+    Ok(Json(jobs.into_iter().map(JobView::from).collect()))
 }
 
 /// Per-job scheduling-liveness view (issue #250), derived from the
@@ -438,7 +468,7 @@ pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
-) -> Result<Json<JobDefinition>, StatusCode> {
+) -> Result<Json<JobView>, StatusCode> {
     require_scope(&ctx, Scope::JOBS_READ)?;
     let store = state
         .store
@@ -448,13 +478,13 @@ pub async fn handle_get(
         .get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        return Ok(Json(job));
+        return Ok(Json(job.into()));
     }
 
     if let Some(dsl) = state.dsl_jobs.as_ref() {
         let guard = dsl.read().await;
         if let Some(cfg) = guard.iter().find(|j| j.key == job_key) {
-            return Ok(Json(synth_job_def_from_dsl(cfg, Utc::now())));
+            return Ok(Json(synth_job_def_from_dsl(cfg, Utc::now()).into()));
         }
     }
 
@@ -1934,6 +1964,51 @@ mod tests {
         let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/demo:slow-job").await;
         assert_eq!(status, 200);
         assert_eq!(body["job_key"], "demo:slow-job");
+    }
+
+    /// The dashboard shows a job's dispatch priority (#826) from a typed
+    /// field, read off the reserved `__priority` stamp — and only for the two
+    /// non-default levels, so a `normal` job carries no field at all.
+    #[tokio::test]
+    async fn job_responses_carry_a_non_default_priority() {
+        let mut high = dsl_job("billing:invoice");
+        high.metadata.insert(
+            croniq_config::compile::PRIORITY_METADATA_KEY.into(),
+            "high".into(),
+        );
+        let state = make_state(vec![high, dsl_job("etl:sync")], make_store());
+
+        let (status, body) = body_json(
+            server_router(Arc::clone(&state)),
+            "GET",
+            "/v1/jobs/billing:invoice",
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["priority"], "high");
+
+        let (_, body) = body_json(
+            server_router(Arc::clone(&state)),
+            "GET",
+            "/v1/jobs/etl:sync",
+        )
+        .await;
+        assert!(
+            body.get("priority").is_none(),
+            "normal is the absence of the field: {body}"
+        );
+
+        let (_, list) = body_json(server_router(state), "GET", "/v1/jobs").await;
+        let by_key = |k: &str| {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .find(|j| j["job_key"] == k)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(by_key("billing:invoice")["priority"], "high");
+        assert!(by_key("etl:sync").get("priority").is_none());
     }
 
     #[tokio::test]

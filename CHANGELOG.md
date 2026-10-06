@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The dashboard shows a job's dispatch priority.**
+  - The Jobs list puts a `high` or `low` badge beside the key.
+  - The job detail has a "Priority" row saying what it does.
+  - A `normal` job shows neither.
+  - `GET /v1/jobs` and `GET /v1/jobs/{job_key}` carry it as a typed
+    `priority` field (`"low"` / `"high"`, absent for `normal`), so clients
+    need not read the reserved `__priority` metadata.
+  - API-created and SDK-registered jobs are always `normal` (#826).
+
 - **`node scripts/dev-stack.mjs --busy` starts a busy dashboard.**
   `Croniqfile.busy` has 49 jobs firing every 10 seconds to every few
   minutes, with `priority`, `singleton` + `coalesce schedule` and one

@@ -108,6 +108,15 @@ components:
         dead_letter_operator_hint: { type: string, nullable: true, description: "Free-form triage hint surfaced with this job's dead letters." }
         dead_letter_replay_max_age: { type: string, nullable: true, description: "Opt-in stale-replay guard (\"7d\"): replaying a dead letter whose original scheduled_for is older is rejected with 409 unless forced. Null = replays always allowed." }
         tags: { type: array, items: { type: string }, description: "Free-form filter tags (convention key=value). Not routing-relevant." }
+        priority:
+          type: string
+          enum: [low, high]
+          description: |
+            Dispatch priority from the Croniqfile's `priority` directive
+            (issues #819, #826). Present on `GET /v1/jobs` and
+            `GET /v1/jobs/{job_key}` for the two non-default levels; absent
+            means `normal`. API-created and SDK-registered jobs are always
+            `normal`.
 
     TriggerDefinition:
       type: object

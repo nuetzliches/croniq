@@ -339,7 +339,19 @@ function ruleOf(row: Row): string {
                    description is what makes the list readable to someone who
                    does not already know the keys by heart. -->
               <td class="max-w-[20rem] px-[var(--cq-cell-x)] py-1.5">
-                <span class="block truncate font-mono text-primary">{{ row.job.job_key }}</span>
+                <span class="flex min-w-0 items-center gap-1.5">
+                  <span class="truncate font-mono text-primary">{{ row.job.job_key }}</span>
+                  <!-- Dispatch priority (#826), only when it is not the default. -->
+                  <UBadge
+                    v-if="row.job.priority"
+                    size="sm"
+                    variant="subtle"
+                    :color="row.job.priority === 'high' ? 'primary' : 'neutral'"
+                    :label="row.job.priority"
+                    :title="`Dispatch priority: ${row.job.priority}`"
+                    data-testid="job-priority-badge"
+                  />
+                </span>
                 <span
                   v-if="row.job.description"
                   class="block truncate text-xs text-muted"
