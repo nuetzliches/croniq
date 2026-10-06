@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Work delivered on an at-capacity poll is run instead of dropped
+  ([#817](https://github.com/nuetzliches/croniq/issues/817)).** The poll loop
+  skipped `response.work` whenever it was at `maxInflight`, assuming the
+  server never hands out work then. The server had already claimed whatever
+  it returned, so a dropped assignment stayed `claimed` until its timeout plus
+  grace — for a `singleton` job, every later run waited behind it. The
+  TypeScript SDK did not trigger this itself (its count and in-flight list are
+  read synchronously together), but now dispatches every assignment the
+  server returns before applying `capacityBackoffMs`, and derives the decision
+  from the same snapshot the request carries.
+
 ## 0.7.0 - 2026-10-01
 
 ### Fixed

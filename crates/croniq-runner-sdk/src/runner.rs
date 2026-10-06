@@ -434,8 +434,10 @@ impl CroniqRunner {
             // via `PollResponse.cancel`. The server's poll handler returns
             // immediately when `inflight.len() == max_inflight` (no
             // long-poll), so `capacity_backoff` is what paces the loop and
-            // prevents a stampede. Work is never dequeued in this state
-            // because the server sees zero capacity from the request.
+            // prevents a stampede. `at_capacity` is derived from the same
+            // snapshot the request carries, so the decision and the server's
+            // view agree (the .NET/Go/Java SDKs once read them separately and
+            // raced — issue #817).
             let poll_req = PollRequest {
                 runner_id: self.runner_id.clone(),
                 capabilities: self.capabilities.clone(),
@@ -461,16 +463,16 @@ impl CroniqRunner {
                     // Honour server-issued cancels (issue #176): abort the
                     // matching in-flight handler futures. Each dispatch task
                     // then acks its execution as a failure and releases the
-                    // inflight slot. Done before the at-capacity early-return
-                    // so a max_inflight=1 runner still acts on cancels.
+                    // inflight slot. Done on every poll, at capacity too, so
+                    // a max_inflight=1 runner still acts on cancels.
                     Self::abort_cancelled(&self.aborts, &resp.cancel).await;
 
-                    if at_capacity {
-                        // Server returned immediately (capacity=0 branch).
-                        // Pace the loop to avoid hammering the server.
-                        tokio::time::sleep(self.capacity_backoff).await;
-                        continue;
-                    }
+                    // Delivered work is dispatched on an at-capacity poll
+                    // too. By the time the response arrives the server has
+                    // committed the claim, so dropping an assignment strands
+                    // it as `claimed` until timeout + grace; for a singleton
+                    // job that blocks every later run (issue #817). Briefly
+                    // running over `max_inflight` is the lesser evil.
                     for assignment in resp.work {
                         let exec_id = assignment.execution_id.clone();
                         let job_key = assignment.job_key.clone();
@@ -648,6 +650,12 @@ impl CroniqRunner {
                             // Remove from inflight
                             inflight.write().await.retain(|id| id != &exec_id);
                         });
+                    }
+
+                    if at_capacity {
+                        // Server returned immediately (capacity=0 branch).
+                        // Pace the loop to avoid hammering the server.
+                        tokio::time::sleep(self.capacity_backoff).await;
                     }
                 }
                 Err(e @ crate::client::ClientError::WorkOwnershipDenied { .. }) => {

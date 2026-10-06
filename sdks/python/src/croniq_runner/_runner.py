@@ -202,13 +202,19 @@ class Runner:
             # poll so the server can deliver cancels via PollResponse.cancel.
             # The server returns immediately when capacity=0 (no long-poll),
             # so capacity_backoff_ms paces the loop and prevents a stampede.
-            at_capacity = len(self._inflight) >= opts.max_inflight
+            #
+            # One snapshot drives both the request and the capacity decision,
+            # so the two can never disagree about how full the runner is
+            # (the .NET/Go/Java SDKs once read them separately and raced —
+            # issue #817).
+            inflight_ids = list(self._inflight.keys())
+            at_capacity = len(inflight_ids) >= opts.max_inflight
 
             request = PollRequest(
                 runner_id=self._runner_id or "",
                 capabilities=list(opts.capabilities),
                 max_inflight=opts.max_inflight,
-                inflight=list(self._inflight.keys()),
+                inflight=inflight_ids,
                 instance_id=self._instance_id,
                 tags=list(opts.tags),
             )
@@ -311,12 +317,11 @@ class Runner:
 
             self._handle_cancellations(response.cancel)
 
-            if at_capacity:
-                # Work is always empty in this branch (server-side capacity
-                # check). Cancels above are already processed; pace the loop.
-                await self._sleep_or_drain(opts.capacity_backoff_ms / 1000.0)
-                continue
-
+            # Delivered work is dispatched on an at-capacity poll too. By the
+            # time the response arrives the server has committed the claim,
+            # so dropping an assignment strands it as claimed until timeout +
+            # grace; for a singleton job that blocks every later run (issue
+            # #817). Briefly running over max_inflight is the lesser evil.
             for assignment in response.work:
                 # Ingest guard: an assignment carrying a control character in
                 # either identifier never reaches a handler, a log record, a
@@ -336,6 +341,12 @@ class Runner:
             # socket I/O — but mock transports and tight retry loops can
             # otherwise starve handlers indefinitely.
             await asyncio.sleep(0)
+
+            if at_capacity:
+                # The server returned immediately (no long-poll). Cancels and
+                # any delivered work above are already processed; pace the
+                # loop.
+                await self._sleep_or_drain(opts.capacity_backoff_ms / 1000.0)
 
     def _handle_cancellations(self, cancel_ids: list[str]) -> None:
         for execution_id in cancel_ids:
