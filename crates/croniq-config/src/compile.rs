@@ -568,6 +568,10 @@ pub struct JobConfig {
     /// flag reaches the server. Forced to `false` for `ephemeral` jobs, whose
     /// triggers enqueue persisted items against a `max_queue_depth` of 1;
     /// `validate.rs` rejects the combination outright.
+    ///
+    /// `coalesce schedule` (issue #818) also sets this; whether scheduled
+    /// fires fold too is read off the stamp's value, see
+    /// [`job_coalesces_scheduled_fires`].
     #[serde(default)]
     pub coalesce: bool,
     /// Free-form tags for filtering/grouping. NOT routing-relevant —
@@ -665,7 +669,16 @@ pub const CONCURRENCY_GROUP_METADATA_KEY: &str = "__concurrency_group";
 /// In the reserved `__` namespace, so caller-supplied metadata can never set
 /// it (see [`is_reserved_metadata_key`]) — otherwise a client could make its
 /// own parameterised trigger absorb someone else's.
+///
+/// The value says which fires fold *into* such an item: `1` for the bare
+/// directive (triggers only), [`COALESCE_SCHEDULE_VALUE`] for
+/// `coalesce schedule` (triggers and scheduled fires, issue #818). Whether an
+/// item is a fold *target* depends only on the key being present.
 pub const COALESCE_METADATA_KEY: &str = "__coalesce";
+
+/// Value of [`COALESCE_METADATA_KEY`] written for `coalesce schedule`
+/// (issue #818): scheduled fires fold as well as bare triggers.
+pub const COALESCE_SCHEDULE_VALUE: &str = "schedule";
 
 /// Metadata key carrying the execution timeout that was in force when an
 /// execution was fired (issue #558).
@@ -720,6 +733,21 @@ pub fn is_reserved_metadata_key(key: &str) -> bool {
 /// job whose metadata carries the key rather than only a DSL-compiled one.
 pub fn job_declares_coalesce(metadata: &HashMap<String, String>) -> bool {
     metadata.contains_key(COALESCE_METADATA_KEY)
+}
+
+/// Whether a job's scheduled fires fold into a queued execution of the job
+/// (`coalesce schedule`, issue #818).
+///
+/// For a level-triggered poller — `every 1 minute`, `singleton`, the handler
+/// drains whatever is open — every fire that piles up behind a stuck run
+/// finds nothing to do once it gets its turn. With this the scheduler folds a
+/// due fire into an already queued, unclaimed execution instead, so after a
+/// stall at most one scheduled run waits behind the stuck one. Read off the
+/// stamp for the same reason as [`job_declares_coalesce`].
+pub fn job_coalesces_scheduled_fires(metadata: &HashMap<String, String>) -> bool {
+    metadata
+        .get(COALESCE_METADATA_KEY)
+        .is_some_and(|v| v == COALESCE_SCHEDULE_VALUE)
 }
 
 /// Whether a queued work item may absorb a trigger (issue #759).
@@ -1645,6 +1673,7 @@ fn compile_job(
     let mut max_concurrent: Option<u32> = None;
     let mut concurrency_group: Option<String> = None;
     let mut coalesce = false;
+    let mut coalesce_schedule = false;
     let mut tags: Vec<String> = Vec::new();
     let mut run_on_register = false;
 
@@ -1702,8 +1731,14 @@ fn compile_job(
                 // Bare directive (issue #759), like `singleton` above: there
                 // is no value to tune, the fold is either on or off. The
                 // collapsing itself happens in the server's trigger path —
-                // the compiler only records the intent.
-                "coalesce" => coalesce = true,
+                // the compiler only records the intent. `coalesce schedule`
+                // (issue #818) widens the fold to scheduled fires; any other
+                // argument is reported by validate.rs and compiles to the
+                // bare form.
+                "coalesce" => {
+                    coalesce = true;
+                    coalesce_schedule = first_arg(d, vars).as_deref() == Some("schedule");
+                }
                 // Bare directive (issue #555): no value, presence is the
                 // whole signal. The adoption fire itself lives in the
                 // server — the compiler only records the intent and the
@@ -1805,6 +1840,7 @@ fn compile_job(
         // `validate.rs` rejects the combination so a well-formed deploy never
         // reaches this fallback.
         coalesce = false;
+        coalesce_schedule = false;
     }
 
     // Stamp the concurrency limit into the job metadata so it rides along
@@ -1831,7 +1867,12 @@ fn compile_job(
     // directive exists. Only present when the job declares it, so an item
     // without the key is never a fold target.
     if coalesce {
-        metadata.insert(COALESCE_METADATA_KEY.into(), "1".into());
+        let value = if coalesce_schedule {
+            COALESCE_SCHEDULE_VALUE
+        } else {
+            "1"
+        };
+        metadata.insert(COALESCE_METADATA_KEY.into(), value.into());
     }
 
     JobConfig {
@@ -2674,6 +2715,42 @@ mod tests {
             !cfg.jobs[0].metadata.contains_key(COALESCE_METADATA_KEY),
             "an ephemeral job must not carry an inert __coalesce"
         );
+    }
+
+    #[test]
+    fn compile_coalesce_schedule_stamps_the_schedule_value() {
+        let ast = Parser::parse(r#"job a:poll { every 1 minute; singleton; coalesce schedule }"#)
+            .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            cfg.jobs[0].coalesce,
+            "`coalesce schedule` includes the trigger fold"
+        );
+        assert_eq!(
+            cfg.jobs[0]
+                .metadata
+                .get(COALESCE_METADATA_KEY)
+                .map(String::as_str),
+            Some(COALESCE_SCHEDULE_VALUE)
+        );
+        assert!(job_declares_coalesce(&cfg.jobs[0].metadata));
+        assert!(job_coalesces_scheduled_fires(&cfg.jobs[0].metadata));
+    }
+
+    #[test]
+    fn bare_coalesce_does_not_fold_scheduled_fires() {
+        let ast = Parser::parse(r#"job a:b { every 5 minutes; coalesce }"#).unwrap();
+        let cfg = compile(&ast);
+        assert!(!job_coalesces_scheduled_fires(&cfg.jobs[0].metadata));
+    }
+
+    #[test]
+    fn compile_coalesce_schedule_is_dropped_on_an_ephemeral_job() {
+        let ast = Parser::parse(r#"job beat:tick { ephemeral every 1 minute; coalesce schedule }"#)
+            .unwrap();
+        let cfg = compile(&ast);
+        assert!(!job_coalesces_scheduled_fires(&cfg.jobs[0].metadata));
+        assert!(!cfg.jobs[0].metadata.contains_key(COALESCE_METADATA_KEY));
     }
 
     // ── coalesce predicates (issue #759) ─────────────────────────────

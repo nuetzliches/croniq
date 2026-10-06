@@ -714,6 +714,61 @@ impl SchedulerLoop {
 
             let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
+            // Scheduled-fire fold (`coalesce schedule`, issue #818). A
+            // level-triggered poller gains nothing from a second queued run:
+            // the one already waiting has not started, so it still covers
+            // this fire. Same target rule as the trigger fold (#759) — only a
+            // queued, unclaimed item carrying the stamp, so never a started
+            // run and never one a parameterised trigger created. Checked
+            // before the depth cap: a folded fire adds nothing to the queue.
+            // A read lock is enough; the tick is the only scheduled-fire
+            // producer, and a poll claiming the target right after this check
+            // starts it after the fire time, so it still covers the fire.
+            if !is_ephemeral && croniq_config::compile::job_coalesces_scheduled_fires(&job.metadata)
+            {
+                let target = self
+                    .runner
+                    .queue
+                    .read()
+                    .await
+                    .find_for_job(&trigger.job_key, |item| {
+                        croniq_config::compile::metadata_is_foldable(&item.metadata)
+                    })
+                    .map(|item| item.execution_id.clone());
+                if let Some(target) = target {
+                    trigger.mark_fired(fire_at, now);
+                    let job_state = JobState {
+                        job_key: trigger.job_key.clone(),
+                        next_fire_at: trigger.next_fire_at,
+                        last_fired_at: Some(fire_at),
+                        fire_count: trigger.fire_count,
+                        status: if trigger.state == TriggerState::Exhausted {
+                            JobStatus::Exhausted
+                        } else {
+                            JobStatus::Active
+                        },
+                        updated_at: now,
+                    };
+                    // Persisted like any fire, so the missed-fire sweep and a
+                    // restart see the schedule as advanced. A failed write
+                    // keeps the fold; the next fire writes the row again.
+                    if let Err(e) = self.store.upsert_job_state(&job_state) {
+                        tracing::warn!(
+                            job_key = %trigger.job_key,
+                            error = %e,
+                            "failed to persist a scheduled fire folded into a queued execution"
+                        );
+                    }
+                    tracing::info!(
+                        job_key = %trigger.job_key,
+                        execution_id = %target,
+                        fire_at = %fire_at,
+                        "scheduled fire coalesced into a queued execution (#818) — nothing enqueued"
+                    );
+                    continue;
+                }
+            }
+
             // Backpressure guards (queue-depth + per-minute rate limit) apply
             // only to persisted (`queued`) jobs. Ephemeral jobs are
             // fire-and-forget and self-bound to a single queued item by the
@@ -1127,6 +1182,109 @@ mod tests {
             next < Utc::now() + ChronoDuration::minutes(5),
             "a shortened schedule must not wait out the old, longer interval (#535); next={next}"
         );
+    }
+
+    // ── coalesce schedule (issue #818) ───────────────────────────────────────
+
+    /// A job compiled with the given `__coalesce` stamp value, and a
+    /// scheduler holding it with a trigger that is due now.
+    fn coalescing_scheduler(stamp: &str, store: DynStore, runner: Arc<AppState>) -> SchedulerLoop {
+        let mut job = make_job("poll:inbox");
+        job.metadata.insert(
+            croniq_config::compile::COALESCE_METADATA_KEY.into(),
+            stamp.into(),
+        );
+        let mut triggers = HashMap::new();
+        triggers.insert("poll:inbox".into(), make_trigger_due_now("poll:inbox"));
+        SchedulerLoop::new(triggers, vec![job], store, runner)
+    }
+
+    /// Re-arm the job's trigger so the next tick sees another due fire.
+    fn rearm(scheduler: &mut SchedulerLoop) {
+        scheduler
+            .triggers
+            .insert("poll:inbox".into(), make_trigger_due_now("poll:inbox"));
+    }
+
+    #[tokio::test]
+    async fn coalesce_schedule_folds_a_due_fire_into_the_queued_execution() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut scheduler = coalescing_scheduler(
+            croniq_config::compile::COALESCE_SCHEDULE_VALUE,
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        for _ in 0..3 {
+            rearm(&mut scheduler);
+            assert!(
+                scheduler.tick(Utc::now()).await.fired.is_empty(),
+                "a fire behind an unclaimed queued run must fold into it"
+            );
+        }
+        assert_eq!(runner.queue.read().await.count_for_job("poll:inbox"), 1);
+        assert_eq!(
+            store.find_queued_executions(&[], 10).unwrap().len(),
+            1,
+            "a folded fire leaves no execution row behind"
+        );
+        let state = store.get_job_state("poll:inbox").unwrap().unwrap();
+        assert!(
+            state.next_fire_at.is_some(),
+            "the schedule advances past a folded fire"
+        );
+    }
+
+    #[tokio::test]
+    async fn coalesce_schedule_enqueues_again_once_the_queued_run_was_claimed() {
+        // Forward-only: a run that has started may already be past the point
+        // the new fire is about, so the fire gets its own run.
+        let store = make_store();
+        let runner = make_runner();
+        let mut scheduler = coalescing_scheduler(
+            croniq_config::compile::COALESCE_SCHEDULE_VALUE,
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        assert!(runner.queue.write().await.dequeue_for(&[]).is_some());
+
+        rearm(&mut scheduler);
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bare_coalesce_still_enqueues_every_scheduled_fire() {
+        let runner = make_runner();
+        let mut scheduler = coalescing_scheduler("1", make_store(), Arc::clone(&runner));
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        rearm(&mut scheduler);
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        assert_eq!(runner.queue.read().await.count_for_job("poll:inbox"), 2);
+    }
+
+    #[tokio::test]
+    async fn coalesce_schedule_never_folds_into_a_parameterised_run() {
+        // A trigger carrying metadata enqueues its item without the stamp
+        // (#759); that item is about one specific thing and must not absorb
+        // the schedule's "check everything" fire.
+        let runner = make_runner();
+        let mut scheduler = coalescing_scheduler(
+            croniq_config::compile::COALESCE_SCHEDULE_VALUE,
+            make_store(),
+            Arc::clone(&runner),
+        );
+        runner.queue.write().await.enqueue(job_to_work_item(
+            &make_job("poll:inbox"),
+            "parameterised",
+            Utc::now(),
+            Utc::now(),
+            1,
+        ));
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), 1);
+        assert_eq!(runner.queue.read().await.count_for_job("poll:inbox"), 2);
     }
 
     #[tokio::test]
@@ -2045,7 +2203,8 @@ mod tests {
             .expect("queued item queued");
         assert!(
             ephemeral.is_ephemeral,
-            "an ephemeral fire must flag its work item — otherwise dispatch              looks for a store row that was never written"
+            "an ephemeral fire must flag its work item — otherwise dispatch \
+             looks for a store row that was never written"
         );
         assert!(
             !queued.is_ephemeral,

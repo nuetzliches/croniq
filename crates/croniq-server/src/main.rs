@@ -384,7 +384,9 @@ async fn main() -> Result<()> {
     }
     if !runner_identity_binding {
         tracing::warn!(
-            "pull_api.runner_identity_binding is off — the work protocol trusts the              runner_id in the request body, so any credential holding a work:* scope              can act as any runner"
+            "pull_api.runner_identity_binding is off — the work protocol trusts the \
+             runner_id in the request body, so any credential holding a work:* scope \
+             can act as any runner"
         );
     }
     // Issue #231: prune orphan alert-rule overrides whose DSL rule no

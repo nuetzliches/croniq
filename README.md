@@ -370,6 +370,12 @@ job etl:sync {
   # beyond the one in flight. A trigger carrying `metadata` names the item
   # it is about and always gets its own run, on any job.
   # coalesce
+  #
+  # For a poller that drains whatever is open, fold scheduled fires the
+  # same way: a fire that falls due while a run is still queued folds into
+  # it, so a stall leaves one run waiting instead of one per missed tick.
+  # Includes the trigger fold above.
+  # coalesce schedule
 }
 
 # Reconcile-on-deploy job: fires once when croniq adopts the definition,
