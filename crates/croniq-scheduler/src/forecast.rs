@@ -22,9 +22,21 @@ pub struct ForecastBucket {
 #[derive(Serialize, Debug, Clone)]
 pub struct ForecastResponse {
     pub window_minutes: u32,
+    /// Whole minutes per bucket — `0` for a sub-minute bucket, whose size is
+    /// in [`Self::bucket_seconds`].
     pub bucket_minutes: u32,
+    /// The bucket size in seconds, always set (issue #829).
+    pub bucket_seconds: u32,
     pub buckets: Vec<ForecastBucket>,
 }
+
+/// Smallest sub-minute bucket: a fire every five seconds is as fine as the
+/// dashboard's live views draw.
+pub const MIN_BUCKET_SECONDS: u32 = 5;
+
+/// Most buckets one forecast returns. A four-hour window in five-second
+/// buckets would be 2880; the bucket grows instead.
+pub const MAX_BUCKETS: u32 = 720;
 
 /// Project fire times for all armed triggers into time buckets.
 ///
@@ -38,15 +50,41 @@ pub fn compute_forecast(
     window_minutes: u32,
     bucket_minutes: u32,
 ) -> ForecastResponse {
-    let window = window_minutes.min(240) as i64;
-    let bucket_size = bucket_minutes.max(1) as i64;
-    let end = now + Duration::minutes(window);
-    let num_buckets = (window / bucket_size) as usize;
+    compute_forecast_seconds(
+        triggers,
+        now,
+        window_minutes,
+        bucket_minutes.max(1).saturating_mul(60),
+    )
+}
+
+/// [`compute_forecast`] with the bucket size in seconds (issue #829), for the
+/// dashboard's live range selector, which draws the next few minutes at the
+/// resolution it draws the last few.
+///
+/// The bucket is floored at [`MIN_BUCKET_SECONDS`] and grown so the window
+/// never yields more than [`MAX_BUCKETS`] buckets.
+pub fn compute_forecast_seconds(
+    triggers: &HashMap<String, Trigger>,
+    now: DateTime<Utc>,
+    window_minutes: u32,
+    bucket_seconds: u32,
+) -> ForecastResponse {
+    let window_minutes = window_minutes.min(240);
+    let window_secs = i64::from(window_minutes) * 60;
+    let bucket_secs = i64::from(
+        bucket_seconds
+            .max(MIN_BUCKET_SECONDS)
+            .max((window_minutes * 60).div_ceil(MAX_BUCKETS)),
+    );
+    let end = now + Duration::minutes(i64::from(window_minutes));
+    let num_buckets = (window_secs / bucket_secs) as usize;
+    let bucket_size_ms = bucket_secs * 1000;
 
     let mut buckets: Vec<ForecastBucket> = (0..num_buckets)
         .map(|i| {
-            let start = now + Duration::minutes(i as i64 * bucket_size);
-            let end = start + Duration::minutes(bucket_size);
+            let start = now + Duration::seconds(i as i64 * bucket_secs);
+            let end = start + Duration::seconds(bucket_secs);
             ForecastBucket {
                 start,
                 end,
@@ -66,8 +104,8 @@ pub fn compute_forecast(
             iterations += 1;
 
             if fire_at >= now {
-                let offset = (fire_at - now).num_minutes();
-                let bucket_idx = (offset / bucket_size) as usize;
+                let offset = (fire_at - now).num_milliseconds();
+                let bucket_idx = (offset / bucket_size_ms) as usize;
                 if bucket_idx < buckets.len() {
                     buckets[bucket_idx].count += 1;
                     if !buckets[bucket_idx].jobs.contains(job_key) {
@@ -82,7 +120,12 @@ pub fn compute_forecast(
 
     ForecastResponse {
         window_minutes,
-        bucket_minutes: bucket_size as u32,
+        bucket_minutes: if bucket_secs % 60 == 0 {
+            (bucket_secs / 60) as u32
+        } else {
+            0
+        },
+        bucket_seconds: bucket_secs as u32,
         buckets,
     }
 }
@@ -97,5 +140,40 @@ mod tests {
         let result = compute_forecast(&triggers, Utc::now(), 60, 5);
         assert_eq!(result.buckets.len(), 12);
         assert!(result.buckets.iter().all(|b| b.count == 0));
+        assert_eq!(result.bucket_minutes, 5);
+        assert_eq!(result.bucket_seconds, 300);
+    }
+
+    #[test]
+    fn seconds_buckets_place_each_fire_in_its_slice() {
+        use crate::misfire::MisfirePolicy;
+        use crate::schedule::Schedule;
+        let now = Utc::now();
+        let mut trigger = Trigger::new(
+            "a:b".into(),
+            Schedule::Interval { seconds: 10 },
+            chrono_tz::UTC,
+            None,
+            None,
+            MisfirePolicy::FireNow,
+            now,
+        );
+        trigger.next_fire_at = Some(now + Duration::seconds(7));
+        let triggers = HashMap::from([("a:b".to_string(), trigger)]);
+
+        let result = compute_forecast_seconds(&triggers, now, 1, 5);
+        assert_eq!(result.bucket_seconds, 5);
+        assert_eq!(result.bucket_minutes, 0);
+        assert_eq!(result.buckets.len(), 12);
+        // Fires at +7 s, +17 s, … +57 s: one in every other five-second slice.
+        let hits: Vec<usize> = (0..12).filter(|&i| result.buckets[i].count > 0).collect();
+        assert_eq!(hits, vec![1, 3, 5, 7, 9, 11]);
+    }
+
+    #[test]
+    fn seconds_buckets_grow_to_stay_under_the_cap() {
+        let result = compute_forecast_seconds(&HashMap::new(), Utc::now(), 240, 5);
+        assert!(result.buckets.len() <= MAX_BUCKETS as usize);
+        assert_eq!(result.bucket_seconds, 20);
     }
 }

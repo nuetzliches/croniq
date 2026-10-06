@@ -1162,3 +1162,119 @@ a next fire follow A–Z. Urgency decides which jobs get one of the ten lanes �
 running, overdue, recent, soonest — and a job filter (a substring, as on the
 Runs screen) narrows the lanes before that cut, so it can reach the jobs the
 cut would hide.
+
+## Pass 19 — every lane, a range instead of a select, and a pause
+
+**Pass 18's ordering lost to a real deployment.** With 49 jobs, the ten-lane
+cut and the next-fire order worked against each other. A job that had just
+fired moved to the bottom of the list, and often out of the ten. The run that
+had just crossed "now" left the view at the moment someone was watching it,
+and `+39 more` was text, not a way to reach anything (#828). The card now
+keeps every lane:
+
+- **Scrolling and Expand.** Past ten lanes the track scrolls, with the labels
+  scrolling along. Expand grows the card to show every lane.
+- **Order by job key by default.** A lane stays where it is while its job
+  fires. "Next fire" is one click away, for the reading order Pass 18 argued
+  for; both choices are remembered per browser.
+- **No urgency ranking.** Without a cut, nothing needs choosing.
+- **Next-fire order holds, then slides.** A job's lane moves down the moment
+  its next fire moves on, which is right as its run crosses "now". In review
+  that felt like the lane vanished at "now". A lane whose job has just fired
+  is now held:
+  - It keeps its place, greyed, for at least 5 s and while its run waits or
+    runs, up to 20 s.
+  - Then it slides to its new row with a 0.5 s transition.
+  - Rows are positioned by `top` in a stable DOM order, because re-inserting
+    an element cuts its transition short.
+  - The job states are re-read right after a fire (they are otherwise polled
+    every 15 s), so the hold starts with the run.
+  - Reduced motion skips the slide.
+
+**The span is chosen on an overview, not a select** (#829). The five fixed
+widths could neither pick a width in between nor look at a moment already
+gone.
+
+A strip under the axis covers the last five minutes and the next one. Left of
+"now" it is a density map of runs started, with failures in red. Right of it
+is the forecast: the schedule's fires per five-second slice, drawn in outline
+because they are not runs yet. The forecast needed sub-minute buckets from
+`GET /v1/dashboard/forecast`, so the endpoint takes `bucket_seconds`.
+
+"Now" is a line at five sixths of the strip, about where the track has always
+drawn it. A first version put it in the middle, with five minutes of forecast
+the same width as the past, and kept the selection's end at "now". In review
+both were wrong: the handle sat in front of the forecast and could not be
+pulled into it, and half the strip showed a future too far out to act on.
+
+The selection is exactly the span the track shows, and the track draws its
+"now" line wherever now falls in that span:
+
+- **Left edge.** Reaches back up to five minutes, down to a 5 s span.
+- **Right edge.** Reaches up to a minute into the forecast. Pulled before
+  "now", the view looks back, and a look back is held still.
+- **Body.** Moves both edges, and a press elsewhere on the strip centres the
+  selection there.
+- **Keyboard.** The arrow keys move or resize it in 5 s steps, 30 s with
+  Shift.
+- **Remembered.** The range persists per browser, but a look back does not:
+  a reload is live.
+
+The handles sit inside the selection's edges, so at either end of the strip
+they are not clipped. The "now" line is drawn in the strongest ink, past the
+strip on both sides.
+
+**The header's centre does not move.** The "Next hour" histogram sat in a
+flex row between a left group whose width changes ("Live", "Paused",
+"Live · held", the Pause or Live button) and a right group whose counts
+change. Every change nudged it sideways. The header is now three columns with
+equal outer ones.
+
+**A run waiting for a runner shows while it waits.** The open part of a wait
+is usually a second or two, and it grows out of the "now" line. At a
+five-minute window that is a few pixels under the line's own pulse, so the
+yellow only became visible once the run had started and moved away. While a
+run waits:
+
+- its wait bar is drawn solid and full height;
+- a yellow marker sits on the line in its lane;
+- the lane label reads `queued` (with the time from one second on), in
+  yellow.
+
+Once claimed, the wait recedes to the thin line it was.
+
+**It does not stutter in a burst.** With fifty jobs passing "now" together,
+the card used to stutter. Profiling it found two causes:
+
+- **Motion on the main thread.** The motion was a `requestAnimationFrame`
+  loop setting a transform sixty times a second. Each one re-ran style,
+  pre-paint and layerization for the whole page, which in the trace was the
+  largest native cost.
+- **Every bar re-rendered.** Each stream frame (four a second in a burst)
+  re-rendered every bar, each a `RouterLink` component.
+
+What changed:
+
+- The motion is a linear Web Animation per layer, restarted when its geometry
+  changes. The compositor plays it, so layerization dropped from ~360 ms to
+  ~15 ms per six seconds.
+- Bars and labels are plain anchors behind one delegated handler.
+- Each lane is memoised on a signature of its bars.
+- Open bars are drawn to a half-minute horizon rather than the clock, and
+  their tooltips say "since 14:03:21", so a lane re-renders only when its
+  runs change.
+- The markers on the line pulse as one layer.
+
+**It holds still.** Pause freezes the picture at one moment: runs and schedule
+are copied then, because the stream keeps moving, and five minutes later the
+runs on screen would have aged out of its horizon. Moving the selection off
+"now" pauses too, since a past moment only makes sense held still. While
+paused:
+
+- the line is labelled with its clock time;
+- the next-fire ticks are hidden;
+- the lane labels' "in 22 s" go quiet while the view is in the past.
+
+"Live" returns to now. Separately, the pointer on the track holds only the
+motion, so a tooltip can be read and a short run clicked; the header says
+`Live · held` while it does.

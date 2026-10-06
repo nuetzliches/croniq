@@ -1904,6 +1904,12 @@ paths:
         - name: bucket_minutes
           in: query
           schema: { type: integer, default: 5 }
+        - name: bucket_seconds
+          in: query
+          description: |
+            Sub-minute buckets (issue #829), at least 5 s; overrides
+            `bucket_minutes`. Grown if the window would exceed 720 buckets.
+          schema: { type: integer, minimum: 5 }
       responses:
         "200":
           description: Forecast buckets covering the requested window
@@ -1913,7 +1919,10 @@ paths:
                 type: object
                 properties:
                   window_minutes: { type: integer }
-                  bucket_minutes: { type: integer }
+                  bucket_minutes:
+                    type: integer
+                    description: Whole minutes per bucket; 0 for a sub-minute bucket.
+                  bucket_seconds: { type: integer }
                   buckets:
                     type: array
                     items:

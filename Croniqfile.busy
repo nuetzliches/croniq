@@ -1,0 +1,253 @@
+# Croniqfile.busy — a busy dashboard for UI work
+#
+# Started by `node scripts/dev-stack.mjs --busy`. Where Croniqfile.demo keeps
+# five slow jobs for the quickstart, this one has fifty, most firing every
+# few seconds to a few minutes, so the dashboard's live timeline has more
+# lanes than fit (issues #828, #829) and the queue, priority and coalescing
+# features have something to act on:
+#
+# - `priority high` / `priority low` on some jobs (#819)
+# - `singleton` + `coalesce schedule` on the level-triggered pollers (#818)
+# - one `disabled` job, which keeps a lane without a next fire
+#
+# The demo runner handles every job with a 50 ms – 2 s sleep and fails a
+# share of them (RUNNER_FAIL_RATE). Not for production: it exists to be
+# looked at.
+
+server {
+  listen :4000
+  data_dir /var/lib/croniq
+  db sqlite
+}
+
+pull_api {
+  lease_ttl 60s
+}
+
+observability {
+  log { level info; format text; output stderr }
+}
+
+defaults {
+  retry fixed { max_attempts 2; delay 5s }
+  timeout 1m
+  dead_letter { retention 1d }
+}
+
+job ops:heartbeat {
+  every 10 seconds
+}
+
+job comdesk:call-sync {
+  every 15 seconds
+}
+
+job comdesk:group-sync {
+  every 15 seconds
+}
+
+job comdesk:presence {
+  every 30 seconds
+}
+
+job comdesk:recording-import {
+  every 2 minutes
+  priority low
+}
+
+job mail:receive {
+  every 15 seconds
+  singleton
+  coalesce schedule
+}
+
+job mail:assign {
+  every 1 minute
+}
+
+job mail:send {
+  every 30 seconds
+  priority high
+}
+
+job mail:bounce-scan {
+  every 5 minutes
+  priority low
+}
+
+job sms:receive {
+  every 15 seconds
+  singleton
+  coalesce schedule
+}
+
+job sms:send {
+  every 30 seconds
+  priority high
+}
+
+job portal:account-status-sync {
+  every 1 minute
+}
+
+job portal:creditor-sync {
+  every 2 minutes
+}
+
+job portal:profile-mirror {
+  every 2 minutes
+}
+
+job portal:session-cleanup {
+  every 5 minutes
+  priority low
+}
+
+job ai:classify {
+  every 30 seconds
+}
+
+job ai:embed {
+  every 1 minute
+}
+
+job ai:document-sweep {
+  every 2 minutes
+  priority low
+  singleton
+}
+
+job debitor:create-from-inquiry {
+  every 1 minute
+  priority high
+}
+
+job debitor:reminder {
+  every 2 minutes
+}
+
+job debitor:dunning {
+  every 5 minutes
+}
+
+job billing:invoice {
+  every 1 minute
+  priority high
+  singleton
+}
+
+job billing:payment-match {
+  every 30 seconds
+}
+
+job billing:export {
+  every 5 minutes
+}
+
+job crm:contact-sync {
+  every 1 minute
+}
+
+job crm:deal-sync {
+  every 2 minutes
+}
+
+job crm:dedupe {
+  every 5 minutes
+  priority low
+}
+
+job erp:order-import {
+  every 30 seconds
+  priority high
+}
+
+job erp:stock-sync {
+  every 1 minute
+}
+
+job erp:price-sync {
+  every 5 minutes
+}
+
+job etl:warehouse-load {
+  every 2 minutes
+  singleton
+  coalesce schedule
+}
+
+job etl:metrics-rollup {
+  every 1 minute
+}
+
+job etl:archive {
+  every 5 minutes
+  priority low
+}
+
+job ops:backup-verify {
+  every 5 minutes
+  priority low
+}
+
+job ops:cert-check {
+  every 5 minutes
+}
+
+job ops:log-rotate {
+  every 5 minutes
+}
+
+job search:reindex {
+  every 2 minutes
+  priority low
+}
+
+job search:suggest-refresh {
+  every 1 minute
+}
+
+job notify:push {
+  every 20 seconds
+}
+
+job notify:digest {
+  every 2 minutes
+}
+
+job report:sla {
+  every 1 minute
+}
+
+job report:daily-kpi {
+  every 5 minutes
+}
+
+job hr:absence-sync {
+  every 2 minutes
+}
+
+job hr:payroll-export {
+  every 5 minutes
+  priority low
+}
+
+job shop:cart-expiry {
+  every 1 minute
+}
+
+job shop:feed-export {
+  every 5 minutes
+}
+
+job shop:review-import {
+  every 2 minutes
+}
+
+job legacy:fax-gateway {
+  every 1 minute
+}
+
+job legacy:mainframe-batch {
+  disabled
+}
