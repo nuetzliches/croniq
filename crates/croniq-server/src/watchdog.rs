@@ -192,6 +192,15 @@ impl WatchdogCounters {
         self.requeued_dead_runner
             .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
+
+    /// Count claims the poll handler released because their runner stopped
+    /// reporting them (issue #817). A claim nobody is working on is the
+    /// condition the stale-claim reaper recovers too, only found sooner, so
+    /// it feeds that series.
+    pub fn add_stale_claim_requeued(&self, n: u64) {
+        self.requeued_stale_claim
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Requeue all executions still claimed by `runner_id` in the persistent
@@ -244,6 +253,190 @@ where
     }
 
     requeued_ids
+}
+
+/// How long a dispatched execution may go unreported by its runner's polls
+/// before the poll handler treats the claim as lost (issue #817).
+///
+/// A runner lists every execution it holds in each poll's `inflight`, and the
+/// first poll it sends after receiving an assignment already lists it. So a
+/// poll that *arrives* this long after the dispatch, from the same runner and
+/// without the id, was sent after the assignment should have landed: the
+/// response carrying it never reached the runner (client-side poll timeout,
+/// dropped connection) or the runner discarded it. The window only has to
+/// cover a request's transit time, not the job's runtime — which is the
+/// point: the stale-claim reaper waits `timeout + grace`, and a lost claim of
+/// a `singleton` job holds every later fire for that long.
+pub const UNREPORTED_CLAIM_GRACE_SECS: i64 = 60;
+
+/// Requeue the executions `runner_id` holds a claim on but no longer reports
+/// in flight (issue #817). Called by the poll handler with the poll's
+/// `inflight` list, right after those ids' leases were refreshed.
+///
+/// The candidates come from the per-execution lease map, which records the
+/// dispatch and every later inflight report or renew: an entry of this runner
+/// older than [`UNREPORTED_CLAIM_GRACE_SECS`] is a claim the runner has not
+/// mentioned since. Each one is checked against the store — still `claimed`,
+/// still by this runner — and requeued through the same CAS the stale-claim
+/// reaper uses, so a completion racing this path wins. The requeue keeps the
+/// attempt (a lost hand-off is an infrastructure fault, not a handler one)
+/// and leaves a line in the execution's log naming the lost claim, so the
+/// detail view still shows it after the second claim overwrites
+/// `runner_id` and `claimed_at`.
+///
+/// Ephemeral executions have no store row; their lease entry is dropped and
+/// nothing is requeued, because there is no row to requeue.
+pub async fn release_unreported_claims<F>(
+    store: &DynStore,
+    runner: &Arc<AppState>,
+    runner_id: &str,
+    reported: &[String],
+    now: DateTime<Utc>,
+    mut resolve_job_config: F,
+) -> Vec<uuid::Uuid>
+where
+    F: FnMut(&str) -> Option<JobConfig>,
+{
+    let cutoff = now - Duration::seconds(UNREPORTED_CLAIM_GRACE_SECS);
+    let candidates: Vec<String> = runner
+        .lease_renewals
+        .read()
+        .await
+        .iter()
+        .filter(|(id, lease)| {
+            lease.runner_id == runner_id
+                && lease.renewed_at < cutoff
+                && !reported.iter().any(|r| r == *id)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    if candidates.is_empty() {
+        return vec![];
+    }
+
+    let mut requeued = Vec::new();
+    let mut enqueued = 0usize;
+    for id_str in &candidates {
+        let execution = match uuid::Uuid::parse_str(id_str)
+            .ok()
+            .map(|id| store.get_execution(id))
+        {
+            Some(Ok(Some(e))) => e,
+            Some(Err(e)) => {
+                // Transient: keep the lease entry so the next poll retries.
+                tracing::warn!(
+                    execution_id = %id_str,
+                    error = %e,
+                    "unreported claim: could not load execution — retrying on the next poll"
+                );
+                continue;
+            }
+            // No row (ephemeral, or a malformed id): nothing to requeue.
+            _ => {
+                runner.clear_lease(runner_id, id_str).await;
+                continue;
+            }
+        };
+        if execution.state != ExecutionState::Claimed
+            || execution.runner_id.as_deref() != Some(runner_id)
+        {
+            // Finished, cancelled or re-claimed elsewhere: the entry is stale.
+            runner.clear_lease(runner_id, id_str).await;
+            continue;
+        }
+        match store.requeue_if_claimed(execution.id, now) {
+            Ok(true) => {}
+            Ok(false) => {
+                runner.clear_lease(runner_id, id_str).await;
+                continue;
+            }
+            Err(e) => {
+                tracing::error!(
+                    execution_id = %execution.id,
+                    error = %e,
+                    "unreported claim: requeue failed"
+                );
+                continue;
+            }
+        }
+
+        let claimed_at = execution
+            .claimed_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
+        tracing::warn!(
+            job_key = %execution.job_key,
+            execution_id = %execution.id,
+            runner_id = %runner_id,
+            claimed_at = %claimed_at,
+            "requeued claimed execution its runner no longer reports in flight — the \
+             assignment never reached the runner, or the runner dropped it"
+        );
+        record_requeue_in_log(
+            store,
+            &execution,
+            now,
+            format!(
+                "claim by runner {runner_id} at {claimed_at} was lost before the runner \
+                 started the execution (it stopped reporting it in flight) — requeued"
+            ),
+        );
+        crate::api::audit::record_event(
+            store,
+            "system",
+            None,
+            "execution.unreported_claim_requeued",
+            "execution",
+            Some(id_str),
+        );
+
+        runner.registry.write().await.release(runner_id, id_str);
+        runner.clear_lease(runner_id, id_str).await;
+        if enqueue_requeued_execution(store, runner, &execution.id, &mut resolve_job_config).await {
+            enqueued += 1;
+        }
+        requeued.push(execution.id);
+    }
+
+    if enqueued > 0 {
+        runner.work_notify.notify_waiters();
+    }
+    requeued
+}
+
+/// Leave a `warn` line in a requeued execution's own log. A requeue clears
+/// the claim and the next claim overwrites `runner_id` / `claimed_at`, so
+/// without it the detail view shows no trace of the first hand-off (issue
+/// #817). Best-effort: the requeue has already happened.
+fn record_requeue_in_log(
+    store: &DynStore,
+    execution: &Execution,
+    now: DateTime<Utc>,
+    message: String,
+) {
+    let mut fields = HashMap::new();
+    if let Some(rid) = &execution.runner_id {
+        fields.insert("runner_id".to_string(), rid.clone());
+    }
+    if let Some(at) = execution.claimed_at {
+        fields.insert("claimed_at".to_string(), at.to_rfc3339());
+    }
+    let entry = croniq_store::models::ExecutionLogEntry {
+        id: uuid::Uuid::new_v4(),
+        execution_id: execution.id,
+        timestamp: now,
+        level: "warn".to_string(),
+        message,
+        fields,
+        seq: 0,
+    };
+    if let Err(e) = store.append_logs_batch(std::slice::from_ref(&entry)) {
+        tracing::warn!(
+            execution_id = %execution.id,
+            error = %e,
+            "requeue: could not record the lost claim in the execution log"
+        );
+    }
 }
 
 /// Load a freshly-requeued execution, rebuild its `WorkItem` and put it back
@@ -1327,6 +1520,16 @@ impl WatchdogLoop {
                 age_secs = age,
                 threshold_secs,
                 "watchdog: requeued stale claimed execution — claim outlived job timeout + grace"
+            );
+            record_requeue_in_log(
+                &self.store,
+                execution,
+                now,
+                format!(
+                    "claim by runner {} outlived the job timeout + grace ({threshold_secs}s) \
+                     without a completion — requeued",
+                    execution.runner_id.as_deref().unwrap_or("<none>")
+                ),
             );
             let id_str = execution.id.to_string();
             crate::api::audit::record_event(

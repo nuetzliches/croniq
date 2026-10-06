@@ -2093,6 +2093,22 @@ complementary mechanisms — no operator action needed:
   `runner_id` — give each replica its own `runner_id` (or stop one). A
   steady stream of `runner.takeover` events with no matching deploys points
   at the same root cause.
+- **Unreported claims** (on every poll, issue #817): each poll lists the
+  executions the runner holds in its `inflight` array, and the first poll
+  after an assignment arrives already lists it. A claim the runner has not
+  listed — and not renewed — for **60 seconds** was never started: the poll
+  response carrying it was lost (client-side poll timeout, dropped
+  connection through a proxy) or the runner discarded it. The poll handler
+  requeues it with the same attempt number, logs
+  `requeued claimed execution its runner no longer reports in flight`, and
+  records an `execution.unreported_claim_requeued` audit event plus a `warn`
+  line in the execution's own log. Without this, such a claim waited for the
+  stale-claim reaper below, and a `singleton` job held every fire behind it
+  for `timeout + grace`. A custom runner that does not send `inflight` loses
+  its claims after 60 s this way and its work is run twice, so a runner must
+  report every execution it holds on every poll — all Croniq SDKs do. After a
+  server restart the lease map is empty, so claims from before the restart
+  fall to the reaper.
 - **Stale-claim reaper** (watchdog sweep, every 30 s): any execution still
   `claimed` after the job `timeout` (default `5m`) plus a grace window of
   `max(2 × lease_ttl, 120 s)` is requeued with the same attempt number,
