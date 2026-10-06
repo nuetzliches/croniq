@@ -746,6 +746,17 @@
               </div>
 
               <div class="field">
+                <label class="opt-check"><input type="checkbox" id="sch-opt-coalesce-schedule"> Fold scheduled fires too</label>
+                <p class="opt-hint">
+                  <code>coalesce schedule</code> &mdash; for a poller that
+                  drains whatever is open: a scheduled fire that falls due
+                  while a run of this job is still queued folds into it
+                  instead of queueing another, so after a stall one run waits,
+                  not one per missed minute. Includes the trigger fold above.
+                </p>
+              </div>
+
+              <div class="field">
                 <label class="opt-check"><input type="checkbox" id="sch-opt-run-on-register"> Fire once on registration</label>
                 <p class="opt-hint">
                   <code>run_on_register</code> — also fires the job when croniq
@@ -863,6 +874,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-09-28a"></script>
+  <script type="module" src="./generator.js?v=2026-10-06a"></script>
 </body>
 </html>

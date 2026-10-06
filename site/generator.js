@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-09-02b'
+const WASM_VERSION = '2026-10-06a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-09-02b'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-06a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -74,6 +74,9 @@ const schState = {
     // Collapse a burst of parameterless triggers into at most one follow-up
     // run (#759). Composes with the guard above rather than replacing it.
     coalesce: false,
+    // Fold scheduled fires too (#818) — `coalesce schedule`, a superset of
+    // the trigger fold above.
+    coalesceSchedule: false,
     // Job-level `timezone` — distinct from `schedTimezone`, which is the
     // schedule-option spelling and is dropped on once/disabled.
     jobTimezone: '',
@@ -284,6 +287,7 @@ bindText('sch-opt-keep-last', () => O.keepLast, (v) => { O.keepLast = v })
 bindText('sch-opt-job-timezone', () => O.jobTimezone, (v) => { O.jobTimezone = v })
 bindCheckbox('sch-opt-run-on-register', () => O.runOnRegister, (v) => { O.runOnRegister = v })
 bindCheckbox('sch-opt-coalesce', () => O.coalesce, (v) => { O.coalesce = v })
+bindCheckbox('sch-opt-coalesce-schedule', () => O.coalesceSchedule, (v) => { O.coalesceSchedule = v })
 bindSelect('sch-opt-exec-mode', () => O.executionMode, (v) => { O.executionMode = v })
 bindSelect('sch-opt-catch-up', () => O.catchUp, (v) => { O.catchUp = v })
 
@@ -384,6 +388,7 @@ function buildJobOptions() {
   if (O.concurrencyGroup.trim()) opts.concurrency_group = O.concurrencyGroup.trim()
   // Bare directive, like run_on_register below.
   if (O.coalesce) opts.coalesce = true
+  if (O.coalesceSchedule) opts.coalesce_schedule = true
 
   // Recurring-only scheduling constraints — the schedule-options block is
   // invalid on once/disabled, so don't emit them there (the wasm bridge

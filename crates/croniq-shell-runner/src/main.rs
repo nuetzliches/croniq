@@ -161,7 +161,8 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
                 job_key = %ctx.job_key,
                 execution_id = %ctx.execution_id,
                 timeout = %ctx.timeout,
-                "could not parse the execution timeout — running the command unbounded; the                  server-side stale-claim reaper is the only remaining backstop"
+                "could not parse the execution timeout — running the command unbounded; the \
+                 server-side stale-claim reaper is the only remaining backstop"
             );
             None
         }

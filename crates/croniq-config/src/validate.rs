@@ -740,10 +740,30 @@ fn validate_concurrency(
                     },
                 }
             }
-            // Issue #759: bare, so there is nothing to check about the
-            // directive itself — only the combination below.
+            // Issue #759: bare, or (issue #818) `coalesce schedule`. Anything
+            // else would compile to the bare form and leave scheduled fires
+            // unfolded without a word — the same silence #792 removed for
+            // `timeout`.
             "coalesce" => {
                 coalesce_ref.get_or_insert(d.key.span.into());
+                let unexpected = match d.args.as_slice() {
+                    [] => None,
+                    [arg] if arg.is_placeholder || arg.value == "schedule" => None,
+                    [arg] => Some(arg),
+                    [_, extra, ..] => Some(extra),
+                };
+                if let Some(arg) = unexpected {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "`coalesce` in job '{}' takes no argument or `schedule`, got '{}' — \
+                             write `coalesce` to fold triggers, or `coalesce schedule` to fold \
+                             scheduled fires as well",
+                            job.key.raw, arg.value
+                        ),
+                        span: arg.span.into(),
+                    });
+                }
             }
             // Issue #546: a job's reference to a shared budget. The
             // per-job guard above and this one compose — a job may cap
@@ -756,7 +776,8 @@ fn validate_concurrency(
                         diags.push(Diagnostic {
                             severity: Severity::Error,
                             message: format!(
-                                "`concurrency_group` in job '{}' requires the name of a                                  `concurrency_group {{ }}` block",
+                                "`concurrency_group` in job '{}' requires the name of a \
+                                 `concurrency_group {{ }}` block",
                                 job.key.raw
                             ),
                             span: d.key.span.into(),
@@ -1716,6 +1737,43 @@ mod tests {
         assert!(
             errors(&diags).is_empty(),
             "coalesce alone must validate clean, got: {diags:?}"
+        );
+    }
+
+    // ── coalesce schedule (issue #818) ────────────────────────────────────────
+
+    #[test]
+    fn coalesce_schedule_is_valid() {
+        let diags = validate_src(r#"job a:poll { every 1 minute; singleton; coalesce schedule }"#);
+        assert!(
+            errors(&diags).is_empty(),
+            "coalesce schedule must validate clean, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn coalesce_with_an_unknown_argument_errors() {
+        for src in [
+            r#"job a:poll { every 1 minute; coalesce scheduled }"#,
+            r#"job a:poll { every 1 minute; coalesce schedule triggers }"#,
+        ] {
+            let diags = validate_src(src);
+            assert!(
+                errors(&diags)
+                    .iter()
+                    .any(|d| d.message.contains("takes no argument or `schedule`")),
+                "{src}: expected an argument error, got: {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ephemeral_with_coalesce_schedule_errors() {
+        let diags =
+            validate_src(r#"job beat:tick { ephemeral every 1 minute; coalesce schedule }"#);
+        assert!(
+            has_ephemeral_coalesce_error(&diags),
+            "coalesce schedule on an ephemeral job must be rejected, got: {diags:?}"
         );
     }
 

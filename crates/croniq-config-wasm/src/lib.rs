@@ -370,6 +370,11 @@ pub struct JobOptions {
     /// nothing.
     #[serde(default)]
     pub coalesce: bool,
+    /// Fold scheduled fires as well (`coalesce schedule`, issue #818).
+    /// Implies the trigger fold, so it emits in place of the bare
+    /// `coalesce`.
+    #[serde(default)]
+    pub coalesce_schedule: bool,
 
     // ── Schedule-options block (Phase 2) ──
     // These attach *inside* the schedule line (`every … { … }`) and are
@@ -537,7 +542,9 @@ fn format_job_block_inner(
     if let Some(g) = opt_str(&o.concurrency_group) {
         lines.push(format!("  concurrency_group {}", quote_if_needed(g)));
     }
-    if o.coalesce {
+    if o.coalesce_schedule {
+        lines.push("  coalesce schedule".into());
+    } else if o.coalesce {
         lines.push("  coalesce".into());
     }
     if o.run_on_register {
@@ -1766,6 +1773,25 @@ mod tests {
         assert!(out.contains("\n  coalesce\n"), "{out}");
         let cfg = croniq_config::compile::compile(&Parser::parse(&out).unwrap());
         assert!(cfg.jobs[0].coalesce, "{out}");
+    }
+
+    #[test]
+    fn job_block_coalesce_schedule_replaces_the_bare_form() {
+        // The form can tick both boxes; `coalesce schedule` already includes
+        // the trigger fold, and two `coalesce` lines would be a duplicate.
+        let o = JobOptions {
+            coalesce: true,
+            coalesce_schedule: true,
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "poll:inbox", &o).unwrap();
+        assert!(out.contains("\n  coalesce schedule\n"), "{out}");
+        assert_eq!(out.matches("coalesce").count(), 1, "{out}");
+        let cfg = croniq_config::compile::compile(&Parser::parse(&out).unwrap());
+        assert!(
+            croniq_config::compile::job_coalesces_scheduled_fires(&cfg.jobs[0].metadata),
+            "{out}"
+        );
     }
 
     #[test]

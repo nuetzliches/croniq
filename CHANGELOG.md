@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`coalesce schedule` folds scheduled fires into a queued run.** For a
+  level-triggered poller (`every 1 minute`, `singleton`, the handler drains
+  whatever is open), every fire that piled up behind a stuck run used to run
+  afterwards, one after the other, and all but the first found nothing to do.
+  With `coalesce schedule` a scheduled fire that falls due while an
+  execution of the job is queued and not yet claimed folds into it: no
+  execution row, no work item, the schedule advances, and the scheduler logs
+  `scheduled fire coalesced into a queued execution`. The rule is the
+  trigger fold's (#759): never into a claimed run, never into one a
+  parameterised trigger created. It includes the bare `coalesce` trigger
+  fold. `validate` rejects any other argument to `coalesce`, and the DSL
+  generator offers it as "Fold scheduled fires too" (#818).
+
 - **The live console keeps the startup log.** Everything the server logs
   before it starts serving — `loading Croniqfile`, `configuration loaded`,
   the alert evaluator line, boot diagnostics — is pinned in its own buffer,
@@ -98,6 +111,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   binding. .NET, Java, Python and TypeScript changes are in their
   changelogs. New conformance case 21 delivers work on an at-capacity poll
   and requires it to be acked.
+
+- **Six log and validation messages no longer contain a run of spaces.** A
+  string continuation had lost its backslash, so `concurrency_group` without
+  a name, the `runner_identity_binding is off` warning, the shell runner's
+  unparseable-timeout warning and three more messages carried the next
+  line's indentation in the middle of the text.
 
 ## [0.44.0] - 2026-10-01
 

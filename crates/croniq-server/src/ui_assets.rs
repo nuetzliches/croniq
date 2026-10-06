@@ -210,7 +210,8 @@ mod tests {
             !conf.contains(&format!(
                 r#"add_header Cache-Control "{ASSET_CACHE_CONTROL}" always"#
             )),
-            "`always` on the asset Cache-Control extends it to the 404 — that is              the bug in #655, and nginx applies add_header to 2xx/3xx without it"
+            "`always` on the asset Cache-Control extends it to the 404 — that is \
+             the bug in #655, and nginx applies add_header to 2xx/3xx without it"
         );
     }
 

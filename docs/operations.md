@@ -1998,10 +1998,43 @@ whether an item is *created*; `singleton` / `max_concurrent` and
 since nothing bounds the in-flight count. `max_queue_depth` still applies, so
 the directive is a collapse, not an exemption.
 
-Scheduled fires are fold *targets* but are never themselves folded: the
-scheduler keeps firing on its own schedule. A trigger arriving while a tick's
-run is still queued folds into it, because that run has not read the work list
-yet.
+Scheduled fires are fold *targets* but, with the bare directive, are never
+themselves folded: the scheduler keeps firing on its own schedule. A trigger
+arriving while a tick's run is still queued folds into it, because that run has
+not read the work list yet.
+
+#### `coalesce schedule`: fold scheduled fires too
+
+```hcl
+job mail:inbox-poll {
+  every 1 minute
+  singleton
+  timeout 5 minutes
+  coalesce schedule
+}
+```
+
+For a **level-triggered poller** — the handler drains "whatever is open now" —
+every scheduled fire that queues up behind a stuck run is wasted: once its turn
+comes, the first one has already drained everything. Eight minutes of stall
+used to mean eight runs afterwards, all but the first finding nothing.
+
+`coalesce schedule` (issue #818) folds a scheduled fire into an execution of
+the job that is **already queued and not yet claimed**, by the same rule a
+trigger folds: never into a claimed run, and never into a run a parameterised
+trigger created. After a stall at most one scheduled run waits behind the stuck
+one. A folded fire creates no execution row and no work item; the schedule
+advances as for any fire, and the scheduler logs
+`scheduled fire coalesced into a queued execution`. It includes the trigger
+fold of the bare `coalesce`, since a parameterless trigger asks for exactly
+what such a fire asks for.
+
+Compared with the other levers: `max_queue_depth 1` also bounds the backlog,
+but it rejects the newest fire *and* rejects triggers with `429`, and it keeps
+the oldest queued run. `queue_ttl` cancels by age, including a parameterised
+trigger's run. `ephemeral` replaces the queued fire but keeps no history and
+cannot be `singleton`. `coalesce schedule` only ever folds unparameterised
+work into unparameterised work that has not started.
 
 Two things it deliberately does not do. It does not accumulate the collapsed
 payloads into a list — that would change the shape the job sees. And it is

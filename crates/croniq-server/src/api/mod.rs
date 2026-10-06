@@ -1297,7 +1297,8 @@ async fn try_dequeue_for(
         tracing::warn!(
             job_key = %job_key,
             count,
-            "ephemeral work dropped at dispatch — the runner registry refused the claim;              the fire is gone and leaves no execution row behind"
+            "ephemeral work dropped at dispatch — the runner registry refused the claim; \
+             the fire is gone and leaves no execution row behind"
         );
         state.runner.record_ephemeral_dropped(&job_key, count).await;
     }
