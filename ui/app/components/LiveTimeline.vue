@@ -328,6 +328,10 @@ function nextLabel(lane: Lane) {
     const waited = coarseNow.value - lane.queuedSince
     return waited < 1_000 ? 'queued' : `queued ${formatDuration(waited)}`
   }
+  // A held lane stands at the fire it just had, so that is what its label
+  // counts from — "fired 6 s ago" — not the next fire it will move to.
+  const firedAt = pinned.value?.get(lane.jobKey)
+  if (firedAt !== undefined) return `fired ${formatRelative(new Date(firedAt).toISOString(), coarseNow.value)}`
   if (lane.overdue) return 'overdue'
   if (lane.status && lane.status !== 'active') return lane.status
   if (lane.next === null) return ''

@@ -283,8 +283,9 @@ pub struct JobScheduleState {
     pub timezone: Option<String>,
     pub last_fired_at: Option<chrono::DateTime<Utc>>,
     pub fire_count: u64,
-    /// `true` when the trigger is active but its next scheduled fire is in
-    /// the past — the scheduler hasn't advanced it, i.e. a missed fire.
+    /// `true` when the trigger is active but its next scheduled fire is more
+    /// than `OVERDUE_GRACE_SECS` (30 s) in the past — the scheduler hasn't
+    /// advanced it, i.e. a missed fire. A fire only just due is not overdue.
     pub overdue: bool,
     /// Execution mode of the job: `queued` (persisted executions) or
     /// `ephemeral` (fire-and-forget, no execution rows). Surfaced so the
@@ -399,8 +400,10 @@ pub async fn handle_list_states(
             } else {
                 (s.status, s.next_fire_at)
             };
-            let overdue =
-                status == JobStatus::Active && next_fire_at.map(|t| t < now).unwrap_or(false);
+            // Past due by more than the scheduler's own lag (see
+            // `OVERDUE_GRACE_SECS`), not merely past due.
+            let overdue = status == JobStatus::Active
+                && next_fire_at.is_some_and(|t| crate::dashboard::is_overdue(t, now));
             let execution_mode = exec_modes.get(&s.job_key).copied().unwrap_or_default();
             let config_error = faults.get(&s.job_key).cloned();
             // Only an active, non-overdue job is "waiting on its gate";
@@ -1393,6 +1396,29 @@ mod tests {
             .expect("job_states row present");
         assert_eq!(row["overdue"], false);
         assert_eq!(row["suppressed_by"], "calendar 'oneoff'");
+    }
+
+    #[tokio::test]
+    async fn job_states_does_not_flag_a_fire_only_just_due() {
+        // Every job is briefly past due before the one-second scheduler tick
+        // takes its fire; the dashboard re-reads the schedule right then.
+        let store = make_store();
+        seed_active_state(
+            &store,
+            "ops:tick",
+            Utc::now() - chrono::Duration::seconds(2),
+        );
+        let state = make_state_with_triggers(store, gated_trigger_map());
+
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/states").await;
+        assert_eq!(status, 200);
+        let row = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["job_key"] == "ops:tick")
+            .expect("job_states row present");
+        assert_eq!(row["overdue"], false);
     }
 
     #[tokio::test]

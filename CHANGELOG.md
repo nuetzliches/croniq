@@ -79,6 +79,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (392 ms) to 3 (158 ms), and frame p95 from 67 to 50 ms, with almost twice
   the runs in the window. Native rendering time halved.
 
+### Fixed
+
+- **A job is no longer "overdue" for the second before it fires.** The
+  `overdue` flag of `GET /v1/jobs/states` (the dashboard's red "overdue")
+  and `croniq_job_overdue` were set the moment a next fire was past due. The
+  scheduler takes a fire on its one-second tick, so every job was briefly
+  past due right before it fired. The dashboard, which now re-reads the
+  schedule right after a fire, showed nearly every job as overdue just
+  before "now", and a Prometheus scrape in that instant could trip a
+  `croniq_job_overdue == 1` alert. Both now need the fire to be more than
+  30 seconds past due.
+
+- **A held lane counts from the fire it is holding at.** In next-fire order a
+  lane whose job has just fired is held in place, greyed. Its label showed the
+  time to the next fire it would move to ("in 8 s"); it now says "fired 6 s
+  ago".
+
 ## [0.45.0] - 2026-10-06
 
 ### Added

@@ -2278,6 +2278,20 @@ the compiler read only the first word, so `timeout 4 hours` became `4` — four
 (4 s + 120 s grace) in its log line. `croniq validate` now rejects a
 `timeout` or `queue_ttl` it cannot read.
 
+### A fire only just due is not overdue
+
+`croniq_job_overdue` and the `overdue` flag of `GET /v1/jobs/states` (the
+dashboard's red "overdue") are set only once an active job's next fire is
+more than **30 seconds** past due.
+
+The scheduler ticks once a second and writes the new next fire when it takes
+the old one. Every job is therefore briefly past due right before it fires.
+With no margin, a scrape or a dashboard read in that instant saw a healthy
+job as overdue, and the recommended `croniq_job_overdue == 1` alert could
+trip at random. A scheduler that has really stopped is still flagged within
+half a minute. `job_missed_fire` alerts are unaffected: they have their own
+grace, the rule's `expected_within`.
+
 ### Removed jobs stop being reported
 
 `croniq_job_last_fire_timestamp`, `croniq_job_next_fire_timestamp` and
