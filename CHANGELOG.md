@@ -24,6 +24,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Lanes are listed by job key by default, so a lane stays put while its job
     fires. A toggle switches to next-fire order.
   - Both choices are remembered per browser (#828).
+  - In next-fire order, a lane whose job has just fired no longer drops away
+    at "now":
+    - It is held in place, greyed, for at least 5 s and while its run is
+      still waiting or running, up to 20 s.
+    - Then it slides to its new place, and the other lanes slide with it.
+    - The schedule is re-read right after a fire rather than on its 15 s
+      poll, so the hold starts with the run.
 
 - **The live timeline's span is chosen on a full-width range selector, and
   the picture can be paused.** The `5 s … 5 min` select is replaced by an

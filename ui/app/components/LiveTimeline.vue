@@ -110,7 +110,7 @@ const expanded = ref(readStored(EXPANDED_KEY) === '1')
 watch(expanded, (value) => writeStored(EXPANDED_KEY, value ? '1' : '0'))
 
 const { runs, connected, received, unavailable, offset } = useExecutionsStream()
-const { data: jobStates } = useJobStates()
+const { data: jobStates, refetch: refetchJobStates } = useJobStates()
 const { data: jobs } = useJobs()
 const { data: forecast } = useForecast(60, 5)
 const { data: liveForecast } = useLiveForecast(1)
@@ -206,8 +206,98 @@ const matches = (jobKey: string) => !needle.value || jobKey.toLowerCase().includ
 const shownRuns = computed(() => sourceRuns.value.filter((r) => matches(r.job_key)))
 const shownSchedule = computed(() => schedule.value.filter((s) => matches(s.job_key)))
 
+// ─── Held lanes (next-fire order) ───────────────────────────────────────────
+
+/**
+ * In next-fire order a job's lane moves down the list the moment its next
+ * fire moves on — that is, right as its run crosses "now", which is when
+ * someone is watching it. So a lane whose job has just fired is held: it keeps
+ * its place, greyed, for at least `HOLD_MIN_MS` and for as long as that job
+ * still has a run waiting or running, up to `HOLD_MAX_MS`. Then it is released
+ * and slides to its new place (the rows are positioned, not re-ordered in the
+ * DOM, so the move can animate).
+ */
+const HOLD_MIN_MS = 5_000
+const HOLD_MAX_MS = 20_000
+const holds = shallowRef(new Map<string, { key: number; since: number }>())
+const lastNext = new Map<string, number>()
+
+watch(shownSchedule, (states) => {
+  if (frozen.value) return
+  const now = serverNow()
+  let next: Map<string, { key: number; since: number }> | null = null
+  for (const state of states) {
+    const at = state.status === 'active' && state.next_fire_at ? Date.parse(state.next_fire_at) : NaN
+    if (Number.isNaN(at)) continue
+    const previous = lastNext.get(state.job_key)
+    lastNext.set(state.job_key, at)
+    // The next fire moved on from one that is due: the job has just fired.
+    if (previous !== undefined && at > previous && previous <= now + 1_000 && !holds.value.has(state.job_key)) {
+      next ??= new Map(holds.value)
+      next.set(state.job_key, { key: previous, since: now })
+    }
+  }
+  if (next) holds.value = next
+})
+
+/** Jobs with a run still waiting or running — a held lane stays while its run does. */
+const openJobs = computed(
+  () => new Set(shownRuns.value.filter((r) => r.completed_at === null).map((r) => r.job_key)),
+)
+
+let lastStatesRefetch = 0
+useIntervalFn(() => {
+  if (frozen.value) return
+  const now = serverNow()
+  // Release holds that have done their job.
+  if (holds.value.size) {
+    const kept = new Map(
+      [...holds.value].filter(([job, hold]) => {
+        const held = now - hold.since
+        return held < HOLD_MIN_MS || (openJobs.value.has(job) && held < HOLD_MAX_MS)
+      }),
+    )
+    if (kept.size !== holds.value.size) holds.value = kept
+  }
+  // The schedule is polled every 15 s; a job that has just come due would
+  // keep its stale next fire that long. Ask again soon after a fire instead,
+  // so the hold starts with the run rather than up to 15 s later.
+  const justDue = (jobStates.value ?? []).some((s) => {
+    if (s.status !== 'active' || !s.next_fire_at) return false
+    const due = now - Date.parse(s.next_fire_at)
+    return due >= 0 && due < 10_000
+  })
+  if (justDue && now - lastStatesRefetch > 2_000) {
+    lastStatesRefetch = now
+    void refetchJobStates()
+  }
+}, 1000)
+
+const pinned = computed(() =>
+  laneOrder.value === 'next' ? new Map([...holds.value].map(([job, hold]) => [job, hold.key])) : undefined,
+)
+const isHeld = (jobKey: string) => pinned.value?.has(jobKey) ?? false
+
 const layout = computed(() =>
-  buildLanes(shownRuns.value, shownSchedule.value, coarseNow.value, pastMs.value, laneOrder.value),
+  buildLanes(
+    shownRuns.value,
+    shownSchedule.value,
+    coarseNow.value,
+    pastMs.value,
+    laneOrder.value,
+    pinned.value,
+  ),
+)
+
+/**
+ * The lanes in a stable DOM order (by job key), each with the row it is shown
+ * in. Rows are positioned by `top`, so a change of order moves elements with
+ * a CSS transition instead of re-inserting them, which would cut it short.
+ */
+const rows = computed(() =>
+  layout.value.lanes
+    .map((lane, row) => ({ lane, row, held: isHeld(lane.jobKey) }))
+    .sort((a, b) => a.lane.jobKey.localeCompare(b.lane.jobKey)),
 )
 
 /** Past this many lanes the track scrolls, unless expanded (issue #828). */
@@ -584,11 +674,17 @@ onBeforeUnmount(stopMotion)
       >
         <div class="flex">
           <!-- Lane labels stay put; only the track to their right moves. -->
-          <ul class="w-32 shrink-0 pr-3 sm:w-56">
+          <ul
+            class="relative w-32 shrink-0 sm:w-56"
+            :style="{ height: `${Math.max(1, layout.lanes.length) * LANE_HEIGHT}px` }"
+          >
             <li
-              v-for="lane in layout.lanes"
+              v-for="{ lane, row, held } in rows"
               :key="lane.jobKey"
-              class="flex h-[22px] items-center gap-2 text-xs"
+              class="absolute inset-x-0 flex h-[22px] items-center gap-2 pr-3 text-xs transition-[top,opacity] duration-500 ease-out motion-reduce:transition-none"
+              :class="held ? 'opacity-40' : ''"
+              :style="{ top: `${row * LANE_HEIGHT}px` }"
+              :data-held="held || undefined"
             >
               <a
                 :href="`/jobs/${encodeURIComponent(lane.jobKey)}`"
@@ -639,10 +735,10 @@ onBeforeUnmount(stopMotion)
 
             <!-- Lane stripes, so a bar can be followed to its label. -->
             <div
-              v-for="(lane, index) in layout.lanes"
-              :key="`stripe-${lane.jobKey}`"
+              v-for="index in layout.lanes.length"
+              :key="`stripe-${index}`"
               class="absolute inset-x-0 border-b border-default/50"
-              :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
+              :style="{ top: `${(index - 1) * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
             />
 
             <!-- The past: clipped at "now". -->
@@ -658,10 +754,11 @@ onBeforeUnmount(stopMotion)
                      new scale or position re-renders all, and a lane with an
                      open bar follows the half-minute horizon it is drawn to. -->
                 <div
-                  v-for="(lane, index) in layout.lanes"
+                  v-for="{ lane, row: index, held } in rows"
                   :key="lane.jobKey"
-                  v-memo="[lane.signature, index, scale, lane.open ? openHorizon : 0]"
-                  class="absolute inset-x-0"
+                  v-memo="[lane.signature, index, held, scale, lane.open ? openHorizon : 0]"
+                  class="absolute inset-x-0 transition-[top,opacity] duration-500 ease-out motion-reduce:transition-none"
+                  :class="held ? 'opacity-40' : ''"
                   :style="{ top: `${index * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }"
                 >
                   <a
@@ -689,12 +786,12 @@ onBeforeUnmount(stopMotion)
                 class="absolute inset-0 will-change-transform"
               >
                 <template
-                  v-for="(lane, index) in layout.lanes"
+                  v-for="{ lane, row: index } in rows"
                   :key="`next-${lane.jobKey}`"
                 >
                   <div
                     v-if="nextInStrip(lane.next)"
-                    class="absolute left-0 w-0 border-l-2 border-dashed border-primary/60"
+                    class="absolute left-0 w-0 border-l-2 border-dashed border-primary/60 transition-[top] duration-500 ease-out motion-reduce:transition-none"
                     :style="{
                       ...tickStyle(lane.next!),
                       top: `${index * LANE_HEIGHT + 3}px`,
@@ -732,17 +829,17 @@ onBeforeUnmount(stopMotion)
               :class="paused ? '' : 'animate-pulse'"
             >
               <template
-                v-for="(lane, index) in layout.lanes"
+                v-for="{ lane, row: index } in rows"
                 :key="`pulse-${lane.jobKey}`"
               >
                 <span
                   v-if="lane.running && !paused"
-                  class="absolute size-2 rounded-full bg-primary ring-2 ring-default"
+                  class="absolute size-2 rounded-full bg-primary ring-2 ring-default transition-[top] duration-500 ease-out motion-reduce:transition-none"
                   :style="{ left: `${nowX - 4}px`, top: `${index * LANE_HEIGHT + 7}px` }"
                 />
                 <span
                   v-else-if="lane.queuedSince !== null && !lookingBack"
-                  class="absolute size-2.5 rounded-full bg-warning ring-2 ring-default"
+                  class="absolute size-2.5 rounded-full bg-warning ring-2 ring-default transition-[top] duration-500 ease-out motion-reduce:transition-none"
                   :style="{ left: `${nowX - 5}px`, top: `${index * LANE_HEIGHT + 6}px` }"
                   data-testid="live-queued-marker"
                 />

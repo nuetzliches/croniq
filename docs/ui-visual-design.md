@@ -1178,6 +1178,18 @@ keeps every lane:
   fires. "Next fire" is one click away, for the reading order Pass 18 argued
   for; both choices are remembered per browser.
 - **No urgency ranking.** Without a cut, nothing needs choosing.
+- **Next-fire order holds, then slides.** A job's lane moves down the moment
+  its next fire moves on, which is right as its run crosses "now". In review
+  that felt like the lane vanished at "now". A lane whose job has just fired
+  is now held:
+  - It keeps its place, greyed, for at least 5 s and while its run waits or
+    runs, up to 20 s.
+  - Then it slides to its new row with a 0.5 s transition.
+  - Rows are positioned by `top` in a stable DOM order, because re-inserting
+    an element cuts its transition short.
+  - The job states are re-read right after a fire (they are otherwise polled
+    every 15 s), so the hold starts with the run.
+  - Reduced motion skips the slide.
 
 **The span is chosen on an overview, not a select** (#829). The five fixed
 widths could neither pick a width in between nor look at a moment already

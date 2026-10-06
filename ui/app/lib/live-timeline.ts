@@ -176,6 +176,10 @@ export interface JobSchedule {
  * first, the order that puts the job about to start next to the strip where
  * its tick is approaching. Jobs with no next fire (paused, manual-only, gone
  * from the schedule) follow; ties and the tail are alphabetical.
+ *
+ * `pinned` holds a lane at a sort key other than its next fire: the fire it
+ * has just had, while its run passes "now", so it does not drop out from under
+ * the eye the moment its job fires. The component decides how long.
  */
 export function buildLanes(
   runs: readonly LiveRun[],
@@ -183,6 +187,7 @@ export function buildLanes(
   now: number,
   windowMs: number,
   order: LaneOrder = 'name',
+  pinned?: ReadonlyMap<string, number>,
 ): { lanes: Lane[] } {
   const from = now - windowMs
   const byJob = new Map<string, Lane>()
@@ -231,7 +236,7 @@ export function buildLanes(
     }
   }
 
-  const soonest = (l: Lane) => (l.next === null ? Infinity : l.next)
+  const soonest = (l: Lane) => pinned?.get(l.jobKey) ?? (l.next === null ? Infinity : l.next)
   const byName = (a: Lane, b: Lane) => a.jobKey.localeCompare(b.jobKey)
   const lanes = [...byJob.values()].sort(
     order === 'next' ? (a, b) => soonest(a) - soonest(b) || byName(a, b) : byName,

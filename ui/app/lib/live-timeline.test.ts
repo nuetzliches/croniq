@@ -119,6 +119,19 @@ describe('buildLanes ordering', () => {
     expect(keys(after)).toEqual(['a:report', 'b:poll'])
   })
 
+  it('keeps a pinned lane at the fire it just had, in next-fire order', () => {
+    // b:poll has just fired: its next fire jumped past a:report's, but the
+    // component pins it at the fire it had until its run has passed "now".
+    const schedule = [
+      { job_key: 'a:report', status: 'active', next_fire_at: iso(60_000), overdue: false },
+      { job_key: 'b:poll', status: 'active', next_fire_at: iso(120_000), overdue: false },
+    ]
+    const keys = (pinned?: Map<string, number>) =>
+      buildLanes([], schedule, T, 60_000, 'next', pinned).lanes.map((l) => l.jobKey)
+    expect(keys()).toEqual(['a:report', 'b:poll'])
+    expect(keys(new Map([['b:poll', T - 1_000]]))).toEqual(['b:poll', 'a:report'])
+  })
+
   it('lists soonest next fire first on request, jobs without one last and A–Z', () => {
     const schedule = [
       { job_key: 'later', status: 'active', next_fire_at: iso(20 * 60_000), overdue: false },
