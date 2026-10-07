@@ -324,6 +324,20 @@ pub struct JobExecutionMetrics {
     pub last_run_at: Option<DateTime<Utc>>,
 }
 
+/// How much run time one job used in a window: the runs that finished in it
+/// with a recorded duration, summed. Backs the dashboard's "Run time by job"
+/// card (`GET /v1/insights/runtime`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobRuntime {
+    pub job_key: String,
+    /// Runs counted, each with a duration.
+    pub runs: u64,
+    /// Of those, the ones that ended `failed` or `dead`.
+    pub failed: u64,
+    /// Their durations summed, in milliseconds.
+    pub total_ms: i64,
+}
+
 /// Filter for listing dead letters.
 #[derive(Debug, Clone, Default)]
 pub struct DeadLetterFilter {

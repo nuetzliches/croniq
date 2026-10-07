@@ -1180,6 +1180,32 @@ impl ExecutionStore for PgStore {
         Ok(out)
     }
 
+    fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
+        let mut client = self.client.lock().unwrap();
+        // `::bigint` keeps COUNT/SUM out of `numeric`, as above.
+        let rows = client
+            .query(
+                "SELECT job_key, COUNT(*)::bigint, \
+                 SUM(CASE WHEN state IN ('failed', 'dead') THEN 1 ELSE 0 END)::bigint, \
+                 SUM(duration_ms)::bigint AS total \
+                 FROM executions \
+                 WHERE completed_at IS NOT NULL AND completed_at >= $1 \
+                   AND duration_ms IS NOT NULL \
+                 GROUP BY job_key ORDER BY total DESC, job_key",
+                &[&since],
+            )
+            .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| JobRuntime {
+                job_key: row.get(0),
+                runs: row.get::<usize, i64>(1) as u64,
+                failed: row.get::<usize, i64>(2) as u64,
+                total_ms: row.get(3),
+            })
+            .collect())
+    }
+
     fn prune_executions_older_than(
         &self,
         cutoff: DateTime<Utc>,

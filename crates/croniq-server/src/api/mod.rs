@@ -665,6 +665,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs/{job_key}/stats", get(stats::handle_job_stats))
         .route("/v1/executions/throughput", get(stats::handle_throughput))
         .route("/v1/insights/failures", get(stats::handle_failure_heatmap))
+        .route("/v1/insights/runtime", get(stats::handle_runtime))
         .route("/v1/audit", get(audit::handle_list))
         // Tags
         .route("/v1/tags", get(tags::handle_list_tags))
@@ -4242,6 +4243,82 @@ mod tests {
 
     /// State with a real (in-memory SQLite) store so the guard can count
     /// claimed executions, and a short long-poll timeout for fast tests.
+    #[tokio::test]
+    async fn insights_runtime_sums_per_job_and_rejects_unknown_windows() {
+        let (state, store, _rx) = make_guard_state();
+        let now = Utc::now();
+        for (job, ms) in [("rt:a", 1_000), ("rt:b", 5_000), ("rt:a", 2_000)] {
+            let id = uuid::Uuid::new_v4();
+            store
+                .create_execution(&Execution {
+                    id,
+                    job_key: job.into(),
+                    fire_at: now,
+                    scheduled_for: now,
+                    attempt: 1,
+                    state: ExecutionState::Queued,
+                    runner_id: None,
+                    claimed_at: None,
+                    started_at: None,
+                    completed_at: None,
+                    duration_ms: None,
+                    error: None,
+                    dead_reason: None,
+                    idempotency_key: None,
+                    metadata: HashMap::new(),
+                    created_at: now,
+                })
+                .unwrap();
+            store.claim_execution(id, "r1", now).unwrap();
+            store
+                .complete_execution(
+                    id,
+                    None,
+                    ExecutionState::Completed,
+                    Some(ms),
+                    None,
+                    None,
+                    now,
+                )
+                .unwrap();
+        }
+
+        let body = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/insights/runtime?window=7d",
+        )
+        .await;
+        assert_eq!(body["window"], "7d");
+        let jobs: Vec<(String, i64, u64)> = body["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| {
+                (
+                    j["job_key"].as_str().unwrap().to_string(),
+                    j["total_ms"].as_i64().unwrap(),
+                    j["runs"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            jobs,
+            vec![("rt:b".into(), 5_000, 1), ("rt:a".into(), 3_000, 2)]
+        );
+
+        let resp = server_router(state)
+            .oneshot(
+                Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
+                    .uri("/v1/insights/runtime?window=1y")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     fn make_guard_state() -> (
         Arc<ServerState>,
         DynStore,

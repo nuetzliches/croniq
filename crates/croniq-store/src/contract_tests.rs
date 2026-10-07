@@ -1061,6 +1061,57 @@ fn job_execution_metrics_aggregates_per_job() {
 }
 
 #[test]
+fn job_runtime_since_sums_finished_runs_in_the_window() {
+    let store = create_memory_store().unwrap();
+    let since = utc(2026, 3, 29, 0, 0);
+
+    let finish = |job: &str, dur_ms: Option<i64>, state: ExecutionState, at| {
+        let exec = make_execution(job, utc(2026, 3, 28, 0, 0));
+        store.create_execution(&exec).unwrap();
+        store.claim_execution(exec.id, "r1", at).unwrap();
+        store
+            .complete_execution(exec.id, None, state, dur_ms, None, None, at)
+            .unwrap();
+    };
+    // In the window: two runs of a slow job, one of them failed …
+    finish("slow:job", Some(60_000), ExecutionState::Completed, now());
+    finish("slow:job", Some(30_000), ExecutionState::Failed, now());
+    // … one of a quick job, and one that recorded no duration.
+    finish("quick:job", Some(500), ExecutionState::Completed, now());
+    finish("quick:job", None, ExecutionState::Completed, now());
+    // Before the window: not counted.
+    finish(
+        "old:job",
+        Some(900_000),
+        ExecutionState::Completed,
+        utc(2026, 3, 28, 23, 59),
+    );
+    // Still running: not counted.
+    let running = make_execution("running:job", utc(2026, 3, 29, 11, 0));
+    store.create_execution(&running).unwrap();
+    store.claim_execution(running.id, "r1", now()).unwrap();
+
+    let runtime = store.job_runtime_since(since).unwrap();
+    assert_eq!(
+        runtime,
+        vec![
+            JobRuntime {
+                job_key: "slow:job".into(),
+                runs: 2,
+                failed: 1,
+                total_ms: 90_000,
+            },
+            JobRuntime {
+                job_key: "quick:job".into(),
+                runs: 1,
+                failed: 0,
+                total_ms: 500,
+            },
+        ]
+    );
+}
+
+#[test]
 fn list_executions_with_filter() {
     let store = create_memory_store().unwrap();
 

@@ -645,6 +645,32 @@ impl ExecutionStore for SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
+    fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT job_key, COUNT(*), \
+                 SUM(CASE WHEN state IN ('failed', 'dead') THEN 1 ELSE 0 END), \
+                 SUM(duration_ms) AS total \
+                 FROM executions \
+                 WHERE completed_at IS NOT NULL AND completed_at >= ?1 \
+                   AND duration_ms IS NOT NULL \
+                 GROUP BY job_key ORDER BY total DESC, job_key",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![dt_to_sql(&since)], |row| {
+                Ok(JobRuntime {
+                    job_key: row.get(0)?,
+                    runs: row.get::<_, i64>(1)? as u64,
+                    failed: row.get::<_, i64>(2)? as u64,
+                    total_ms: row.get(3)?,
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
     fn prune_executions_older_than(
         &self,
         cutoff: DateTime<Utc>,

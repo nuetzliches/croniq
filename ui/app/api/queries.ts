@@ -34,6 +34,8 @@ import type {
   Role,
   ReplayResponse,
   RunnerSummary,
+  RuntimeResponse,
+  RuntimeWindow,
   ThroughputResponse,
   TotpSetupResponse,
   TriggerDefinition,
@@ -601,6 +603,19 @@ export function useThroughput(window = '24h') {
     queryFn: () => apiGet<ThroughputResponse>('/v1/executions/throughput', { window }),
     enabled: authedAnd(),
     refetchInterval: 60_000,
+  })
+}
+
+/** Run time per job over a window, for the dashboard. Summed by the server. */
+export function useJobRuntime(window: MaybeRefOrGetter<RuntimeWindow>) {
+  return useQuery({
+    queryKey: ['job-runtime', computed(() => toValue(window))],
+    queryFn: () => apiGet<RuntimeResponse>('/v1/insights/runtime', { window: toValue(window) }),
+    enabled: authedAnd(),
+    refetchInterval: 60_000,
+    // Switching the window keeps the old list up until the new one arrives,
+    // rather than flashing the empty state in between.
+    placeholderData: (previous) => previous,
   })
 }
 

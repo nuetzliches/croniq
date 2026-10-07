@@ -111,8 +111,6 @@ const successRate = computed(() => {
   return total === 0 ? null : (ok / total) * 100
 })
 
-const peak = computed(() => Math.max(1, ...buckets.value.map((b) => b.ok + b.err)))
-
 /**
  * The heatmap the audit wanted promoted: it answers "is something wrong"
  * better than any single number, and in the React tree it is small,
@@ -179,47 +177,10 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
     <div class="grid gap-4 lg:grid-cols-[1fr_22rem]">
       <div class="flex flex-col gap-4">
-        <!-- Throughput, ok over failed. Stacked rather than two lines: what
-             matters is the proportion, and a second axis invites reading the
-             error count as a trend of its own. -->
-        <section class="rounded-xl border border-default bg-default p-4 shadow-sm">
-          <div class="mb-3 flex items-baseline justify-between">
-            <p class="cq-label">
-              Throughput · last 24h
-            </p>
-            <span class="cq-num text-xs text-muted">{{ totals.ok + totals.err }} runs</span>
-          </div>
-          <AppEmpty
-            v-if="buckets.length === 0"
-            size="tight"
-            icon="i-lucide-chart-column"
-            title="No runs in the window"
-          />
-          <div
-            v-else
-            class="flex h-28 items-end gap-0.5"
-            role="img"
-            :aria-label="`${totals.ok} successful and ${totals.err} failed runs in the last 24 hours`"
-          >
-            <div
-              v-for="bucket in buckets"
-              :key="bucket.start"
-              class="flex h-full min-w-0 flex-1 flex-col justify-end gap-px"
-              :title="`${bucket.ok} ok · ${bucket.err} failed`"
-            >
-              <div
-                v-if="bucket.err"
-                class="rounded-t-sm bg-error"
-                :style="{ height: `${(bucket.err / peak) * 100}%` }"
-              />
-              <div
-                class="bg-success/70"
-                :class="!bucket.err && 'rounded-t-sm'"
-                :style="{ height: `${(bucket.ok / peak) * 100}%` }"
-              />
-            </div>
-          </div>
-        </section>
+        <!-- Where the run time went, per job. It replaced a 24-hour
+             throughput chart; the success rate above still reads the
+             throughput totals. -->
+        <JobRuntimeCard />
 
         <!-- Failures only. Not a general run list: that is /executions. -->
         <section class="rounded-xl border border-default bg-default p-4 shadow-sm">

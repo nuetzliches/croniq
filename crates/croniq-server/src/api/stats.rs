@@ -320,3 +320,72 @@ pub async fn handle_failure_heatmap(
         hotspots,
     }))
 }
+
+// ─── /v1/insights/runtime ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct RuntimeParams {
+    /// "24h", "7d", "30d". Defaults to "24h".
+    #[serde(default)]
+    pub window: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct JobRuntimeRow {
+    pub job_key: String,
+    pub runs: u64,
+    pub failed: u64,
+    pub total_ms: i64,
+}
+
+#[derive(Serialize)]
+pub struct RuntimeResponse {
+    pub window: String,
+    pub since: DateTime<Utc>,
+    /// Largest total first.
+    pub jobs: Vec<JobRuntimeRow>,
+}
+
+/// `GET /v1/insights/runtime?window=24h|7d|30d`: how much run time each job
+/// used in the window, from the runs that finished in it with a duration.
+///
+/// Summed in the store (one grouped scan) rather than over a capped
+/// `list_executions` like the endpoints above: a month of a busy job set is
+/// well past their 100 000-row limit, and a total that quietly stops counting
+/// would understate exactly the jobs it is meant to show.
+pub async fn handle_runtime(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    Query(params): Query<RuntimeParams>,
+) -> Result<Json<RuntimeResponse>, StatusCode> {
+    require_scope(&ctx, Scope::EXECUTIONS_READ)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let window = params.window.unwrap_or_else(|| "24h".into());
+    let span = match window.as_str() {
+        "24h" => Duration::hours(24),
+        "7d" => Duration::days(7),
+        "30d" => Duration::days(30),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    let since = Utc::now() - span;
+    let jobs = store
+        .job_runtime_since(since)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|r| JobRuntimeRow {
+            job_key: r.job_key,
+            runs: r.runs,
+            failed: r.failed,
+            total_ms: r.total_ms,
+        })
+        .collect();
+    Ok(Json(RuntimeResponse {
+        window,
+        since,
+        jobs,
+    }))
+}

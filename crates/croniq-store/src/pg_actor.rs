@@ -323,6 +323,10 @@ impl ExecutionStore for PgStoreHandle {
         self.call(|s| s.job_execution_metrics())
     }
 
+    fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
+        self.call(move |s| s.job_runtime_since(since))
+    }
+
     fn prune_executions_older_than(
         &self,
         cutoff: DateTime<Utc>,
