@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`priority high` is honoured for jobs that fire at the same moment.**
+  The scheduler queued each fire as soon as it had written its row, and
+  woke the waiting runners each time. A runner with free slots therefore
+  took the first job of a wave before the next one was queued, and a wave
+  went out in the scheduler's internal order, the same in every wave: a
+  `high` job could be claimed after `normal` and `low` jobs that fired in
+  the same second (issue #841). A tick now writes all of its fires first
+  and queues them in one step, so the queue ranks the whole wave by
+  priority. Adoption fires after a deploy (`run_on_register`) are queued
+  the same way. The first job of a wave now waits until the rest of the
+  wave is written, which with a normal store takes milliseconds.
+
 ## [0.47.0] - 2026-10-07
 
 ### Added

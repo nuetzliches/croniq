@@ -1748,6 +1748,14 @@ ahead of it goes first. In practice that is an execution the watchdog requeued
 to the *back* of the queue (a stale claim, a runner takeover) — it keeps its
 original `fire_at`, so it no longer waits behind work that fired after it.
 
+**Jobs that fire together are ranked together.** The scheduler writes every
+fire that falls due in one tick before it queues any of them, so a runner that
+is already waiting sees the whole wave at once and takes its `high` jobs first.
+Up to v0.47.0 each fire was queued as soon as it was written: an idle or
+partly idle runner took a wave in the scheduler's internal order, the same in
+every wave, and `priority` only ranked what happened to be queued together
+(issue #841).
+
 What it composes with:
 
 - **The concurrency guards still win.** A `high` execution held back by its
