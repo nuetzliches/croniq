@@ -2,7 +2,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
-import { RUN_DETAIL_DEFAULT_WIDTH, useUiStore } from './ui'
+import { DETAIL_PANE_DEFAULT_WIDTH, useUiStore } from './ui'
 
 /**
  * Preferences written by the React dashboard, read by this one.
@@ -125,14 +125,14 @@ describe('ui store, how tables show a time', () => {
   })
 })
 
-describe('ui store, the run detail width', () => {
+describe('ui store, the detail pane widths', () => {
   beforeEach(() => {
     localStorage.clear()
     setActivePinia(createPinia())
   })
 
   it('starts at the default until someone drags it', () => {
-    expect(useUiStore().runDetailWidth).toBe(RUN_DETAIL_DEFAULT_WIDTH)
+    expect(useUiStore().runDetailWidth).toBe(DETAIL_PANE_DEFAULT_WIDTH)
   })
 
   it('remembers a dragged width for the next visit', async () => {
@@ -150,7 +150,21 @@ describe('ui store, the run detail width', () => {
   it.each(['wide', '', '-5', '100'])('reads %j as the default', (stored) => {
     localStorage.setItem('croniq_run_detail_width', stored)
 
-    expect(useUiStore().runDetailWidth).toBe(RUN_DETAIL_DEFAULT_WIDTH)
+    expect(useUiStore().runDetailWidth).toBe(DETAIL_PANE_DEFAULT_WIDTH)
+  })
+
+  it('keeps the dead letter detail apart from the run detail', async () => {
+    localStorage.setItem('croniq_dead_letter_detail_width', '520')
+    const ui = useUiStore()
+
+    expect(ui.deadLetterDetailWidth).toBe(520)
+    expect(ui.runDetailWidth).toBe(DETAIL_PANE_DEFAULT_WIDTH)
+
+    ui.runDetailWidth = 700
+    await nextTick()
+
+    expect(localStorage.getItem('croniq_dead_letter_detail_width')).toBe('520')
+    expect(localStorage.getItem('croniq_run_detail_width')).toBe('700')
   })
 
   it('keeps a stored width wider than any window, for the view to clamp', () => {

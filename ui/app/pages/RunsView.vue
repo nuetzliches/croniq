@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useElementSize } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
 import { fetchExecutions, useExecutions, useNotes } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatDuration, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
+import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 import { notesByExecution } from '~/lib/notes'
-import { clampPaneWidth } from '~/lib/pane-width'
-import { RUN_DETAIL_DEFAULT_WIDTH, RUN_DETAIL_MIN_WIDTH, useUiStore } from '~/stores/ui'
+import { DETAIL_PANE_DEFAULT_WIDTH, DETAIL_PANE_MIN_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Runs — the one list of executions.
@@ -241,31 +241,10 @@ watch(
 const selectedId = computed(() => (route.params.id as string | undefined) ?? undefined)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
 
-/**
- * The detail's width: dragged by its left edge and remembered per browser.
- *
- * The table keeps at least `LIST_MIN_WIDTH` beside it. That bound moves with
- * the window, so it is applied here, at render, and never written back — a
- * width saved on a wide monitor survives a visit from a narrow one.
- */
-const ui = useUiStore()
-const LIST_MIN_WIDTH = 360
-/** The handle and the `gap-1.5` either side of it: 3 × 6 px. */
-const RESIZER_GUTTER = 18
+/** The detail's width: dragged by its left edge, remembered per browser. */
+const { runDetailWidth } = storeToRefs(useUiStore())
 const splitEl = ref<HTMLElement | null>(null)
-const { width: splitWidth } = useElementSize(splitEl)
-const maxDetailWidth = computed(() =>
-  // Before the first measurement the width is 0; show the saved width as is.
-  Math.max(
-    RUN_DETAIL_MIN_WIDTH,
-    splitWidth.value > 0
-      ? Math.floor(splitWidth.value - LIST_MIN_WIDTH - RESIZER_GUTTER)
-      : ui.runDetailWidth,
-  ),
-)
-const detailWidth = computed(() =>
-  clampPaneWidth(ui.runDetailWidth, RUN_DETAIL_MIN_WIDTH, maxDetailWidth.value),
-)
+const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, runDetailWidth)
 
 function setFilter(
   key: 'state' | 'q' | 'job_key' | 'runner_id' | 'window' | 'favorites',
@@ -671,10 +650,10 @@ function onKey(event: KeyboardEvent) {
            the handle drags it, and the store remembers it. -->
       <template v-if="selectedId">
         <PaneResizer
-          v-model="ui.runDetailWidth"
-          :min="RUN_DETAIL_MIN_WIDTH"
+          v-model="runDetailWidth"
+          :min="DETAIL_PANE_MIN_WIDTH"
           :max="maxDetailWidth"
-          :default-width="RUN_DETAIL_DEFAULT_WIDTH"
+          :default-width="DETAIL_PANE_DEFAULT_WIDTH"
           label="Resize run detail"
         />
         <RunDetail

@@ -8,14 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **The run detail can be resized.** On the Runs screen, drag the edge
-  between the table and the detail to make it wider or narrower.
+- **The run and dead letter details can be resized.** On the Runs and Dead
+  Letters screens, drag the edge between the table and the detail to make
+  it wider or narrower.
   - With the edge focused, ←/→ move it by 16 px (64 px with Shift) and
     Home/End jump to the narrowest and widest; a double-click puts it back
     to the default 416 px.
   - The table keeps at least 360 px, and the detail at least 320 px.
-  - The width is remembered per browser. A window too narrow for it shows
-    less for now and keeps the saved width for the next wide one.
+  - The width is remembered per browser, separately for each screen. A
+    window too narrow for it shows less for now and keeps the saved width
+    for the next wide one.
 
 - **Tables can show times as the time of day.** A toggle in a time column's
   heading (or `t`, anywhere outside a text field) switches between "3 min

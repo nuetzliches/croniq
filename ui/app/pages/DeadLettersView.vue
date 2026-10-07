@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { ApiError } from '~/api/client'
 import {
   useBulkDeleteDeadLetters,
@@ -13,7 +14,9 @@ import type { DeadLetter, StaleReplayError } from '~/api/types'
 import { formatAbsolute, shortId } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 import { describeRefusal } from '~/composables/useActionError'
+import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
+import { DETAIL_PANE_DEFAULT_WIDTH, DETAIL_PANE_MIN_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Dead letters — the work queue.
@@ -52,6 +55,14 @@ const rows = computed<DeadLetter[]>(() => data.value ?? [])
  */
 const selectedId = ref<string | null>((route.query.selected as string) || null)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
+
+/**
+ * The detail's width: dragged by its left edge, remembered per browser — under
+ * its own key, not the Runs detail's, since a stack trace wants other room.
+ */
+const { deadLetterDetailWidth } = storeToRefs(useUiStore())
+const splitEl = ref<HTMLElement | null>(null)
+const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, deadLetterDetailWidth)
 
 /** What the last replay attempt said, when it said no. */
 const replayError = ref<string | null>(null)
@@ -255,7 +266,10 @@ const times = useTimeDisplay()
       </template>
     </UAlert>
 
-    <div class="flex min-h-0 flex-1 gap-4">
+    <div
+      ref="splitEl"
+      class="flex min-h-0 flex-1 gap-1.5"
+    >
       <div class="cq-list min-w-0 flex-1">
         <AppLoading
           v-if="isPending"
@@ -392,9 +406,18 @@ const times = useTimeDisplay()
         @confirm="runBulk"
       />
 
+      <PaneResizer
+        v-if="selected"
+        v-model="deadLetterDetailWidth"
+        :min="DETAIL_PANE_MIN_WIDTH"
+        :max="maxDetailWidth"
+        :default-width="DETAIL_PANE_DEFAULT_WIDTH"
+        label="Resize dead letter detail"
+      />
       <aside
         v-if="selected"
-        class="flex w-[26rem] shrink-0 flex-col overflow-hidden rounded-lg border border-default"
+        class="flex shrink-0 flex-col overflow-hidden rounded-lg border border-default"
+        :style="{ width: `${detailWidth}px` }"
         aria-label="Dead letter detail"
       >
         <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-3">
