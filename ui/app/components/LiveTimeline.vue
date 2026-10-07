@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, 
 import { useElementSize, useIntervalFn, usePreferredReducedMotion } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import { useForecast, useJobStates, useJobs, useLiveForecast } from '~/api/queries'
-import { useExecutionsStream } from '~/composables/useExecutionsStream'
+import type { ExecutionsStream } from '~/composables/useExecutionsStream'
 import { useFavorites } from '~/composables/useFavorites'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
 import {
@@ -12,6 +12,7 @@ import {
   backToNow,
   buildLanes,
   clampRange,
+  countActive,
   densityBuckets,
   formatOffset,
   formatSpan,
@@ -124,7 +125,9 @@ const favoritesFirst = ref(readStored(FAVORITES_FIRST_KEY) !== '0')
 watch(favoritesFirst, (value) => writeStored(FAVORITES_FIRST_KEY, value ? '1' : '0'))
 const { favorites, available: favoritesAvailable } = useFavorites()
 
-const { runs, connected, received, unavailable, offset } = useExecutionsStream()
+/** Opened by the page, which reads its counts from the same frames. */
+const props = defineProps<{ stream: ExecutionsStream }>()
+const { runs, connected, received, unavailable, offset } = props.stream
 const { data: jobStates, refetch: refetchJobStates } = useJobStates()
 const { data: jobs } = useJobs()
 const { data: forecast } = useForecast(60, 5)
@@ -382,10 +385,9 @@ const hourBuckets = computed(() => forecast.value?.buckets ?? [])
 const hourPeak = computed(() => Math.max(1, ...hourBuckets.value.map((b) => b.count)))
 const hourTotal = computed(() => hourBuckets.value.reduce((sum, b) => sum + b.count, 0))
 
-const running = computed(
-  () => shownRuns.value.filter((r) => r.state === 'claimed').length,
-)
-const queued = computed(() => shownRuns.value.filter((r) => r.state === 'queued').length)
+const counts = computed(() => countActive(shownRuns.value))
+const running = computed(() => counts.value.running)
+const queued = computed(() => counts.value.queued)
 
 // ─── Links ──────────────────────────────────────────────────────────────────
 
@@ -680,6 +682,7 @@ onBeforeUnmount(stopMotion)
         <span
           v-if="!lookingBack"
           class="cq-num text-xs text-muted"
+          data-testid="live-counts"
         >
           {{ running }} running · {{ queued }} queued
         </span>

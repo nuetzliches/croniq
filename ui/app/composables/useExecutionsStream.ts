@@ -13,6 +13,9 @@ import { useAuthStore } from '~/stores/auth'
  *
  * `offset` is the server's clock minus this browser's. The timeline places
  * bars by server timestamps, so it reads "now" as `Date.now() + offset`.
+ *
+ * The dashboard opens it once and hands it to the timeline, so its counts
+ * and the timeline's come from the same frame over one connection.
  */
 export function useExecutionsStream() {
   const auth = useAuthStore()
@@ -52,3 +55,5 @@ export function useExecutionsStream() {
 
   return { runs, connected, received, unavailable, offset }
 }
+
+export type ExecutionsStream = ReturnType<typeof useExecutionsStream>

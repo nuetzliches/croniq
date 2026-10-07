@@ -28,6 +28,24 @@ export interface LiveFrame {
 }
 
 /**
+ * How many active runs a frame carries at most: the stream's read of queued
+ * and claimed runs is capped (`ACTIVE_LIMIT` in `executions_sse.rs`). A count
+ * at the cap is a floor, not a figure.
+ */
+export const ACTIVE_CAP = 500
+
+/** Runs running and waiting, as the store's rows have them. */
+export function countActive(runs: readonly LiveRun[]): { running: number; queued: number } {
+  let running = 0
+  let queued = 0
+  for (const run of runs) {
+    if (run.state === 'claimed') running++
+    else if (run.state === 'queued') queued++
+  }
+  return { running, queued }
+}
+
+/**
  * How far back the range selector reaches (issue #829). The stream keeps five
  * and a half minutes; the extra half minute is slack, so a bar at the left
  * edge of the widest view is never cut short by the stream's own horizon.

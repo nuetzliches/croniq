@@ -13,6 +13,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under the pointer. It is on by default, as before, and the choice is
   remembered in this browser.
 
+### Changed
+
+- **The dashboard's "Queue depth" and "Running" move with the live
+  timeline.** They used to come from `/health`, polled every 5 s: the
+  in-memory dispatch queue, and what the runners last reported in flight.
+  Now they count the queued and claimed runs in the timeline's own stream,
+  over the same connection, so the cards and the timeline agree.
+  - Ephemeral runs no longer count towards "Running". They have no row,
+    so they never had a bar on the timeline or a place in the run list the
+    card links to.
+  - Without the stream (no `executions:read`, reconnecting, or more than
+    500 runs active at once), the cards fall back to `/health`.
+
 ### Fixed
 
 - **Hovering the live timeline holds all of it, not just the motion.**
