@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useElementSize } from '@vueuse/core'
 import { fetchExecutions, useExecutions, useNotes } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatDuration, shortId, stateLabel } from '~/lib/format'
@@ -9,6 +10,8 @@ import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 import { notesByExecution } from '~/lib/notes'
+import { clampPaneWidth } from '~/lib/pane-width'
+import { RUN_DETAIL_DEFAULT_WIDTH, RUN_DETAIL_MIN_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Runs — the one list of executions.
@@ -237,6 +240,32 @@ watch(
 /** The detail comes out of the list; there is no GET /v1/executions/{id}. */
 const selectedId = computed(() => (route.params.id as string | undefined) ?? undefined)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
+
+/**
+ * The detail's width: dragged by its left edge and remembered per browser.
+ *
+ * The table keeps at least `LIST_MIN_WIDTH` beside it. That bound moves with
+ * the window, so it is applied here, at render, and never written back — a
+ * width saved on a wide monitor survives a visit from a narrow one.
+ */
+const ui = useUiStore()
+const LIST_MIN_WIDTH = 360
+/** The handle and the `gap-1.5` either side of it: 3 × 6 px. */
+const RESIZER_GUTTER = 18
+const splitEl = ref<HTMLElement | null>(null)
+const { width: splitWidth } = useElementSize(splitEl)
+const maxDetailWidth = computed(() =>
+  // Before the first measurement the width is 0; show the saved width as is.
+  Math.max(
+    RUN_DETAIL_MIN_WIDTH,
+    splitWidth.value > 0
+      ? Math.floor(splitWidth.value - LIST_MIN_WIDTH - RESIZER_GUTTER)
+      : ui.runDetailWidth,
+  ),
+)
+const detailWidth = computed(() =>
+  clampPaneWidth(ui.runDetailWidth, RUN_DETAIL_MIN_WIDTH, maxDetailWidth.value),
+)
 
 function setFilter(
   key: 'state' | 'q' | 'job_key' | 'runner_id' | 'window' | 'favorites',
@@ -479,7 +508,10 @@ function onKey(event: KeyboardEvent) {
       <span class="cq-num ml-auto text-sm text-muted">{{ rows.length }} runs</span>
     </div>
 
-    <div class="flex min-h-0 flex-1 gap-4">
+    <div
+      ref="splitEl"
+      class="flex min-h-0 flex-1 gap-1.5"
+    >
       <div
         ref="listEl"
         class="cq-list min-w-0 flex-1"
@@ -635,13 +667,23 @@ function onKey(event: KeyboardEvent) {
       </div>
 
       <!-- Only when there is something to show. The pane the audit complained
-           about sat empty across 60% of the screen. -->
-      <RunDetail
-        v-if="selectedId"
-        :execution="selected"
-        class="w-[26rem] shrink-0"
-        @close="close"
-      />
+           about sat empty across 60% of the screen. Its width is the reader's:
+           the handle drags it, and the store remembers it. -->
+      <template v-if="selectedId">
+        <PaneResizer
+          v-model="ui.runDetailWidth"
+          :min="RUN_DETAIL_MIN_WIDTH"
+          :max="maxDetailWidth"
+          :default-width="RUN_DETAIL_DEFAULT_WIDTH"
+          label="Resize run detail"
+        />
+        <RunDetail
+          :execution="selected"
+          class="shrink-0"
+          :style="{ width: `${detailWidth}px` }"
+          @close="close"
+        />
+      </template>
     </div>
   </div>
 </template>

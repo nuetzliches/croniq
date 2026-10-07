@@ -22,6 +22,13 @@ const SIDEBAR_KEY = 'croniq_sidebar'
 const THEME_KEY = 'croniq_theme'
 /** New with this tree, so it has one shape and no React-tree spelling to read. */
 const TIME_DISPLAY_KEY = 'croniq_time_display'
+/** Also new with this tree: the run detail's width in pixels, as a decimal string. */
+const RUN_DETAIL_WIDTH_KEY = 'croniq_run_detail_width'
+
+/** The run detail's width until someone drags it — the old fixed `26rem`. */
+export const RUN_DETAIL_DEFAULT_WIDTH = 416
+/** Narrower than this and the detail's header and log toolbar start to wrap. */
+export const RUN_DETAIL_MIN_WIDTH = 320
 
 export type ThemePref = 'light' | 'dark' | 'system'
 
@@ -102,10 +109,24 @@ function readTimeDisplay(): TimeDisplay {
   return read(TIME_DISPLAY_KEY) === 'absolute' ? 'absolute' : 'relative'
 }
 
+/**
+ * The stored run detail width, or the default for anything unusable.
+ *
+ * Only the lower bound is checked here. The upper one depends on the window it
+ * is shown in, which may not be the window it was saved from — so the view
+ * clamps it at render time and leaves the stored value alone, and a width saved
+ * on a wide monitor comes back when the browser is wide again.
+ */
+function readRunDetailWidth(): number {
+  const stored = Number.parseInt(read(RUN_DETAIL_WIDTH_KEY) ?? '', 10)
+  return Number.isFinite(stored) && stored >= RUN_DETAIL_MIN_WIDTH ? stored : RUN_DETAIL_DEFAULT_WIDTH
+}
+
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(readSidebarCollapsed())
   const theme = ref<ThemePref>(readTheme())
   const timeDisplay = ref<TimeDisplay>(readTimeDisplay())
+  const runDetailWidth = ref<number>(readRunDetailWidth())
 
   // Write the new shape back on boot, so a browser carrying a React-tree value
   // stops carrying it. The watchers below only fire on change, and a
@@ -129,6 +150,10 @@ export const useUiStore = defineStore('ui', () => {
 
   watch(timeDisplay, (display) => {
     write(TIME_DISPLAY_KEY, display)
+  })
+
+  watch(runDetailWidth, (width) => {
+    write(RUN_DETAIL_WIDTH_KEY, String(Math.round(width)))
   })
 
   function toggleSidebar() {
@@ -160,6 +185,7 @@ export const useUiStore = defineStore('ui', () => {
     sidebarCollapsed,
     theme,
     timeDisplay,
+    runDetailWidth,
     toggleSidebar,
     toggleTimeDisplay,
     reapplyTheme,

@@ -2,7 +2,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
-import { useUiStore } from './ui'
+import { RUN_DETAIL_DEFAULT_WIDTH, useUiStore } from './ui'
 
 /**
  * Preferences written by the React dashboard, read by this one.
@@ -122,5 +122,40 @@ describe('ui store, how tables show a time', () => {
     localStorage.setItem('croniq_time_display', 'sundial')
 
     expect(useUiStore().timeDisplay).toBe('relative')
+  })
+})
+
+describe('ui store, the run detail width', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+
+  it('starts at the default until someone drags it', () => {
+    expect(useUiStore().runDetailWidth).toBe(RUN_DETAIL_DEFAULT_WIDTH)
+  })
+
+  it('remembers a dragged width for the next visit', async () => {
+    const ui = useUiStore()
+
+    ui.runDetailWidth = 640.4
+    await nextTick()
+
+    expect(localStorage.getItem('croniq_run_detail_width')).toBe('640')
+
+    setActivePinia(createPinia())
+    expect(useUiStore().runDetailWidth).toBe(640)
+  })
+
+  it.each(['wide', '', '-5', '100'])('reads %j as the default', (stored) => {
+    localStorage.setItem('croniq_run_detail_width', stored)
+
+    expect(useUiStore().runDetailWidth).toBe(RUN_DETAIL_DEFAULT_WIDTH)
+  })
+
+  it('keeps a stored width wider than any window, for the view to clamp', () => {
+    localStorage.setItem('croniq_run_detail_width', '5000')
+
+    expect(useUiStore().runDetailWidth).toBe(5000)
   })
 })
