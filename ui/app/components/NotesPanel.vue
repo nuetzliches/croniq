@@ -143,26 +143,26 @@ async function confirmDelete() {
               class="text-xs text-warning"
             >asks</span>
             <span
+              v-tooltip="formatAbsolute(note.created_at)"
               class="cq-num text-xs text-muted"
-              :title="formatAbsolute(note.created_at)"
             >{{ formatRelative(note.created_at) }}</span>
             <RouterLink
               v-if="!executionId && note.execution_id"
+              v-tooltip="note.execution_id"
               :to="`/executions/${note.execution_id}`"
               class="font-mono text-xs text-primary hover:underline"
-              :title="note.execution_id"
             >
               run {{ shortId(note.execution_id) }}
             </RouterLink>
             <UButton
               v-if="canWrite && canDelete(note)"
+              v-tooltip="'Delete this note'"
               icon="i-lucide-trash-2"
               color="neutral"
               variant="ghost"
               size="xs"
               class="ml-auto"
               aria-label="Delete this note"
-              title="Delete this note"
               @click="pendingDelete = note"
             />
           </div>

@@ -69,7 +69,7 @@ export function formatDuration(ms: number | null | undefined): string {
 
 /**
  * The first segment of a UUID — enough to recognise a run across a page,
- * short enough for a column. The full value belongs in a `title`, and callers
+ * short enough for a column. The full value belongs in a `v-tooltip`, and callers
  * are expected to put it there.
  */
 export function shortId(id: string | null | undefined): string {
@@ -80,7 +80,7 @@ export function shortId(id: string | null | undefined): string {
 const absoluteFormatters = new Map<string, Intl.DateTimeFormat>()
 
 /**
- * An absolute timestamp for the `title` behind every relative one, and for
+ * An absolute timestamp for the tooltip behind every relative one, and for
  * every "Created" / "Fired" / "Next fire" fact.
  *
  * In the browser's locale and zone — or in `timeZone`, for tests — and it

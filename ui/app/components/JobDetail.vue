@@ -186,7 +186,7 @@ const facts = computed(() => {
     // Description, tags and the operator hint are the opposite: they are as
     // long as someone made them, and an operator hint cut off at "Sampler
     // defekt (nicht: schlechter Messwert). Pruefen: …" is withholding the
-    // instruction it exists to give. A `title` tooltip is not a substitute —
+    // instruction it exists to give. A tooltip is not a substitute —
     // it is invisible until hovered and unreachable on a touch screen.
     { label: 'Description', value: job.description || '—', wrap: true },
     { label: 'Tags', value: (job.tags ?? []).join(' ') || '—', mono: true, wrap: true },
@@ -290,24 +290,24 @@ const deadLetterFacts = computed(() => {
             Run now
           </UButton>
           <UButton
+            v-tooltip="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             :icon="job.is_active ? 'i-lucide-pause' : 'i-lucide-play-circle'"
             color="neutral"
             variant="subtle"
             size="xs"
             :disabled="dslManaged"
-            :title="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             :loading="setActive.isPending.value"
             @click="toggleActive"
           >
             {{ job.is_active ? 'Pause' : 'Resume' }}
           </UButton>
           <UButton
+            v-tooltip="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             icon="i-lucide-pencil"
             color="neutral"
             variant="subtle"
             size="xs"
             :disabled="dslManaged"
-            :title="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             @click="editing = true"
           >
             Edit
@@ -341,11 +341,11 @@ const deadLetterFacts = computed(() => {
                  here whose meaning is not obvious from its label. -->
             <UButton
               v-if="dslManaged"
+              v-tooltip="'Copy this job and its schedule into the API store so they can be edited here. The Croniqfile definition is ignored until you release it again. Requires policy { dsl_adopt_on_mutate true }.'"
               icon="i-lucide-download"
               color="neutral"
               variant="subtle"
               size="xs"
-              title="Copy this job and its schedule into the API store so they can be edited here. The Croniqfile definition is ignored until you release it again. Requires policy { dsl_adopt_on_mutate true }."
               :loading="adopt.isPending.value"
               @click="run(() => adopt.mutateAsync(jobKey))"
             >
@@ -353,24 +353,24 @@ const deadLetterFacts = computed(() => {
             </UButton>
             <UButton
               v-else
+              v-tooltip="'Drop the API copy so the next reload reinstates the Croniqfile definition. Has no effect on a job that was never in the Croniqfile.'"
               icon="i-lucide-undo-2"
               color="neutral"
               variant="ghost"
               size="xs"
-              title="Drop the API copy so the next reload reinstates the Croniqfile definition. Has no effect on a job that was never in the Croniqfile."
               :loading="unadopt.isPending.value"
               @click="run(() => unadopt.mutateAsync(jobKey))"
             >
               Release
             </UButton>
             <UButton
+              v-tooltip="dslManaged ? 'Declared in the Croniqfile — delete it there' : 'Delete'"
               icon="i-lucide-trash-2"
               color="error"
               variant="ghost"
               size="xs"
               :disabled="dslManaged"
               :aria-label="`Delete ${jobKey}`"
-              :title="dslManaged ? 'Declared in the Croniqfile — delete it there' : 'Delete'"
               @click="confirmingDelete = true"
             />
           </div>
@@ -485,13 +485,13 @@ const deadLetterFacts = computed(() => {
                   `break-words` as well as wrapping: a tag list or a hint can
                   contain one token longer than the column, and without it the
                   word overflows the pane instead of the line breaking.
-                  `title` only where the text is still cut, so a hover card
+                  A tooltip only where the text is still cut, so a hover card
                   does not cover text the reader can already see.
                 -->
                 <dd
+                  v-tooltip="fact.wrap ? undefined : fact.value"
                   class="min-w-0 text-right"
                   :class="[fact.mono && 'font-mono', fact.wrap ? 'break-words' : 'truncate']"
-                  :title="fact.wrap ? undefined : fact.value"
                 >
                   {{ fact.value }}
                 </dd>
@@ -511,9 +511,9 @@ const deadLetterFacts = computed(() => {
                     {{ fact.label }}
                   </dt>
                   <dd
+                    v-tooltip="fact.wrap ? undefined : fact.value"
                     class="min-w-0 text-right"
                     :class="[fact.mono && 'font-mono', fact.wrap ? 'break-words' : 'truncate']"
-                    :title="fact.wrap ? undefined : fact.value"
                   >
                     {{ fact.value }}
                   </dd>
@@ -540,8 +540,8 @@ const deadLetterFacts = computed(() => {
           <template v-else>
             <div class="mb-2 flex items-center justify-between gap-2">
               <p
+                v-tooltip="'There is no endpoint that returns a job\'s source text — an API-registered job never had any, so this is reconstructed rather than fetched. It is formatted by croniq\'s own compiler, so it parses.'"
                 class="text-xs text-muted"
-                title="There is no endpoint that returns a job's source text — an API-registered job never had any, so this is reconstructed rather than fetched. It is formatted by croniq's own compiler, so it parses."
               >
                 Reconstructed from the live job and its first schedule.
               </p>

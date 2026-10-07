@@ -49,8 +49,8 @@ const toneClass = {
     </p>
     <p
       v-if="sub"
+      v-tooltip="sub"
       class="mt-0.5 truncate text-xs text-muted"
-      :title="sub"
     >
       {{ sub }}
     </p>

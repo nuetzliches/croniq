@@ -18,7 +18,7 @@ import { useMaintenance } from '~/api/queries'
  *
  * And it says when. The original appends `toLocaleString()` of the window end,
  * which is precise and hard to act on; "ends in about 40 minutes" is what an
- * operator is actually asking. The absolute time stays in the `title` for
+ * operator is actually asking. The absolute time stays in the tooltip for
  * anyone who needs it.
  */
 const { data } = useMaintenance()
@@ -70,7 +70,7 @@ const title = computed(() =>
       {{ description }}
       <span
         v-if="relative"
-        :title="until?.toLocaleString()"
+        v-tooltip="until?.toLocaleString()"
         class="whitespace-nowrap"
       >— {{ relative }}.</span>
       <span v-else-if="data?.manual_active">— until someone turns it off.</span>

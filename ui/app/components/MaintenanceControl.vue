@@ -97,12 +97,12 @@ async function clearAll() {
 <template>
   <UPopover v-model:open="open">
     <UButton
+      v-tooltip="active ? 'Maintenance mode is on' : 'Maintenance mode'"
       color="neutral"
       :variant="active ? 'soft' : 'subtle'"
       icon="i-lucide-wrench"
       :class="active && 'text-warning'"
       :aria-label="active ? 'Maintenance mode is on' : 'Maintenance mode'"
-      :title="active ? 'Maintenance mode is on' : 'Maintenance mode'"
     />
 
     <template #content>

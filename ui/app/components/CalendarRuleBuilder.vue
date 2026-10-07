@@ -232,12 +232,12 @@ const typeItems = computed(() =>
         <!-- A toggle rather than a dropdown: include adds days, exclude
              removes them, and +/− is how the rule reads aloud. -->
         <UButton
+          v-tooltip="`${rule.action} — click to switch`"
           :icon="rule.action === 'include' ? 'i-lucide-plus' : 'i-lucide-minus'"
           :color="rule.action === 'include' ? 'success' : 'error'"
           variant="subtle"
           size="xs"
           :aria-label="`Rule ${index + 1} is ${rule.action} — switch it`"
-          :title="`${rule.action} — click to switch`"
           @click="toggleAction(index)"
         />
         <USelectMenu

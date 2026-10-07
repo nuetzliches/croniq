@@ -53,6 +53,45 @@ test.describe('URL state', () => {
   })
 
   /**
+   * A deep link to a row further down the list scrolls the list to it, so the
+   * open detail and its row are on screen together. The viewport is kept low
+   * enough that the demo's last job starts out below the fold.
+   */
+  test('a job deep link scrolls the list to its row', async ({ app }) => {
+    await app.goto('/jobs')
+    // The demo's jobs only: other specs add jobs of their own.
+    const rows = app.locator('tbody tr').filter({ hasText: /demo:/ })
+    await expect(rows).not.toHaveCount(0)
+    const lastKey = (await rows.last().textContent())?.match(/demo:[a-z-]+/)?.[0]
+    expect(lastKey).toBeTruthy()
+
+    await app.setViewportSize({ width: 1400, height: 400 })
+    await app.goto(`/jobs/${encodeURIComponent(lastKey!)}`)
+    const row = app.locator('tr[data-selected]')
+    await expect(row).toBeInViewport()
+    // Vertically whole. Not `toBeInViewport({ ratio: 1 })`: with the detail
+    // open the table is wider than its pane, so its right-hand columns are
+    // clipped sideways whatever the scroll position.
+    await expect
+      .poll(() =>
+        row.evaluate((el) => {
+          const box = el.getBoundingClientRect()
+          let top = 0
+          let bottom = window.innerHeight
+          for (let node = el.parentElement; node; node = node.parentElement) {
+            if (getComputedStyle(node).overflowY !== 'visible') {
+              const frame = node.getBoundingClientRect()
+              top = Math.max(top, frame.top)
+              bottom = Math.min(bottom, frame.bottom)
+            }
+          }
+          return box.top >= top - 1 && box.bottom <= bottom + 1
+        }),
+      )
+      .toBe(true)
+  })
+
+  /**
    * `/jobs` with no key still lists jobs.
    *
    * The React tree also *selected* the first one implicitly; the Vue tree

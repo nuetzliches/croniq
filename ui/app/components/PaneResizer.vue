@@ -85,6 +85,7 @@ function onKey(event: KeyboardEvent) {
 
 <template>
   <div
+    v-tooltip="'Drag to resize · double-click to reset'"
     role="separator"
     aria-orientation="vertical"
     :aria-label="label"
@@ -92,7 +93,6 @@ function onKey(event: KeyboardEvent) {
     :aria-valuemin="min"
     :aria-valuemax="Math.max(min, max)"
     tabindex="0"
-    title="Drag to resize · double-click to reset"
     :class="[
       'group flex w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center rounded-full outline-none select-none',
       'transition-colors hover:bg-primary/30 focus-visible:bg-primary/30 focus-visible:ring-2 focus-visible:ring-primary',

@@ -238,8 +238,8 @@ function diffTitle(diff: string | null): string | undefined {
             class="cq-row border-b border-default/60"
           >
             <td
+              v-tooltip="when.title(event.created_at)"
               class="cq-num px-[var(--cq-cell-x)] text-muted"
-              :title="when.title(event.created_at)"
             >
               {{ when.text(event.created_at) }}
             </td>
@@ -248,37 +248,37 @@ function diffTitle(diff: string | null): string | undefined {
                    change" is the question this log exists for. -->
               <UButton
                 v-if="event.actor_id"
+                v-tooltip="`Only events by ${event.actor_id}`"
                 variant="link"
                 color="neutral"
                 size="xs"
                 class="p-0 font-mono"
-                :title="`Only events by ${event.actor_id}`"
                 @click="setFilter('actor', event.actor_id!)"
               >
                 {{ actorName(event.actor_id) }}
               </UButton>
               <span
                 v-else
+                v-tooltip="'No user record — an API-key session'"
                 class="text-muted"
-                title="No user record — an API-key session"
               >system</span>
             </td>
             <td class="max-w-[16rem] truncate px-[var(--cq-cell-x)] font-mono">
-              <span :title="diffTitle(event.diff_json)">{{ event.action }}</span>
+              <span v-tooltip="diffTitle(event.diff_json)">{{ event.action }}</span>
             </td>
             <td class="max-w-[20rem] truncate px-[var(--cq-cell-x)] font-mono text-muted">
               <span class="mr-1.5">{{ event.target_type }}</span>
               <RouterLink
                 v-if="targetLink(event.target_type, event.target_id)"
+                v-tooltip="event.target_id ?? ''"
                 :to="targetLink(event.target_type, event.target_id)!"
                 class="text-primary hover:underline"
-                :title="event.target_id ?? ''"
               >
                 {{ event.target_id }}
               </RouterLink>
               <span
                 v-else-if="event.target_id"
-                :title="event.target_id"
+                v-tooltip="event.target_id"
               >{{ shortId(event.target_id) }}</span>
             </td>
           </tr>

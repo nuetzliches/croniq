@@ -243,8 +243,8 @@ const fieldText = (event: LogEvent): string =>
           {{ connected ? 'live' : forbidden || unavailable ? 'stopped' : 'reconnecting' }}
         </span>
         <span
+          v-tooltip="'Times are shown in your browser\'s time zone. Copy and download keep UTC.'"
           class="text-xs text-muted"
-          title="Times are shown in your browser's time zone. Copy and download keep UTC."
         >{{ timeZone }}</span>
         <span class="cq-num text-xs text-muted">
           <!-- Startup section included: the count is what the screen holds. -->
@@ -262,30 +262,30 @@ const fieldText = (event: LogEvent): string =>
           {{ paused ? `Resume${pendingCount ? ` (${pendingCount})` : ''}` : 'Pause' }}
         </UButton>
         <UButton
+          v-tooltip="'Copy what is on screen'"
           :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
           color="neutral"
           variant="ghost"
           size="xs"
           aria-label="Copy the visible events"
-          title="Copy what is on screen"
           @click="copyAll"
         />
         <UButton
+          v-tooltip="'Download as NDJSON'"
           icon="i-lucide-download"
           color="neutral"
           variant="ghost"
           size="xs"
           aria-label="Download the visible events as NDJSON"
-          title="Download as NDJSON"
           @click="downloadNdjson"
         />
         <UButton
+          v-tooltip="'Clear'"
           icon="i-lucide-trash-2"
           color="neutral"
           variant="ghost"
           size="xs"
           aria-label="Clear the console"
-          title="Clear"
           @click="clear"
         />
       </div>
@@ -367,8 +367,8 @@ const fieldText = (event: LogEvent): string =>
               event{{ startup.length === 1 ? '' : 's' }}
             </span>
             <span
+              v-tooltip="'When this server process logged its first line'"
               class="cq-num ml-auto text-dimmed"
-              title="When this server process logged its first line"
             >started {{ startedAt }}</span>
           </button>
           <div
@@ -383,8 +383,8 @@ const fieldText = (event: LogEvent): string =>
               :class="row.gutter"
             >
               <span
+                v-tooltip="`${row.event.ts} (UTC)`"
                 class="cq-num shrink-0 text-dimmed"
-                :title="`${row.event.ts} (UTC)`"
               >{{ row.time }}</span>
               <span
                 class="w-11 shrink-0 font-medium uppercase"
@@ -414,8 +414,8 @@ const fieldText = (event: LogEvent): string =>
           <!-- A coloured gutter as well as a level column: an error is found
                by scanning the left edge, not by reading every row. -->
           <span
+            v-tooltip="`${row.event.ts} (UTC)`"
             class="cq-num shrink-0 text-dimmed"
-            :title="`${row.event.ts} (UTC)`"
           >{{ row.time }}</span>
           <span
             class="w-11 shrink-0 font-medium uppercase"

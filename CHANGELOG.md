@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Hover texts across the dashboard are tooltips.** Every native `title`
+  tooltip is replaced by one in the dashboard's own style, which shows
+  sooner, wraps long text (a run's whole error, a run's notes one per
+  line) and can also be reached from the keyboard. An icon-only button
+  keeps its hover text as its accessible name. A lint rule keeps native
+  titles from coming back.
+- **"Run time by job" reads as a calm table.** The bar is now each row's
+  background, measured against one width, instead of a track that shrank
+  with the labels beside it. Runs and failures are badges in aligned
+  columns, and they link to the job's runs on `/executions` — failures
+  to its failed runs — over the window the card is showing.
+  `/executions` offers "Last 30 days" to match.
+- **"Recent failures" can hide what is already checked.** A "Hide
+  checked" switch leaves out failures someone has marked as checked, so
+  the five rows are the ones nobody has looked at yet. Off by default and
+  remembered per browser.
+- **A deep link scrolls its list to the row.** Opening `/jobs/<key>`,
+  `/executions/<id>`, `/alerts/rules/<name>`, `/calendars/<id>` or
+  `/dead-letters/<id>` scrolls the list so the selected row is
+  in view next to its detail, instead of leaving the list at the top.
+- The "Success rate (24h)" tile links to the last 24 hours of failed
+  runs rather than to all of them.
+
 ## [0.47.1] - 2026-10-07
 
 ### Fixed

@@ -83,11 +83,11 @@ const changes = computed(() => {
 <template>
   <UPopover v-model:open="open">
     <UButton
+      v-tooltip="'Reload the Croniqfile'"
       color="neutral"
       variant="subtle"
       icon="i-lucide-refresh-cw"
       aria-label="Reload the Croniqfile"
-      title="Reload the Croniqfile"
     />
 
     <template #content>

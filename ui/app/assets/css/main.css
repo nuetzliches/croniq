@@ -170,3 +170,32 @@
 @utility cq-spin {
   animation: cq-spin 0.9s linear infinite;
 }
+
+/* The one element `v-tooltip` (app/lib/tooltip.ts) moves between hosts. Styled
+ * like Nuxt UI's own tooltip so the two never look like different products:
+ * the page's surface, a hairline ring, small type. `pre-line` because some
+ * hosts (a run's notes) list one entry per line. Never a pointer target — a
+ * tooltip that catches the cursor fights the host underneath it. */
+@layer components {
+  .cq-tooltip {
+    position: fixed;
+    z-index: 100;
+    max-width: min(28rem, calc(100vw - 8px));
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--ui-radius);
+    background-color: var(--ui-bg);
+    color: var(--ui-text-highlighted);
+    box-shadow:
+      0 0 0 1px var(--ui-border),
+      0 4px 12px rgb(0 0 0 / 0.12);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
+
+  .cq-tooltip[hidden] {
+    display: none;
+  }
+}

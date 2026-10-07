@@ -80,14 +80,14 @@ async function copy() {
         :label="acknowledgement ?? 'I have stored this somewhere safe'"
       />
       <UButton
-        class="ml-auto"
-        size="xs"
-        :disabled="!copied && !acknowledged"
-        :title="
+        v-tooltip="
           !copied && !acknowledged
             ? 'Copy the value or confirm you have stored it — it cannot be shown again'
             : undefined
         "
+        class="ml-auto"
+        size="xs"
+        :disabled="!copied && !acknowledged"
         @click="emit('done')"
       >
         Done
