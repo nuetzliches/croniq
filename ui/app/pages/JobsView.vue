@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useJobStates, useJobs, useSchedules } from '~/api/queries'
 import type { JobDefinition, JobScheduleState, TriggerDefinition } from '~/api/types'
 import { formatAbsolute, formatRelative } from '~/lib/format'
+import FavoriteButton from '~/components/FavoriteButton.vue'
+import { useFavorites } from '~/composables/useFavorites'
 
 /**
  * Jobs — the configuration screen, and the one the audit hit hardest.
@@ -32,6 +34,9 @@ const { data: schedules } = useSchedules()
 
 const search = ref((route.query.q as string) || '')
 const tagFilter = computed(() => (route.query.tag as string) || '')
+const { favorites, available: favoritesAvailable } = useFavorites()
+/** `?favorites=1`: only the jobs this user has starred. In the URL like `tag`. */
+const favoritesOnly = computed(() => route.query.favorites === '1')
 
 const selectedKey = computed(() => (route.params.jobKey as string | undefined) ?? undefined)
 
@@ -81,6 +86,7 @@ const rows = computed<Row[]>(() => {
   return (jobs.value ?? [])
     .filter((job) => {
       if (tagFilter.value && !(job.tags ?? []).includes(tagFilter.value)) return false
+      if (favoritesOnly.value && !favorites.value.has(job.job_key)) return false
       if (!needle) return true
       return (
         job.job_key.toLowerCase().includes(needle) ||
@@ -220,6 +226,19 @@ function ruleOf(row: Row): string {
         aria-label="Clear the tag filter"
         @click="setQuery({ tag: undefined })"
       />
+      <UButton
+        v-if="favoritesAvailable"
+        icon="i-lucide-star"
+        :variant="favoritesOnly ? 'subtle' : 'ghost'"
+        color="neutral"
+        size="sm"
+        :aria-pressed="favoritesOnly"
+        title="Show only the jobs you have starred"
+        data-testid="jobs-favorites-only"
+        @click="setQuery({ favorites: favoritesOnly ? undefined : '1' })"
+      >
+        Favorites
+      </UButton>
 
       <div class="ml-auto flex items-center gap-3">
         <RouterLink
@@ -341,6 +360,7 @@ function ruleOf(row: Row): string {
               <td class="max-w-[20rem] px-[var(--cq-cell-x)] py-1.5">
                 <span class="flex min-w-0 items-center gap-1.5">
                   <span class="truncate font-mono text-primary">{{ row.job.job_key }}</span>
+                  <FavoriteButton :job-key="row.job.job_key" />
                   <!-- Dispatch priority (#826), only when it is not the default. -->
                   <UBadge
                     v-if="row.job.priority"

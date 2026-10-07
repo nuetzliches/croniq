@@ -16,6 +16,7 @@ import type { JobDefinition, TriggerDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { renderJobDsl } from '~/lib/render-dsl'
 import ConfirmModal from '~/components/ConfirmModal.vue'
+import FavoriteButton from '~/components/FavoriteButton.vue'
 import { useActionError } from '~/composables/useActionError'
 
 /**
@@ -255,6 +256,7 @@ const deadLetterFacts = computed(() => {
         :state="state?.status ?? (job.is_active ? 'active' : 'disabled')"
       />
       <span class="min-w-0 flex-1 truncate font-mono text-sm text-primary">{{ jobKey }}</span>
+      <FavoriteButton :job-key="jobKey" />
       <UButton
         icon="i-lucide-x"
         color="neutral"

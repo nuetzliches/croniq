@@ -40,12 +40,14 @@ describe('forgetLegacyTokens', () => {
     // the cutover (#697). Purging by prefix would have taken them too.
     localStorage.setItem('croniq_theme', 'dark')
     localStorage.setItem('croniq_sidebar', 'collapsed')
+    localStorage.setItem('croniq_live_favorites_first', '0')
 
     const { forgetLegacyTokens } = await import('./session')
     forgetLegacyTokens()
 
     expect(localStorage.getItem('croniq_theme')).toBe('dark')
     expect(localStorage.getItem('croniq_sidebar')).toBe('collapsed')
+    expect(localStorage.getItem('croniq_live_favorites_first')).toBe('0')
   })
 
   it('does nothing and throws nothing when there is nothing to remove', async () => {

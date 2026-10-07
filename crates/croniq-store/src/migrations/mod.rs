@@ -95,6 +95,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("030_maintenance_active_since.sql"),
     ),
     ("031_job_notes", include_str!("031_job_notes.sql")),
+    (
+        "032_user_favorite_jobs",
+        include_str!("032_user_favorite_jobs.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -925,5 +929,55 @@ mod tests {
             .unwrap();
         assert_eq!(kind, "ack");
         assert_eq!(author, "Anna");
+    }
+
+    #[test]
+    fn migration_032_favorites_are_per_user_and_go_with_the_user() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        apply_through(&conn, "031_job_notes").unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "032_user_favorite_jobs")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+        // Idempotent: a second run is a no-op, not an error.
+        conn.execute_batch(sql).unwrap();
+
+        for (id, name) in [(uuid_str(1), "anna"), (uuid_str(2), "ben")] {
+            conn.execute(
+                "INSERT INTO users (user_id, username, role, is_active, created_at, updated_at)
+                 VALUES (?1, ?2, 'operator', 1, '2026-10-07T00:00:00+00:00', '2026-10-07T00:00:00+00:00')",
+                [id, name.to_string()],
+            )
+            .unwrap();
+        }
+        let star = |user: &str, job: &str| {
+            conn.execute(
+                "INSERT INTO user_favorite_jobs (user_id, job_key, created_at)
+                 VALUES (?1, ?2, '2026-10-07T08:00:00Z')",
+                [user, job],
+            )
+        };
+
+        // A job key need not name an existing job: no FK on it.
+        star(&uuid_str(1), "mail:send").unwrap();
+        star(&uuid_str(2), "mail:send").unwrap();
+        // One star per user and job.
+        assert!(star(&uuid_str(1), "mail:send").is_err());
+        // Only a real user can star.
+        assert!(star(&uuid_str(9), "mail:send").is_err());
+
+        conn.execute("DELETE FROM users WHERE user_id = ?1", [uuid_str(1)])
+            .unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT user_id FROM user_favorite_jobs")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, vec![uuid_str(2)]);
     }
 }

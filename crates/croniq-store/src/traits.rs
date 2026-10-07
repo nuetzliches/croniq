@@ -711,6 +711,24 @@ pub trait NoteStore {
     fn delete_note(&self, id: Uuid) -> Result<bool, StoreError>;
 }
 
+/// Jobs a user has starred (migration 032). Per user, keyed by job key.
+pub trait FavoriteStore {
+    /// The user's starred job keys, sorted by key.
+    fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError>;
+
+    /// Star `job_key` for the user. Starring it again is a no-op, so the
+    /// first `created_at` stands. The user must exist.
+    fn add_favorite(
+        &self,
+        user_id: &str,
+        job_key: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    /// Returns `Ok(true)` when a star was removed, `Ok(false)` when none existed.
+    fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError>;
+}
+
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
@@ -748,5 +766,6 @@ pub trait Store:
     + AlertStore
     + MaintenanceStore
     + NoteStore
+    + FavoriteStore
 {
 }

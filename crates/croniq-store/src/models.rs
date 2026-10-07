@@ -262,6 +262,10 @@ pub struct ExecutionFilter {
     /// is right for a search box and wrong for a deep link. Wildcards in the
     /// needle are escaped, so `%` and `_` match themselves.
     pub job_key_contains: Option<String>,
+    /// Exact job keys, any of which matches — the Runs screen's "favorites
+    /// only". `None` is no filter; `Some(empty)` matches nothing, so a user
+    /// with no favorites gets an empty list rather than every run.
+    pub job_keys: Option<Vec<String>>,
     /// Match any of these states; empty means no state filter. A set rather
     /// than one value so the Runs screen can show, say, `queued` and `claimed`
     /// together without two requests.

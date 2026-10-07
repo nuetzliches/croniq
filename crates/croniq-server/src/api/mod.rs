@@ -12,6 +12,7 @@ pub mod events_sse;
 pub mod execution_logs;
 pub mod executions;
 pub mod executions_sse;
+pub mod favorites;
 pub mod hardening;
 pub mod invitations;
 pub mod job_sync;
@@ -756,6 +757,12 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             get(pat::handle_list).post(pat::handle_create),
         )
         .route("/v1/users/me/tokens/{id}", delete(pat::handle_revoke))
+        // Favorite jobs (self-service)
+        .route("/v1/users/me/favorites", get(favorites::handle_list))
+        .route(
+            "/v1/users/me/favorites/{job_key}",
+            put(favorites::handle_add).delete(favorites::handle_remove),
+        )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
@@ -2133,11 +2140,47 @@ async fn handle_list_executions(
         until_id: params
             .get("until_id")
             .and_then(|v| uuid::Uuid::parse_str(v).ok()),
+        job_keys: favorites_filter(store, &ctx, params.get("favorites"))?,
     };
     let executions = store
         .list_executions(&filter)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     Ok(Json(serde_json::to_value(&executions).unwrap_or_default()))
+}
+
+/// The Runs screen's "favorites only": `favorites=1` (or `true`) narrows the
+/// list to the jobs the calling user has starred. Any other value, or none,
+/// is no filter.
+///
+/// Refused rather than ignored for a caller with no user behind it, for the
+/// reason `state` is: dropping the flag widens "my few jobs" to "every run",
+/// and the answer would still look like a normal list.
+#[allow(clippy::result_large_err)]
+fn favorites_filter(
+    store: &crate::store::DynStore,
+    ctx: &CallerContext,
+    raw: Option<&String>,
+) -> Result<Option<Vec<String>>, axum::response::Response> {
+    use axum::response::IntoResponse;
+
+    let on = raw.is_some_and(|v| matches!(v.trim(), "1" | "true"));
+    if !on {
+        return Ok(None);
+    }
+    let Some(user_id) = ctx.user_id.as_deref() else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(calendars::ValidationError {
+                error: "favorites_requires_user",
+                message: "favorites belong to a user; this credential has none".into(),
+            }),
+        )
+            .into_response());
+    };
+    store
+        .list_favorites(user_id)
+        .map(Some)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// `GET /health`

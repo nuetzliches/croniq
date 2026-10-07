@@ -133,6 +133,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("029_concurrency_group", PG_MIGRATION_029),
     ("030_maintenance_active_since", PG_MIGRATION_030),
     ("031_job_notes", PG_MIGRATION_031),
+    ("032_user_favorite_jobs", PG_MIGRATION_032),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -319,6 +320,17 @@ CREATE INDEX IF NOT EXISTS idx_job_notes_job_created
     ON job_notes(job_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_job_notes_execution
     ON job_notes(execution_id);
+"#;
+
+// Jobs a user has starred. Mirrors migrations/032_user_favorite_jobs.sql —
+// see there for why job_key carries no foreign key.
+const PG_MIGRATION_032: &str = r#"
+CREATE TABLE IF NOT EXISTS user_favorite_jobs (
+    user_id    TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    job_key    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, job_key)
+);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -898,6 +910,13 @@ impl ExecutionStore for PgStore {
             // the same way (issue #753).
             params.push(Box::new(like_contains(needle)));
             sql.push_str(&format!(" AND job_key ILIKE ${idx} ESCAPE '\\'"));
+            idx += 1;
+        }
+        if let Some(ref keys) = filter.job_keys {
+            // `= ANY` of an empty array is false, so no favorites means no
+            // rows, as the filter documents.
+            params.push(Box::new(keys.clone()));
+            sql.push_str(&format!(" AND job_key = ANY(${idx})"));
             idx += 1;
         }
         if !filter.states.is_empty() {
@@ -3139,6 +3158,47 @@ impl NoteStore for PgStore {
         let mut db = self.client.lock().unwrap();
         let removed = db
             .execute("DELETE FROM job_notes WHERE id = $1", &[&id])
+            .map_err(map_err)?;
+        Ok(removed > 0)
+    }
+}
+
+impl FavoriteStore for PgStore {
+    fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                "SELECT job_key FROM user_favorite_jobs WHERE user_id = $1 ORDER BY job_key",
+                &[&user_id],
+            )
+            .map_err(map_err)?;
+        Ok(rows.iter().map(|r| r.get(0)).collect())
+    }
+
+    fn add_favorite(
+        &self,
+        user_id: &str,
+        job_key: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        db.execute(
+            "INSERT INTO user_favorite_jobs (user_id, job_key, created_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, job_key) DO NOTHING",
+            &[&user_id, &job_key, &at],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let removed = db
+            .execute(
+                "DELETE FROM user_favorite_jobs WHERE user_id = $1 AND job_key = $2",
+                &[&user_id, &job_key],
+            )
             .map_err(map_err)?;
         Ok(removed > 0)
     }

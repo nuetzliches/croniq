@@ -180,6 +180,10 @@ export interface JobSchedule {
  * `pinned` holds a lane at a sort key other than its next fire: the fire it
  * has just had, while its run passes "now", so it does not drop out from under
  * the eye the moment its job fires. The component decides how long.
+ *
+ * `favorites`, when given, puts the user's starred jobs ahead of the rest;
+ * within each group the order above applies. With the card collapsed to
+ * `COLLAPSED_LANES`, that is what keeps the jobs someone watches in view.
  */
 export function buildLanes(
   runs: readonly LiveRun[],
@@ -188,6 +192,7 @@ export function buildLanes(
   windowMs: number,
   order: LaneOrder = 'name',
   pinned?: ReadonlyMap<string, number>,
+  favorites?: ReadonlySet<string>,
 ): { lanes: Lane[] } {
   const from = now - windowMs
   const byJob = new Map<string, Lane>()
@@ -238,9 +243,9 @@ export function buildLanes(
 
   const soonest = (l: Lane) => pinned?.get(l.jobKey) ?? (l.next === null ? Infinity : l.next)
   const byName = (a: Lane, b: Lane) => a.jobKey.localeCompare(b.jobKey)
-  const lanes = [...byJob.values()].sort(
-    order === 'next' ? (a, b) => soonest(a) - soonest(b) || byName(a, b) : byName,
-  )
+  const within = order === 'next' ? (a: Lane, b: Lane) => soonest(a) - soonest(b) || byName(a, b) : byName
+  const starred = (l: Lane) => (favorites?.has(l.jobKey) ? 0 : 1)
+  const lanes = [...byJob.values()].sort((a, b) => starred(a) - starred(b) || within(a, b))
   return { lanes }
 }
 

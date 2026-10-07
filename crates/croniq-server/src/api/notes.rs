@@ -14,6 +14,7 @@ use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_store::models::{JobNote, NoteFilter, NoteKind};
+use croniq_store::traits::StoreError;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -191,7 +192,10 @@ pub async fn handle_create(
             }
         }
         None => {
-            if !job_exists(&state, store, &job_key).await? {
+            if !job_exists(&state, store, &job_key)
+                .await
+                .map_err(internal)?
+            {
                 return Err(StatusCode::NOT_FOUND.into());
             }
         }
@@ -259,17 +263,13 @@ fn audit_target(note: &JobNote) -> &'static str {
 }
 
 /// Whether `job_key` names a job the API knows: a stored definition or one
-/// the Croniqfile declares.
-async fn job_exists(
+/// the Croniqfile declares. Also used by the favorites endpoints.
+pub(crate) async fn job_exists(
     state: &ServerState,
     store: &DynStore,
     job_key: &str,
-) -> Result<bool, NoteError> {
-    if store
-        .get_job_definition(job_key)
-        .map_err(internal)?
-        .is_some()
-    {
+) -> Result<bool, StoreError> {
+    if store.get_job_definition(job_key)?.is_some() {
         return Ok(true);
     }
     if let Some(dsl) = state.dsl_jobs.as_ref() {

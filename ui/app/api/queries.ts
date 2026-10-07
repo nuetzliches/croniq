@@ -20,6 +20,7 @@ import type {
   Execution,
   ExecutionLogEntry,
   FailureHeatmap,
+  Favorites,
   ForecastResponse,
   HealthResponse,
   JobDefinition,
@@ -266,6 +267,12 @@ export interface ExecutionFilters {
    * size — the same page comes back forever (issue #654).
    */
   until_id?: string
+  /**
+   * Only runs of the jobs the signed-in user has starred. Resolved by the
+   * server, so paging stays honest: filtering a 200-row page in the browser
+   * would leave a handful of rows and a "Load older" that keeps finding none.
+   */
+  favorites?: boolean
 }
 
 /**
@@ -294,6 +301,7 @@ function executionQuery(active: ExecutionFilters): Record<string, string | numbe
   if (active.job_key_contains) query.job_key_contains = active.job_key_contains
   if (active.state) query.state = active.state
   if (active.runner_id) query.runner_id = active.runner_id
+  if (active.favorites) query.favorites = 1
   // Resolved here rather than by the caller: this runs on every fetch, so a
   // window expressed as a length slides instead of being pinned to first
   // render (issue #662).
@@ -373,6 +381,55 @@ export function useExecutionLogs(
     queryFn: () => apiGet<ExecutionLogEntry[]>(`/v1/executions/${toValue(id)}/logs`),
     enabled: authedAnd(() => Boolean(toValue(id))),
     refetchInterval: () => (finished.value ? false : 5_000),
+  })
+}
+
+/**
+ * The jobs the signed-in user has starred.
+ *
+ * Favorites belong to a user, so an API-key session gets a 403 here; the
+ * query then simply has no data and the stars stay hidden. Not polled: the
+ * only writer is this user, and their own mutations update the cache.
+ */
+export function useFavoriteJobs() {
+  return useQuery({
+    queryKey: ['favorites'],
+    queryFn: () => apiGet<Favorites>('/v1/users/me/favorites'),
+    enabled: authedAnd(),
+    staleTime: 60_000,
+  })
+}
+
+/**
+ * Star or unstar one job.
+ *
+ * Optimistic: the star flips on click and flips back if the server refuses,
+ * because a toggle that waits a round trip to change reads as a missed click.
+ * Runs are refetched afterwards so a "favorites only" list follows the change.
+ */
+export function useSetFavorite() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ jobKey, favorite }: { jobKey: string; favorite: boolean }) => {
+      const path = `/v1/users/me/favorites/${encodeURIComponent(jobKey)}`
+      return favorite ? apiPut<void>(path) : apiDelete<void>(path)
+    },
+    onMutate: async ({ jobKey, favorite }) => {
+      await queryClient.cancelQueries({ queryKey: ['favorites'] })
+      const previous = queryClient.getQueryData<Favorites>(['favorites'])
+      const keys = new Set(previous?.job_keys ?? [])
+      if (favorite) keys.add(jobKey)
+      else keys.delete(jobKey)
+      queryClient.setQueryData<Favorites>(['favorites'], { job_keys: [...keys].sort() })
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(['favorites'], context.previous)
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['favorites'] })
+      void queryClient.invalidateQueries({ queryKey: ['executions'] })
+    },
   })
 }
 

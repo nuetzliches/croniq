@@ -327,6 +327,19 @@ impl ExecutionStore for SqliteStore {
                 param_values.len()
             ));
         }
+        if let Some(ref keys) = filter.job_keys {
+            if keys.is_empty() {
+                // No favorites means no rows, not every row.
+                sql.push_str(" AND 1=0");
+            } else {
+                let mut marks = Vec::with_capacity(keys.len());
+                for key in keys {
+                    param_values.push(Box::new(key.clone()));
+                    marks.push(format!("?{}", param_values.len()));
+                }
+                sql.push_str(&format!(" AND job_key IN ({})", marks.join(", ")));
+            }
+        }
         if !filter.states.is_empty() {
             let mut marks = Vec::with_capacity(filter.states.len());
             for state in &filter.states {
@@ -2737,6 +2750,47 @@ impl NoteStore for SqliteStore {
             .execute(
                 "DELETE FROM job_notes WHERE id = ?1",
                 params![id.to_string()],
+            )
+            .map_err(map_err)?;
+        Ok(removed > 0)
+    }
+}
+
+impl FavoriteStore for SqliteStore {
+    fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT job_key FROM user_favorite_jobs WHERE user_id = ?1 ORDER BY job_key")
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![user_id], |r| r.get(0))
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn add_favorite(
+        &self,
+        user_id: &str,
+        job_key: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO user_favorite_jobs (user_id, job_key, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT (user_id, job_key) DO NOTHING",
+            params![user_id, job_key, dt_to_sql(&at)],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let removed = conn
+            .execute(
+                "DELETE FROM user_favorite_jobs WHERE user_id = ?1 AND job_key = ?2",
+                params![user_id, job_key],
             )
             .map_err(map_err)?;
         Ok(removed > 0)

@@ -1541,6 +1541,27 @@ that run — what was learned about a failure stays readable on the job's
 too. Nothing prunes notes automatically; delete them through the dashboard or
 `DELETE /v1/notes/{id}`.
 
+## Favorite jobs
+
+Each user can star jobs — in the job detail or on the Jobs list. The live
+timeline on the dashboard sorts starred jobs first (switchable per browser
+with the star button in its header), and the Runs and Jobs screens have a
+"Favorites" filter. The Runs filter is `GET /v1/executions?favorites=1`,
+resolved on the server, so paging back through history stays complete.
+
+Favorites are stored per user (`user_favorite_jobs`, migration 032) and
+managed through `GET /v1/users/me/favorites` and
+`PUT`/`DELETE /v1/users/me/favorites/{job_key}`, all needing `jobs:read`. An
+API key or API-client token has no user and therefore no favorites: the
+endpoints answer `403`, and `favorites=1` on the executions list answers `400`
+instead of silently listing everything.
+
+A star belongs to the user, not to the job. It is keyed by job key, so it is
+untouched by a Croniqfile reload, survives adopting the job, and comes back
+if a deleted job is declared again; it is removed when the user is deleted.
+Starring is not audit-logged — it changes nobody else's view. A user may
+star at most 500 jobs.
+
 ## Maintenance mode
 
 `PUT /v1/maintenance` (admin) freezes dispatch: the scheduler emits no new

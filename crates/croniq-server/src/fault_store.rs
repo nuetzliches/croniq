@@ -324,4 +324,12 @@ impl NoteStore for FaultStore {
     }
 }
 
+impl FavoriteStore for FaultStore {
+    delegate! {
+        list_favorites(user_id: &str) -> Vec<String>;
+        add_favorite(user_id: &str, job_key: &str, at: DateTime<Utc>) -> ();
+        remove_favorite(user_id: &str, job_key: &str) -> bool;
+    }
+}
+
 impl croniq_store::traits::Store for FaultStore {}

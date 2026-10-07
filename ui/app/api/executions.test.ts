@@ -118,6 +118,19 @@ describe('execution list requests', () => {
     expect(query.get('job_key_contains')).toBe('storage')
   })
 
+  it('asks the server for favorites only when the filter is on', async () => {
+    // The server resolves the user's favorites, so a page of 200 is 200 of
+    // their runs rather than a filtered remnant of everyone's.
+    const { useExecutions } = await import('./queries')
+    useExecutions(() => ({ favorites: true }))
+    await queries.at(-1)!.queryFn()
+    expect(lastQuery().get('favorites')).toBe('1')
+
+    useExecutions(() => ({ favorites: false }))
+    await queries.at(-1)!.queryFn()
+    expect(lastQuery().get('favorites')).toBeNull()
+  })
+
   it('fetchExecutions carries the full keyset cursor', async () => {
     // Paging backwards goes through this rather than through the polled query,
     // so that the polled one stays on the newest page (issue #662).

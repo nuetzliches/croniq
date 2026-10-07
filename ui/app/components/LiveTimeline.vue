@@ -4,6 +4,7 @@ import { useElementSize, useIntervalFn, usePreferredReducedMotion } from '@vueus
 import { useRouter } from 'vue-router'
 import { useForecast, useJobStates, useJobs, useLiveForecast } from '~/api/queries'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
+import { useFavorites } from '~/composables/useFavorites'
 import { formatAbsolute, formatDuration, formatRelative, stateLabel } from '~/lib/format'
 import {
   COLLAPSED_LANES,
@@ -59,6 +60,7 @@ const RANGE_KEY = 'croniq_live_range'
 const LEGACY_WINDOW_KEY = 'croniq_live_window'
 const ORDER_KEY = 'croniq_live_order'
 const EXPANDED_KEY = 'croniq_live_expanded'
+const FAVORITES_FIRST_KEY = 'croniq_live_favorites_first'
 
 /** Per-browser conveniences: a blocked storage just means the defaults. */
 function readStored(key: string): string | null {
@@ -108,6 +110,15 @@ const laneOrder = ref<LaneOrder>(readStored(ORDER_KEY) === 'next' ? 'next' : 'na
 watch(laneOrder, (value) => writeStored(ORDER_KEY, value))
 const expanded = ref(readStored(EXPANDED_KEY) === '1')
 watch(expanded, (value) => writeStored(EXPANDED_KEY, value ? '1' : '0'))
+/**
+ * Starred jobs on top, on by default: starring a job is how someone says
+ * "this is the one I watch", and the collapsed card shows ten lanes. Which
+ * jobs are starred is the user's and lives on the server; whether to sort by
+ * it is this browser's, like the order beside it.
+ */
+const favoritesFirst = ref(readStored(FAVORITES_FIRST_KEY) !== '0')
+watch(favoritesFirst, (value) => writeStored(FAVORITES_FIRST_KEY, value ? '1' : '0'))
+const { favorites, available: favoritesAvailable } = useFavorites()
 
 const { runs, connected, received, unavailable, offset } = useExecutionsStream()
 const { data: jobStates, refetch: refetchJobStates } = useJobStates()
@@ -286,6 +297,7 @@ const layout = computed(() =>
     pastMs.value,
     laneOrder.value,
     pinned.value,
+    favoritesFirst.value ? favorites.value : undefined,
   ),
 )
 
@@ -656,6 +668,18 @@ onBeforeUnmount(stopMotion)
           data-testid="live-order"
           @click="laneOrder = laneOrder === 'name' ? 'next' : 'name'"
         />
+        <UButton
+          v-if="favoritesAvailable"
+          size="xs"
+          :variant="favoritesFirst ? 'subtle' : 'ghost'"
+          color="neutral"
+          icon="i-lucide-star"
+          :aria-pressed="favoritesFirst"
+          aria-label="Favorites first"
+          :title="favoritesFirst ? 'Starred jobs first — switch off' : 'Put starred jobs first'"
+          data-testid="live-favorites-first"
+          @click="favoritesFirst = !favoritesFirst"
+        />
       </div>
     </div>
 
@@ -690,6 +714,15 @@ onBeforeUnmount(stopMotion)
               :style="{ top: `${row * LANE_HEIGHT}px` }"
               :data-held="held || undefined"
             >
+              <!-- A glyph, not a component: this list re-renders with every
+                   stream frame, so lane labels stay plain markup. -->
+              <span
+                v-if="favorites.has(lane.jobKey)"
+                class="-mr-1 shrink-0 text-warning"
+                title="Favorite"
+                aria-label="Favorite"
+                data-testid="live-lane-favorite"
+              >★</span>
               <a
                 :href="`/jobs/${encodeURIComponent(lane.jobKey)}`"
                 :data-route="`/jobs/${encodeURIComponent(lane.jobKey)}`"

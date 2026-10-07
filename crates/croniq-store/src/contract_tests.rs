@@ -3479,3 +3479,85 @@ fn notes_survive_the_retention_prune_of_their_run() {
         "the note keeps naming the run it was written about"
     );
 }
+
+// ─── FavoriteStore ───
+
+#[test]
+fn favorites_are_idempotent_sorted_and_per_user() {
+    let store = create_memory_store().unwrap();
+    let anna = make_user("anna", Role::Operator);
+    let ben = make_user("ben", Role::Operator);
+    store.users_create(&anna).unwrap();
+    store.users_create(&ben).unwrap();
+
+    store
+        .add_favorite(&anna.user_id, "report:daily", now())
+        .unwrap();
+    store
+        .add_favorite(&anna.user_id, "mail:send", now())
+        .unwrap();
+    store
+        .add_favorite(&anna.user_id, "mail:send", now())
+        .unwrap();
+    store.add_favorite(&ben.user_id, "backup", now()).unwrap();
+
+    assert_eq!(
+        store.list_favorites(&anna.user_id).unwrap(),
+        vec!["mail:send", "report:daily"]
+    );
+    assert_eq!(store.list_favorites(&ben.user_id).unwrap(), vec!["backup"]);
+
+    assert!(store.remove_favorite(&anna.user_id, "mail:send").unwrap());
+    assert!(
+        !store.remove_favorite(&anna.user_id, "mail:send").unwrap(),
+        "a second remove finds nothing"
+    );
+    assert_eq!(
+        store.list_favorites(&anna.user_id).unwrap(),
+        vec!["report:daily"]
+    );
+}
+
+#[test]
+fn favorites_go_with_their_user() {
+    let store = create_memory_store().unwrap();
+    let anna = make_user("anna", Role::Operator);
+    store.users_create(&anna).unwrap();
+    store
+        .add_favorite(&anna.user_id, "mail:send", now())
+        .unwrap();
+
+    store.users_delete(&anna.user_id).unwrap();
+    assert!(store.list_favorites(&anna.user_id).unwrap().is_empty());
+}
+
+#[test]
+fn list_executions_by_job_keys() {
+    let store = create_memory_store().unwrap();
+    for key in ["mail:send", "mail:send-retry", "report:daily"] {
+        store.create_execution(&make_execution(key, now())).unwrap();
+    }
+    let keys_for = |job_keys: Option<Vec<String>>| -> Vec<String> {
+        let mut keys: Vec<String> = store
+            .list_executions(&ExecutionFilter {
+                job_keys,
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|e| e.job_key)
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    // Exact keys only: `mail:send` is not a prefix match for its retry job.
+    assert_eq!(
+        keys_for(Some(vec!["mail:send".into(), "report:daily".into()])),
+        vec!["mail:send", "report:daily"]
+    );
+    // An empty set matches nothing — a user with no favorites sees no runs.
+    assert!(keys_for(Some(Vec::new())).is_empty());
+    // No set is no filter.
+    assert_eq!(keys_for(None).len(), 3);
+}

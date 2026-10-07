@@ -1021,4 +1021,26 @@ impl NoteStore for PgStoreHandle {
     }
 }
 
+impl FavoriteStore for PgStoreHandle {
+    fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError> {
+        let user_id = user_id.to_string();
+        self.call(move |s| s.list_favorites(&user_id))
+    }
+
+    fn add_favorite(
+        &self,
+        user_id: &str,
+        job_key: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let (user_id, job_key) = (user_id.to_string(), job_key.to_string());
+        self.call(move |s| s.add_favorite(&user_id, &job_key, at))
+    }
+
+    fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError> {
+        let (user_id, job_key) = (user_id.to_string(), job_key.to_string());
+        self.call(move |s| s.remove_favorite(&user_id, &job_key))
+    }
+}
+
 impl Store for PgStoreHandle {}

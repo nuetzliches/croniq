@@ -143,3 +143,42 @@ test.describe('the server refusing something', () => {
     await expect(app.getByText(key, { exact: true })).toHaveCount(0)
   })
 })
+
+test.describe('favorite jobs', () => {
+  /**
+   * A star set in a job's detail shows on the live timeline and drives the
+   * Runs screen's "Favorites only", which travels in the URL. Rows are not
+   * asserted — the first demo run is up to a minute away on a fresh stack;
+   * the filtering itself is pinned against the endpoint.
+   *
+   * The star is removed at the end: favorites are per user and persist, and
+   * this suite shares one user across specs.
+   */
+  test('a starred job shows on the timeline and filters the runs', async ({ app }) => {
+    await app.goto('/jobs/demo%3Aheartbeat')
+    const star = app.getByRole('complementary', { name: 'Job detail' }).getByTestId('favorite-toggle')
+    await expect(star).toHaveAttribute('aria-pressed', 'false', { timeout: 20_000 })
+    await star.click()
+    await expect(star).toHaveAttribute('aria-pressed', 'true')
+
+    try {
+      await app.goto('/')
+      await expect(app.getByTestId('live-favorites-first')).toHaveAttribute('aria-pressed', 'true', {
+        timeout: 20_000,
+      })
+      await expect(app.getByTestId('live-lane-favorite').first()).toBeVisible()
+
+      await app.goto('/executions')
+      await app.getByTestId('runs-favorites-only').click()
+      await expect(app).toHaveURL(/favorites=1/)
+      await app.reload()
+      await expect(app.getByTestId('runs-favorites-only')).toHaveAttribute('aria-pressed', 'true')
+    } finally {
+      await app.goto('/jobs/demo%3Aheartbeat')
+      const again = app.getByRole('complementary', { name: 'Job detail' }).getByTestId('favorite-toggle')
+      await expect(again).toHaveAttribute('aria-pressed', 'true', { timeout: 20_000 })
+      await again.click()
+      await expect(again).toHaveAttribute('aria-pressed', 'false')
+    }
+  })
+})

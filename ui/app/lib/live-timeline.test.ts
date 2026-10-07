@@ -14,6 +14,7 @@ import {
   formatOffset,
   formatSpan,
   looksBack,
+  type LaneOrder,
   type LiveRun,
 } from './live-timeline'
 
@@ -141,6 +142,23 @@ describe('buildLanes ordering', () => {
     ]
     const { lanes } = buildLanes([], schedule, T, 60_000, 'next')
     expect(lanes.map((l) => l.jobKey)).toEqual(['soon', 'later', 'manual', 'paused'])
+  })
+
+  it('puts favorites first, each group in the chosen order', () => {
+    const schedule = [
+      { job_key: 'a:report', status: 'active', next_fire_at: iso(60_000), overdue: false },
+      { job_key: 'b:poll', status: 'active', next_fire_at: iso(1_000), overdue: false },
+      { job_key: 'c:backup', status: 'active', next_fire_at: iso(120_000), overdue: false },
+      { job_key: 'd:mail', status: 'active', next_fire_at: iso(30_000), overdue: false },
+    ]
+    const favorites = new Set(['c:backup', 'd:mail'])
+    const keys = (order: LaneOrder, starred?: ReadonlySet<string>) =>
+      buildLanes([], schedule, T, 60_000, order, undefined, starred).lanes.map((l) => l.jobKey)
+    expect(keys('name', favorites)).toEqual(['c:backup', 'd:mail', 'a:report', 'b:poll'])
+    expect(keys('next', favorites)).toEqual(['d:mail', 'c:backup', 'b:poll', 'a:report'])
+    // No set, or an empty one, is the plain order.
+    expect(keys('name')).toEqual(['a:report', 'b:poll', 'c:backup', 'd:mail'])
+    expect(keys('name', new Set())).toEqual(['a:report', 'b:poll', 'c:backup', 'd:mail'])
   })
 })
 

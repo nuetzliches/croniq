@@ -8,6 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Favorite jobs.** A user can star the jobs they keep an eye on, in the
+  job detail or on the Jobs list.
+  - The live timeline puts starred jobs first (a star button beside the lane
+    order switches it off) and marks their lanes with a ★.
+  - The Runs screen has "Favorites only", carried in the URL as
+    `?favorites=1`; the Jobs list has the same filter.
+  - Favorites are per user and stored on the server, so they follow the
+    operator to another browser. An API key has none.
+  - New endpoints `GET /v1/users/me/favorites` and
+    `PUT`/`DELETE /v1/users/me/favorites/{job_key}` (`jobs:read`), and a
+    `favorites=1` filter on `GET /v1/executions`, which answers `400` for a
+    credential with no user rather than every run.
+  - A star is the operator's view state, not part of the job, so the
+    Croniqfile does not own it (ADR-0006): it is keyed by job key, survives
+    adopting the job and a reload, and goes when the user is deleted.
+  - Migration 032 adds the `user_favorite_jobs` table.
+
 - **The dashboard shows a job's dispatch priority.**
   - The Jobs list puts a `high` or `low` badge beside the key.
   - The job detail has a "Priority" row saying what it does.

@@ -5,6 +5,7 @@ import { fetchExecutions, useExecutions, useNotes } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
+import { useFavorites } from '~/composables/useFavorites'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 import { notesByExecution } from '~/lib/notes'
 
@@ -52,7 +53,14 @@ const filters = computed(() => ({
   job_key: (route.query.job_key as string) || '',
   runner_id: (route.query.runner_id as string) || '',
   window: (route.query.window as string) || '',
+  /**
+   * `1`: only runs of the jobs this user has starred. The server resolves the
+   * set, so paging and the row count stay true to the filter.
+   */
+  favorites: route.query.favorites === '1' ? '1' : '',
 }))
+
+const { favorites, available: favoritesAvailable } = useFavorites()
 
 /**
  * The time window, as a length rather than two instants.
@@ -123,6 +131,7 @@ const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   job_key: filters.value.job_key || undefined,
   job_key_contains: typedSearch.value || undefined,
   runner_id: filters.value.runner_id || undefined,
+  favorites: filters.value.favorites === '1',
   since_ms: sinceMs.value,
   limit: PAGE_SIZE,
 }))
@@ -192,6 +201,7 @@ async function loadOlder() {
       job_key: filters.value.job_key || undefined,
       job_key_contains: typedSearch.value || undefined,
       runner_id: filters.value.runner_id || undefined,
+      favorites: filters.value.favorites === '1',
       since_ms: sinceMs.value,
       until: oldest.created_at,
       until_id: oldest.id,
@@ -215,6 +225,7 @@ watch(
     filters.value.job_key,
     filters.value.runner_id,
     filters.value.window,
+    filters.value.favorites,
   ],
   () => {
     filterGeneration += 1
@@ -226,7 +237,10 @@ watch(
 const selectedId = computed(() => (route.params.id as string | undefined) ?? undefined)
 const selected = computed(() => rows.value.find((row) => row.id === selectedId.value) ?? null)
 
-function setFilter(key: 'state' | 'q' | 'job_key' | 'runner_id' | 'window', value: string) {
+function setFilter(
+  key: 'state' | 'q' | 'job_key' | 'runner_id' | 'window' | 'favorites',
+  value: string,
+) {
   const query = { ...route.query }
   if (value) query[key] = value
   else delete query[key]
@@ -268,8 +282,14 @@ const hasFilters = computed(() =>
       filters.value.q ||
       filters.value.job_key ||
       filters.value.runner_id ||
-      filters.value.window,
+      filters.value.window ||
+      filters.value.favorites,
   ),
+)
+
+/** "Favorites only" with nothing starred is a different empty from a filter that misses. */
+const noFavoritesYet = computed(
+  () => filters.value.favorites === '1' && favoritesAvailable.value && favorites.value.size === 0,
 )
 
 // Labelled through `stateLabel` so the filter says what the pill says; the
@@ -420,6 +440,18 @@ function onKey(event: KeyboardEvent) {
         @update:model-value="(value: string) => setFilter('window', value ?? '')"
       />
       <UButton
+        v-if="favoritesAvailable || filters.favorites"
+        icon="i-lucide-star"
+        :variant="filters.favorites ? 'subtle' : 'ghost'"
+        color="neutral"
+        :aria-pressed="Boolean(filters.favorites)"
+        title="Show only runs of the jobs you have starred"
+        data-testid="runs-favorites-only"
+        @click="setFilter('favorites', filters.favorites ? '' : '1')"
+      >
+        Favorites only
+      </UButton>
+      <UButton
         v-if="showNextFailure"
         color="error"
         variant="subtle"
@@ -459,11 +491,19 @@ function onKey(event: KeyboardEvent) {
         <AppEmpty
           v-else-if="rows.length === 0"
           icon="i-lucide-list"
-          :title="hasFilters ? 'No runs match these filters' : 'No runs yet'"
+          :title="
+            noFavoritesYet
+              ? 'No favorite jobs yet'
+              : hasFilters
+                ? 'No runs match these filters'
+                : 'No runs yet'
+          "
           :description="
-            hasFilters
-              ? 'Nothing in the history matches. Clearing the filters shows everything.'
-              : 'Runs appear here as soon as a job fires. Trigger one from its job page to see it.'
+            noFavoritesYet
+              ? 'Star a job on the Jobs screen or in its detail, and its runs show up here.'
+              : hasFilters
+                ? 'Nothing in the history matches. Clearing the filters shows everything.'
+                : 'Runs appear here as soon as a job fires. Trigger one from its job page to see it.'
           "
         >
           <template

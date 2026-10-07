@@ -424,7 +424,7 @@ fn require_user_admin(ctx: &CallerContext) -> Result<(), StatusCode> {
 /// Require that the caller is a user (not an API key). Returns the
 /// user_id; this is the same value as `caller_id` for users but the
 /// explicit accessor makes intent clear.
-fn require_self_user(ctx: &CallerContext) -> Result<&str, StatusCode> {
+pub(crate) fn require_self_user(ctx: &CallerContext) -> Result<&str, StatusCode> {
     if ctx.caller_type != CallerType::User {
         return Err(StatusCode::FORBIDDEN);
     }

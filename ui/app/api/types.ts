@@ -275,6 +275,11 @@ export function isEnrollmentRequired(
 
 export type Role = 'admin' | 'operator' | 'viewer'
 
+/** `GET /v1/users/me/favorites` — the jobs the signed-in user has starred. */
+export interface Favorites {
+  job_keys: string[]
+}
+
 export interface User {
   user_id: string
   username: string

@@ -1308,6 +1308,16 @@ paths:
         - name: runner_id
           in: query
           schema: { type: string }
+        - name: favorites
+          in: query
+          description: >
+            `1` or `true`: only executions of the jobs the calling user has
+            starred (`/v1/users/me/favorites`). A user with no favorites gets
+            an empty list, not every execution. Any other value is no filter.
+            A credential with no user behind it (an API key, an API-client
+            token) is refused with `400 favorites_requires_user` rather than
+            answered with everything.
+          schema: { type: string, enum: ["1", "true"] }
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
@@ -1369,8 +1379,9 @@ paths:
                 items: { $ref: "#/components/schemas/Execution" }
         "400":
           description: >
-            `state` named no known execution state. The message lists the
-            accepted values.
+            `state` named no known execution state (the message lists the
+            accepted values), or `favorites=1` came from a credential with no
+            user (`favorites_requires_user`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InvalidStateError" }
@@ -3263,6 +3274,48 @@ paths:
       responses:
         "204": { description: Revoked }
         "404": { description: Not your token }
+
+  /v1/users/me/favorites:
+    get:
+      summary: List own favorite jobs
+      description: >-
+        The job keys the calling user has starred, sorted. Per user; an API
+        key or API-client token has none and gets `403`. Needs `jobs:read`.
+      responses:
+        "200":
+          description: Starred job keys
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_keys]
+                properties:
+                  job_keys:
+                    type: array
+                    items: { type: string }
+        "403": { description: "Not a user, or missing `jobs:read`" }
+
+  /v1/users/me/favorites/{job_key}:
+    parameters:
+      - { name: job_key, in: path, required: true, schema: { type: string } }
+    put:
+      summary: Star a job
+      description: >-
+        Idempotent. A new star needs the job to exist (a stored definition or
+        one the Croniqfile declares); re-starring one already starred always
+        succeeds. Keyed by job key, so a star survives the job being adopted
+        or deleted and declared again. At most 500 per user.
+      responses:
+        "204": { description: Starred }
+        "403": { description: "Not a user, or missing `jobs:read`" }
+        "404": { description: No such job }
+        "409": { description: "`too_many_favorites`: the user has 500 already" }
+    delete:
+      summary: Unstar a job
+      description: Idempotent; succeeds whether or not the job was starred or still exists.
+      responses:
+        "204": { description: Not starred (any more) }
+        "403": { description: "Not a user, or missing `jobs:read`" }
 
   # ─── PR-B1 Stats + Audit + Insights ─────────────────────────────────────
 
