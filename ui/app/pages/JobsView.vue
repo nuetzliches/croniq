@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { useJobStates, useJobs, useSchedules } from '~/api/queries'
 import type { JobDefinition, JobScheduleState, TriggerDefinition } from '~/api/types'
 import FavoriteButton from '~/components/FavoriteButton.vue'
+import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
+import { DETAIL_PANE_MIN_WIDTH, JOB_DETAIL_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Jobs — the configuration screen, and the one the audit hit hardest.
@@ -141,6 +144,11 @@ function close() {
 }
 
 const selected = computed(() => rows.value.find((row) => row.job.job_key === selectedKey.value))
+
+/** The detail's width: dragged by its left edge, remembered per browser. */
+const { jobDetailWidth } = storeToRefs(useUiStore())
+const splitEl = ref<HTMLElement | null>(null)
+const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, jobDetailWidth)
 /**
  * A deep-linked job that the current filters hide still opens: the detail
  * resolves against the unfiltered list, so a link from an alert or a ticket
@@ -269,7 +277,10 @@ function ruleOf(row: Row): string {
       </div>
     </div>
 
-    <div class="flex min-h-0 flex-1 gap-4">
+    <div
+      ref="splitEl"
+      class="flex min-h-0 flex-1 gap-1.5"
+    >
       <div class="cq-list min-w-0 flex-1">
         <AppLoading
           v-if="isPending"
@@ -427,16 +438,26 @@ function ruleOf(row: Row): string {
            re-rendering in place. Belt to the generation counter's braces
            inside the component (issue #663): a remount also resets the tab
            state and the copy button, which is what a reader expects from a
-           different job anyway. -->
-      <JobDetail
-        v-if="selectedKey"
-        :key="selectedKey"
-        :job="selectedJob"
-        :job-key="selectedKey"
-        :known-triggers="triggersByKey.get(selectedKey) ?? []"
-        class="w-[30rem] shrink-0"
-        @close="close"
-      />
+           different job anyway. The handle sits outside the key: its width
+           belongs to the screen, not to one job. -->
+      <template v-if="selectedKey">
+        <PaneResizer
+          v-model="jobDetailWidth"
+          :min="DETAIL_PANE_MIN_WIDTH"
+          :max="maxDetailWidth"
+          :default-width="JOB_DETAIL_DEFAULT_WIDTH"
+          label="Resize job detail"
+        />
+        <JobDetail
+          :key="selectedKey"
+          :job="selectedJob"
+          :job-key="selectedKey"
+          :known-triggers="triggersByKey.get(selectedKey) ?? []"
+          class="shrink-0"
+          :style="{ width: `${detailWidth}px` }"
+          @close="close"
+        />
+      </template>
     </div>
 
     <JobForm

@@ -2,7 +2,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
-import { DETAIL_PANE_DEFAULT_WIDTH, useUiStore } from './ui'
+import { DETAIL_PANE_DEFAULT_WIDTH, JOB_DETAIL_DEFAULT_WIDTH, useUiStore } from './ui'
 
 /**
  * Preferences written by the React dashboard, read by this one.
@@ -165,6 +165,20 @@ describe('ui store, the detail pane widths', () => {
 
     expect(localStorage.getItem('croniq_dead_letter_detail_width')).toBe('520')
     expect(localStorage.getItem('croniq_run_detail_width')).toBe('700')
+  })
+
+  it('starts the job detail at its own, wider default', async () => {
+    const ui = useUiStore()
+    expect(ui.jobDetailWidth).toBe(JOB_DETAIL_DEFAULT_WIDTH)
+
+    localStorage.setItem('croniq_job_detail_width', 'wide')
+    setActivePinia(createPinia())
+    expect(useUiStore().jobDetailWidth).toBe(JOB_DETAIL_DEFAULT_WIDTH)
+
+    const next = useUiStore()
+    next.jobDetailWidth = 600
+    await nextTick()
+    expect(localStorage.getItem('croniq_job_detail_width')).toBe('600')
   })
 
   it('keeps a stored width wider than any window, for the view to clamp', () => {

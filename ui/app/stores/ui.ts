@@ -29,9 +29,12 @@ const TIME_DISPLAY_KEY = 'croniq_time_display'
  */
 const RUN_DETAIL_WIDTH_KEY = 'croniq_run_detail_width'
 const DEAD_LETTER_DETAIL_WIDTH_KEY = 'croniq_dead_letter_detail_width'
+const JOB_DETAIL_WIDTH_KEY = 'croniq_job_detail_width'
 
 /** A detail pane's width until someone drags it — the old fixed `26rem`. */
 export const DETAIL_PANE_DEFAULT_WIDTH = 416
+/** The job detail's, which was `30rem`: it carries tabs and a schedule table. */
+export const JOB_DETAIL_DEFAULT_WIDTH = 480
 /** Narrower than this and a detail's header and toolbars start to wrap. */
 export const DETAIL_PANE_MIN_WIDTH = 320
 
@@ -122,9 +125,9 @@ function readTimeDisplay(): TimeDisplay {
  * clamps it at render time and leaves the stored value alone, and a width saved
  * on a wide monitor comes back when the browser is wide again.
  */
-function readPaneWidth(key: string): number {
+function readPaneWidth(key: string, fallback = DETAIL_PANE_DEFAULT_WIDTH): number {
   const stored = Number.parseInt(read(key) ?? '', 10)
-  return Number.isFinite(stored) && stored >= DETAIL_PANE_MIN_WIDTH ? stored : DETAIL_PANE_DEFAULT_WIDTH
+  return Number.isFinite(stored) && stored >= DETAIL_PANE_MIN_WIDTH ? stored : fallback
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -133,6 +136,7 @@ export const useUiStore = defineStore('ui', () => {
   const timeDisplay = ref<TimeDisplay>(readTimeDisplay())
   const runDetailWidth = ref<number>(readPaneWidth(RUN_DETAIL_WIDTH_KEY))
   const deadLetterDetailWidth = ref<number>(readPaneWidth(DEAD_LETTER_DETAIL_WIDTH_KEY))
+  const jobDetailWidth = ref<number>(readPaneWidth(JOB_DETAIL_WIDTH_KEY, JOB_DETAIL_DEFAULT_WIDTH))
 
   // Write the new shape back on boot, so a browser carrying a React-tree value
   // stops carrying it. The watchers below only fire on change, and a
@@ -166,6 +170,10 @@ export const useUiStore = defineStore('ui', () => {
     write(DEAD_LETTER_DETAIL_WIDTH_KEY, String(Math.round(width)))
   })
 
+  watch(jobDetailWidth, (width) => {
+    write(JOB_DETAIL_WIDTH_KEY, String(Math.round(width)))
+  })
+
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
@@ -197,6 +205,7 @@ export const useUiStore = defineStore('ui', () => {
     timeDisplay,
     runDetailWidth,
     deadLetterDetailWidth,
+    jobDetailWidth,
     toggleSidebar,
     toggleTimeDisplay,
     reapplyTheme,
