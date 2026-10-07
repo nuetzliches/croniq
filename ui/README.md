@@ -29,7 +29,7 @@ node ../scripts/dev-stack.mjs
 
 That starts `croniq-server` on `:4230` with a demo runner attached, and this
 dashboard on `:4231`. Add `--busy` for `Croniqfile.busy`'s fifty jobs instead
-of the demo's five. That is the profile for work on the live views, which need
+of the demo's six. That is the profile for work on the live views, which need
 more lanes than fit. See the script's header for prerequisites and for the
 environment variables that move the ports when something else on the machine
 holds one.

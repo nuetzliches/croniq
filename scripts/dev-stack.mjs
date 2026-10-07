@@ -71,7 +71,7 @@ const API_KEY = "croniq_dev_stack_key_not_for_production_use";
  */
 function dataDir() {
   // The busy profile keeps its own directory: its fifty jobs' history would
-  // otherwise bury the demo's five the next time the plain stack starts.
+  // otherwise bury the demo's six the next time the plain stack starts.
   const dir =
     process.env.CRONIQ_DEV_DATA_DIR ??
     path.join(os.tmpdir(), busy ? "croniq-dev-stack-busy" : "croniq-dev-stack");

@@ -69,6 +69,28 @@ job demo:slow-job {
   tags "env=demo" "kind=ops"
 }
 
+# ── Calendars ────────────────────────────────────────────────────────────────
+#
+# Without one the dashboard's Calendars screen is empty and no job shows a
+# gate. Office hours exercise all three rule kinds the builder offers: weekly,
+# window and annual.
+
+calendar business-hours {
+  # Rules are read in this zone for every job that consults the calendar,
+  # whatever zone the job itself runs in.
+  timezone Europe/Vienna
+  include weekly monday tuesday wednesday thursday friday
+  include window "08:00".."17:00"
+  exclude annual 01-01 12-24 12-25 12-26 12-31
+}
+
+job demo:office-sync {
+  description "Syncs office data — every 10 minutes, weekdays 08:00–17:00 only"
+  every 10 minutes { calendar business-hours }
+  timeout 1m
+  tags "env=demo" "kind=etl" "team=office"
+}
+
 # --- Alerting ---
 #
 # The demo deliberately fails some runs (RUNNER_FAIL_RATE in the shell runner),

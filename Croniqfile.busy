@@ -1,7 +1,7 @@
 # Croniqfile.busy — a busy dashboard for UI work
 #
 # Started by `node scripts/dev-stack.mjs --busy`. Where Croniqfile.demo keeps
-# five slow jobs for the quickstart, this one has fifty, most firing every
+# six slow jobs for the quickstart, this one has fifty, most firing every
 # few seconds to a few minutes, so the dashboard's live timeline has more
 # lanes than fit (issues #828, #829) and the queue, priority and coalescing
 # features have something to act on:
@@ -9,6 +9,8 @@
 # - `priority high` / `priority low` on some jobs (#819)
 # - `singleton` + `coalesce schedule` on the level-triggered pollers (#818)
 # - one `disabled` job, which keeps a lane without a next fire
+# - a `business-hours` calendar gating the hr:* and crm:deal-sync jobs, so
+#   outside weekdays 08:00–17:00 (Vienna) their lanes fall silent
 #
 # The demo runner handles every job with a 50 ms – 2 s sleep and fails a
 # share of them (RUNNER_FAIL_RATE). Not for production: it exists to be
@@ -32,6 +34,13 @@ defaults {
   retry fixed { max_attempts 2; delay 5s }
   timeout 1m
   dead_letter { retention 1d }
+}
+
+calendar business-hours {
+  timezone Europe/Vienna
+  include weekly monday tuesday wednesday thursday friday
+  include window "08:00".."17:00"
+  exclude annual 01-01 12-24 12-25 12-26 12-31
 }
 
 job ops:heartbeat {
@@ -149,7 +158,7 @@ job crm:contact-sync {
 }
 
 job crm:deal-sync {
-  every 2 minutes
+  every 2 minutes { calendar business-hours }
 }
 
 job crm:dedupe {
@@ -224,11 +233,11 @@ job report:daily-kpi {
 }
 
 job hr:absence-sync {
-  every 2 minutes
+  every 2 minutes { calendar business-hours }
 }
 
 job hr:payroll-export {
-  every 5 minutes
+  every 5 minutes { calendar business-hours }
   priority low
 }
 
