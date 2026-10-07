@@ -14,7 +14,9 @@ import {
 import type { Execution } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
 import { useCanWriteNotes } from '~/composables/useCanWriteNotes'
+import { useExecutionsStream } from '~/composables/useExecutionsStream'
 import { formatDuration, formatRelative } from '~/lib/format'
+import { ACTIVE_CAP, countActive } from '~/lib/live-timeline'
 import { notesByExecution } from '~/lib/notes'
 
 /**
@@ -59,6 +61,27 @@ async function markChecked(run: Execution) {
   )
   acking.value = null
 }
+
+/**
+ * "Queue depth" and "Running" from the timeline's own stream, so the cards
+ * and the timeline below them move together. `/health` has the figures too,
+ * but polled every 5 s and from other sources: the in-memory dispatch queue,
+ * and what each runner last reported in flight (a poll behind, and counting
+ * ephemeral runs, which have no row and no bar). The stream's are the store's
+ * queued and claimed rows, which is also what the cards link to.
+ *
+ * Counted live and unfiltered, whatever the timeline is paused at or filtered
+ * by. `/health` stands in while the stream has nothing to say: not yet
+ * connected, reconnecting, not allowed (no `executions:read`), or at its cap.
+ */
+const stream = useExecutionsStream()
+const liveCounts = computed(() => {
+  if (!stream.received.value || !stream.connected.value || stream.unavailable.value) return null
+  const counts = countActive(stream.runs.value)
+  return counts.running + counts.queued >= ACTIVE_CAP ? null : counts
+})
+const queuedNow = computed(() => liveCounts.value?.queued ?? health.value?.queued)
+const runningNow = computed(() => liveCounts.value?.running ?? health.value?.running)
 
 const activeJobs = computed(() => (jobs.value ?? []).filter((job) => job.is_active).length)
 const online = computed(
@@ -105,17 +128,16 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <KpiCard
         label="Queue depth"
-        :value="health?.queued ?? '—'"
+        :value="queuedNow ?? '—'"
         :sub="`${activeJobs} active job${activeJobs === 1 ? '' : 's'}`"
-        :tone="(health?.queued ?? 0) > 0 ? 'warning' : 'default'"
+        :tone="(queuedNow ?? 0) > 0 ? 'warning' : 'default'"
         to="/executions?state=queued"
       />
-      <!-- Runner-reported, like the per-runner figure on /runners: it can lag
-           a poll and counts ephemeral runs, which the claimed list cannot
-           show. Running work is normal, so no tone. -->
+      <!-- The claimed rows, as on the timeline (see `liveCounts`). Running
+           work is normal, so no tone. -->
       <KpiCard
         label="Running"
-        :value="health?.running ?? '—'"
+        :value="runningNow ?? '—'"
         :sub="slots ? `of ${slots} slot${slots === 1 ? '' : 's'}` : 'no runner capacity'"
         to="/executions?state=claimed"
       />
@@ -153,7 +175,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
     <!-- What is running now and what fires next, full width: a timeline
          reads by its length, and it absorbed the "next hour" rail. -->
-    <LiveTimeline />
+    <LiveTimeline :stream="stream" />
 
     <div class="grid gap-4 lg:grid-cols-[1fr_22rem]">
       <div class="flex flex-col gap-4">

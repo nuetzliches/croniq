@@ -137,6 +137,28 @@ test.describe('live surfaces', () => {
   })
 })
 
+test.describe('dashboard counts', () => {
+  /**
+   * "Queue depth" and "Running" are read from the timeline's stream, not from
+   * the 5 s `/health` poll, so they never disagree with the timeline below.
+   */
+  test('the KPI cards and the timeline count the same runs', async ({ app }) => {
+    await app.goto('/')
+    const counts = app.getByTestId('live-counts')
+    await expect(counts).toBeVisible({ timeout: 20_000 })
+    const kpi = (label: string) =>
+      app.getByRole('link').filter({ hasText: label }).locator('p.text-3xl')
+    await expect
+      .poll(
+        async () =>
+          `${await kpi('Running').innerText()} running · ${await kpi('Queue depth').innerText()} queued` ===
+          (await counts.innerText()),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+  })
+})
+
 test.describe('live timeline links', () => {
   /**
    * Lane labels and bars are plain anchors behind one delegated handler

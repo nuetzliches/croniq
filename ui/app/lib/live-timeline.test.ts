@@ -9,6 +9,7 @@ import {
   barsOf,
   buildLanes,
   clampRange,
+  countActive,
   densityBuckets,
   dragRange,
   formatOffset,
@@ -159,6 +160,20 @@ describe('buildLanes ordering', () => {
     // No set, or an empty one, is the plain order.
     expect(keys('name')).toEqual(['a:report', 'b:poll', 'c:backup', 'd:mail'])
     expect(keys('name', new Set())).toEqual(['a:report', 'b:poll', 'c:backup', 'd:mail'])
+  })
+})
+
+describe('countActive', () => {
+  it('counts claimed as running and queued as queued, nothing else', () => {
+    const runs = [
+      run({ id: 'a', state: 'claimed', completed_at: null }),
+      run({ id: 'b', state: 'claimed', completed_at: null }),
+      run({ id: 'c', state: 'queued', claimed_at: null, completed_at: null }),
+      run({ id: 'd', state: 'completed' }),
+      run({ id: 'e', state: 'failed' }),
+    ]
+    expect(countActive(runs)).toEqual({ running: 2, queued: 1 })
+    expect(countActive([])).toEqual({ running: 0, queued: 0 })
   })
 })
 
