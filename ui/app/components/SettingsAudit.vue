@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuditEvents, useUsers } from '~/api/queries'
-import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
+import { shortId } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 
 /**
  * Who did what.
@@ -20,6 +21,12 @@ import { useDebounced } from '~/composables/useDebounced'
  */
 const route = useRoute()
 const router = useRouter()
+
+/**
+ * "When" as "3 min ago" or as the clock time — see `useTimeDisplay`. The
+ * clock is what "who changed it at 14:00" needs.
+ */
+const when = useTimeDisplay()
 
 const filters = computed(() => ({
   actor_id: (route.query.actor as string) || '',
@@ -211,7 +218,7 @@ function diffTitle(diff: string | null): string | undefined {
         <thead class="sticky top-0 z-10 bg-default">
           <tr class="border-b border-default">
             <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-left">
-              When
+              <TimeHeading label="When" />
             </th>
             <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-left">
               Who
@@ -232,9 +239,9 @@ function diffTitle(diff: string | null): string | undefined {
           >
             <td
               class="cq-num px-[var(--cq-cell-x)] text-muted"
-              :title="formatAbsolute(event.created_at)"
+              :title="when.title(event.created_at)"
             >
-              {{ formatRelative(event.created_at) }}
+              {{ when.text(event.created_at) }}
             </td>
             <td class="max-w-[12rem] truncate px-[var(--cq-cell-x)]">
               <!-- Clicking a name filters to that person: "what did they

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 import { useUiStore } from './ui'
 
 /**
@@ -91,5 +92,35 @@ describe('ui store, reading what the React tree left behind', () => {
 
     expect(ui.theme).toBe('system')
     expect(ui.sidebarCollapsed).toBe(false)
+  })
+})
+
+describe('ui store, how tables show a time', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+
+  it('shows relative times until asked otherwise', () => {
+    expect(useUiStore().timeDisplay).toBe('relative')
+  })
+
+  it('toggles, and remembers the choice for the next visit', async () => {
+    const ui = useUiStore()
+
+    ui.toggleTimeDisplay()
+    await nextTick()
+
+    expect(ui.timeDisplay).toBe('absolute')
+    expect(localStorage.getItem('croniq_time_display')).toBe('absolute')
+
+    setActivePinia(createPinia())
+    expect(useUiStore().timeDisplay).toBe('absolute')
+  })
+
+  it('reads an unknown stored value as the default', () => {
+    localStorage.setItem('croniq_time_display', 'sundial')
+
+    expect(useUiStore().timeDisplay).toBe('relative')
   })
 })

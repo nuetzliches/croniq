@@ -3,9 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useJobStates, useJobs, useSchedules } from '~/api/queries'
 import type { JobDefinition, JobScheduleState, TriggerDefinition } from '~/api/types'
-import { formatAbsolute, formatRelative } from '~/lib/format'
 import FavoriteButton from '~/components/FavoriteButton.vue'
 import { useFavorites } from '~/composables/useFavorites'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 
 /**
  * Jobs — the configuration screen, and the one the audit hit hardest.
@@ -156,6 +156,12 @@ const selectedJob = computed(
 const creating = ref(false)
 
 /**
+ * "Next fire" and "Last fire", as "3 min ago" or as the clock time. One switch
+ * for both, in the "Next fire" heading — the one still there with a job open.
+ */
+const times = useTimeDisplay()
+
+/**
  * The next fire, phrased for a column about the future.
  *
  * `formatRelative` says "just now" inside its five-second threshold, which
@@ -165,7 +171,7 @@ const creating = ref(false)
 function nextFire(row: Row): string {
   if (row.state?.overdue) return 'overdue'
   if (!row.state?.next_fire_at) return '—'
-  const text = formatRelative(row.state.next_fire_at)
+  const text = times.text(row.state.next_fire_at)
   return text === 'just now' ? 'due now' : text
 }
 
@@ -318,7 +324,7 @@ function ruleOf(row: Row): string {
                 Rule
               </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
-                Next fire
+                <TimeHeading label="Next fire" />
               </th>
               <th
                 v-if="!selectedKey"
@@ -385,15 +391,15 @@ function ruleOf(row: Row): string {
               <td
                 class="cq-num px-[var(--cq-cell-x)] text-right"
                 :class="row.state?.overdue ? 'text-warning' : 'text-muted'"
-                :title="formatAbsolute(row.state?.next_fire_at)"
+                :title="times.title(row.state?.next_fire_at)"
               >
                 {{ nextFire(row) }}
               </td>
               <td
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="formatAbsolute(row.state?.last_fired_at)"
+                :title="times.title(row.state?.last_fired_at)"
               >
-                {{ formatRelative(row.state?.last_fired_at) }}
+                {{ times.text(row.state?.last_fired_at) }}
               </td>
               <td class="cq-num px-[var(--cq-cell-x)] text-right text-muted">
                 {{ row.state?.fire_count ?? 0 }}

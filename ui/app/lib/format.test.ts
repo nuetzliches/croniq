@@ -6,6 +6,7 @@ import {
   formatLogLines,
   formatLogTime,
   formatRelative,
+  formatTableTime,
   shortId,
   stateLabel,
 } from './format'
@@ -145,6 +146,46 @@ describe('formatLogTime', () => {
   it('is the clock time in the given zone, to the second', () => {
     expect(formatLogTime('2026-10-07T08:00:01.250Z', 'Europe/Berlin')).toBe('10:00:01')
     expect(formatLogTime('2026-01-15T23:30:00.000Z', 'Europe/Berlin')).toBe('00:30:00')
+  })
+})
+
+describe('formatTableTime', () => {
+  // 14:00 in Berlin on 7 October 2026.
+  const NOW_BERLIN = Date.parse('2026-10-07T12:00:00Z')
+
+  it('is the clock alone for a run from today', () => {
+    expect(formatTableTime('2026-10-07T08:00:01.250Z', NOW_BERLIN, 'Europe/Berlin', 'de-DE')).toBe('10:00:01')
+  })
+
+  it('adds the day and month for an earlier day', () => {
+    expect(formatTableTime('2026-10-06T12:02:11Z', NOW_BERLIN, 'Europe/Berlin', 'de-DE')).toBe('06.10. 14:02:11')
+  })
+
+  it('adds the year once it is not this one', () => {
+    expect(formatTableTime('2025-12-31T10:00:00Z', NOW_BERLIN, 'Europe/Berlin', 'de-DE')).toBe(
+      '31.12.2025 11:00:00',
+    )
+  })
+
+  /**
+   * "Today" is the day in the zone shown. At 00:30 in Berlin a run from 23:50
+   * is yesterday's, though in UTC both are the same day.
+   */
+  it('decides "today" in the zone shown, not in UTC', () => {
+    const justAfterMidnight = Date.parse('2026-10-06T22:30:00Z') // 00:30 on the 7th, Berlin
+    expect(formatTableTime('2026-10-06T21:50:00Z', justAfterMidnight, 'Europe/Berlin', 'de-DE')).toBe(
+      '06.10. 23:50:00',
+    )
+    expect(formatTableTime('2026-10-06T21:50:00Z', justAfterMidnight, 'UTC', 'de-DE')).toBe('21:50:00')
+  })
+
+  it('follows the locale for the date part', () => {
+    expect(formatTableTime('2026-10-06T12:02:11Z', NOW_BERLIN, 'UTC', 'en-US')).toBe('10/06 12:02:11')
+  })
+
+  it('is a dash for nothing or junk, as formatRelative is', () => {
+    expect(formatTableTime(null, NOW_BERLIN)).toBe('—')
+    expect(formatTableTime('not a date', NOW_BERLIN)).toBe('—')
   })
 })
 

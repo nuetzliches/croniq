@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Tables can show times as the time of day.** A toggle in a time column's
+  heading (or `t`, anywhere outside a text field) switches between "3 min
+  ago" and the time itself, to find the run from 14:00 without doing
+  arithmetic.
+  - It covers every table with a time column: Runs ("Fired"), Jobs ("Next
+    fire", "Last fire"), Dead Letters ("Died", "Expires"), alert deliveries
+    ("Fired"), the audit log ("When") and Runners ("Last poll").
+  - Today's times show `14:02:11`; other days add the date (`06.10.
+    14:02:11`), and another year adds the year.
+  - Times are in the browser's zone, which the heading names once, as the
+    log panel does beside "Logs". "Today" is today in that zone.
+  - The tooltip shows the other form, with the zone's abbreviation.
+  - One choice for all tables, remembered per browser and not part of the
+    URL.
+
 - **Favorite jobs.** A user can star the jobs they keep an eye on, in the
   job detail or on the Jobs list.
   - The live timeline puts starred jobs first (a star button beside the lane

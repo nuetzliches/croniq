@@ -142,6 +142,71 @@ export function formatClockTime(iso: string, timeZone?: string): string {
   return `${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`
 }
 
+const dayKeyFormatters = new Map<string, Intl.DateTimeFormat>()
+const tableDateFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function cachedFormatter(
+  cache: Map<string, Intl.DateTimeFormat>,
+  key: string,
+  make: () => Intl.DateTimeFormat,
+): Intl.DateTimeFormat {
+  let formatter = cache.get(key)
+  if (!formatter) {
+    formatter = make()
+    cache.set(key, formatter)
+  }
+  return formatter
+}
+
+/** `YYYY-MM-DD` of an instant in `timeZone`, for "is this the same day". */
+function dayKey(date: Date, timeZone?: string): string {
+  return cachedFormatter(dayKeyFormatters, timeZone ?? '', () =>
+    new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }),
+  ).format(date)
+}
+
+/**
+ * A fire time for a table column, when someone is looking for a run at a
+ * point in time rather than asking how long ago it was.
+ *
+ * `14:02:11` for today, `06.10. 14:02:11` for an earlier day, and the year as
+ * well once it is not this one — the clock is what is scanned for, and the
+ * date is only there when it differs. "Today" is today in the zone shown, not
+ * in UTC: just after midnight in Berlin a run from 23:50 is yesterday's.
+ *
+ * In the browser's zone (or `timeZone`), which the column names once in its
+ * header — not as an abbreviation per row, which would be wider than the time
+ * and, across a DST change, different from row to row. The clock is
+ * `formatLogTime`'s, so a run's row and its log lines read alike. The date
+ * part follows the browser's locale, as `formatAbsolute` does.
+ */
+export function formatTableTime(
+  iso: string | null | undefined,
+  now = Date.now(),
+  timeZone?: string,
+  locale?: string,
+): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const clock = formatLogTime(iso, timeZone)
+  const today = new Date(now)
+  if (dayKey(date, timeZone) === dayKey(today, timeZone)) return clock
+  const sameYear = dayKey(date, timeZone).slice(0, 4) === dayKey(today, timeZone).slice(0, 4)
+  const formatter = cachedFormatter(
+    tableDateFormatters,
+    `${locale ?? ''}|${timeZone ?? ''}|${sameYear}`,
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        day: '2-digit',
+        month: '2-digit',
+        year: sameYear ? undefined : 'numeric',
+        timeZone,
+      }),
+  )
+  return `${formatter.format(date)} ${clock}`
+}
+
 /** The IANA name of the browser's zone, for saying which zone times are in. */
 export function localTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'

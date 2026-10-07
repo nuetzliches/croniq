@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useDeleteRunner } from '~/api/queries'
 import { useActionError } from '~/composables/useActionError'
 import { useRunnersStream } from '~/composables/useRunnersStream'
-import { formatAbsolute, formatRelative } from '~/lib/format'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 
 /**
@@ -19,6 +19,9 @@ import ConfirmModal from '~/components/ConfirmModal.vue'
 const { runners, connected, received } = useRunnersStream()
 const removeRunner = useDeleteRunner()
 const { error, attempt } = useActionError()
+
+/** "Last poll" as "3 s ago" or as the clock time — see `useTimeDisplay`. */
+const lastPoll = useTimeDisplay()
 
 const tagFilter = ref('')
 
@@ -157,7 +160,7 @@ async function remove(runnerId: string) {
               In flight
             </th>
             <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
-              Last poll
+              <TimeHeading label="Last poll" />
             </th>
             <th class="w-20" />
           </tr>
@@ -187,9 +190,9 @@ async function remove(runnerId: string) {
             </td>
             <td
               class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-              :title="formatAbsolute(runner.last_poll_at)"
+              :title="lastPoll.title(runner.last_poll_at)"
             >
-              {{ formatRelative(runner.last_poll_at) }}
+              {{ lastPoll.text(runner.last_poll_at) }}
             </td>
             <td class="px-[var(--cq-cell-x)] text-right">
               <div class="flex items-center justify-end gap-1">

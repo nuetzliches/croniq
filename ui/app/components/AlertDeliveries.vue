@@ -3,9 +3,10 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAlertDeliveries } from '~/api/queries'
 import type { AlertDelivery } from '~/api/types'
-import { formatAbsolute, formatDuration, formatRelative, shortId } from '~/lib/format'
+import { formatDuration, shortId } from '~/lib/format'
 import StatusPill from '~/components/StatusPill.vue'
 import { useDebounced } from '~/composables/useDebounced'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 
 /**
  * What actually went out.
@@ -20,6 +21,9 @@ import { useDebounced } from '~/composables/useDebounced'
  */
 const route = useRoute()
 const router = useRouter()
+
+/** "Fired" as "3 min ago" or as the clock time — see `useTimeDisplay`. */
+const fired = useTimeDisplay()
 
 const STATES = ['delivered', 'failed', 'throttled']
 
@@ -170,7 +174,7 @@ function latency(delivery: AlertDelivery): string {
               Run
             </th>
             <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
-              Fired
+              <TimeHeading label="Fired" />
             </th>
             <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
               Took
@@ -230,9 +234,9 @@ function latency(delivery: AlertDelivery): string {
             </td>
             <td
               class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-              :title="formatAbsolute(delivery.fired_at)"
+              :title="fired.title(delivery.fired_at)"
             >
-              {{ formatRelative(delivery.fired_at) }}
+              {{ fired.text(delivery.fired_at) }}
             </td>
             <td class="cq-num px-[var(--cq-cell-x)] text-right text-muted">
               {{ latency(delivery) }}

@@ -20,8 +20,20 @@ import { defineStore } from 'pinia'
  */
 const SIDEBAR_KEY = 'croniq_sidebar'
 const THEME_KEY = 'croniq_theme'
+/** New with this tree, so it has one shape and no React-tree spelling to read. */
+const TIME_DISPLAY_KEY = 'croniq_time_display'
 
 export type ThemePref = 'light' | 'dark' | 'system'
+
+/**
+ * How a table shows when something happened: "3 min ago", or the clock time.
+ *
+ * Relative answers "is this recent"; the clock answers "which run was the
+ * 14:00 one", and reading that off "2 h ago" is arithmetic. A per-browser
+ * reading preference, not a filter — so it is stored here and kept out of the
+ * URL: a pasted link should not switch how the reader's tables read.
+ */
+export type TimeDisplay = 'relative' | 'absolute'
 
 function read(key: string): string | null {
   try {
@@ -85,9 +97,15 @@ function readSidebarCollapsed(): boolean {
   }
 }
 
+/** Anything but the two known values reads as the default. */
+function readTimeDisplay(): TimeDisplay {
+  return read(TIME_DISPLAY_KEY) === 'absolute' ? 'absolute' : 'relative'
+}
+
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(readSidebarCollapsed())
   const theme = ref<ThemePref>(readTheme())
+  const timeDisplay = ref<TimeDisplay>(readTimeDisplay())
 
   // Write the new shape back on boot, so a browser carrying a React-tree value
   // stops carrying it. The watchers below only fire on change, and a
@@ -109,8 +127,16 @@ export const useUiStore = defineStore('ui', () => {
     { immediate: true },
   )
 
+  watch(timeDisplay, (display) => {
+    write(TIME_DISPLAY_KEY, display)
+  })
+
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value
+  }
+
+  function toggleTimeDisplay() {
+    timeDisplay.value = timeDisplay.value === 'relative' ? 'absolute' : 'relative'
   }
 
   /**
@@ -130,7 +156,14 @@ export const useUiStore = defineStore('ui', () => {
     applyTheme(theme.value)
   }
 
-  return { sidebarCollapsed, theme, toggleSidebar, reapplyTheme }
+  return {
+    sidebarCollapsed,
+    theme,
+    timeDisplay,
+    toggleSidebar,
+    toggleTimeDisplay,
+    reapplyTheme,
+  }
 })
 
 /**

@@ -3,9 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchExecutions, useExecutions, useNotes } from '~/api/queries'
 import type { Execution } from '~/api/types'
-import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
+import { formatDuration, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
 import { useFavorites } from '~/composables/useFavorites'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
 import { notesByExecution } from '~/lib/notes'
 
@@ -303,8 +304,12 @@ const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
   value,
 }))
 
+/** "Fired" as "3 min ago" or as the clock time — see `useTimeDisplay`. */
+const fired = useTimeDisplay()
+
 /**
- * Keyboard navigation — j/k to move, Enter to open, Escape to close.
+ * Keyboard navigation — j/k to move, Enter to open, Escape to close. (`t`, for
+ * how "Fired" reads, is every time column's, in `TimeHeading`.)
  *
  * An operations list is read far more often than it is clicked, and this is a
  * tool for people who live in a terminal. `j`/`k` costs one handler and no
@@ -539,7 +544,7 @@ function onKey(event: KeyboardEvent) {
                 Runner
               </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
-                Fired
+                <TimeHeading label="Fired" />
               </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
                 Duration
@@ -584,9 +589,9 @@ function onKey(event: KeyboardEvent) {
               </td>
               <td
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="formatAbsolute(row.fire_at)"
+                :title="fired.title(row.fire_at)"
               >
-                {{ formatRelative(row.fire_at) }}
+                {{ fired.text(row.fire_at) }}
               </td>
               <td class="cq-num px-[var(--cq-cell-x)] text-right">
                 {{ formatDuration(row.duration_ms) }}

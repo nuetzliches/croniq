@@ -10,9 +10,10 @@ import {
   useReplayDeadLetter,
 } from '~/api/queries'
 import type { DeadLetter, StaleReplayError } from '~/api/types'
-import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
+import { formatAbsolute, shortId } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 import { describeRefusal } from '~/composables/useActionError'
+import { useTimeDisplay } from '~/composables/useTimeDisplay'
 
 /**
  * Dead letters — the work queue.
@@ -163,6 +164,9 @@ async function doDelete(id: string) {
 }
 
 const expiring = (row: DeadLetter) => Boolean(row.expires_at)
+
+/** "Died" and "Expires", as "3 min ago" or as the clock time; the switch is in "Died". */
+const times = useTimeDisplay()
 </script>
 
 <template>
@@ -293,7 +297,7 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
                 Attempt
               </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
-                Died
+                <TimeHeading label="Died" />
               </th>
               <th class="cq-label px-[var(--cq-cell-x)] py-[var(--cq-cell-y)] text-right">
                 Expires
@@ -335,15 +339,15 @@ const expiring = (row: DeadLetter) => Boolean(row.expires_at)
               </td>
               <td
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="formatAbsolute(row.created_at)"
+                :title="times.title(row.created_at)"
               >
-                {{ formatRelative(row.created_at) }}
+                {{ times.text(row.created_at) }}
               </td>
               <td
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="formatAbsolute(row.expires_at)"
+                :title="times.title(row.expires_at)"
               >
-                {{ expiring(row) ? formatRelative(row.expires_at) : 'never' }}
+                {{ expiring(row) ? times.text(row.expires_at) : 'never' }}
               </td>
               <td class="px-[var(--cq-cell-x)] text-right">
                 <div class="flex items-center justify-end gap-1">
