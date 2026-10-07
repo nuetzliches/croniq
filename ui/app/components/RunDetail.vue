@@ -3,7 +3,14 @@ import { computed, ref } from 'vue'
 import { useCancelExecution, useExecutionLogs } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
-import { formatAbsolute, formatDuration, formatLogLines, formatRelative } from '~/lib/format'
+import {
+  formatAbsolute,
+  formatDuration,
+  formatLogLines,
+  formatLogTime,
+  formatRelative,
+  localTimeZone,
+} from '~/lib/format'
 
 /**
  * One run, beside the list rather than instead of it.
@@ -38,6 +45,7 @@ function doCancel(id: string) {
 }
 
 const copied = ref(false)
+const timeZone = localTimeZone()
 
 async function copyLogs() {
   if (!logs.value?.length) return
@@ -107,7 +115,7 @@ const facts = computed(() => {
         <StatusPill :state="execution.state" />
         <span
           class="min-w-0 flex-1 truncate font-mono text-sm text-muted"
-          :title="execution.fire_at"
+          :title="formatAbsolute(execution.fire_at)"
         >{{ formatRelative(execution.fire_at) }}</span>
       </template>
       <span
@@ -189,6 +197,11 @@ const facts = computed(() => {
           <div class="mb-1.5 flex items-center justify-between">
             <p class="cq-label">
               Logs
+              <span
+                v-if="logs?.length"
+                class="ml-1 font-normal normal-case text-dimmed"
+                title="Times are shown in your browser's time zone, and copied as shown."
+              >{{ timeZone }}</span>
             </p>
             <UButton
               v-if="logs?.length"
@@ -224,7 +237,7 @@ const facts = computed(() => {
               :key="entry.id"
               class="flex gap-2 whitespace-pre-wrap"
             >
-              <span class="shrink-0 text-dimmed">{{ entry.timestamp.slice(11, 19) }}</span>
+              <span class="shrink-0 text-dimmed">{{ formatLogTime(entry.timestamp) }}</span>
               <span
                 class="w-10 shrink-0 uppercase"
                 :class="{

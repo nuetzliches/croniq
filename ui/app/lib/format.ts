@@ -77,11 +77,37 @@ export function shortId(id: string | null | undefined): string {
   return id.length > 8 ? id.slice(0, 8) : id
 }
 
-/** An absolute timestamp for the `title` behind every relative one. */
-export function formatAbsolute(iso: string | null | undefined): string {
+const absoluteFormatters = new Map<string, Intl.DateTimeFormat>()
+
+/**
+ * An absolute timestamp for the `title` behind every relative one, and for
+ * every "Created" / "Fired" / "Next fire" fact.
+ *
+ * In the browser's locale and zone — or in `timeZone`, for tests — and it
+ * names the zone ("07.10.2026, 14:00:00 CEST"). `toLocaleString()` converted
+ * too, but said nothing about it, so a time beside a trigger's "(UTC)" read as
+ * UTC and there was no way to tell it from the console's zone.
+ */
+export function formatAbsolute(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return ''
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+  if (Number.isNaN(date.getTime())) return ''
+  const key = timeZone ?? ''
+  let formatter = absoluteFormatters.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'short',
+      timeZone,
+    })
+    absoluteFormatters.set(key, formatter)
+  }
+  return formatter.format(date)
 }
 
 const clockFormatters = new Map<string, Intl.DateTimeFormat>()
@@ -137,15 +163,27 @@ export function stateLabel(state: string): string {
 }
 
 /**
+ * `HH:mm:ss` in the browser's zone (or `timeZone`): the console's clock
+ * without the milliseconds, for a run's log panel.
+ *
+ * The panel used to slice the UTC string, as the console once did, so the
+ * same event showed one hour on `/console` and another in the run.
+ */
+export function formatLogTime(iso: string, timeZone?: string): string {
+  return formatClockTime(iso, timeZone).slice(0, 8)
+}
+
+/**
  * A run's log events as plain text, one line each: `HH:MM:SS LEVEL message`.
  *
- * The same clock time the panel shows (the UTC part of the ISO timestamp), so
- * what is pasted reads as what was on screen.
+ * The same clock time the panel shows (`formatLogTime`), so what is pasted
+ * reads as what was on screen.
  */
 export function formatLogLines(
   entries: ReadonlyArray<{ timestamp: string; level: string; message: string }>,
+  timeZone?: string,
 ): string {
   return entries
-    .map((e) => `${e.timestamp.slice(11, 19)} ${e.level.toUpperCase()} ${e.message}`)
+    .map((e) => `${formatLogTime(e.timestamp, timeZone)} ${e.level.toUpperCase()} ${e.message}`)
     .join('\n')
 }

@@ -121,6 +121,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Runs and jobs show times in the viewer's zone, and say which.** A run's
+  log panel (and "Copy the logs") sliced the UTC timestamp, so the same event
+  read one hour on `/console` and another in the run; it now uses the
+  browser's zone, named beside "Logs". A job's "Next fire" put the trigger's
+  zone in brackets after a time shown in the browser's zone — a Berlin
+  browser read "14:00:00 (UTC)" for a 12:00 UTC fire. The trigger's zone is
+  now its own "Schedule zone" fact. Every absolute time in the dashboard
+  ("Created", "Updated", "Last fire", "Fired", the tooltips behind "3 min
+  ago") now carries its zone abbreviation, so it can be told apart from UTC.
+
 - **A job is no longer "overdue" for the second before it fires.** The
   `overdue` flag of `GET /v1/jobs/states` (the dashboard's red "overdue")
   and `croniq_job_overdue` were set the moment a next fire was past due. The

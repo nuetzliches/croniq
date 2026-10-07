@@ -4,6 +4,7 @@ import {
   formatClockTime,
   formatDuration,
   formatLogLines,
+  formatLogTime,
   formatRelative,
   shortId,
   stateLabel,
@@ -114,6 +115,18 @@ describe('formatAbsolute', () => {
     expect(formatAbsolute('not a date')).toBe('')
     expect(formatAbsolute('2026-09-11T12:00:00Z')).not.toBe('')
   })
+
+  // Locale-neutral assertions: the locale is the machine's, the zone is not.
+  it('renders the instant in the given zone', () => {
+    const iso = '2026-09-11T12:00:00Z'
+    expect(formatAbsolute(iso, 'UTC')).not.toBe(formatAbsolute(iso, 'Asia/Tokyo'))
+    expect(formatAbsolute(iso, 'UTC')).toMatch(/12/)
+    expect(formatAbsolute(iso, 'Asia/Tokyo')).toMatch(/9|21/)
+  })
+
+  it('names the zone it is in', () => {
+    expect(formatAbsolute('2026-09-11T12:00:00Z', 'UTC')).toMatch(/UTC|GMT/)
+  })
 })
 
 describe('stateLabel', () => {
@@ -128,14 +141,33 @@ describe('stateLabel', () => {
   })
 })
 
+describe('formatLogTime', () => {
+  it('is the clock time in the given zone, to the second', () => {
+    expect(formatLogTime('2026-10-07T08:00:01.250Z', 'Europe/Berlin')).toBe('10:00:01')
+    expect(formatLogTime('2026-01-15T23:30:00.000Z', 'Europe/Berlin')).toBe('00:30:00')
+  })
+})
+
 describe('formatLogLines', () => {
   it('writes one `HH:MM:SS LEVEL message` line per event', () => {
     expect(
-      formatLogLines([
-        { timestamp: '2026-09-30T08:00:01.250Z', level: 'info', message: 'pulling inbox' },
-        { timestamp: '2026-09-30T08:00:02.000Z', level: 'error', message: 'timeout' },
-      ]),
+      formatLogLines(
+        [
+          { timestamp: '2026-09-30T08:00:01.250Z', level: 'info', message: 'pulling inbox' },
+          { timestamp: '2026-09-30T08:00:02.000Z', level: 'error', message: 'timeout' },
+        ],
+        'UTC',
+      ),
     ).toBe('08:00:01 INFO pulling inbox\n08:00:02 ERROR timeout')
+  })
+
+  it('uses the same zone as the panel', () => {
+    expect(
+      formatLogLines(
+        [{ timestamp: '2026-10-07T08:00:00Z', level: 'info', message: 'start' }],
+        'Europe/Berlin',
+      ),
+    ).toBe('10:00:00 INFO start')
   })
 
   it('is empty for no events', () => {

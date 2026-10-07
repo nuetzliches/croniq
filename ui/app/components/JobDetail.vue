@@ -211,12 +211,13 @@ const facts = computed(() => {
     ...(job.assigned_runner_id
       ? [{ label: 'Pinned runner', value: job.assigned_runner_id, mono: true }]
       : []),
-    {
-      label: 'Next fire',
-      value: state.value?.next_fire_at
-        ? `${formatAbsolute(state.value.next_fire_at)}${state.value.timezone ? ` (${state.value.timezone})` : ''}`
-        : '—',
-    },
+    { label: 'Next fire', value: formatAbsolute(state.value?.next_fire_at) || '—' },
+    // The zone the schedule is evaluated in, as a fact of its own. It used to
+    // sit in brackets after the next fire, which is shown in the browser's
+    // zone — so a Berlin browser read "14:00:00 (UTC)" for a 12:00 UTC fire.
+    ...(state.value?.timezone
+      ? [{ label: 'Schedule zone', value: state.value.timezone, mono: true }]
+      : []),
     { label: 'Last fire', value: formatAbsolute(state.value?.last_fired_at) },
     { label: 'Fires', value: String(state.value?.fire_count ?? 0) },
     { label: 'Created', value: formatAbsolute(job.created_at) },
