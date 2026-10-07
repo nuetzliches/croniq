@@ -351,6 +351,7 @@ export function dragRange(
 /** One slice of the range selector's overview: how many runs started in it. */
 export interface DensityBucket {
   start: number
+  end: number
   count: number
   failed: number
 }
@@ -359,6 +360,13 @@ export interface DensityBucket {
  * Runs per slice of the span ending at `end`, by when they started — the
  * claim, or the fire for one nothing claimed yet. The overview the range is
  * chosen on: where the activity was, and where it failed.
+ *
+ * The slices sit on a fixed grid, whole multiples of their size since the
+ * epoch, the grid `/v1/dashboard/forecast` cuts the future on. Cut from `end`
+ * instead, every tick moved every boundary, runs a few seconds apart were
+ * grouped one way and then the other, and the whole overview jumped. So there
+ * is one slice more than the span holds: the first reaches back past the
+ * span's start and the last is the one still filling up, cut off at `end`.
  */
 export function densityBuckets(
   runs: readonly LiveRun[],
@@ -367,12 +375,17 @@ export function densityBuckets(
   count = 60,
 ): DensityBucket[] {
   const size = span / count
-  const from = end - span
-  const buckets = Array.from({ length: count }, (_, i) => ({ start: from + i * size, count: 0, failed: 0 }))
+  const from = Math.floor((end - span) / size) * size
+  const buckets = Array.from({ length: count + 1 }, (_, i) => ({
+    start: from + i * size,
+    end: from + (i + 1) * size,
+    count: 0,
+    failed: 0,
+  }))
   for (const run of runs) {
     const at = Date.parse(run.claimed_at ?? run.fire_at)
     if (Number.isNaN(at) || at < from || at >= end) continue
-    const bucket = buckets[Math.min(count - 1, Math.floor((at - from) / size))]!
+    const bucket = buckets[Math.min(count, Math.floor((at - from) / size))]!
     bucket.count += 1
     if (run.state === 'failed' || run.state === 'dead') bucket.failed += 1
   }
