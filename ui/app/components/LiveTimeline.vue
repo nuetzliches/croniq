@@ -52,7 +52,9 @@ import type { JobScheduleState } from '~/api/types'
  * "now", freezes the picture at one moment — runs and
  * schedule are snapshotted then, so what was on screen stays readable while
  * the stream moves on underneath. Hovering the track freezes only the motion,
- * so a tooltip can be read and a short bar clicked.
+ * so a tooltip can be read and a short bar clicked — unless the hand beside
+ * the Pause button is switched off, for someone who wants the picture moving
+ * under the pointer.
  */
 
 const RANGE_KEY = 'croniq_live_range'
@@ -61,6 +63,7 @@ const LEGACY_WINDOW_KEY = 'croniq_live_window'
 const ORDER_KEY = 'croniq_live_order'
 const EXPANDED_KEY = 'croniq_live_expanded'
 const FAVORITES_FIRST_KEY = 'croniq_live_favorites_first'
+const HOLD_ON_HOVER_KEY = 'croniq_live_hold_on_hover'
 
 /** Per-browser conveniences: a blocked storage just means the defaults. */
 function readStored(key: string): string | null {
@@ -483,6 +486,11 @@ const futureLabel = computed(() => formatOffset(range.value.endMs))
 
 /** Pointer on the track: hold the motion so a tooltip can be read and a bar clicked. */
 const hovering = ref(false)
+/** Whether a hover holds the motion at all; on by default, this browser's choice. */
+const holdOnHover = ref(readStored(HOLD_ON_HOVER_KEY) !== '0')
+watch(holdOnHover, (value) => writeStored(HOLD_ON_HOVER_KEY, value ? '1' : '0'))
+/** The motion held by the pointer, as opposed to frozen by Pause. */
+const pointerHeld = computed(() => holdOnHover.value && hovering.value)
 
 /** The two moving layers and where each sits when no time has passed since `t0`. */
 function layers(): [HTMLElement, number][] {
@@ -527,7 +535,7 @@ function stopAnimations() {
 function animate() {
   stopAnimations()
   shift()
-  if (frozen.value || hovering.value || scale.value <= 0) return
+  if (frozen.value || pointerHeld.value || scale.value <= 0) return
   const travelled = (viewNow() - t0) * scale.value
   const distance = LEG_MS * scale.value
   for (const [layer, base] of layers()) {
@@ -557,7 +565,7 @@ function start() {
   if (motion.value === 'reduce') {
     shift()
     stepTimer = setInterval(() => {
-      if (!hovering.value) shift()
+      if (!pointerHeld.value) shift()
     }, 1000)
   } else {
     animate()
@@ -572,7 +580,7 @@ function stopMotion() {
 onMounted(start)
 // A new scale or position moves every bar, and a freeze or a hover stops the
 // motion; restart it in the same tick so layer and bars never disagree.
-watch([motion, scale, nowX, frozen, range, hovering, pastLayer, futureLayer], start, {
+watch([motion, scale, nowX, frozen, range, pointerHeld, pastLayer, futureLayer], start, {
   flush: 'post',
 })
 onBeforeUnmount(stopMotion)
@@ -596,7 +604,7 @@ onBeforeUnmount(stopMotion)
           class="cq-label"
           data-testid="live-state"
         >
-          {{ paused ? 'Paused' : hovering ? 'Live · held' : 'Live' }}
+          {{ paused ? 'Paused' : pointerHeld ? 'Live · held' : 'Live' }}
         </p>
         <UButton
           v-if="paused"
@@ -617,6 +625,17 @@ onBeforeUnmount(stopMotion)
           title="Hold the picture still"
           data-testid="live-pause"
           @click="pause"
+        />
+        <UButton
+          size="xs"
+          :variant="holdOnHover ? 'soft' : 'ghost'"
+          color="neutral"
+          icon="i-lucide-hand"
+          aria-label="Hold on hover"
+          :aria-pressed="holdOnHover"
+          :title="holdOnHover ? 'Hovering the timeline holds it still — click to keep it moving' : 'The timeline keeps moving under the pointer — click to hold it on hover'"
+          data-testid="live-hold-on-hover"
+          @click="holdOnHover = !holdOnHover"
         />
       </div>
       <!-- The hour ahead, from the rail this card absorbed: names are in the
@@ -756,6 +775,7 @@ onBeforeUnmount(stopMotion)
           <div
             ref="track"
             class="relative min-w-0 flex-1"
+            data-testid="live-track"
             :style="{ height: `${Math.max(1, layout.lanes.length) * LANE_HEIGHT}px` }"
             role="img"
             :aria-label="`${running} running and ${queued} queued; ${layout.lanes.length} jobs shown, window ${windowLabel}`"

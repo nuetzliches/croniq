@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Hovering the live timeline no longer has to stop it.** A hand button
+  beside Pause switches off the hold on hover, so the picture keeps moving
+  under the pointer. It is on by default, as before, and the choice is
+  remembered in this browser.
+
 ## [0.46.0] - 2026-10-07
 
 ### Added

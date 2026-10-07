@@ -98,6 +98,29 @@ test.describe('live surfaces', () => {
     await app.getByTestId('live-resume').click()
     await expect(state).toHaveText(/live/i)
   })
+
+  test('hovering the track holds it only while the hand is on', async ({ app }) => {
+    await app.goto('/')
+    const state = app.getByTestId('live-state')
+    await expect(state).toHaveText(/live/i, { timeout: 20_000 })
+    const track = app.getByTestId('live-track')
+    const hand = app.getByTestId('live-hold-on-hover')
+    await expect(hand).toHaveAttribute('aria-pressed', 'true')
+
+    await track.hover()
+    await expect(state).toHaveText('Live · held')
+    await app.mouse.move(0, 0)
+    await expect(state).toHaveText('Live')
+
+    await hand.click()
+    await expect(hand).toHaveAttribute('aria-pressed', 'false')
+    await track.hover()
+    await expect(state).toHaveText('Live')
+
+    // The choice outlives a reload.
+    await app.reload()
+    await expect(app.getByTestId('live-hold-on-hover')).toHaveAttribute('aria-pressed', 'false')
+  })
 })
 
 test.describe('live timeline links', () => {
