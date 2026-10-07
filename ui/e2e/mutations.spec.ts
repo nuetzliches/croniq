@@ -162,11 +162,16 @@ test.describe('favorite jobs', () => {
     await expect(star).toHaveAttribute('aria-pressed', 'true')
 
     try {
+      // The timeline only has a lane for a job active in its window, and
+      // heartbeat fires once a minute: a run of our own gives it one now
+      // instead of making this a clock test (as live.spec.ts does).
+      await app.getByRole('button', { name: 'Run now' }).click()
+
       await app.goto('/')
       await expect(app.getByTestId('live-favorites-first')).toHaveAttribute('aria-pressed', 'true', {
         timeout: 20_000,
       })
-      await expect(app.getByTestId('live-lane-favorite').first()).toBeVisible()
+      await expect(app.getByTestId('live-lane-favorite').first()).toBeVisible({ timeout: 20_000 })
 
       await app.goto('/executions')
       await app.getByTestId('runs-favorites-only').click()
