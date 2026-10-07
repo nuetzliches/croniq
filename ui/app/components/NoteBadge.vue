@@ -44,8 +44,8 @@ const label = computed(() => {
 <template>
   <span
     v-if="summary.total"
+    v-tooltip="title"
     class="inline-flex shrink-0 items-center gap-1"
-    :title="title"
     :aria-label="label"
   >
     <UBadge

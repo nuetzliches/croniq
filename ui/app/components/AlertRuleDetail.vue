@@ -202,13 +202,13 @@ const recent = computed(() => deliveries.value ?? [])
           </UButton>
           <UButton
             v-if="override"
+            v-tooltip="'Return the rule to what the Croniqfile says'"
             icon="i-lucide-undo-2"
             color="neutral"
             variant="ghost"
             size="xs"
             class="ml-auto"
             :loading="clear.isPending.value"
-            title="Return the rule to what the Croniqfile says"
             @click="run(() => clear.mutateAsync(ruleName))"
           >
             Clear override
@@ -331,9 +331,9 @@ const recent = computed(() => deliveries.value ?? [])
                 {{ fact.label }}
               </dt>
               <dd
+                v-tooltip="fact.value"
                 class="min-w-0 truncate text-right"
                 :class="fact.mono && 'font-mono'"
-                :title="fact.value"
               >
                 {{ fact.value }}
               </dd>
@@ -369,6 +369,7 @@ const recent = computed(() => deliveries.value ?? [])
               class="flex h-8 items-center gap-2 text-sm"
             >
               <span
+                v-tooltip="delivery.state"
                 class="size-1.5 shrink-0 rounded-full"
                 :class="
                   delivery.state === 'delivered'
@@ -377,7 +378,6 @@ const recent = computed(() => deliveries.value ?? [])
                       ? 'bg-error'
                       : 'bg-dimmed'
                 "
-                :title="delivery.state"
               />
               <RouterLink
                 :to="`/jobs/${encodeURIComponent(delivery.job_key)}`"
@@ -386,8 +386,8 @@ const recent = computed(() => deliveries.value ?? [])
                 {{ delivery.job_key }}
               </RouterLink>
               <span
+                v-tooltip="formatAbsolute(delivery.fired_at)"
                 class="cq-num text-xs text-muted"
-                :title="formatAbsolute(delivery.fired_at)"
               >{{ formatRelative(delivery.fired_at) }}</span>
             </li>
           </ul>

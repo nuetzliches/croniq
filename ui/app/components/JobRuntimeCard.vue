@@ -11,7 +11,9 @@ import { formatDuration } from '~/lib/format'
  *
  * The bars are relative to the largest job, not to the window: the question
  * is which jobs dominate, and a job using a tenth of a day would otherwise
- * be a sliver beside nothing.
+ * be a sliver beside nothing. They fill the row behind the job key rather
+ * than sitting in a track of their own, so every bar is measured against the
+ * same width whatever the labels beside it say.
  */
 
 const WINDOW_KEY = 'croniq_runtime_window'
@@ -48,6 +50,18 @@ const total = computed(() => jobs.value.reduce((sum, j) => sum + j.total_ms, 0))
 
 const expanded = ref(false)
 const shown = computed(() => (expanded.value ? jobs.value : jobs.value.slice(0, COLLAPSED)))
+
+function share(job: { total_ms: number }): string {
+  return `${Math.round((job.total_ms / Math.max(1, total.value)) * 100)}%`
+}
+
+/** The runs behind a row, over the same window the card is showing. */
+function runsLink(jobKey: string, state?: 'failed') {
+  return {
+    path: '/executions',
+    query: { job_key: jobKey, window: span.value, ...(state ? { state } : {}) },
+  }
+}
 </script>
 
 <template>
@@ -62,8 +76,8 @@ const shown = computed(() => (expanded.value ? jobs.value : jobs.value.slice(0, 
       <div class="flex items-center gap-3">
         <span
           v-if="jobs.length"
+          v-tooltip="'Finished runs with a recorded duration. Runs still going, and history removed by retention, are not counted.'"
           class="cq-num text-xs text-muted"
-          title="Finished runs with a recorded duration. Runs still going, and history removed by retention, are not counted."
         >{{ formatDuration(total) }} total</span>
         <USelectMenu
           v-model="span"
@@ -83,41 +97,67 @@ const shown = computed(() => (expanded.value ? jobs.value : jobs.value.slice(0, 
       icon="i-lucide-timer"
       title="No finished runs in the window"
     />
+    <!-- One grid for the whole list, each row a subgrid of it, so the
+         figures line up in columns whatever their length: ragged badges were
+         what made the bar version read as restless. -->
     <ul
       v-else
-      class="flex flex-col gap-1.5"
+      class="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-y-1"
     >
       <li
         v-for="job in shown"
         :key="job.job_key"
-        class="grid grid-cols-[minmax(0,14rem)_1fr_auto] items-center gap-3 text-sm"
+        v-tooltip="`${share(job)} of the run time in the window`"
+        class="relative col-span-4 grid h-8 grid-cols-subgrid items-center gap-x-2 overflow-hidden rounded-md px-2 text-sm"
         data-testid="job-runtime-row"
       >
+        <!-- The row's background is the bar: one width, so every bar is
+             measured against the same length. -->
+        <div
+          class="absolute inset-y-0 left-0 rounded-md bg-primary/12 dark:bg-primary/20"
+          :style="{ width: `${Math.max(1, (job.total_ms / peak) * 100)}%` }"
+          aria-hidden="true"
+          data-testid="job-runtime-bar"
+        />
         <RouterLink
           :to="`/jobs/${encodeURIComponent(job.job_key)}`"
-          class="truncate font-mono text-primary hover:underline"
-          :title="job.job_key"
+          class="relative truncate font-mono text-primary hover:underline"
         >
           {{ job.job_key }}
         </RouterLink>
-        <div
-          class="h-2 min-w-0 overflow-hidden rounded-full bg-elevated"
-          role="img"
-          :aria-label="`${Math.round((job.total_ms / total) * 100)}% of the run time in the window`"
+        <RouterLink
+          v-if="job.failed"
+          :to="runsLink(job.job_key, 'failed')"
+          class="relative justify-self-end"
+          :aria-label="`${job.failed} failed runs of ${job.job_key}`"
         >
-          <div
-            class="h-full rounded-full bg-primary/70"
-            :style="{ width: `${Math.max(1, (job.total_ms / peak) * 100)}%` }"
-          />
-        </div>
-        <span class="cq-num flex items-baseline justify-end gap-2 whitespace-nowrap">
-          <span class="text-highlighted">{{ formatDuration(job.total_ms) }}</span>
-          <span class="min-w-16 text-right text-xs text-muted">
-            {{ job.runs }} run{{ job.runs === 1 ? '' : 's' }}<span
-              v-if="job.failed"
-              class="text-error"
-            > · {{ job.failed }} failed</span>
-          </span>
+          <UBadge
+            color="error"
+            variant="subtle"
+            size="sm"
+            class="cq-num"
+          >
+            {{ job.failed }} failed
+          </UBadge>
+        </RouterLink>
+        <span v-else />
+        <RouterLink
+          :to="runsLink(job.job_key)"
+          class="relative justify-self-end"
+          :aria-label="`${job.runs} runs of ${job.job_key}`"
+        >
+          <UBadge
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            class="cq-num"
+          >
+            {{ job.runs }} run{{ job.runs === 1 ? '' : 's' }}
+          </UBadge>
+        </RouterLink>
+        <span class="cq-num relative min-w-[4.5rem] text-right font-medium text-highlighted">
+          {{ formatDuration(job.total_ms) }}
+          <span class="sr-only">, {{ share(job) }} of the run time in the window</span>
         </span>
       </li>
     </ul>

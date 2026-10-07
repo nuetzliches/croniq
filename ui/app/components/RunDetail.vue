@@ -114,8 +114,8 @@ const facts = computed(() => {
       <template v-if="execution">
         <StatusPill :state="execution.state" />
         <span
+          v-tooltip="formatAbsolute(execution.fire_at)"
           class="min-w-0 flex-1 truncate font-mono text-sm text-muted"
-          :title="formatAbsolute(execution.fire_at)"
         >{{ formatRelative(execution.fire_at) }}</span>
       </template>
       <span
@@ -151,9 +151,9 @@ const facts = computed(() => {
               {{ fact.label }}
             </dt>
             <dd
+              v-tooltip="fact.value"
               class="min-w-0 truncate text-right"
               :class="fact.mono && 'font-mono'"
-              :title="fact.value"
             >
               <RouterLink
                 v-if="fact.to"
@@ -199,18 +199,18 @@ const facts = computed(() => {
               Logs
               <span
                 v-if="logs?.length"
+                v-tooltip="'Times are shown in your browser\'s time zone, and copied as shown.'"
                 class="ml-1 font-normal normal-case text-dimmed"
-                title="Times are shown in your browser's time zone, and copied as shown."
               >{{ timeZone }}</span>
             </p>
             <UButton
               v-if="logs?.length"
+              v-tooltip="'Copy the logs'"
               :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
               color="neutral"
               variant="ghost"
               size="xs"
               aria-label="Copy the logs"
-              title="Copy the logs"
               @click="copyLogs"
             />
           </div>

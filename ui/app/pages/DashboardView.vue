@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   useCreateNote,
   useDeadLetterCount,
@@ -15,7 +15,7 @@ import type { Execution } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
 import { useCanWriteNotes } from '~/composables/useCanWriteNotes'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
-import { formatDuration, formatRelative } from '~/lib/format'
+import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { ACTIVE_CAP, countActive } from '~/lib/live-timeline'
 import { notesByExecution } from '~/lib/notes'
 
@@ -37,18 +37,67 @@ const deadLetterCount = useDeadLetterCount()
 const { data: throughput } = useThroughput('24h')
 const { data: heatmap } = useFailureHeatmap(7)
 
+/** Rows the card shows. */
+const FAILURES_SHOWN = 5
+/**
+ * Rows it fetches, so that with checked failures hidden there are still five
+ * to show. Well inside the notes endpoint's 200 ids per request.
+ */
+const FAILURES_FETCHED = 50
+const HIDE_CHECKED_KEY = 'croniq_failures_hide_checked'
+
 /** Only failures. A general run list belongs on /executions, once. */
-const { data: failures } = useExecutions(() => ({ state: 'failed', limit: 5 }))
+const { data: recentFailures } = useExecutions(() => ({
+  state: 'failed',
+  limit: FAILURES_FETCHED,
+}))
 
 /**
- * Who has already looked at each failure. One request for all five rows, and
+ * Who has already looked at each failure. One request for all the rows, and
  * a one-click "checked" beside each, so acknowledging a failure does not mean
  * opening it — opening it is for when there is something to say.
  */
 const { data: failureNotes } = useNotes(() => ({
-  execution_ids: (failures.value ?? []).map((run) => run.id),
+  execution_ids: (recentFailures.value ?? []).map((run) => run.id),
 }))
 const notesByRun = computed(() => notesByExecution(failureNotes.value ?? []))
+
+function readHideChecked(): boolean {
+  try {
+    return localStorage.getItem(HIDE_CHECKED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * "Hide checked": a failure someone has marked as checked has been dealt
+ * with, and on a busy day it pushes the ones nobody has looked at off the
+ * card. Off by default, so the card still answers "what failed last" until
+ * an operator asks it to answer "what is still open". Remembered per browser.
+ */
+const hideChecked = ref(readHideChecked())
+watch(hideChecked, (value) => {
+  try {
+    localStorage.setItem(HIDE_CHECKED_KEY, value ? '1' : '0')
+  } catch {
+    // A convenience, not a requirement.
+  }
+})
+
+const isChecked = (run: Execution) =>
+  (notesByRun.value.get(run.id) ?? []).some((note) => note.kind === 'ack')
+
+const failures = computed(() => {
+  const all = recentFailures.value ?? []
+  // Until the notes have loaded nothing is known to be checked; filtering
+  // then would show checked rows and pull them a moment later.
+  const open = hideChecked.value && failureNotes.value ? all.filter((run) => !isChecked(run)) : all
+  return open.slice(0, FAILURES_SHOWN)
+})
+const hiddenCount = computed(() =>
+  hideChecked.value ? (recentFailures.value ?? []).filter(isChecked).length : 0,
+)
 const canWriteNotes = useCanWriteNotes()
 const createNote = useCreateNote()
 const { error: ackError, attempt: attemptAck } = useActionError()
@@ -155,7 +204,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         :value="successRate === null ? '—' : `${successRate.toFixed(1)}%`"
         :sub="`${totals.ok} ok · ${totals.err} failed`"
         :tone="successRate === null ? 'default' : successRate < 95 ? 'error' : 'success'"
-        to="/executions?state=failed"
+        to="/executions?state=failed&window=24h"
       />
       <!-- The count, not the length of a page. `useDeadLetters` is capped at
            the server's default of 50, so a queue of any size above that used to
@@ -184,19 +233,35 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
         <!-- Failures only. Not a general run list: that is /executions. -->
         <section class="rounded-xl border border-default bg-default p-4 shadow-sm">
-          <div class="mb-3 flex items-baseline justify-between">
+          <div class="mb-3 flex items-center justify-between gap-3">
             <p class="cq-label">
               Recent failures
             </p>
-            <RouterLink
-              to="/executions?state=failed"
-              class="text-xs text-primary hover:underline"
-            >
-              View all
-            </RouterLink>
+            <div class="flex items-center gap-4">
+              <USwitch
+                v-model="hideChecked"
+                size="xs"
+                label="Hide checked"
+                data-testid="failures-hide-checked"
+                :ui="{ label: 'text-xs font-normal text-muted' }"
+              />
+              <RouterLink
+                to="/executions?state=failed"
+                class="text-xs text-primary hover:underline"
+              >
+                View all
+              </RouterLink>
+            </div>
           </div>
           <AppEmpty
-            v-if="!failures?.length"
+            v-if="!failures.length && hiddenCount"
+            size="tight"
+            icon="i-lucide-check-check"
+            title="Every recent failure is checked"
+            :description="`${hiddenCount} checked failure${hiddenCount === 1 ? ' is' : 's are'} hidden.`"
+          />
+          <AppEmpty
+            v-else-if="!failures.length"
             size="tight"
             icon="i-lucide-check"
             title="Nothing has failed"
@@ -220,22 +285,25 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
               </RouterLink>
               <NoteBadge :notes="notesByRun.get(run.id)" />
               <span
+                v-tooltip="run.error"
                 class="hidden min-w-0 max-w-[18rem] truncate text-xs text-muted md:block"
-                :title="run.error ?? ''"
               >{{ run.error ?? '' }}</span>
-              <span class="cq-num text-xs text-muted">{{ formatRelative(run.fire_at) }}</span>
+              <span
+                v-tooltip="formatAbsolute(run.fire_at)"
+                class="cq-num text-xs text-muted"
+              >{{ formatRelative(run.fire_at) }}</span>
               <span class="cq-num w-16 text-right text-xs text-muted">{{
                 formatDuration(run.duration_ms)
               }}</span>
               <UButton
                 v-if="canWriteNotes"
+                v-tooltip="'Mark as checked'"
                 icon="i-lucide-check"
                 color="neutral"
                 variant="ghost"
                 size="xs"
                 :loading="acking === run.id"
                 :aria-label="`Mark the ${run.job_key} failure as checked`"
-                title="Mark as checked"
                 @click="markChecked(run)"
               />
             </li>
@@ -281,10 +349,10 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                 <div
                   v-for="(count, hour) in row"
                   :key="hour"
+                  v-tooltip="`${WEEKDAYS[dayIndex]} ${String(hour).padStart(2, '0')}:00 — ${count} failure${count === 1 ? '' : 's'}`"
                   class="h-3 min-w-0 flex-1 rounded-[2px]"
                   :class="count ? 'bg-error' : 'bg-elevated'"
                   :style="count ? { opacity: 0.35 + (count / heatMax) * 0.65 } : undefined"
-                  :title="`${WEEKDAYS[dayIndex]} ${String(hour).padStart(2, '0')}:00 — ${count} failure${count === 1 ? '' : 's'}`"
                 />
               </div>
             </div>

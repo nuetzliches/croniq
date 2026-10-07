@@ -186,8 +186,8 @@ async function signOut() {
               :key="item.to"
             >
               <RouterLink
+                v-tooltip="ui.sidebarCollapsed ? item.label : undefined"
                 :to="item.to"
-                :title="ui.sidebarCollapsed ? item.label : undefined"
                 class="group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors hover:bg-elevated hover:text-highlighted"
                 :class="
                   isCurrent(item.to)
@@ -331,13 +331,12 @@ async function signOut() {
             version is a fact about the server, not an action, and it should
             look like the least clickable thing up here.
 
-            The build details go in the title: an operator debugging a version
+            The build details go in the tooltip: an operator debugging a version
             question wants the sha, and it does not deserve permanent space.
           -->
           <span
             v-if="version?.version"
-            class="cq-num px-1 font-mono text-xs text-dimmed"
-            :title="
+            v-tooltip="
               [
                 `Croniq ${version.version}`,
                 version.git_sha && `build ${version.git_sha}`,
@@ -347,6 +346,7 @@ async function signOut() {
                 .filter(Boolean)
                 .join(' · ')
             "
+            class="cq-num px-1 font-mono text-xs text-dimmed"
           >v{{ version.version }}</span>
           <!-- aria-live: an operator who cannot see the dot still needs to
                learn that the server stopped answering. -->

@@ -6,6 +6,7 @@ import { useJobStates, useJobs, useSchedules } from '~/api/queries'
 import type { JobDefinition, JobScheduleState, TriggerDefinition } from '~/api/types'
 import FavoriteButton from '~/components/FavoriteButton.vue'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
+import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
@@ -148,6 +149,8 @@ const selected = computed(() => rows.value.find((row) => row.job.job_key === sel
 /** The detail's width: dragged by its left edge, remembered per browser. */
 const { jobDetailWidth } = storeToRefs(useUiStore())
 const splitEl = ref<HTMLElement | null>(null)
+/** A deep link to a row scrolls the list to it. */
+useRevealSelected(splitEl, selectedKey, () => rows.value.length)
 const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, jobDetailWidth)
 /**
  * A deep-linked job that the current filters hide still opens: the detail
@@ -242,12 +245,12 @@ function ruleOf(row: Row): string {
       />
       <UButton
         v-if="favoritesAvailable"
+        v-tooltip="'Show only the jobs you have starred'"
         icon="i-lucide-star"
         :variant="favoritesOnly ? 'subtle' : 'ghost'"
         color="neutral"
         size="sm"
         :aria-pressed="favoritesOnly"
-        title="Show only the jobs you have starred"
         data-testid="jobs-favorites-only"
         @click="setQuery({ favorites: favoritesOnly ? undefined : '1' })"
       >
@@ -361,6 +364,7 @@ function ruleOf(row: Row): string {
             <tr
               v-for="row in rows"
               :key="row.job.job_key"
+              :data-selected="row.job.job_key === selectedKey || undefined"
               :class="[
                 'cq-row cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
                 row.job.job_key === selectedKey && 'bg-elevated',
@@ -381,11 +385,11 @@ function ruleOf(row: Row): string {
                   <!-- Dispatch priority (#826), only when it is not the default. -->
                   <UBadge
                     v-if="row.job.priority"
+                    v-tooltip="`Dispatch priority: ${row.job.priority}`"
                     size="sm"
                     variant="subtle"
                     :color="row.job.priority === 'high' ? 'primary' : 'neutral'"
                     :label="row.job.priority"
-                    :title="`Dispatch priority: ${row.job.priority}`"
                     data-testid="job-priority-badge"
                   />
                 </span>
@@ -400,15 +404,15 @@ function ruleOf(row: Row): string {
               <!-- The column the React list did not have, and the reason this
                    screen is worth opening less often. -->
               <td
+                v-tooltip="times.title(row.state?.next_fire_at)"
                 class="cq-num px-[var(--cq-cell-x)] text-right"
                 :class="row.state?.overdue ? 'text-warning' : 'text-muted'"
-                :title="times.title(row.state?.next_fire_at)"
               >
                 {{ nextFire(row) }}
               </td>
               <td
+                v-tooltip="times.title(row.state?.last_fired_at)"
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="times.title(row.state?.last_fired_at)"
               >
                 {{ times.text(row.state?.last_fired_at) }}
               </td>
@@ -417,14 +421,14 @@ function ruleOf(row: Row): string {
               </td>
               <td class="px-[var(--cq-cell-x)]">
                 <UBadge
-                  :color="row.dslManaged ? 'neutral' : 'primary'"
-                  variant="subtle"
-                  size="sm"
-                  :title="
+                  v-tooltip="
                     row.dslManaged
                       ? 'Declared in the Croniqfile — read-only here until adopted'
                       : 'Registered through the API — editable here'
                   "
+                  :color="row.dslManaged ? 'neutral' : 'primary'"
+                  variant="subtle"
+                  size="sm"
                 >
                   {{ row.dslManaged ? 'Croniqfile' : 'API' }}
                 </UBadge>

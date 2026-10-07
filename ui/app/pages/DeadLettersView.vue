@@ -15,6 +15,7 @@ import { formatAbsolute, shortId } from '~/lib/format'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 import { describeRefusal } from '~/composables/useActionError'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
+import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { DETAIL_PANE_DEFAULT_WIDTH, DETAIL_PANE_MIN_WIDTH, useUiStore } from '~/stores/ui'
 
@@ -62,6 +63,8 @@ const selected = computed(() => rows.value.find((row) => row.id === selectedId.v
  */
 const { deadLetterDetailWidth } = storeToRefs(useUiStore())
 const splitEl = ref<HTMLElement | null>(null)
+/** A deep link to a row scrolls the list to it. */
+useRevealSelected(splitEl, selectedId, () => rows.value.length)
 const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, deadLetterDetailWidth)
 
 /** What the last replay attempt said, when it said no. */
@@ -323,6 +326,7 @@ const times = useTimeDisplay()
             <tr
               v-for="row in rows"
               :key="row.id"
+              :data-selected="row.id === selectedId || undefined"
               :class="[
                 'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
@@ -352,36 +356,36 @@ const times = useTimeDisplay()
                 {{ row.attempt }}
               </td>
               <td
+                v-tooltip="times.title(row.created_at)"
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="times.title(row.created_at)"
               >
                 {{ times.text(row.created_at) }}
               </td>
               <td
+                v-tooltip="times.title(row.expires_at)"
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="times.title(row.expires_at)"
               >
                 {{ expiring(row) ? times.text(row.expires_at) : 'never' }}
               </td>
               <td class="px-[var(--cq-cell-x)] text-right">
                 <div class="flex items-center justify-end gap-1">
                   <UButton
+                    v-tooltip="'Replay'"
                     icon="i-lucide-rotate-cw"
                     color="neutral"
                     variant="ghost"
                     size="xs"
                     :aria-label="`Replay ${row.job_key}`"
-                    title="Replay"
                     :loading="replay.isPending.value"
                     @click.stop="doReplay(row.id)"
                   />
                   <UButton
+                    v-tooltip="'Discard'"
                     icon="i-lucide-trash-2"
                     color="error"
                     variant="ghost"
                     size="xs"
                     :aria-label="`Discard the dead letter for ${row.job_key}`"
-                    title="Discard"
                     :loading="remove.isPending.value"
                     @click.stop="doDelete(row.id)"
                   />
@@ -440,8 +444,8 @@ const times = useTimeDisplay()
               Run
             </dt>
             <dd
+              v-tooltip="selected.execution_id"
               class="truncate text-right font-mono"
-              :title="selected.execution_id"
             >
               {{ shortId(selected.execution_id) }}
             </dd>

@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 import { useCalendars, useJobStates, useSchedules } from '~/api/queries'
 import type { CalendarDefinition } from '~/api/types'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
+import { useRevealSelected } from '~/composables/useRevealSelected'
 import { formatRelative } from '~/lib/format'
 import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
@@ -53,6 +54,8 @@ const selected = computed(
 /** The detail's width: dragged by its left edge, remembered per browser. */
 const { calendarDetailWidth } = storeToRefs(useUiStore())
 const splitEl = ref<HTMLElement | null>(null)
+/** A deep link to a row scrolls the list to it. */
+useRevealSelected(splitEl, selectedId, () => rows.value.length)
 const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, calendarDetailWidth)
 
 function open(calendar: CalendarDefinition) {
@@ -172,6 +175,7 @@ function nextThrough(calendar: CalendarDefinition): string {
             <tr
               v-for="calendar in rows"
               :key="calendar.calendar_id"
+              :data-selected="calendar.calendar_id === selectedId || undefined"
               :class="[
                 'cq-row cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
                 calendar.calendar_id === selectedId && 'bg-elevated',
@@ -200,14 +204,14 @@ function nextThrough(calendar: CalendarDefinition): string {
                   {{ usage.get(calendar.name)!.uses }}
                   <span
                     v-if="usage.get(calendar.name)!.held"
+                    v-tooltip="`${usage.get(calendar.name)!.held} held by this gate right now`"
                     class="text-warning"
-                    :title="`${usage.get(calendar.name)!.held} held by this gate right now`"
                   >· {{ usage.get(calendar.name)!.held }} held</span>
                 </span>
                 <span
                   v-else
+                  v-tooltip="'No schedule names this calendar'"
                   class="text-muted"
-                  title="No schedule names this calendar"
                 >unused</span>
               </td>
               <td

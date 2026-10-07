@@ -189,8 +189,8 @@ async function remove(runnerId: string) {
               </span>
             </td>
             <td
+              v-tooltip="lastPoll.title(runner.last_poll_at)"
               class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-              :title="lastPoll.title(runner.last_poll_at)"
             >
               {{ lastPoll.text(runner.last_poll_at) }}
             </td>
@@ -199,21 +199,21 @@ async function remove(runnerId: string) {
                 <!-- Into the one run list, filtered — rather than a second
                      executions table living here. -->
                 <UButton
+                  v-tooltip="'Runs on this runner'"
                   :to="`/executions?runner_id=${encodeURIComponent(runner.runner_id)}`"
                   icon="i-lucide-list"
                   color="neutral"
                   variant="ghost"
                   size="xs"
                   :aria-label="`Runs on ${runner.runner_id}`"
-                  title="Runs on this runner"
                 />
                 <UButton
+                  v-tooltip="'Remove — in-flight work stays claimed until its lease expires'"
                   icon="i-lucide-trash-2"
                   color="error"
                   variant="ghost"
                   size="xs"
                   :aria-label="`Remove ${runner.runner_id}`"
-                  title="Remove — in-flight work stays claimed until its lease expires"
                   :loading="removeRunner.isPending.value"
                   @click="confirming = runner.runner_id"
                 />

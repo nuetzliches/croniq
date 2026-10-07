@@ -135,10 +135,10 @@ const adminChosen = computed(() => chosen.value.has('admin'))
       <UButton
         v-for="preset in PRESETS"
         :key="preset.label"
+        v-tooltip="preset.hint"
         :variant="matchesPreset(preset.scopes) ? 'subtle' : 'ghost'"
         color="neutral"
         size="xs"
-        :title="preset.hint"
         @click="applyPreset(preset.scopes)"
       >
         {{ preset.label }}

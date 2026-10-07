@@ -211,10 +211,10 @@ function toggleActive(client: ApiClient) {
           <span class="font-mono text-sm">{{ client.name }}</span>
           <UBadge
             v-if="envManaged(client)"
+            v-tooltip="`Declared by ${declaringKeyVar(client.name)} in the server's environment`"
             color="neutral"
             variant="subtle"
             size="sm"
-            :title="`Declared by ${declaringKeyVar(client.name)} in the server's environment`"
           >
             environment
           </UBadge>
@@ -227,35 +227,35 @@ function toggleActive(client: ApiClient) {
             inactive
           </UBadge>
           <span
+            v-tooltip="formatAbsolute(client.created_at)"
             class="cq-num text-xs text-muted"
-            :title="formatAbsolute(client.created_at)"
           >created {{ formatAbsolute(client.created_at) }}</span>
 
           <div class="ml-auto flex items-center gap-1">
             <UButton
+              v-tooltip="
+                envManaged(client)
+                  ? `Its key comes from ${declaringKeyVar(client.name)}; the server refuses to mint another`
+                  : 'Mint a new key for this client'
+              "
               icon="i-lucide-key-round"
               color="neutral"
               variant="subtle"
               size="xs"
               :disabled="envManaged(client)"
-              :title="
-                envManaged(client)
-                  ? `Its key comes from ${declaringKeyVar(client.name)}; the server refuses to mint another`
-                  : 'Mint a new key for this client'
-              "
               :loading="issueKey.isPending.value"
               @click="mint(client)"
             >
               New key
             </UButton>
             <UButton
+              v-tooltip="envManaged(client) ? `Edit ${declaringKeyVar(client.name)} instead` : 'Edit scopes'"
               icon="i-lucide-pencil"
               color="neutral"
               variant="ghost"
               size="xs"
               :disabled="envManaged(client)"
               :aria-label="`Edit the scopes of ${client.name}`"
-              :title="envManaged(client) ? `Edit ${declaringKeyVar(client.name)} instead` : 'Edit scopes'"
               @click="startEdit(client)"
             />
             <UButton
@@ -269,17 +269,17 @@ function toggleActive(client: ApiClient) {
               @click="toggleActive(client)"
             />
             <UButton
+              v-tooltip="
+                envManaged(client)
+                  ? `Remove ${declaringKeyVar(client.name)} from the environment instead`
+                  : 'Delete'
+              "
               icon="i-lucide-trash-2"
               color="error"
               variant="ghost"
               size="xs"
               :disabled="envManaged(client)"
               :aria-label="`Delete ${client.name}`"
-              :title="
-                envManaged(client)
-                  ? `Remove ${declaringKeyVar(client.name)} from the environment instead`
-                  : 'Delete'
-              "
               :loading="deleteClient.isPending.value"
               @click="confirmDelete = { id: client.client_id, label: client.name }"
             />

@@ -130,12 +130,12 @@ const ruleLines = computed(() =>
       <template v-else>
         <div class="flex flex-wrap items-center gap-1.5 border-b border-default px-4 py-3">
           <UButton
+            v-tooltip="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             icon="i-lucide-pencil"
             color="neutral"
             variant="subtle"
             size="xs"
             :disabled="dslManaged"
-            :title="dslManaged ? 'Declared in the Croniqfile — adopt it first' : undefined"
             @click="editing = true"
           >
             Edit
@@ -155,11 +155,11 @@ const ruleLines = computed(() =>
           <div class="ml-auto flex items-center gap-1.5">
             <UButton
               v-if="dslManaged"
+              v-tooltip="'Copy this calendar into the API store so it can be edited. The Croniqfile definition is ignored until you release it. Requires policy { dsl_adopt_on_mutate true }.'"
               icon="i-lucide-download"
               color="neutral"
               variant="subtle"
               size="xs"
-              title="Copy this calendar into the API store so it can be edited. The Croniqfile definition is ignored until you release it. Requires policy { dsl_adopt_on_mutate true }."
               :loading="adopt.isPending.value"
               @click="run(() => adopt.mutateAsync(calendarId))"
             >
@@ -167,24 +167,24 @@ const ruleLines = computed(() =>
             </UButton>
             <UButton
               v-else
+              v-tooltip="'Drop the API copy so the next reload reinstates the Croniqfile definition.'"
               icon="i-lucide-undo-2"
               color="neutral"
               variant="ghost"
               size="xs"
-              title="Drop the API copy so the next reload reinstates the Croniqfile definition."
               :loading="unadopt.isPending.value"
               @click="run(() => unadopt.mutateAsync(calendarId))"
             >
               Release
             </UButton>
             <UButton
+              v-tooltip="dslManaged ? 'Declared in the Croniqfile — delete it there' : 'Delete'"
               icon="i-lucide-trash-2"
               color="error"
               variant="ghost"
               size="xs"
               :disabled="dslManaged"
               :aria-label="`Delete ${calendar.name}`"
-              :title="dslManaged ? 'Declared in the Croniqfile — delete it there' : 'Delete'"
               @click="confirmingDelete = true"
             />
           </div>
@@ -285,13 +285,13 @@ const ruleLines = computed(() =>
               </RouterLink>
               <UIcon
                 v-if="row.state?.suppressed_by?.includes(calendar.name)"
+                v-tooltip="`Held right now: ${row.state.suppressed_by}`"
                 name="i-lucide-lock"
                 class="size-3.5 shrink-0 text-warning"
-                :title="`Held right now: ${row.state.suppressed_by}`"
               />
               <span
+                v-tooltip="formatAbsolute(row.state?.next_fire_at)"
                 class="cq-num text-xs text-muted"
-                :title="formatAbsolute(row.state?.next_fire_at)"
               >{{ formatRelative(row.state?.next_fire_at) }}</span>
             </li>
           </ul>

@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 import { useAlertDeliveries, useAlertsConfig } from '~/api/queries'
 import type { AlertChannelConfig, AlertRuleConfig, AlertRuleOverride } from '~/api/types'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
+import { useRevealSelected } from '~/composables/useRevealSelected'
 import { formatRelative } from '~/lib/format'
 import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
@@ -150,6 +151,8 @@ const selected = computed(() => rules.value.find((rule) => rule.name === selecte
 /** The detail's width: dragged by its left edge, remembered per browser. */
 const { alertRuleDetailWidth } = storeToRefs(useUiStore())
 const splitEl = ref<HTMLElement | null>(null)
+/** A deep link to a row scrolls the list to it. */
+useRevealSelected(splitEl, selectedRule, () => rules.value.length)
 const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, alertRuleDetailWidth)
 
 /** Rules that are not currently in the state the Croniqfile declares. */
@@ -269,7 +272,7 @@ const overriddenCount = computed(() => overrides.value.size)
               </span>
               <span
                 v-else
-                title="No rule delivers through this channel"
+                v-tooltip="'No rule delivers through this channel'"
               >unused</span>
             </td>
           </tr>
@@ -323,6 +326,7 @@ const overriddenCount = computed(() => overrides.value.size)
             <tr
               v-for="rule in rules"
               :key="rule.name"
+              :data-selected="rule.name === selectedRule || undefined"
               :class="[
                 'cq-row cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
                 rule.name === selectedRule && 'bg-elevated',
@@ -342,9 +346,9 @@ const overriddenCount = computed(() => overrides.value.size)
                 {{ rule.channels.join(' ') || '—' }}
                 <UIcon
                   v-if="missingChannels(rule).length"
+                  v-tooltip="`No such channel: ${missingChannels(rule).join(', ')} — this rule delivers nowhere`"
                   name="i-lucide-triangle-alert"
                   class="size-3.5 text-error"
-                  :title="`No such channel: ${missingChannels(rule).join(', ')} — this rule delivers nowhere`"
                 />
               </td>
               <td
@@ -360,10 +364,10 @@ const overriddenCount = computed(() => overrides.value.size)
               <td class="px-[var(--cq-cell-x)]">
                 <UBadge
                   v-if="overrides.get(rule.name)"
+                  v-tooltip="overrides.get(rule.name)!.note"
                   color="warning"
                   variant="subtle"
                   size="sm"
-                  :title="overrides.get(rule.name)!.note"
                 >
                   {{ overrideSummary(overrides.get(rule.name)!) }}
                 </UBadge>

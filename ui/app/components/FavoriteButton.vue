@@ -21,13 +21,13 @@ const label = computed(() => (on.value ? 'Remove from favorites' : 'Add to favor
 <template>
   <UButton
     v-if="available"
+    v-tooltip="error ?? label"
     icon="i-lucide-star"
     :color="error ? 'error' : on ? 'warning' : 'neutral'"
     variant="ghost"
     size="xs"
     :aria-pressed="on"
     :aria-label="label"
-    :title="error ?? label"
     :ui="{ leadingIcon: on ? '[&_path]:fill-current' : 'opacity-60' }"
     data-testid="favorite-toggle"
     @click.stop.prevent="toggle(jobKey)"

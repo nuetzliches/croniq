@@ -612,9 +612,9 @@ onBeforeUnmount(stopMotion)
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3 sm:grid sm:grid-cols-[1fr_auto_1fr]">
       <div class="flex min-w-0 items-center gap-2">
         <span
+          v-tooltip="paused ? 'Paused' : connected ? 'Live' : 'Reconnecting…'"
           class="size-2 rounded-full"
           :class="paused ? 'bg-warning' : connected ? 'animate-pulse bg-success' : 'bg-accented'"
-          :title="paused ? 'Paused' : connected ? 'Live' : 'Reconnecting…'"
         />
         <p
           class="cq-label"
@@ -633,23 +633,23 @@ onBeforeUnmount(stopMotion)
         />
         <UButton
           v-else
+          v-tooltip="'Hold the picture still'"
           size="xs"
           variant="ghost"
           color="neutral"
           icon="i-lucide-pause"
           aria-label="Pause"
-          title="Hold the picture still"
           data-testid="live-pause"
           @click="pause"
         />
         <UButton
+          v-tooltip="holdOnHover ? 'Hovering the timeline holds it still — click to keep it moving' : 'The timeline keeps moving under the pointer — click to hold it on hover'"
           size="xs"
           :variant="holdOnHover ? 'soft' : 'ghost'"
           color="neutral"
           icon="i-lucide-hand"
           aria-label="Hold on hover"
           :aria-pressed="holdOnHover"
-          :title="holdOnHover ? 'Hovering the timeline holds it still — click to keep it moving' : 'The timeline keeps moving under the pointer — click to hold it on hover'"
           data-testid="live-hold-on-hover"
           @click="holdOnHover = !holdOnHover"
         />
@@ -669,10 +669,10 @@ onBeforeUnmount(stopMotion)
           <div
             v-for="bucket in hourBuckets"
             :key="bucket.start"
+            v-tooltip="`${formatAbsolute(bucket.start)} — ${bucket.count} run${bucket.count === 1 ? '' : 's'}${bucket.jobs.length ? `: ${bucket.jobs.join(', ')}` : ''}`"
             class="min-w-0 flex-1 rounded-t-[1px]"
             :class="bucket.count ? 'bg-primary/60' : 'bg-elevated'"
             :style="{ height: `${Math.max(bucket.count ? 20 : 10, (bucket.count / hourPeak) * 100)}%` }"
-            :title="`${formatAbsolute(bucket.start)} — ${bucket.count} run${bucket.count === 1 ? '' : 's'}${bucket.jobs.length ? `: ${bucket.jobs.join(', ')}` : ''}`"
           />
         </div>
         <span class="cq-num text-xs text-muted">{{ hourTotal }} fire{{ hourTotal === 1 ? '' : 's' }}</span>
@@ -695,24 +695,24 @@ onBeforeUnmount(stopMotion)
           class="w-40"
         />
         <UButton
+          v-tooltip="laneOrder === 'name' ? 'Lanes by job key — switch to next fire first' : 'Lanes by next fire — switch to job key'"
           size="xs"
           variant="ghost"
           color="neutral"
           :icon="laneOrder === 'name' ? 'i-lucide-arrow-down-a-z' : 'i-lucide-clock-arrow-up'"
           :label="laneOrder === 'name' ? 'Name' : 'Next fire'"
-          :title="laneOrder === 'name' ? 'Lanes by job key — switch to next fire first' : 'Lanes by next fire — switch to job key'"
           data-testid="live-order"
           @click="laneOrder = laneOrder === 'name' ? 'next' : 'name'"
         />
         <UButton
           v-if="favoritesAvailable"
+          v-tooltip="favoritesFirst ? 'Starred jobs first — switch off' : 'Put starred jobs first'"
           size="xs"
           :variant="favoritesFirst ? 'subtle' : 'ghost'"
           color="neutral"
           icon="i-lucide-star"
           :aria-pressed="favoritesFirst"
           aria-label="Favorites first"
-          :title="favoritesFirst ? 'Starred jobs first — switch off' : 'Put starred jobs first'"
           data-testid="live-favorites-first"
           @click="favoritesFirst = !favoritesFirst"
         />
@@ -754,17 +754,17 @@ onBeforeUnmount(stopMotion)
                    stream frame, so lane labels stay plain markup. -->
               <span
                 v-if="favorites.has(lane.jobKey)"
+                v-tooltip="'Favorite'"
                 class="-mr-1 shrink-0 text-warning"
-                title="Favorite"
                 aria-label="Favorite"
                 data-testid="live-lane-favorite"
               >★</span>
               <a
+                v-tooltip="lane.jobKey"
                 :href="`/jobs/${encodeURIComponent(lane.jobKey)}`"
                 :data-route="`/jobs/${encodeURIComponent(lane.jobKey)}`"
                 class="min-w-0 flex-1 truncate font-mono hover:underline"
                 :class="lane.overdue ? 'text-error' : lane.running ? 'text-highlighted' : 'text-primary'"
-                :title="lane.jobKey"
               >
                 {{ lane.jobKey }}
               </a>
@@ -772,8 +772,8 @@ onBeforeUnmount(stopMotion)
                    its lane shows nothing having run. -->
               <span
                 v-if="lane.overdue"
+                v-tooltip="'Should have fired and did not'"
                 class="hidden shrink-0 items-center gap-1 text-error sm:flex"
-                title="Should have fired and did not"
               >
                 <UIcon
                   name="i-lucide-clock-alert"
@@ -782,9 +782,9 @@ onBeforeUnmount(stopMotion)
               </span>
               <span
                 v-else
+                v-tooltip="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
                 class="cq-num hidden shrink-0 sm:inline"
                 :class="lane.queuedSince !== null && !lookingBack ? 'text-warning' : 'text-muted'"
-                :title="lane.next === null ? '' : formatAbsolute(new Date(lane.next).toISOString())"
               >{{ nextLabel(lane) }}</span>
             </li>
           </ul>
@@ -838,12 +838,12 @@ onBeforeUnmount(stopMotion)
                   <a
                     v-for="bar in lane.bars"
                     :key="bar.id"
+                    v-tooltip="barTitle(bar)"
                     :href="`/executions/${bar.run.id}`"
                     :data-route="`/executions/${bar.run.id}`"
                     class="absolute left-0 origin-left hover:brightness-125"
                     :class="barClass(bar)"
                     :style="barStyle(bar)"
-                    :title="barTitle(bar)"
                   />
                 </div>
               </div>
@@ -865,13 +865,13 @@ onBeforeUnmount(stopMotion)
                 >
                   <div
                     v-if="nextInStrip(lane.next)"
+                    v-tooltip="`${lane.jobKey} — next fire`"
                     class="absolute left-0 w-0 border-l-2 border-dashed border-primary/60 transition-[top] duration-500 ease-out motion-reduce:transition-none"
                     :style="{
                       ...tickStyle(lane.next!),
                       top: `${index * LANE_HEIGHT + 3}px`,
                       height: `${LANE_HEIGHT - 6}px`,
                     }"
-                    :title="`${lane.jobKey} — next fire`"
                   />
                 </template>
               </div>

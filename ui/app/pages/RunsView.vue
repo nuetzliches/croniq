@@ -7,6 +7,7 @@ import type { Execution } from '~/api/types'
 import { formatDuration, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
+import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
@@ -85,6 +86,9 @@ const WINDOWS = [
   { label: 'Last hour', value: '1h', ms: 3_600_000 },
   { label: 'Last 24 hours', value: '24h', ms: 86_400_000 },
   { label: 'Last 7 days', value: '7d', ms: 604_800_000 },
+  // The dashboard's run-time card offers 30 days, and its badges link here
+  // with the window they were counted over.
+  { label: 'Last 30 days', value: '30d', ms: 2_592_000_000 },
 ]
 
 /**
@@ -342,6 +346,8 @@ watch(rows, (next) => {
  * first.
  */
 const listEl = ref<HTMLElement | null>(null)
+/** A deep link to a row scrolls the list to it. */
+useRevealSelected(listEl, selectedId, () => rows.value.length)
 
 const failureCount = computed(
   () => rows.value.filter((row) => FAILURE_STATES.has(row.state)).length,
@@ -430,8 +436,8 @@ function onKey(event: KeyboardEvent) {
         />
         <span class="text-muted">{{ chip.label }}</span>
         <span
+          v-tooltip="chip.value"
           class="max-w-[24rem] truncate font-mono text-highlighted"
-          :title="chip.value"
         >{{ chip.value }}</span>
         <UButton
           variant="ghost"
@@ -454,11 +460,11 @@ function onKey(event: KeyboardEvent) {
       />
       <UButton
         v-if="favoritesAvailable || filters.favorites"
+        v-tooltip="'Show only runs of the jobs you have starred'"
         icon="i-lucide-star"
         :variant="filters.favorites ? 'subtle' : 'ghost'"
         color="neutral"
         :aria-pressed="Boolean(filters.favorites)"
-        title="Show only runs of the jobs you have starred"
         data-testid="runs-favorites-only"
         @click="setFilter('favorites', filters.favorites ? '' : '1')"
       >
@@ -466,10 +472,10 @@ function onKey(event: KeyboardEvent) {
       </UButton>
       <UButton
         v-if="showNextFailure"
+        v-tooltip="'Scroll to the next failed run'"
         color="error"
         variant="subtle"
         icon="i-lucide-arrow-down-to-line"
-        title="Scroll to the next failed run"
         @click="scrollToNextFailure"
       >
         Next failure <span class="cq-num">· {{ failureCount }}</span>
@@ -567,6 +573,7 @@ function onKey(event: KeyboardEvent) {
               v-for="(row, index) in rows"
               :key="row.id"
               :data-row-index="index"
+              :data-selected="row.id === selectedId || undefined"
               :class="[
                 'cq-row',
                 'cursor-pointer border-b border-default/60 transition-colors hover:bg-elevated',
@@ -585,8 +592,8 @@ function onKey(event: KeyboardEvent) {
                 </div>
               </td>
               <td
+                v-tooltip="row.id"
                 class="cq-num px-[var(--cq-cell-x)] font-mono text-muted"
-                :title="row.id"
               >
                 {{ shortId(row.id) }}
                 <!-- Attempt only when it says something: every run is attempt 1. -->
@@ -599,8 +606,8 @@ function onKey(event: KeyboardEvent) {
                 {{ row.runner_id ?? '—' }}
               </td>
               <td
+                v-tooltip="fired.title(row.fire_at)"
                 class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-                :title="fired.title(row.fire_at)"
               >
                 {{ fired.text(row.fire_at) }}
               </td>

@@ -87,11 +87,11 @@ const tone = computed(() => {
 
 <template>
   <UBadge
+    v-tooltip="title"
     :color="tone.color"
     variant="subtle"
     :size="size ?? 'sm'"
     class="gap-1.5 whitespace-nowrap"
-    :title="title"
   >
     <span
       class="size-1.5 shrink-0 rounded-full"

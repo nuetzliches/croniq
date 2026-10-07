@@ -224,17 +224,17 @@ function latency(delivery: AlertDelivery): string {
                    being paged. -->
               <RouterLink
                 v-if="delivery.execution_id"
+                v-tooltip="delivery.execution_id"
                 :to="`/executions/${delivery.execution_id}`"
                 class="text-primary hover:underline"
-                :title="delivery.execution_id"
               >
                 {{ shortId(delivery.execution_id) }}
               </RouterLink>
               <span v-else>—</span>
             </td>
             <td
+              v-tooltip="fired.title(delivery.fired_at)"
               class="cq-num px-[var(--cq-cell-x)] text-right text-muted"
-              :title="fired.title(delivery.fired_at)"
             >
               {{ fired.text(delivery.fired_at) }}
             </td>

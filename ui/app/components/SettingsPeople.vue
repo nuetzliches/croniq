@@ -319,31 +319,31 @@ function isSelf(row: Row): boolean {
             {{ row.status }}
           </td>
           <td
+            v-tooltip="formatAbsolute(row.when)"
             class="cq-num text-right text-muted"
-            :title="formatAbsolute(row.when)"
           >
             {{ row.whenLabel }}
           </td>
           <td class="text-right">
             <UButton
               v-if="row.kind === 'invitation' && row.status === 'invited'"
+              v-tooltip="'Revoke the invitation'"
               icon="i-lucide-x"
               color="error"
               variant="ghost"
               size="xs"
               :aria-label="`Revoke the invitation for ${row.identity}`"
-              title="Revoke the invitation"
               :loading="revokeInvitation.isPending.value"
               @click="confirmRevoke = { id: row.id, label: row.identity }"
             />
             <UButton
               v-else-if="row.kind === 'user' && !isSelf(row)"
+              v-tooltip="'Remove this user'"
               icon="i-lucide-trash-2"
               color="error"
               variant="ghost"
               size="xs"
               :aria-label="`Remove ${row.identity}`"
-              title="Remove this user"
               :loading="removeUser.isPending.value"
               @click="confirmRemoveUser = { id: row.id, label: row.identity }"
             />

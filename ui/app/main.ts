@@ -8,6 +8,7 @@ import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
 import { forgetLegacyTokens } from './api/session'
 import { reloadInto } from './lib/server-update'
+import { vTooltip } from './lib/tooltip'
 import { installAuthWatch, router } from './router'
 
 // Before anything else: a browser that used the pre-#454 dashboard still holds
@@ -43,6 +44,7 @@ app.use(createPinia())
 app.use(router)
 app.use(ui)
 app.use(VueQueryPlugin, { queryClient })
+app.directive('tooltip', vTooltip)
 
 app.mount('#app')
 

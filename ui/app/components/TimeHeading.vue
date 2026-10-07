@@ -25,11 +25,12 @@ useTimeDisplayShortcut()
     {{ label }}
     <span
       v-if="clock"
+      v-tooltip="'Times are shown in your browser\'s time zone.'"
       class="font-normal normal-case text-dimmed"
-      title="Times are shown in your browser's time zone."
       data-testid="time-heading-zone"
     >{{ timeZone }}</span>
     <UButton
+      v-tooltip="clock ? 'Show how long ago (t)' : 'Show the time of day (t)'"
       variant="ghost"
       color="neutral"
       size="xs"
@@ -37,7 +38,6 @@ useTimeDisplayShortcut()
       :icon="clock ? 'i-lucide-clock' : 'i-lucide-history'"
       :aria-pressed="clock"
       :aria-label="clock ? 'Show how long ago' : 'Show the time of day'"
-      :title="clock ? 'Show how long ago (t)' : 'Show the time of day (t)'"
       data-testid="time-heading-toggle"
       @click="toggle()"
     />

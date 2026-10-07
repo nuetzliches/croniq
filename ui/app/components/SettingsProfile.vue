@@ -458,8 +458,8 @@ function expiryLabel(iso: string | null): string {
               {{ token.scopes.join(' ') }}
             </td>
             <td
+              v-tooltip="formatAbsolute(token.last_used_at)"
               class="cq-num text-right text-muted"
-              :title="formatAbsolute(token.last_used_at)"
             >
               <!-- A token that has never been used is worth spotting: it is
                    either unnecessary or something is misconfigured. -->
@@ -470,12 +470,12 @@ function expiryLabel(iso: string | null): string {
             </td>
             <td class="text-right">
               <UButton
+                v-tooltip="'Revoke'"
                 icon="i-lucide-trash-2"
                 color="error"
                 variant="ghost"
                 size="xs"
                 :aria-label="`Revoke ${token.name}`"
-                title="Revoke"
                 :loading="revokePat.isPending.value"
                 @click="confirmRevoke = { id: token.token_id, label: token.name }"
               />
