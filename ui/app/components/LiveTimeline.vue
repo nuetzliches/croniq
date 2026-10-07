@@ -968,6 +968,7 @@ onBeforeUnmount(stopMotion)
         :buckets="overview"
         :forecast="overviewForecast"
         :at="overviewAt"
+        :moving="!still"
       />
     </template>
   </section>

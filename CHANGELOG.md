@@ -40,6 +40,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     now and counts only fires still ahead, and there is one bucket more than
     the window holds. This also steadies the dashboard's "Next hour"
     histogram.
+  - The bars also glide now, like the timeline above them. They used to
+    stand still for a second and then step left.
 
 - **Hovering the live timeline holds all of it, not just the motion.**
   Lanes kept greying and sliding to their new place, countdowns kept
