@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-07
+
 ### Fixed
 
 - **`priority high` is honoured for jobs that fire at the same moment.**
