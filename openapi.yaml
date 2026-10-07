@@ -2048,7 +2048,13 @@ paths:
           schema: { type: integer, minimum: 5 }
       responses:
         "200":
-          description: Forecast buckets covering the requested window
+          description: |
+            Forecast buckets covering the requested window. Buckets sit on a
+            fixed grid (whole multiples of the bucket size since the epoch),
+            so a fire stays in the same bucket from one request to the next.
+            The first bucket starts up to one bucket before now and counts
+            only fires still ahead; there is one bucket more than the window
+            holds, so the last one is whole.
           content:
             application/json:
               schema:

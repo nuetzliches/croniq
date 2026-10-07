@@ -64,26 +64,35 @@ const peak = computed(() =>
 )
 const height = (count: number) => `${count ? Math.max(12, (count / peak.value) * 100) : 0}%`
 
+/**
+ * Both halves come on one fixed grid, so the slice "now" falls in is in both:
+ * its runs so far in the past, its fires still due in the forecast. Each half
+ * draws its part of it, cut at the line. The slice reaching past the strip's
+ * left edge is clipped by the strip.
+ */
 const pastBars = computed(() =>
   props.buckets.map((b) => ({
     key: b.start,
     left: pct(b.start - props.at),
-    width: (SPAN_MS / props.buckets.length / TOTAL) * 100,
+    width: ((Math.min(b.end, props.at) - b.start) / TOTAL) * 100,
     count: b.count,
     failed: b.failed,
   })),
 )
 const futureBars = computed(() =>
   props.forecast
-    .map((b) => ({
-      key: b.start,
-      left: pct(b.start - props.at),
-      width: ((b.end - b.start) / TOTAL) * 100,
-      count: b.count,
-    }))
-    // A forecast fetched a few seconds ago starts left of "now" by that much;
-    // what has passed is the past's to show.
-    .filter((b) => b.left >= nowPct && b.left < 100),
+    // What has passed is the past's to show.
+    .filter((b) => b.end > props.at)
+    .map((b) => {
+      const start = Math.max(b.start, props.at)
+      return {
+        key: b.start,
+        left: pct(start - props.at),
+        width: ((b.end - start) / TOTAL) * 100,
+        count: b.count,
+      }
+    })
+    .filter((b) => b.left < 100),
 )
 
 const ticks = [

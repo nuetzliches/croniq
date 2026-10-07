@@ -277,10 +277,32 @@ describe('densityBuckets', () => {
       SPAN_MS,
       60,
     )
-    expect(buckets).toHaveLength(60)
+    // T is on the 5 s grid, so the extra slice is the empty one still to fill.
+    expect(buckets).toHaveLength(61)
     expect(buckets[59]).toMatchObject({ count: 2, failed: 1 })
     expect(buckets[0]).toMatchObject({ count: 1, failed: 0 })
+    expect(buckets[60]).toMatchObject({ start: T, end: T + 5_000, count: 0 })
     expect(buckets.reduce((sum, b) => sum + b.count, 0)).toBe(3)
+  })
+
+  // The jump this grid fixes: a moment later, the same runs must be in the
+  // same slices, not regrouped around the new "now".
+  it('keeps each run in its slice as "now" moves', () => {
+    const runs = [-61_000, -58_000, -44_500, -42_000, -12_000].map((offset, i) =>
+      run({ id: `r${i}`, claimed_at: iso(offset) }),
+    )
+    const slices = (now: number) =>
+      densityBuckets(runs, now)
+        .filter((b) => b.count > 0)
+        .map((b) => [b.start - T, b.count])
+    const first = slices(T)
+    expect(first).toEqual([
+      [-65_000, 1],
+      [-60_000, 1],
+      [-45_000, 2],
+      [-15_000, 1],
+    ])
+    for (const ms of [300, 1_000, 2_700, 4_999]) expect(slices(T + ms)).toEqual(first)
   })
 })
 

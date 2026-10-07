@@ -28,6 +28,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The overview under the live timeline no longer jumps.** Its bars,
+  runs started per five seconds, were cut from the current instant, so
+  every tick moved every boundary and runs a few seconds apart were grouped
+  one way and then the other. With one shared scale, the whole strip
+  changed height. Bars now sit on a fixed five-second grid and only change
+  when a run arrives or a bar leaves the window.
+  - `GET /v1/dashboard/forecast` (and the `dashboard_forecast` MCP tool)
+    puts its buckets on the same kind of grid, whole multiples of the bucket
+    size since the epoch. The first bucket starts up to one bucket before
+    now and counts only fires still ahead, and there is one bucket more than
+    the window holds. This also steadies the dashboard's "Next hour"
+    histogram.
+
 - **Hovering the live timeline holds all of it, not just the motion.**
   Lanes kept greying and sliding to their new place, countdowns kept
   counting and new runs kept appearing under the pointer. Now the hover
