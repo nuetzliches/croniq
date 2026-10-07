@@ -197,6 +197,13 @@ pub trait ExecutionStore {
     /// Returns one entry per `job_key` that has at least one execution.
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError>;
 
+    /// Run time per job over the runs that finished at or after `since` with
+    /// a recorded duration, largest total first (ties by job key). One grouped
+    /// scan on `(job_key, completed_at)`, so a month of history costs no more
+    /// than the rows it covers. Runs still in flight are not counted, and
+    /// neither are ephemeral ones, which have no row.
+    fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError>;
+
     /// Age-based retention: delete up to `limit` terminal executions whose
     /// `completed_at` is at or before `cutoff`, together with their
     /// `execution_logs` (issue #344). Terminal here means `completed` /

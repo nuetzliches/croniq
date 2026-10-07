@@ -154,6 +154,7 @@ impl ExecutionStore for FaultStore {
         cancel_execution(id: Uuid, now: DateTime<Utc>) -> ();
         count_by_state() -> HashMap<ExecutionState, u64>;
         job_execution_metrics() -> Vec<JobExecutionMetrics>;
+        job_runtime_since(since: DateTime<Utc>) -> Vec<JobRuntime>;
         prune_executions_older_than(cutoff: DateTime<Utc>, limit: u32) -> u64;
         prune_executions_keep_last(job_key: &str, keep_last: u32, limit: u32) -> u64;
     }

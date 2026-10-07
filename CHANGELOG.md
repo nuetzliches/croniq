@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The dashboard shows where the run time went.** A "Run time by job"
+  card replaces the 24-hour throughput chart. It lists the jobs by how
+  much run time their finished runs used, largest first, with a bar
+  relative to the busiest job, the run count and failures. A dropdown
+  switches between the last 24 hours, 7 days and 30 days, and the choice
+  is remembered in this browser. The first ten are shown, the rest behind
+  "Show all".
+  - New endpoint `GET /v1/insights/runtime?window=24h|7d|30d`
+    (`executions:read`). It sums in the store with one grouped query, so
+    a month of history is not cut off at a row limit. Runs still going,
+    ephemeral runs, and history removed by `execution_retention` or
+    `keep_last` are not counted.
+
 - **Hovering the live timeline no longer has to stop it.** A hand button
   beside Pause switches off the hold on hover, so the picture keeps moving
   under the pointer. It is on by default, as before, and the choice is

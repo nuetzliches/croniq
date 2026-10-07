@@ -61,6 +61,7 @@ fn pg_backend_exercises_all_traits() {
     execution_retention(&store, &s);
     execution_job_key_search(&store, &s);
     execution_completion_cas(&store, &s);
+    job_runtime(&store, &s);
     dsl_adoptions(&store, &s);
     register_fires(&store, &s);
     alert_deliveries(&store, &s);
@@ -965,6 +966,54 @@ fn execution_completion_cas(store: &PgStore, s: &str) {
         ExecutionState::Dead
     );
     assert!(store.get_dead_letter(dl.id).unwrap().is_some());
+}
+
+/// Run time per job for the dashboard. The `::bigint` casts and the
+/// timestamptz comparison are only checked against a real server.
+fn job_runtime(store: &PgStore, s: &str) {
+    let slow = format!("rt-slow-{s}");
+    let quick = format!("rt-quick-{s}");
+    let since = ts() - chrono::Duration::hours(1);
+    let finish = |job: &str, dur_ms: i64, state: ExecutionState, at: DateTime<Utc>| {
+        let id = seed_execution(store, job, None);
+        store.claim_execution(id, "r-seed", at).unwrap();
+        store
+            .complete_execution(id, None, state, Some(dur_ms), None, None, at)
+            .unwrap();
+    };
+    finish(&slow, 60_000, ExecutionState::Completed, ts());
+    finish(&slow, 30_000, ExecutionState::Dead, ts());
+    finish(&quick, 500, ExecutionState::Completed, ts());
+    finish(
+        &quick,
+        900_000,
+        ExecutionState::Completed,
+        since - chrono::Duration::seconds(1),
+    );
+
+    let ours: Vec<JobRuntime> = store
+        .job_runtime_since(since)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.job_key.starts_with("rt-") && r.job_key.ends_with(s))
+        .collect();
+    assert_eq!(
+        ours,
+        vec![
+            JobRuntime {
+                job_key: slow,
+                runs: 2,
+                failed: 1,
+                total_ms: 90_000,
+            },
+            JobRuntime {
+                job_key: quick,
+                runs: 1,
+                failed: 0,
+                total_ms: 500,
+            },
+        ]
+    );
 }
 
 /// Execution retention (issue #344): age sweep + per-job keep_last, Postgres.

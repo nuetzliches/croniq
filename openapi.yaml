@@ -3389,6 +3389,42 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/FailureHeatmap" }
 
+  /v1/insights/runtime:
+    get:
+      summary: Run time per job over a window
+      description: |
+        How much run time each job used: the runs that finished in the
+        window with a recorded duration, summed per job, largest total
+        first. Runs still in flight and ephemeral runs (which have no row)
+        are not counted, and history removed by `execution_retention` or
+        `keep_last` is gone from the sum. Requires `executions:read`.
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: ["24h", "7d", "30d"], default: "24h" }
+      responses:
+        "200":
+          description: Run time per job
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [window, since, jobs]
+                properties:
+                  window: { type: string }
+                  since: { type: string, format: date-time }
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      required: [job_key, runs, failed, total_ms]
+                      properties:
+                        job_key: { type: string }
+                        runs: { type: integer, description: "Runs counted, each with a duration." }
+                        failed: { type: integer, description: "Of those, the ones that ended failed or dead." }
+                        total_ms: { type: integer, description: "Their durations summed, in milliseconds." }
+        "400": { description: Unknown window }
+
   /v1/tags:
     get:
       summary: Distinct tags across an entity kind

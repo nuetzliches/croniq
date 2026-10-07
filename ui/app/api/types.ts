@@ -409,6 +409,14 @@ export interface ThroughputResponse {
   buckets: ThroughputBucket[]
 }
 
+/** `GET /v1/insights/runtime`: run time per job, largest total first. */
+export interface RuntimeResponse {
+  window: RuntimeWindow
+  since: string
+  jobs: { job_key: string; runs: number; failed: number; total_ms: number }[]
+}
+export type RuntimeWindow = '24h' | '7d' | '30d'
+
 export interface FailureHeatmap {
   days: number
   rows: number[][]
