@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { useAlertDeliveries, useAlertsConfig } from '~/api/queries'
 import type { AlertChannelConfig, AlertRuleConfig, AlertRuleOverride } from '~/api/types'
+import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { formatRelative } from '~/lib/format'
+import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Alerting: the rules, the channels they deliver through, and what went out.
@@ -144,6 +147,11 @@ function openRule(rule: AlertRuleConfig) {
 
 const selected = computed(() => rules.value.find((rule) => rule.name === selectedRule.value) ?? null)
 
+/** The detail's width: dragged by its left edge, remembered per browser. */
+const { alertRuleDetailWidth } = storeToRefs(useUiStore())
+const splitEl = ref<HTMLElement | null>(null)
+const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, alertRuleDetailWidth)
+
 /** Rules that are not currently in the state the Croniqfile declares. */
 const overriddenCount = computed(() => overrides.value.size)
 </script>
@@ -271,7 +279,8 @@ const overriddenCount = computed(() => overrides.value.size)
 
     <div
       v-else
-      class="flex min-h-0 flex-1 gap-4"
+      ref="splitEl"
+      class="flex min-h-0 flex-1 gap-1.5"
     >
       <div class="cq-list min-w-0 flex-1">
         <AppEmpty
@@ -368,15 +377,24 @@ const overriddenCount = computed(() => overrides.value.size)
         </table>
       </div>
 
-      <AlertRuleDetail
-        v-if="selectedRule"
-        :rule="selected"
-        :rule-name="selectedRule"
-        :override="overrides.get(selectedRule) ?? null"
-        :missing-channels="selected ? missingChannels(selected) : []"
-        class="w-[30rem] shrink-0"
-        @close="router.push('/alerts')"
-      />
+      <template v-if="selectedRule">
+        <PaneResizer
+          v-model="alertRuleDetailWidth"
+          :min="DETAIL_PANE_MIN_WIDTH"
+          :max="maxDetailWidth"
+          :default-width="DETAIL_PANE_WIDE_DEFAULT_WIDTH"
+          label="Resize alert rule detail"
+        />
+        <AlertRuleDetail
+          :rule="selected"
+          :rule-name="selectedRule"
+          :override="overrides.get(selectedRule) ?? null"
+          :missing-channels="selected ? missingChannels(selected) : []"
+          class="shrink-0"
+          :style="{ width: `${detailWidth}px` }"
+          @close="router.push('/alerts')"
+        />
+      </template>
     </div>
   </div>
 </template>

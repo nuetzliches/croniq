@@ -31,12 +31,14 @@ const RUN_DETAIL_WIDTH_KEY = 'croniq_run_detail_width'
 const DEAD_LETTER_DETAIL_WIDTH_KEY = 'croniq_dead_letter_detail_width'
 const JOB_DETAIL_WIDTH_KEY = 'croniq_job_detail_width'
 const CALENDAR_DETAIL_WIDTH_KEY = 'croniq_calendar_detail_width'
+const ALERT_RULE_DETAIL_WIDTH_KEY = 'croniq_alert_rule_detail_width'
 
 /** A detail pane's width until someone drags it — the old fixed `26rem`. */
 export const DETAIL_PANE_DEFAULT_WIDTH = 416
 /**
- * The job and calendar details', which were `30rem`: they carry tabs, a
- * schedule table, a list of dates — more than a run's facts.
+ * The job, calendar and alert rule details', which were `30rem`: they carry
+ * tabs, a schedule table, a list of dates or deliveries — more than a run's
+ * facts.
  */
 export const DETAIL_PANE_WIDE_DEFAULT_WIDTH = 480
 /** Narrower than this and a detail's header and toolbars start to wrap. */
@@ -144,6 +146,9 @@ export const useUiStore = defineStore('ui', () => {
   const calendarDetailWidth = ref<number>(
     readPaneWidth(CALENDAR_DETAIL_WIDTH_KEY, DETAIL_PANE_WIDE_DEFAULT_WIDTH),
   )
+  const alertRuleDetailWidth = ref<number>(
+    readPaneWidth(ALERT_RULE_DETAIL_WIDTH_KEY, DETAIL_PANE_WIDE_DEFAULT_WIDTH),
+  )
 
   // Write the new shape back on boot, so a browser carrying a React-tree value
   // stops carrying it. The watchers below only fire on change, and a
@@ -185,6 +190,10 @@ export const useUiStore = defineStore('ui', () => {
     write(CALENDAR_DETAIL_WIDTH_KEY, String(Math.round(width)))
   })
 
+  watch(alertRuleDetailWidth, (width) => {
+    write(ALERT_RULE_DETAIL_WIDTH_KEY, String(Math.round(width)))
+  })
+
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
@@ -218,6 +227,7 @@ export const useUiStore = defineStore('ui', () => {
     deadLetterDetailWidth,
     jobDetailWidth,
     calendarDetailWidth,
+    alertRuleDetailWidth,
     toggleSidebar,
     toggleTimeDisplay,
     reapplyTheme,

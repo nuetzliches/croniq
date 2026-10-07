@@ -167,10 +167,11 @@ describe('ui store, the detail pane widths', () => {
     expect(localStorage.getItem('croniq_run_detail_width')).toBe('700')
   })
 
-  it('starts the job and calendar details at the wider default', async () => {
+  it('starts the job, calendar and alert rule details at the wider default', async () => {
     const ui = useUiStore()
     expect(ui.jobDetailWidth).toBe(DETAIL_PANE_WIDE_DEFAULT_WIDTH)
     expect(ui.calendarDetailWidth).toBe(DETAIL_PANE_WIDE_DEFAULT_WIDTH)
+    expect(ui.alertRuleDetailWidth).toBe(DETAIL_PANE_WIDE_DEFAULT_WIDTH)
 
     localStorage.setItem('croniq_job_detail_width', 'wide')
     setActivePinia(createPinia())
@@ -185,6 +186,10 @@ describe('ui store, the detail pane widths', () => {
     next.calendarDetailWidth = 540
     await nextTick()
     expect(localStorage.getItem('croniq_calendar_detail_width')).toBe('540')
+
+    next.alertRuleDetailWidth = 500
+    await nextTick()
+    expect(localStorage.getItem('croniq_alert_rule_detail_width')).toBe('500')
   })
 
   it('keeps a stored width wider than any window, for the view to clamp', () => {

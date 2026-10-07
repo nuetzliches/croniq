@@ -8,12 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **The run, dead letter, job and calendar details can be resized.** On
-  the Runs, Dead Letters, Jobs and Calendars screens, drag the edge between
-  the table and the detail to make it wider or narrower.
+- **The detail beside a table can be resized.** On the Runs, Dead
+  Letters, Jobs, Calendars and Alerts screens, drag the edge between the
+  table and the detail to make it wider or narrower.
   - With the edge focused, ←/→ move it by 16 px (64 px with Shift) and
     Home/End jump to the narrowest and widest; a double-click puts it back
-    to the default: 416 px, or 480 px for a job or a calendar.
+    to the default: 416 px for a run or a dead letter, 480 px for a job, a
+    calendar or an alert rule.
   - The table keeps at least 360 px, and the detail at least 320 px.
   - The width is remembered per browser, separately for each screen. A
     window too narrow for it shows less for now and keeps the saved width
