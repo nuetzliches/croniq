@@ -2897,12 +2897,7 @@ mod tests {
         }
 
         assert_eq!(
-            server
-                .state
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            server.state.queue.read().await.count_for_job("inbox:sync"),
             1,
             "ten bare triggers must leave exactly one queued execution"
         );
@@ -2965,12 +2960,7 @@ mod tests {
             "a call with a payload must not fold: {parameterised}"
         );
         assert_eq!(
-            server
-                .state
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            server.state.queue.read().await.count_for_job("inbox:sync"),
             2
         );
     }
@@ -3069,12 +3059,7 @@ mod tests {
             );
         }
         assert_eq!(
-            server
-                .state
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            server.state.queue.read().await.count_for_job("inbox:sync"),
             5
         );
     }
@@ -3111,12 +3096,7 @@ mod tests {
             "the signal must fold into the queued scheduled fire: {resp}"
         );
         assert_eq!(
-            server
-                .state
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            server.state.queue.read().await.count_for_job("inbox:sync"),
             1
         );
     }

@@ -5372,12 +5372,7 @@ mod tests {
         }
 
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1,
             "twenty signals must leave exactly one queued execution"
         );
@@ -5428,12 +5423,7 @@ mod tests {
         }
 
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1,
             "the in-flight run plus exactly one follow-up — no more"
         );
@@ -5489,12 +5479,7 @@ mod tests {
         );
         assert_ne!(parameterised["execution_id"].as_str().unwrap(), signal_id);
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             2
         );
     }
@@ -5647,12 +5632,7 @@ mod tests {
             "the signal must fold into the queued scheduled fire"
         );
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1
         );
     }
@@ -5681,12 +5661,7 @@ mod tests {
         }
         assert_eq!(ids.len(), 5, "each trigger gets its own execution");
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             5
         );
     }
@@ -5729,12 +5704,7 @@ mod tests {
             "`coalesce` must not turn off the per-job queue cap"
         );
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("inbox:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             2
         );
     }
