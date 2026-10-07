@@ -3348,3 +3348,134 @@ fn maintenance_next_active_since_carries_over_while_active() {
     // Switching off clears it.
     assert_eq!(off.next_active_since(&previous, later), None);
 }
+
+// ─── NoteStore ───
+
+fn make_note(
+    job_key: &str,
+    execution_id: Option<Uuid>,
+    kind: NoteKind,
+    created_at: chrono::DateTime<Utc>,
+) -> JobNote {
+    JobNote {
+        id: Uuid::new_v4(),
+        job_key: job_key.into(),
+        execution_id,
+        kind,
+        body: if kind == NoteKind::Ack {
+            String::new()
+        } else {
+            "why does this fail on Mondays?".into()
+        },
+        author_id: "user-1".into(),
+        author_name: "Anna".into(),
+        created_at,
+    }
+}
+
+#[test]
+fn note_create_get_and_delete() {
+    let store = create_memory_store().unwrap();
+    let exec_id = Uuid::new_v4();
+    let note = make_note("mail:send", Some(exec_id), NoteKind::Question, now());
+
+    store.create_note(&note).unwrap();
+    let loaded = store.get_note(note.id).unwrap().unwrap();
+    assert_eq!(loaded.job_key, "mail:send");
+    assert_eq!(loaded.execution_id, Some(exec_id));
+    assert_eq!(loaded.kind, NoteKind::Question);
+    assert_eq!(loaded.body, note.body);
+    assert_eq!(loaded.author_name, "Anna");
+    assert_eq!(loaded.created_at, note.created_at);
+
+    assert!(store.delete_note(note.id).unwrap());
+    assert!(store.get_note(note.id).unwrap().is_none());
+    assert!(
+        !store.delete_note(note.id).unwrap(),
+        "a second delete finds nothing"
+    );
+}
+
+#[test]
+fn notes_list_by_job_newest_first_and_by_execution_ids() {
+    let store = create_memory_store().unwrap();
+    let run_a = Uuid::new_v4();
+    let run_b = Uuid::new_v4();
+
+    let job_note = make_note("mail:send", None, NoteKind::Idea, utc(2026, 3, 29, 9, 0));
+    let ack_a = make_note(
+        "mail:send",
+        Some(run_a),
+        NoteKind::Ack,
+        utc(2026, 3, 29, 10, 0),
+    );
+    let q_b = make_note(
+        "mail:send",
+        Some(run_b),
+        NoteKind::Question,
+        utc(2026, 3, 29, 11, 0),
+    );
+    let other = make_note(
+        "billing:invoice",
+        None,
+        NoteKind::Note,
+        utc(2026, 3, 29, 12, 0),
+    );
+    for n in [&job_note, &ack_a, &q_b, &other] {
+        store.create_note(n).unwrap();
+    }
+
+    let by_job = store
+        .list_notes(&NoteFilter {
+            job_key: Some("mail:send".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let ids: Vec<Uuid> = by_job.iter().map(|n| n.id).collect();
+    assert_eq!(ids, vec![q_b.id, ack_a.id, job_note.id]);
+
+    let by_runs = store
+        .list_notes(&NoteFilter {
+            execution_ids: vec![run_a, Uuid::new_v4()],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(by_runs.len(), 1);
+    assert_eq!(by_runs[0].id, ack_a.id);
+
+    let limited = store
+        .list_notes(&NoteFilter {
+            limit: Some(2),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(limited.len(), 2);
+    assert_eq!(limited[0].id, other.id);
+}
+
+#[test]
+fn notes_survive_the_retention_prune_of_their_run() {
+    let store = create_memory_store().unwrap();
+    let old = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(&store, &old, ExecutionState::Failed, utc(2026, 1, 10, 0, 0));
+    let note = make_note(
+        "ret:job",
+        Some(old.id),
+        NoteKind::Ack,
+        utc(2026, 1, 10, 1, 0),
+    );
+    store.create_note(&note).unwrap();
+
+    let deleted = store
+        .prune_executions_older_than(utc(2026, 2, 1, 0, 0), 100)
+        .unwrap();
+    assert_eq!(deleted, 1);
+    assert!(store.get_execution(old.id).unwrap().is_none());
+
+    let kept = store.get_note(note.id).unwrap().unwrap();
+    assert_eq!(
+        kept.execution_id,
+        Some(old.id),
+        "the note keeps naming the run it was written about"
+    );
+}

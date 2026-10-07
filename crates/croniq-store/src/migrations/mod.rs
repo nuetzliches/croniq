@@ -94,6 +94,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "030_maintenance_active_since",
         include_str!("030_maintenance_active_since.sql"),
     ),
+    ("031_job_notes", include_str!("031_job_notes.sql")),
 ];
 
 /// Run all pending migrations.
@@ -880,5 +881,49 @@ mod tests {
         assert!(manual);
         assert_eq!(note, "deploy");
         assert!(since.is_none(), "a legacy row has no recorded activation");
+    }
+
+    #[test]
+    fn migration_031_creates_job_notes_without_execution_fk() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        apply_through(&conn, "030_maintenance_active_since").unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "031_job_notes")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // A note may name a run that does not exist (any more): retention
+        // deletes runs, and the note is meant to outlive them.
+        conn.execute(
+            "INSERT INTO job_notes
+                (id, job_key, execution_id, kind, body, author_id, author_name, created_at)
+             VALUES (?1, 'mail:send', ?2, 'ack', '', 'u1', 'Anna', '2026-10-06T08:00:00Z')",
+            [uuid_str(1), uuid_str(99)],
+        )
+        .unwrap();
+
+        // The kind is constrained to the four the API knows.
+        assert!(
+            conn.execute(
+                "INSERT INTO job_notes
+                    (id, job_key, kind, body, author_id, author_name, created_at)
+                 VALUES (?1, 'mail:send', 'shrug', 'x', 'u1', 'Anna', '2026-10-06T08:00:00Z')",
+                [uuid_str(2)],
+            )
+            .is_err()
+        );
+
+        let (kind, author): (String, String) = conn
+            .query_row(
+                "SELECT kind, author_name FROM job_notes WHERE job_key = 'mail:send'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "ack");
+        assert_eq!(author, "Anna");
     }
 }

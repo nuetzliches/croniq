@@ -315,4 +315,13 @@ impl MaintenanceStore for FaultStore {
     }
 }
 
+impl NoteStore for FaultStore {
+    delegate! {
+        create_note(note: &JobNote) -> ();
+        get_note(id: Uuid) -> Option<JobNote>;
+        list_notes(filter: &NoteFilter) -> Vec<JobNote>;
+        delete_note(id: Uuid) -> bool;
+    }
+}
+
 impl croniq_store::traits::Store for FaultStore {}

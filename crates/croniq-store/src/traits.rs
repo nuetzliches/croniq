@@ -698,6 +698,19 @@ pub trait MaintenanceStore {
     fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError>;
 }
 
+/// Operator notes on jobs and their runs (migration 031).
+pub trait NoteStore {
+    fn create_note(&self, note: &JobNote) -> Result<(), StoreError>;
+
+    fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError>;
+
+    /// Notes matching `filter`, newest first. `limit` defaults to 100.
+    fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError>;
+
+    /// Returns `Ok(true)` when a row was removed, `Ok(false)` when none existed.
+    fn delete_note(&self, id: Uuid) -> Result<bool, StoreError>;
+}
+
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
@@ -734,5 +747,6 @@ pub trait Store:
     + ExecutionLogStore
     + AlertStore
     + MaintenanceStore
+    + NoteStore
 {
 }

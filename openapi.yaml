@@ -575,6 +575,49 @@ components:
           nullable: true
           description: When the override auto-clears; `null` for open-ended (disable/throttle only)
 
+    NoteKind:
+      type: string
+      enum: [ack, question, idea, note]
+      description: |
+        What a note says. `ack` marks a run or job as seen and checked and may
+        carry no text; the other kinds need some.
+
+    JobNote:
+      type: object
+      description: |
+        An operator's note on a job, optionally pinned to one of its runs.
+        `execution_id` is a weak reference: retention deletes runs, the note
+        stays, and the run it names may be gone.
+      required: [id, job_key, kind, body, author_id, author_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        job_key: { type: string }
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The run the note was written about; `null` for a note on the job
+        kind: { $ref: "#/components/schemas/NoteKind" }
+        body: { type: string, description: Plain text; empty only for an `ack` }
+        author_id: { type: string, description: User id or API client id of the writer }
+        author_name: { type: string, description: Display name at write time }
+        created_at: { type: string, format: date-time }
+
+    CreateNote:
+      type: object
+      required: [job_key, kind]
+      properties:
+        job_key: { type: string }
+        execution_id:
+          type: string
+          format: uuid
+          description: Must be a run of `job_key`
+        kind: { $ref: "#/components/schemas/NoteKind" }
+        body:
+          type: string
+          maxLength: 4000
+          description: Required unless `kind` is `ack`
+
     AlertsConfigView:
       type: object
       description: |
@@ -1470,6 +1513,79 @@ paths:
         "400": { description: Invalid execution id (not a UUID) }
         "404": { description: Execution not found }
         "409": { description: Execution is in a terminal state }
+
+  /v1/notes:
+    get:
+      summary: List operator notes
+      description: |
+        Notes on a job and its runs, newest first. Name a `job_key`,
+        `execution_ids`, or both (they combine with AND) — a request with
+        neither is rejected. `execution_ids` is what a run list uses to fetch
+        the notes of every visible row in one call.
+
+        Scope: `executions:read`.
+      parameters:
+        - name: job_key
+          in: query
+          schema: { type: string }
+        - name: execution_ids
+          in: query
+          description: Comma-separated run ids, at most 200
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Defaults to 100, capped at 500
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Matching notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/JobNote" }
+        "400": { description: "No filter, a malformed run id, or too many ids" }
+        "403": { description: Caller lacks executions:read }
+    post:
+      summary: Write an operator note
+      description: |
+        Mark a run or job as seen and checked (`ack`), or leave a question,
+        an idea or a note for colleagues. With `execution_id` the run must
+        exist and belong to `job_key`; without it the job must exist.
+
+        Scope: `notes:write` (granted to operators) or `admin`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateNote" }
+      responses:
+        "201":
+          description: The stored note
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobNote" }
+        "400": { description: "Unknown kind, missing or over-long text, or a run of another job" }
+        "403": { description: Caller lacks notes:write }
+        "404": { description: Job or run not found }
+
+  /v1/notes/{id}:
+    delete:
+      summary: Delete an operator note
+      description: |
+        Only the note's author or an admin may delete it.
+
+        Scope: `notes:write` or `admin`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Invalid note id (not a UUID) }
+        "403": { description: Caller lacks notes:write or is not the author }
+        "404": { description: Note not found }
 
   /v1/dead-letters:
     get:

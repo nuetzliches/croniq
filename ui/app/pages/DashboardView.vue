@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
+  useCreateNote,
   useDeadLetterCount,
   useExecutions,
   useFailureHeatmap,
   useHealth,
   useJobs,
+  useNotes,
   useRunners,
   useThroughput,
 } from '~/api/queries'
+import type { Execution } from '~/api/types'
+import { useActionError } from '~/composables/useActionError'
+import { useCanWriteNotes } from '~/composables/useCanWriteNotes'
 import { formatDuration, formatRelative } from '~/lib/format'
+import { notesByExecution } from '~/lib/notes'
 
 /**
  * The landing page: is anything wrong, and what happens next.
@@ -31,6 +37,28 @@ const { data: heatmap } = useFailureHeatmap(7)
 
 /** Only failures. A general run list belongs on /executions, once. */
 const { data: failures } = useExecutions(() => ({ state: 'failed', limit: 5 }))
+
+/**
+ * Who has already looked at each failure. One request for all five rows, and
+ * a one-click "checked" beside each, so acknowledging a failure does not mean
+ * opening it — opening it is for when there is something to say.
+ */
+const { data: failureNotes } = useNotes(() => ({
+  execution_ids: (failures.value ?? []).map((run) => run.id),
+}))
+const notesByRun = computed(() => notesByExecution(failureNotes.value ?? []))
+const canWriteNotes = useCanWriteNotes()
+const createNote = useCreateNote()
+const { error: ackError, attempt: attemptAck } = useActionError()
+const acking = ref<string | null>(null)
+
+async function markChecked(run: Execution) {
+  acking.value = run.id
+  await attemptAck(() =>
+    createNote.mutateAsync({ job_key: run.job_key, execution_id: run.id, kind: 'ack' }),
+  )
+  acking.value = null
+}
 
 const activeJobs = computed(() => (jobs.value ?? []).filter((job) => job.is_active).length)
 const online = computed(
@@ -207,6 +235,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
               >
                 {{ run.job_key }}
               </RouterLink>
+              <NoteBadge :notes="notesByRun.get(run.id)" />
               <span
                 class="hidden min-w-0 max-w-[18rem] truncate text-xs text-muted md:block"
                 :title="run.error ?? ''"
@@ -215,8 +244,30 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
               <span class="cq-num w-16 text-right text-xs text-muted">{{
                 formatDuration(run.duration_ms)
               }}</span>
+              <UButton
+                v-if="canWriteNotes"
+                icon="i-lucide-check"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :loading="acking === run.id"
+                :aria-label="`Mark the ${run.job_key} failure as checked`"
+                title="Mark as checked"
+                @click="markChecked(run)"
+              />
             </li>
           </ul>
+          <UAlert
+            v-if="ackError"
+            class="mt-2"
+            color="error"
+            variant="subtle"
+            icon="i-lucide-alert-triangle"
+            :description="ackError"
+            role="alert"
+            close
+            @update:open="ackError = null"
+          />
         </section>
       </div>
 

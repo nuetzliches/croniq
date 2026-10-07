@@ -2664,6 +2664,85 @@ impl MaintenanceStore for SqliteStore {
     }
 }
 
+impl NoteStore for SqliteStore {
+    fn create_note(&self, note: &JobNote) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO job_notes
+                (id, job_key, execution_id, kind, body, author_id, author_name, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                note.id.to_string(),
+                note.job_key,
+                note.execution_id.map(|id| id.to_string()),
+                note.kind.as_str(),
+                note.body,
+                note.author_id,
+                note.author_name,
+                dt_to_sql(&note.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+             FROM job_notes WHERE id = ?1",
+            params![id.to_string()],
+            row_to_job_note,
+        )
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+             FROM job_notes WHERE 1=1",
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(ref jk) = filter.job_key {
+            param_values.push(Box::new(jk.clone()));
+            sql.push_str(&format!(" AND job_key = ?{}", param_values.len()));
+        }
+        if !filter.execution_ids.is_empty() {
+            let mut marks = Vec::with_capacity(filter.execution_ids.len());
+            for id in &filter.execution_ids {
+                param_values.push(Box::new(id.to_string()));
+                marks.push(format!("?{}", param_values.len()));
+            }
+            sql.push_str(&format!(" AND execution_id IN ({})", marks.join(", ")));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+        param_values.push(Box::new(filter.limit.unwrap_or(100)));
+        sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
+
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let rows = stmt
+            .query_map(
+                params_from_iter(param_values.iter().map(|p| p.as_ref())),
+                row_to_job_note,
+            )
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let removed = conn
+            .execute(
+                "DELETE FROM job_notes WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .map_err(map_err)?;
+        Ok(removed > 0)
+    }
+}
+
 impl Store for SqliteStore {}
 
 // ─── Row mappers ───
@@ -2726,6 +2805,23 @@ fn row_to_dead_letter(row: &rusqlite::Row<'_>) -> Result<DeadLetter, rusqlite::E
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
         created_at: sql_to_dt(&row.get::<_, String>(8)?),
         expires_at: sql_to_opt_dt(row.get(9)?),
+    })
+}
+
+fn row_to_job_note(row: &rusqlite::Row<'_>) -> Result<JobNote, rusqlite::Error> {
+    let id: String = row.get(0)?;
+    let execution_id: Option<String> = row.get(2)?;
+    let kind: String = row.get(3)?;
+    Ok(JobNote {
+        id: Uuid::parse_str(&id).unwrap(),
+        job_key: row.get(1)?,
+        execution_id: execution_id.and_then(|id| Uuid::parse_str(&id).ok()),
+        // The CHECK constraint keeps anything else out of the table.
+        kind: NoteKind::parse(&kind).unwrap_or(NoteKind::Note),
+        body: row.get(4)?,
+        author_id: row.get(5)?,
+        author_name: row.get(6)?,
+        created_at: sql_to_dt(&row.get::<_, String>(7)?),
     })
 }
 

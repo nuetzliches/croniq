@@ -1001,4 +1001,24 @@ impl MaintenanceStore for PgStoreHandle {
     }
 }
 
+impl NoteStore for PgStoreHandle {
+    fn create_note(&self, note: &JobNote) -> Result<(), StoreError> {
+        let note = note.clone();
+        self.call(move |s| s.create_note(&note))
+    }
+
+    fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError> {
+        self.call(move |s| s.get_note(id))
+    }
+
+    fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError> {
+        let filter = filter.clone();
+        self.call(move |s| s.list_notes(&filter))
+    }
+
+    fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
+        self.call(move |s| s.delete_note(id))
+    }
+}
+
 impl Store for PgStoreHandle {}

@@ -23,6 +23,7 @@ import type {
   ForecastResponse,
   HealthResponse,
   JobDefinition,
+  JobNote,
   JobScheduleState,
   Invitation,
   JobStatsResponse,
@@ -391,6 +392,73 @@ export function useCancelExecution() {
         { method: 'POST' },
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['executions'] }),
+  })
+}
+
+/**
+ * Which notes to fetch. Both fields combine with AND; the server refuses a
+ * request naming neither, so the hook does not send one.
+ */
+export interface NoteFilters {
+  job_key?: string
+  execution_ids?: string[]
+  /** Server default 100, cap 500. A run list passes more than one run's worth. */
+  limit?: number
+}
+
+/**
+ * The query string for a notes request. Ids are sorted so the same set of
+ * rows, in whatever order the list holds them, is one query key and one
+ * request rather than a new one every time the order shifts.
+ */
+export function notesQuery(filters: NoteFilters): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (filters.job_key) query.job_key = filters.job_key
+  const ids = [...new Set(filters.execution_ids ?? [])].sort()
+  if (ids.length) query.execution_ids = ids.join(',')
+  if (Object.keys(query).length && filters.limit) query.limit = String(filters.limit)
+  return query
+}
+
+/**
+ * Operator notes on a job or on a set of runs.
+ *
+ * One call for a whole list: the Runs screen and the dashboard pass the ids
+ * of every row they show, rather than asking per row. Polled slowly — notes
+ * are written by people, and a colleague's "checked" turning up within
+ * fifteen seconds is soon enough.
+ */
+export function useNotes(filters: MaybeRefOrGetter<NoteFilters>) {
+  const query = computed(() => notesQuery(toValue(filters)))
+  return useQuery({
+    queryKey: ['notes', query],
+    queryFn: () => apiGet<JobNote[]>('/v1/notes', query.value),
+    enabled: authedAnd(() => Object.keys(query.value).length > 0),
+    refetchInterval: 15_000,
+    // A run list's ids change with every new run; without this the badges
+    // would blink out and back on each refresh.
+    placeholderData: (previous) => previous,
+  })
+}
+
+export function useCreateNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (note: {
+      job_key: string
+      execution_id?: string | null
+      kind: JobNote['kind']
+      body?: string
+    }) => apiPost<JobNote>('/v1/notes', note),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
+  })
+}
+
+export function useDeleteNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete<void>(`/v1/notes/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
   })
 }
 

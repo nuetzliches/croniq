@@ -1511,6 +1511,36 @@ Is this a permanent change to how the rule should behave?
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
 
+## Operator notes
+
+Operators can leave notes on a job and on its runs, so a colleague opening a
+failure sees that someone has already looked at it — and what they found.
+A note has one of four kinds:
+
+| kind | meaning | text |
+|---|---|---|
+| `ack` | seen and checked | optional |
+| `question` | needs someone's attention | required |
+| `idea` | a possible fix or prevention | required |
+| `note` | anything else worth knowing | required |
+
+Reading needs `executions:read`; writing needs `notes:write`, which the
+`operator` role has by default and `viewer` does not. Admins have it through
+the wildcard; an API client needs it granted explicitly. A note can be deleted
+by whoever wrote it or by an admin. Both writes land in the audit log as
+`note.created` / `note.deleted`.
+
+The author's display name is stored with the note when it is written, so a
+note still reads correctly after the user is renamed or removed. For an API
+key, which has no user, the client id is shown.
+
+Notes are **not** subject to execution retention. A note keeps the id of the
+run it was written about after `execution_retention` or `keep_last` has pruned
+that run — what was learned about a failure stays readable on the job's
+*Notes* tab once the run and its log are gone. Notes of a deleted job are kept
+too. Nothing prunes notes automatically; delete them through the dashboard or
+`DELETE /v1/notes/{id}`.
+
 ## Maintenance mode
 
 `PUT /v1/maintenance` (admin) freezes dispatch: the scheduler emits no new
@@ -2411,6 +2441,9 @@ server restart — a hot-reload parses them and then warns that they are pending
 a restart (see [Reload](#reload-vs-restart) below). Once pruned, an execution
 and its logs are gone; dashboards, `/metrics` aggregates, and the UI run
 history reflect only the retained window.
+
+Operator notes on a pruned run are kept; see [Operator
+notes](#operator-notes).
 
 With neither knob set, `croniq-server doctor` reports
 `retention.unbounded_history` as an informational finding. It never turns the

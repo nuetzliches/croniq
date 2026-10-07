@@ -185,6 +185,11 @@ impl Scope {
     /// Implied by the `admin` wildcard.
     pub const ALERTS_WRITE: &str = "alerts:write";
 
+    /// Write operator notes on jobs and their runs: "seen and checked",
+    /// questions, ideas. Reading them needs only `executions:read`. Granted
+    /// to Operator by default; admin's wildcard implies it.
+    pub const NOTES_WRITE: &str = "notes:write";
+
     /// Every scope the server recognises.
     ///
     /// Exists for callers that must validate a scope string arriving from
@@ -220,6 +225,7 @@ impl Scope {
         Self::MCP_WRITE,
         Self::ALERTS_READ,
         Self::ALERTS_WRITE,
+        Self::NOTES_WRITE,
     ];
 
     /// Whether `scope` is one this server knows about.
@@ -248,6 +254,7 @@ pub fn default_scopes_for_role(role: Role) -> Vec<String> {
             Scope::DEAD_LETTERS_WRITE.to_string(),
             Scope::RUNNERS_READ.to_string(),
             Scope::ALERTS_READ.to_string(),
+            Scope::NOTES_WRITE.to_string(),
         ],
         Role::Viewer => vec![
             Scope::JOBS_READ.to_string(),
@@ -289,7 +296,7 @@ mod tests {
         }
         assert_eq!(
             Scope::ALL.len(),
-            27,
+            28,
             "Scope::ALL changed — add the new scope here and to the docs"
         );
         assert!(Scope::is_known(Scope::WORK_POLL));

@@ -132,6 +132,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("028_job_register_fires", PG_MIGRATION_028),
     ("029_concurrency_group", PG_MIGRATION_029),
     ("030_maintenance_active_since", PG_MIGRATION_030),
+    ("031_job_notes", PG_MIGRATION_031),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -299,6 +300,25 @@ CREATE INDEX IF NOT EXISTS idx_executions_concurrency_group_state
 
 const PG_MIGRATION_030: &str = r#"
 ALTER TABLE maintenance ADD COLUMN IF NOT EXISTS active_since TIMESTAMPTZ;
+"#;
+
+// Operator notes on jobs and their runs. Mirrors migrations/031_job_notes.sql
+// — see there for why neither column carries a foreign key.
+const PG_MIGRATION_031: &str = r#"
+CREATE TABLE IF NOT EXISTS job_notes (
+    id           UUID PRIMARY KEY,
+    job_key      TEXT NOT NULL,
+    execution_id UUID,
+    kind         TEXT NOT NULL CHECK (kind IN ('ack', 'question', 'idea', 'note')),
+    body         TEXT NOT NULL DEFAULT '',
+    author_id    TEXT NOT NULL,
+    author_name  TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_notes_job_created
+    ON job_notes(job_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_notes_execution
+    ON job_notes(execution_id);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -3053,6 +3073,77 @@ impl MaintenanceStore for PgStore {
     }
 }
 
+impl NoteStore for PgStore {
+    fn create_note(&self, note: &JobNote) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        db.execute(
+            "INSERT INTO job_notes
+                (id, job_key, execution_id, kind, body, author_id, author_name, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &[
+                &note.id,
+                &note.job_key,
+                &note.execution_id,
+                &note.kind.as_str(),
+                &note.body,
+                &note.author_id,
+                &note.author_name,
+                &note.created_at,
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+                 FROM job_notes WHERE id = $1",
+                &[&id],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(row_to_job_note))
+    }
+
+    fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+             FROM job_notes WHERE true",
+        );
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
+        let mut idx = 1;
+        if let Some(ref jk) = filter.job_key {
+            params.push(Box::new(jk.clone()));
+            sql.push_str(&format!(" AND job_key = ${idx}"));
+            idx += 1;
+        }
+        if !filter.execution_ids.is_empty() {
+            params.push(Box::new(filter.execution_ids.clone()));
+            sql.push_str(&format!(" AND execution_id = ANY(${idx})"));
+            idx += 1;
+        }
+        let limit = filter.limit.unwrap_or(100);
+        params.push(Box::new(limit as i64));
+        sql.push_str(&format!(" ORDER BY created_at DESC, id DESC LIMIT ${idx}"));
+
+        let params_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = db.query(&sql, &params_ref).map_err(map_err)?;
+        Ok(rows.iter().map(row_to_job_note).collect())
+    }
+
+    fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let removed = db
+            .execute("DELETE FROM job_notes WHERE id = $1", &[&id])
+            .map_err(map_err)?;
+        Ok(removed > 0)
+    }
+}
+
 impl Store for PgStore {}
 
 // ─── Row mappers ───
@@ -3261,6 +3352,21 @@ fn row_to_execution_log(row: &postgres::Row) -> ExecutionLogEntry {
         message: row.get(4),
         fields: serde_json::from_str(&fields_str).unwrap_or_default(),
         seq: row.get(6),
+    }
+}
+
+fn row_to_job_note(row: &postgres::Row) -> JobNote {
+    let kind: String = row.get(3);
+    JobNote {
+        id: row.get(0),
+        job_key: row.get(1),
+        execution_id: row.get(2),
+        // The CHECK constraint keeps anything else out of the table.
+        kind: NoteKind::parse(&kind).unwrap_or(NoteKind::Note),
+        body: row.get(4),
+        author_id: row.get(5),
+        author_name: row.get(6),
+        created_at: row.get(7),
     }
 }
 

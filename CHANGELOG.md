@@ -23,6 +23,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `disabled` job, so the live views have more lanes than fit and something to
   show. It keeps its own data directory, and the demo runner gets 8 slots.
 
+- **Operator notes on failed runs and jobs.** An operator can now mark a run
+  as *checked*, or leave a *question*, an *idea* or a plain *note* on it or on
+  its job, so colleagues see that a failure has been looked at and what was
+  found. "Recent failures" on the dashboard and the Runs list show who checked
+  a run and how many questions are open; the dashboard row has a one-click
+  "checked", the run detail has the full thread, and the job detail gains a
+  *Notes* tab with every note on the job. Notes are plain text and survive
+  execution retention: the run a note names may be pruned, the note is not.
+  New endpoints `GET`/`POST /v1/notes` and `DELETE /v1/notes/{id}`; writing
+  needs the new `notes:write` scope, which operators get by default (viewers
+  read only), and a note can be deleted by its author or an admin. Both writes
+  are audit-logged as `note.created` / `note.deleted`. Migration 031 adds the
+  `job_notes` table.
+
 ### Changed
 
 - **The live timeline keeps every lane and orders them by job key.** It used

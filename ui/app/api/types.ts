@@ -140,6 +140,27 @@ export interface Execution {
   created_at: string
 }
 
+/** What an operator's note says. `ack` is "seen and checked"; it may be empty. */
+export type NoteKind = 'ack' | 'question' | 'idea' | 'note'
+
+/**
+ * An operator's note on a job, optionally pinned to one of its runs.
+ *
+ * `execution_id` is a weak reference: retention deletes runs and the note
+ * stays, so the run it names may no longer exist.
+ */
+export interface JobNote {
+  id: string
+  job_key: string
+  execution_id: string | null
+  kind: NoteKind
+  body: string
+  author_id: string
+  /** Display name at write time. */
+  author_name: string
+  created_at: string
+}
+
 export interface DeadLetter {
   id: string
   execution_id: string

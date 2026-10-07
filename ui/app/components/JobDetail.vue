@@ -66,9 +66,10 @@ const removeJob = useDeleteJob()
 const adopt = useAdoptJob()
 const unadopt = useUnadoptJob()
 
-const tab = ref<'overview' | 'dsl'>('overview')
+const tab = ref<'overview' | 'notes' | 'dsl'>('overview')
 const TABS = [
   { label: 'Overview', value: 'overview' },
+  { label: 'Notes', value: 'notes' },
   { label: 'DSL', value: 'dsl' },
 ]
 
@@ -524,6 +525,14 @@ const deadLetterFacts = computed(() => {
               :dsl-managed="dslManaged"
             />
           </template>
+
+          <!-- Every note on the job, the ones written about a single run
+               included: what was learned about a failure is still worth
+               reading after retention has deleted the run. -->
+          <NotesPanel
+            v-else-if="tab === 'notes'"
+            :job-key="jobKey"
+          />
 
           <template v-else>
             <div class="mb-2 flex items-center justify-between gap-2">

@@ -18,6 +18,7 @@ pub mod job_sync;
 pub mod jobs;
 pub mod login_throttle;
 pub mod maintenance;
+pub mod notes;
 pub mod oidc;
 pub mod password_reset;
 pub mod pat;
@@ -680,6 +681,13 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/executions/{id}/logs",
             get(execution_logs::handle_get_logs),
         )
+        // Operator notes on jobs and runs: `executions:read` to read,
+        // `notes:write` to write.
+        .route(
+            "/v1/notes",
+            get(notes::handle_list).post(notes::handle_create),
+        )
+        .route("/v1/notes/{id}", delete(notes::handle_delete))
         // Admin
         .route("/v1/admin/reload-config", post(admin::handle_reload_config))
         .route(

@@ -903,3 +903,72 @@ pub struct ExecutionLogEntry {
     #[serde(default)]
     pub seq: i64,
 }
+
+// ─── Job notes ───
+
+/// What an operator's note says. `Ack` is the "seen and checked" mark and may
+/// carry no text; the others are free-form and need some.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoteKind {
+    Ack,
+    Question,
+    Idea,
+    Note,
+}
+
+impl NoteKind {
+    pub const ALL: [Self; 4] = [Self::Ack, Self::Question, Self::Idea, Self::Note];
+
+    /// The wire name, as serialized and stored.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ack => "ack",
+            Self::Question => "question",
+            Self::Idea => "idea",
+            Self::Note => "note",
+        }
+    }
+
+    /// Parse a stored or caller-supplied kind; `None` for anything unknown.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str().eq_ignore_ascii_case(s))
+    }
+
+    /// The accepted names, comma-separated, for an error message.
+    pub fn allowed_values() -> String {
+        Self::ALL.map(Self::as_str).join(", ")
+    }
+}
+
+/// An operator's note on a job, optionally pinned to one of its runs.
+///
+/// `execution_id` is a weak reference: retention deletes runs, and the note
+/// is meant to outlive the run it was written about (see migration 031). A
+/// reader must expect the run to be gone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobNote {
+    pub id: Uuid,
+    pub job_key: String,
+    pub execution_id: Option<Uuid>,
+    pub kind: NoteKind,
+    /// Plain text. Empty only for an `Ack`.
+    pub body: String,
+    /// Caller user_id / api_client_id that wrote the note.
+    pub author_id: String,
+    /// Display name at write time, so the note still reads correctly after the
+    /// user is renamed or deleted.
+    pub author_name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Filter for listing job notes. The conditions combine with AND; an empty
+/// `execution_ids` means no execution filter.
+#[derive(Debug, Clone, Default)]
+pub struct NoteFilter {
+    pub job_key: Option<String>,
+    pub execution_ids: Vec<Uuid>,
+    pub limit: Option<u32>,
+}

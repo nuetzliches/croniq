@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { fetchExecutions, useExecutions } from '~/api/queries'
+import { fetchExecutions, useExecutions, useNotes } from '~/api/queries'
 import type { Execution } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative, shortId, stateLabel } from '~/lib/format'
 import { useDebounced } from '~/composables/useDebounced'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
+import { notesByExecution } from '~/lib/notes'
 
 /**
  * Runs — the one list of executions.
@@ -143,6 +144,17 @@ const rows = computed<Execution[]>(() => {
   }
   return out
 })
+
+/**
+ * Notes on the rows on screen, in one request. Capped at the server's 200 ids,
+ * which is one page: rows from "Load older" go without badges rather than
+ * multiplying requests, and their notes are a click away in the detail.
+ */
+const { data: rowNotes } = useNotes(() => ({
+  execution_ids: rows.value.slice(0, 200).map((row) => row.id),
+  limit: 500,
+}))
+const notesByRun = computed(() => notesByExecution(rowNotes.value ?? []))
 
 /** A full page back means there is probably more behind it. */
 const mayHaveMore = computed(() => {
@@ -510,8 +522,11 @@ function onKey(event: KeyboardEvent) {
               <td class="px-[var(--cq-cell-x)]">
                 <StatusPill :state="row.state" />
               </td>
-              <td class="max-w-[16rem] truncate px-[var(--cq-cell-x)] font-mono text-primary">
-                {{ row.job_key }}
+              <td class="max-w-[20rem] px-[var(--cq-cell-x)] font-mono text-primary">
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="truncate">{{ row.job_key }}</span>
+                  <NoteBadge :notes="notesByRun.get(row.id)" />
+                </div>
               </td>
               <td
                 class="cq-num px-[var(--cq-cell-x)] font-mono text-muted"

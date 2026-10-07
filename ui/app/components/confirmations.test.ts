@@ -70,6 +70,8 @@ describe('destructive controls', () => {
       // without a confirmation the React tree had (issue #717).
       'useRevokePat',
       'useRevokeInvitation',
+      // A colleague's note, gone for everyone who reads the run.
+      'useDeleteNote',
     ]
 
     const missing = vueFiles(APP)

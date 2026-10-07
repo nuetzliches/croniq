@@ -173,6 +173,18 @@ const facts = computed(() => {
           <pre class="overflow-x-auto rounded-md border border-default bg-elevated p-3 font-mono text-xs whitespace-pre-wrap">{{ execution.error }}</pre>
         </div>
 
+        <!-- Right under the error, because that is what a note is usually
+             about: who looked at it, and what they think. -->
+        <div class="mt-4">
+          <p class="cq-label mb-1.5">
+            Notes
+          </p>
+          <NotesPanel
+            :job-key="execution.job_key"
+            :execution-id="execution.id"
+          />
+        </div>
+
         <div class="mt-4">
           <div class="mb-1.5 flex items-center justify-between">
             <p class="cq-label">
