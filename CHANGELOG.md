@@ -13,6 +13,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under the pointer. It is on by default, as before, and the choice is
   remembered in this browser.
 
+### Fixed
+
+- **Hovering the live timeline holds all of it, not just the motion.**
+  Lanes kept greying and sliding to their new place, countdowns kept
+  counting and new runs kept appearing under the pointer. Now the hover
+  holds the picture the way Pause does, until the pointer leaves.
+
 ## [0.46.0] - 2026-10-07
 
 ### Added
