@@ -607,14 +607,14 @@ mod tests {
     #[test]
     fn find_for_job_returns_the_first_match_and_leaves_it_queued() {
         let mut q = WorkQueue::new();
-        q.enqueue(item_with_job("e1", "soapneo:sync"));
-        q.enqueue(item_with_job("e2", "soapneo:sync"));
+        q.enqueue(item_with_job("e1", "inbox:sync"));
+        q.enqueue(item_with_job("e2", "inbox:sync"));
 
-        let found = q.find_for_job("soapneo:sync", |_| true);
+        let found = q.find_for_job("inbox:sync", |_| true);
         assert_eq!(found.map(|i| i.execution_id.as_str()), Some("e1"));
         // A fold reads, it does not consume: the item stays for the runner.
         assert_eq!(q.len(), 2);
-        assert_eq!(q.count_for_job("soapneo:sync"), 2);
+        assert_eq!(q.count_for_job("inbox:sync"), 2);
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
         let mut q = WorkQueue::new();
         q.enqueue(item_with_job("e1", "etl:sync"));
 
-        assert!(q.find_for_job("soapneo:sync", |_| true).is_none());
+        assert!(q.find_for_job("inbox:sync", |_| true).is_none());
     }
 
     #[test]
@@ -630,18 +630,18 @@ mod tests {
         // What makes the payload invariant work: a queued item of the right
         // job that the predicate rejects is not a fold target.
         let mut q = WorkQueue::new();
-        q.enqueue(item_with_job("e1", "soapneo:sync"));
-        q.enqueue(item_with_job("e2", "soapneo:sync"));
+        q.enqueue(item_with_job("e1", "inbox:sync"));
+        q.enqueue(item_with_job("e2", "inbox:sync"));
 
-        let found = q.find_for_job("soapneo:sync", |i| i.execution_id == "e2");
+        let found = q.find_for_job("inbox:sync", |i| i.execution_id == "e2");
         assert_eq!(found.map(|i| i.execution_id.as_str()), Some("e2"));
-        assert!(q.find_for_job("soapneo:sync", |_| false).is_none());
+        assert!(q.find_for_job("inbox:sync", |_| false).is_none());
     }
 
     #[test]
     fn find_for_job_on_an_empty_queue_is_none() {
         let q = WorkQueue::new();
-        assert!(q.find_for_job("soapneo:sync", |_| true).is_none());
+        assert!(q.find_for_job("inbox:sync", |_| true).is_none());
     }
 
     // ── priority (issue #819) ─────────────────────────────────────────────────

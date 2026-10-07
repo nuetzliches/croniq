@@ -185,7 +185,7 @@ public class CroniqTriggerClientTests
             """{"execution_id":"exec-9","queued":2,"deduplicated":false,"coalesced":true}""");
         var client = CreateClient(stub);
 
-        var result = await client.TriggerAsync("soapneo:sync");
+        var result = await client.TriggerAsync("inbox:sync");
 
         result.Coalesced.ShouldBeTrue();
         // The two flags are not interchangeable: a fold names an execution that

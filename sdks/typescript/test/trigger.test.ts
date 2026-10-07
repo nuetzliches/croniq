@@ -158,7 +158,7 @@ describe('CroniqTriggerClient.trigger', () => {
     );
     const client = createTriggerClient({ serverUrl: 'https://example.test:4000', fetchImpl });
 
-    const result = await client.trigger('soapneo:sync');
+    const result = await client.trigger('inbox:sync');
 
     expect(result.coalesced).toBe(true);
     // The two flags are not interchangeable: a fold names an execution that

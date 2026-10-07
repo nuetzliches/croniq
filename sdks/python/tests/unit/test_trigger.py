@@ -165,7 +165,7 @@ async def test_coalesced_flag_is_surfaced() -> None:
     )
     client = _client(rec, api_key="k")
 
-    result = await client.trigger("soapneo:sync")
+    result = await client.trigger("inbox:sync")
 
     assert result.coalesced is True
     # The two flags are not interchangeable: a fold names an execution that has

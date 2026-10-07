@@ -5331,7 +5331,7 @@ mod tests {
     }
 
     const COALESCING_JOB: &str = r#"
-        job soapneo:sync {
+        job inbox:sync {
             every 5 minutes
             singleton
             coalesce
@@ -5344,7 +5344,7 @@ mod tests {
         // job with nothing queued produces one execution, not twenty.
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
-        let first = trigger_signal(&state, "soapneo:sync").await;
+        let first = trigger_signal(&state, "inbox:sync").await;
         let first_id = first["execution_id"].as_str().unwrap().to_string();
         assert_eq!(
             first["coalesced"].as_bool(),
@@ -5353,7 +5353,7 @@ mod tests {
         );
 
         for i in 0..19 {
-            let resp = trigger_signal(&state, "soapneo:sync").await;
+            let resp = trigger_signal(&state, "inbox:sync").await;
             assert_eq!(
                 resp["coalesced"].as_bool(),
                 Some(true),
@@ -5372,12 +5372,7 @@ mod tests {
         }
 
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1,
             "twenty signals must leave exactly one queued execution"
         );
@@ -5390,7 +5385,7 @@ mod tests {
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
         // Put one execution in flight by letting a runner claim it.
-        let in_flight = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+        let in_flight = trigger_signal(&state, "inbox:sync").await["execution_id"]
             .as_str()
             .unwrap()
             .to_string();
@@ -5413,7 +5408,7 @@ mod tests {
 
         // The burst. The first signal has nothing queued to fold into, so it
         // enqueues the one follow-up; every later one folds into that.
-        let follow_up = trigger_signal(&state, "soapneo:sync").await;
+        let follow_up = trigger_signal(&state, "inbox:sync").await;
         let follow_up_id = follow_up["execution_id"].as_str().unwrap().to_string();
         assert_eq!(follow_up["coalesced"].as_bool(), Some(false));
         assert_ne!(
@@ -5422,18 +5417,13 @@ mod tests {
         );
 
         for _ in 0..19 {
-            let resp = trigger_signal(&state, "soapneo:sync").await;
+            let resp = trigger_signal(&state, "inbox:sync").await;
             assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
             assert_eq!(resp["execution_id"].as_str().unwrap(), follow_up_id);
         }
 
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1,
             "the in-flight run plus exactly one follow-up — no more"
         );
@@ -5445,7 +5435,7 @@ mod tests {
         // its own execution rather than the running one's id.
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
-        let first = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+        let first = trigger_signal(&state, "inbox:sync").await["execution_id"]
             .as_str()
             .unwrap()
             .to_string();
@@ -5458,7 +5448,7 @@ mod tests {
         )
         .await;
 
-        let after = trigger_signal(&state, "soapneo:sync").await;
+        let after = trigger_signal(&state, "inbox:sync").await;
         assert_eq!(
             after["coalesced"].as_bool(),
             Some(false),
@@ -5473,13 +5463,13 @@ mod tests {
         // about, so it always gets its own run even here.
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
-        let signal = trigger_signal(&state, "soapneo:sync").await;
+        let signal = trigger_signal(&state, "inbox:sync").await;
         let signal_id = signal["execution_id"].as_str().unwrap().to_string();
 
         let parameterised = post_json(
             server_router(Arc::clone(&state)),
             "/v1/trigger",
-            serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": "42" } }),
+            serde_json::json!({ "job_key": "inbox:sync", "metadata": { "item": "42" } }),
         )
         .await;
         assert_eq!(
@@ -5489,12 +5479,7 @@ mod tests {
         );
         assert_ne!(parameterised["execution_id"].as_str().unwrap(), signal_id);
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             2
         );
     }
@@ -5510,7 +5495,7 @@ mod tests {
         let parameterised = post_json(
             server_router(Arc::clone(&state)),
             "/v1/trigger",
-            serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": "42" } }),
+            serde_json::json!({ "job_key": "inbox:sync", "metadata": { "item": "42" } }),
         )
         .await;
         let parameterised_id = parameterised["execution_id"].as_str().unwrap().to_string();
@@ -5527,7 +5512,7 @@ mod tests {
             );
         }
 
-        let signal = trigger_signal(&state, "soapneo:sync").await;
+        let signal = trigger_signal(&state, "inbox:sync").await;
         assert_eq!(
             signal["coalesced"].as_bool(),
             Some(false),
@@ -5543,15 +5528,15 @@ mod tests {
         // with nothing afterwards to show that it was ever asked for.
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
-        let signal_id = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+        let signal_id = trigger_signal(&state, "inbox:sync").await["execution_id"]
             .as_str()
             .unwrap()
             .to_string();
 
         for body in [
-            serde_json::json!({ "job_key": "soapneo:sync", "require": ["soapneo"] }),
-            serde_json::json!({ "job_key": "soapneo:sync", "prefer": ["fast"] }),
-            serde_json::json!({ "job_key": "soapneo:sync", "timeout": "30m" }),
+            serde_json::json!({ "job_key": "inbox:sync", "require": ["worker"] }),
+            serde_json::json!({ "job_key": "inbox:sync", "prefer": ["fast"] }),
+            serde_json::json!({ "job_key": "inbox:sync", "timeout": "30m" }),
         ] {
             let resp = post_json(
                 server_router(Arc::clone(&state)),
@@ -5574,7 +5559,7 @@ mod tests {
         // #553), so it must not quietly disable the fold either.
         let (state, _store) = make_dsl_state(COALESCING_JOB).await;
 
-        let first_id = trigger_signal(&state, "soapneo:sync").await["execution_id"]
+        let first_id = trigger_signal(&state, "inbox:sync").await["execution_id"]
             .as_str()
             .unwrap()
             .to_string();
@@ -5582,7 +5567,7 @@ mod tests {
         let resp = post_json(
             server_router(Arc::clone(&state)),
             "/v1/trigger",
-            serde_json::json!({ "job_key": "soapneo:sync", "timeout": "", "metadata": {} }),
+            serde_json::json!({ "job_key": "inbox:sync", "timeout": "", "metadata": {} }),
         )
         .await;
         assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
@@ -5609,7 +5594,7 @@ mod tests {
         store
             .create_execution(&Execution {
                 id: scheduled_id,
-                job_key: "soapneo:sync".into(),
+                job_key: "inbox:sync".into(),
                 fire_at: now,
                 scheduled_for: now,
                 attempt: 1,
@@ -5628,7 +5613,7 @@ mod tests {
             .unwrap();
         state.runner.queue.write().await.enqueue(WorkItem {
             execution_id: scheduled_id.to_string(),
-            job_key: "soapneo:sync".into(),
+            job_key: "inbox:sync".into(),
             fire_at: now,
             scheduled_for: now,
             attempt: 1,
@@ -5639,7 +5624,7 @@ mod tests {
             is_ephemeral: false,
         });
 
-        let resp = trigger_signal(&state, "soapneo:sync").await;
+        let resp = trigger_signal(&state, "inbox:sync").await;
         assert_eq!(resp["coalesced"].as_bool(), Some(true), "{resp}");
         assert_eq!(
             resp["execution_id"].as_str().unwrap(),
@@ -5647,12 +5632,7 @@ mod tests {
             "the signal must fold into the queued scheduled fire"
         );
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             1
         );
     }
@@ -5662,7 +5642,7 @@ mod tests {
         // The regression guard for "unchanged without the directive": the
         // same burst against a job that only declares `singleton`.
         let dsl = r#"
-            job soapneo:sync {
+            job inbox:sync {
                 every 5 minutes
                 singleton
             }
@@ -5671,7 +5651,7 @@ mod tests {
 
         let mut ids = HashSet::new();
         for _ in 0..5 {
-            let resp = trigger_signal(&state, "soapneo:sync").await;
+            let resp = trigger_signal(&state, "inbox:sync").await;
             assert_eq!(
                 resp["coalesced"].as_bool(),
                 Some(false),
@@ -5681,12 +5661,7 @@ mod tests {
         }
         assert_eq!(ids.len(), 5, "each trigger gets its own execution");
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             5
         );
     }
@@ -5698,7 +5673,7 @@ mod tests {
         // only reachable through items a signal cannot fold into, so this
         // pins that those two still compose.
         let dsl = r#"
-            job soapneo:sync {
+            job inbox:sync {
                 every 5 minutes
                 max_queue_depth 2
                 coalesce
@@ -5711,7 +5686,7 @@ mod tests {
             let (status, _) = post_json_status(
                 server_router(Arc::clone(&state)),
                 "/v1/trigger",
-                serde_json::json!({ "job_key": "soapneo:sync", "metadata": { "item": i } }),
+                serde_json::json!({ "job_key": "inbox:sync", "metadata": { "item": i } }),
             )
             .await;
             assert_eq!(status, 200);
@@ -5721,7 +5696,7 @@ mod tests {
         let (status, _) = post_json_status(
             server_router(Arc::clone(&state)),
             "/v1/trigger",
-            serde_json::json!({ "job_key": "soapneo:sync" }),
+            serde_json::json!({ "job_key": "inbox:sync" }),
         )
         .await;
         assert_eq!(
@@ -5729,12 +5704,7 @@ mod tests {
             "`coalesce` must not turn off the per-job queue cap"
         );
         assert_eq!(
-            state
-                .runner
-                .queue
-                .read()
-                .await
-                .count_for_job("soapneo:sync"),
+            state.runner.queue.read().await.count_for_job("inbox:sync"),
             2
         );
     }
