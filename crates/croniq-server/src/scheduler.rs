@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use chrono_tz;
 use croniq_bridge::{job_execution_metadata, job_to_work_item};
 use croniq_config::compile::{ExecutionMode, JobConfig};
-use croniq_runner::{AppState, EphemeralTally};
+use croniq_runner::{AppState, EphemeralTally, WorkItem};
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::{PendingFire, Trigger, TriggerState};
 use croniq_store::models::{
@@ -394,6 +394,8 @@ impl SchedulerLoop {
             .partition(|p| p.due_at <= now);
         self.pending_register_fires = later;
 
+        let mut wave = Vec::new();
+        let mut dispatched = Vec::new();
         for pending in due {
             let Some(job) = self.jobs.get(&pending.job_key).cloned() else {
                 tracing::warn!(
@@ -466,67 +468,106 @@ impl SchedulerLoop {
                 }
             }
 
+            // A deploy can adopt many jobs at once, so these are a wave too
+            // (issue #841, see `publish_wave`).
             let mut item = job_to_work_item(&job, &exec_id_str, now, now, 1);
             crate::trace_propagation::inject_into_metadata(&mut item.metadata);
-            if is_ephemeral {
-                // Replace-latest, matching the scheduled ephemeral path
-                // (issue #263): a runner gap must not accumulate stale
-                // non-persisted work.
-                let replaced = {
-                    let mut q = self.runner.queue.write().await;
-                    let replaced = q.remove_job(&job.key);
-                    q.enqueue(item);
-                    replaced
-                };
-                self.runner.work_notify.notify_waiters();
-                self.runner.forget_ephemeral(&replaced).await;
-                self.runner
-                    .record_ephemeral(
-                        &exec_id_str,
-                        now,
-                        chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
-                    )
-                    .await;
-                self.runner.record_ephemeral_fired(&job.key, 1).await;
-                self.runner
-                    .record_ephemeral_superseded(&job.key, replaced.len() as u64)
-                    .await;
-            } else {
-                self.runner.queue.write().await.enqueue(item);
-                self.runner.work_notify.notify_waiters();
-            }
+            wave.push(item);
+            dispatched.push((pending, execution_id, is_ephemeral));
+        }
+        self.publish_wave(wave, now).await;
 
+        for (pending, execution_id, is_ephemeral) in dispatched {
             // Recorded only now: a crash before this point leaves the job
             // un-reconciled and the next boot fires again, which is the safe
             // direction for a reconciler.
             if let Err(e) = self.store.upsert_register_fire(&JobRegisterFire {
-                job_key: job.key.clone(),
+                job_key: pending.job_key.clone(),
                 config_hash: pending.config_hash.clone(),
                 fired_at: now,
             }) {
                 tracing::error!(
-                    job_key = %job.key,
+                    job_key = %pending.job_key,
                     error = %e,
                     "run_on_register: adoption fire dispatched but could not be recorded — \
                      the next config load will fire it again"
                 );
             }
 
-            fired.push(FiredExecution {
-                execution_id,
-                job_key: job.key.clone(),
-                fire_at: now,
-                attempt: 1,
-                is_ephemeral,
-            });
-
             tracing::info!(
-                job_key = %job.key,
+                job_key = %pending.job_key,
                 execution_id = %execution_id,
                 reason = pending.reason.as_str(),
                 config_hash = %pending.config_hash,
                 "run_on_register: adoption fire dispatched"
             );
+
+            fired.push(FiredExecution {
+                execution_id,
+                job_key: pending.job_key,
+                fire_at: now,
+                attempt: 1,
+                is_ephemeral,
+            });
+        }
+    }
+
+    /// Enqueue one wave of fires — everything a tick (or its adoption pass)
+    /// produced — under a single queue write lock, and wake waiting polls once
+    /// (issue #841).
+    ///
+    /// Each fire used to be enqueued, and every waiting poll woken, as soon as
+    /// its own row was written. A runner long-polling with free slots then
+    /// claimed the first item of a wave before the next one existed, and its
+    /// following polls took the rest as they trickled in. The wave went out in
+    /// the order the tick visits its triggers — `HashMap` order, the same every
+    /// wave — and `priority` only ranked whatever few items happened to be
+    /// queued together: a `high` job could be claimed after `low` ones that
+    /// fired at the same instant. With the whole wave persisted first, the first
+    /// poll to see any of it sees all of it, and the queue ranks it as a whole.
+    ///
+    /// The price is that a wave's first item waits for its last row to be
+    /// written. That is the time a poll would otherwise have spent dispatching
+    /// it ahead of a higher-priority one.
+    ///
+    /// An ephemeral item replaces any still-unclaimed item of its job (issue
+    /// #263) inside the same lock, so a poll never sees the job with neither.
+    async fn publish_wave(&self, wave: Vec<WorkItem>, now: DateTime<Utc>) {
+        if wave.is_empty() {
+            return;
+        }
+        let mut ephemeral = Vec::new();
+        {
+            let mut q = self.runner.queue.write().await;
+            for item in wave {
+                if item.is_ephemeral {
+                    let replaced = q.remove_job(&item.job_key);
+                    ephemeral.push((item.execution_id.clone(), item.job_key.clone(), replaced));
+                }
+                q.enqueue(item);
+            }
+        }
+        self.runner.work_notify.notify_waiters();
+
+        for (execution_id, job_key, replaced) in ephemeral {
+            // Replaced ids will never report a completion — stop tracking
+            // them — then track the new dispatch so the completion processor
+            // recognises it on the (expected) store miss.
+            self.runner.forget_ephemeral(&replaced).await;
+            self.runner
+                .record_ephemeral(
+                    &execution_id,
+                    now,
+                    chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
+                )
+                .await;
+            // Tally both halves of the replacement for the heartbeat (issue
+            // #541): this fire, and the older ones it dropped out of the
+            // queue unclaimed.
+            self.runner.record_ephemeral_fired(&job_key, 1).await;
+            self.runner
+                .record_ephemeral_superseded(&job_key, replaced.len() as u64)
+                .await;
         }
     }
 
@@ -646,6 +687,7 @@ impl SchedulerLoop {
             self.dispatch_due_register_fires(now, &mut fired).await;
         }
 
+        let mut wave = Vec::new();
         for trigger in self.triggers.values_mut() {
             let Some(fire_at) = trigger.evaluate(now) else {
                 continue;
@@ -895,43 +937,11 @@ impl SchedulerLoop {
             //    back into this trace instead of starting an orphan
             //    root span. No-op when the `otlp` feature is off or no
             //    valid OTel context is in scope.
+            //    Held back until every due trigger has been persisted, then
+            //    published as one wave (issue #841, see `publish_wave`).
             let mut item = job_to_work_item(job, &exec_id_str, fire_at, fire_at, 1);
             crate::trace_propagation::inject_into_metadata(&mut item.metadata);
-            if is_ephemeral {
-                // Keep only the latest fire: drop any earlier, still-unclaimed
-                // ephemeral item for this job before enqueuing the new one, so
-                // a runner gap can't accumulate stale non-persisted work
-                // (issue #263). Both ops happen under one write lock so a poll
-                // can't observe a transient empty queue between them.
-                let replaced = {
-                    let mut q = self.runner.queue.write().await;
-                    let replaced = q.remove_job(&job.key);
-                    q.enqueue(item);
-                    replaced
-                };
-                self.runner.work_notify.notify_waiters();
-                // Replaced ids will never report a completion — stop tracking
-                // them — then track the new dispatch so the completion
-                // processor recognises it on the (expected) store miss.
-                self.runner.forget_ephemeral(&replaced).await;
-                self.runner
-                    .record_ephemeral(
-                        &exec_id_str,
-                        now,
-                        chrono::Duration::hours(EPHEMERAL_TRACKING_MAX_AGE_HOURS),
-                    )
-                    .await;
-                // Tally both halves of the replacement for the heartbeat
-                // (issue #541): this fire, and the older ones it just
-                // dropped out of the queue unclaimed.
-                self.runner.record_ephemeral_fired(&job.key, 1).await;
-                self.runner
-                    .record_ephemeral_superseded(&job.key, replaced.len() as u64)
-                    .await;
-            } else {
-                self.runner.queue.write().await.enqueue(item);
-                self.runner.work_notify.notify_waiters();
-            }
+            wave.push(item);
 
             fired.push(FiredExecution {
                 execution_id,
@@ -955,6 +965,7 @@ impl SchedulerLoop {
                 );
             }
         }
+        self.publish_wave(wave, now).await;
 
         if !maintenance_skipped.is_empty() {
             // One line per tick, not per fire: the list is what an operator
@@ -1183,6 +1194,66 @@ mod tests {
             next < Utc::now() + ChronoDuration::minutes(5),
             "a shortened schedule must not wait out the old, longer interval (#535); next={next}"
         );
+    }
+
+    // ── fire waves (issue #841) ──────────────────────────────────────────────
+
+    /// A tick publishes its fires as one wave: no poll can see part of it
+    /// while the rest is still being written, so the queue ranks the whole
+    /// wave by `priority` instead of handing it out in trigger-map order.
+    #[tokio::test]
+    async fn a_tick_publishes_its_fires_as_one_wave() {
+        use croniq_config::compile::PRIORITY_METADATA_KEY;
+
+        let fault = crate::fault_store::FaultStore::wrap(make_store());
+        let store: DynStore = fault.clone();
+        let runner = make_runner();
+
+        // What a poll could see at each per-fire write: the queue length, or
+        // `None` if the tick held the queue lock (it must not, while writing).
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        {
+            let (runner, seen) = (Arc::clone(&runner), Arc::clone(&seen));
+            *fault.on_fire_persist.lock().unwrap() = Some(Box::new(move || {
+                let visible = runner.queue.try_read().ok().map(|q| q.len());
+                seen.lock().unwrap().push(visible);
+            }));
+        }
+
+        let levels = [
+            ("wave:a", Some("low")),
+            ("wave:b", None),
+            ("wave:c", Some("high")),
+            ("wave:d", None),
+            ("wave:e", Some("high")),
+            ("wave:f", Some("low")),
+        ];
+        let mut jobs = Vec::new();
+        let mut triggers = HashMap::new();
+        for (key, level) in levels {
+            let mut job = make_job(key);
+            if let Some(level) = level {
+                job.metadata
+                    .insert(PRIORITY_METADATA_KEY.into(), level.into());
+            }
+            jobs.push(job);
+            triggers.insert(key.to_string(), make_trigger_due_now(key));
+        }
+        let mut scheduler = SchedulerLoop::new(triggers, jobs, store, Arc::clone(&runner));
+
+        assert_eq!(scheduler.tick(Utc::now()).await.fired.len(), levels.len());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Some(0); levels.len()],
+            "every row of the wave is written before any of it is visible"
+        );
+
+        // One fire instant, so no aging: the levels alone decide.
+        let mut queue = runner.queue.write().await;
+        let order: Vec<u32> = std::iter::from_fn(|| queue.dequeue_for(&[]))
+            .map(|item| croniq_runner::queue::base_priority(&item))
+            .collect();
+        assert_eq!(order, vec![2, 2, 1, 1, 0, 0]);
     }
 
     // ── coalesce schedule (issue #818) ───────────────────────────────────────

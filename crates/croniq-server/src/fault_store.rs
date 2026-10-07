@@ -39,6 +39,10 @@ pub struct FaultStore {
     /// deliberate asymmetry: the per-job guard dispatches on a store error,
     /// the group guard does not.
     pub fail_job_count: AtomicBool,
+    /// Called just before every `create_execution_and_advance_job_state`
+    /// delegates — the scheduler's per-fire write. Lets a test look at what
+    /// the rest of the system can see while a tick is mid-wave (issue #841).
+    pub on_fire_persist: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl FaultStore {
@@ -50,6 +54,7 @@ impl FaultStore {
             fail_claim: AtomicBool::new(false),
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
+            on_fire_persist: std::sync::Mutex::new(None),
         })
     }
 
@@ -141,8 +146,18 @@ impl ExecutionStore for FaultStore {
         self.inner
             .count_executions_in_group_in_states(group, states)
     }
+    fn create_execution_and_advance_job_state(
+        &self,
+        execution: &Execution,
+        job_state: &JobState,
+    ) -> Result<(), StoreError> {
+        if let Some(hook) = self.on_fire_persist.lock().unwrap().as_ref() {
+            hook();
+        }
+        self.inner
+            .create_execution_and_advance_job_state(execution, job_state)
+    }
     delegate! {
-        create_execution_and_advance_job_state(execution: &Execution, job_state: &JobState) -> ();
         get_execution(id: Uuid) -> Option<Execution>;
         complete_execution(id: Uuid, runner_id: Option<&str>, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> bool;
         find_queued_executions(capabilities: &[String], limit: u32) -> Vec<Execution>;
