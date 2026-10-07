@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, useTemplateRef } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { useElementSize, usePreferredReducedMotion } from '@vueuse/core'
 import {
   FUTURE_SPAN_MS,
   SPAN_MS,
@@ -40,6 +40,8 @@ const props = defineProps<{
   forecast: { start: number; end: number; count: number }[]
   /** The strip's "now": the live clock, or the moment the view froze. */
   at: number
+  /** Whether `at` is the live clock, so the bars glide between its ticks. */
+  moving: boolean
 }>()
 
 const emit = defineEmits<{
@@ -65,16 +67,31 @@ const peak = computed(() =>
 const height = (count: number) => `${count ? Math.max(12, (count / peak.value) * 100) : 0}%`
 
 /**
+ * Where the bars are laid out from. They are placed once against this fixed
+ * instant, and two layers carrying them are shifted left as time passes, the
+ * way the track above moves. Placed against `at` instead, they stood still
+ * between its once-a-second ticks and then jumped. Moved on now and then, so
+ * the shift does not grow without bound in a tab left open for days.
+ */
+const origin = ref(props.at)
+const REORIGIN_MS = 600_000
+watch(
+  () => props.at,
+  (at) => {
+    if (Math.abs(at - origin.value) > REORIGIN_MS) origin.value = at
+  },
+)
+
+/**
  * Both halves come on one fixed grid, so the slice "now" falls in is in both:
  * its runs so far in the past, its fires still due in the forecast. Each half
- * draws its part of it, cut at the line. The slice reaching past the strip's
- * left edge is clipped by the strip.
+ * is clipped at the line, so each shows its part of that slice.
  */
 const pastBars = computed(() =>
   props.buckets.map((b) => ({
     key: b.start,
-    left: pct(b.start - props.at),
-    width: ((Math.min(b.end, props.at) - b.start) / TOTAL) * 100,
+    left: pct(b.start - origin.value),
+    width: ((b.end - b.start) / TOTAL) * 100,
     count: b.count,
     failed: b.failed,
   })),
@@ -83,17 +100,59 @@ const futureBars = computed(() =>
   props.forecast
     // What has passed is the past's to show.
     .filter((b) => b.end > props.at)
-    .map((b) => {
-      const start = Math.max(b.start, props.at)
-      return {
-        key: b.start,
-        left: pct(start - props.at),
-        width: ((b.end - start) / TOTAL) * 100,
-        count: b.count,
-      }
-    })
-    .filter((b) => b.left < 100),
+    .map((b) => ({
+      key: b.start,
+      left: pct(b.start - origin.value),
+      width: ((b.end - b.start) / TOTAL) * 100,
+      count: b.count,
+    })),
 )
+
+// ─── Motion ─────────────────────────────────────────────────────────────────
+
+/**
+ * On the compositor, as in `LiveTimeline`: a linear Web Animation per layer,
+ * restarted from the exact position whenever `at` ticks, so the tick only
+ * corrects and never moves anything itself. Still while the view is held,
+ * and a step a second for anyone who asked their system for less motion.
+ */
+const pastLayer = useTemplateRef<HTMLElement>('pastLayer')
+const futureLayer = useTemplateRef<HTMLElement>('futureLayer')
+const motion = usePreferredReducedMotion()
+const LEG_MS = 60_000
+let animations: Animation[] = []
+
+function stopMotion() {
+  for (const animation of animations) animation.cancel()
+  animations = []
+}
+
+function place() {
+  stopMotion()
+  const pxPerMs = width.value / TOTAL
+  const from = -(props.at - origin.value) * pxPerMs
+  const glide = props.moving && motion.value !== 'reduce' && pxPerMs > 0
+  for (const layer of [pastLayer.value, futureLayer.value]) {
+    if (!layer) continue
+    layer.style.transform = `translate3d(${from}px,0,0)`
+    if (!glide) continue
+    animations.push(
+      layer.animate(
+        [
+          { transform: `translate3d(${from}px,0,0)` },
+          { transform: `translate3d(${from - LEG_MS * pxPerMs}px,0,0)` },
+        ],
+        { duration: LEG_MS, easing: 'linear', fill: 'forwards' },
+      ),
+    )
+  }
+}
+
+onMounted(place)
+watch([() => props.at, () => props.moving, origin, width, motion, pastLayer, futureLayer], place, {
+  flush: 'post',
+})
+onBeforeUnmount(stopMotion)
 
 const ticks = [
   ...[-5, -4, -3, -2, -1].map((m) => ({ at: pct(m * 60_000), label: formatOffset(m * 60_000) })),
@@ -175,29 +234,54 @@ const description = computed(() => {
           :style="{ left: `${nowPct}%` }"
         />
 
-        <!-- The past: runs started per slice, failures on top. -->
+        <!-- The past: runs started per slice, failures on top. Clipped at the
+             line; the moving layer is the strip's width, so the bars'
+             percentages are of the strip. -->
         <div
-          v-for="bar in pastBars"
-          :key="`p-${bar.key}`"
-          class="pointer-events-none absolute bottom-0"
-          :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
+          class="pointer-events-none absolute inset-y-0 left-0 overflow-hidden"
+          :style="{ width: `${nowPct}%` }"
         >
-          <div class="absolute inset-0 rounded-t-[1px] bg-primary/35" />
           <div
-            v-if="bar.failed"
-            class="absolute inset-x-0 bottom-0 bg-error/70"
-            :style="{ height: `${(bar.failed / bar.count) * 100}%` }"
-          />
+            ref="pastLayer"
+            class="absolute inset-y-0 left-0 will-change-transform"
+            :style="{ width: `${width}px` }"
+          >
+            <div
+              v-for="bar in pastBars"
+              :key="`p-${bar.key}`"
+              class="absolute bottom-0"
+              :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
+            >
+              <div class="absolute inset-0 rounded-t-[1px] bg-primary/35" />
+              <div
+                v-if="bar.failed"
+                class="absolute inset-x-0 bottom-0 bg-error/70"
+                :style="{ height: `${(bar.failed / bar.count) * 100}%` }"
+              />
+            </div>
+          </div>
         </div>
 
-        <!-- The forecast: fires the schedule has coming, outlined — not yet runs. -->
+        <!-- The forecast: fires the schedule has coming, outlined — not yet
+             runs. Clipped at the line from the other side. -->
         <div
-          v-for="bar in futureBars"
-          :key="`f-${bar.key}`"
-          class="pointer-events-none absolute bottom-0 rounded-t-[1px] border border-b-0 border-dashed border-primary/50 bg-primary/10"
-          :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
-          data-testid="live-range-forecast"
-        />
+          class="pointer-events-none absolute inset-y-0 right-0 overflow-hidden"
+          :style="{ left: `${nowPct}%` }"
+        >
+          <div
+            ref="futureLayer"
+            class="absolute inset-y-0 will-change-transform"
+            :style="{ left: `${(-nowPct / 100) * width}px`, width: `${width}px` }"
+          >
+            <div
+              v-for="bar in futureBars"
+              :key="`f-${bar.key}`"
+              class="absolute bottom-0 rounded-t-[1px] border border-b-0 border-dashed border-primary/50 bg-primary/10"
+              :style="{ left: `${bar.left}%`, width: `calc(${bar.width}% - 1px)`, height: height(bar.count) }"
+              data-testid="live-range-forecast"
+            />
+          </div>
+        </div>
 
         <!-- Outside the selection is dimmed, so the selection reads as the view. -->
         <div
