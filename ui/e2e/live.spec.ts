@@ -98,6 +98,43 @@ test.describe('live surfaces', () => {
     await app.getByTestId('live-resume').click()
     await expect(state).toHaveText(/live/i)
   })
+
+  test('hovering the track holds it only while the hand is on', async ({ app }) => {
+    await app.goto('/')
+    const state = app.getByTestId('live-state')
+    await expect(state).toHaveText(/live/i, { timeout: 20_000 })
+    const track = app.getByTestId('live-track')
+    const hand = app.getByTestId('live-hold-on-hover')
+    await expect(hand).toHaveAttribute('aria-pressed', 'true')
+
+    // Held means everything, not only the bars' motion: a run that starts
+    // while the pointer is on the track waits until it leaves. Started from a
+    // second tab, so this one's pointer stays where it is.
+    const bars = track.locator('a[data-route^="/executions/"]')
+    await track.hover()
+    await expect(state).toHaveText('Live · held')
+    const before = await bars.count()
+    const other = await app.context().newPage()
+    await other.goto('/jobs')
+    await other.locator('tbody tr').first().click()
+    await other.getByRole('button', { name: 'Run now' }).click()
+    await other.waitForTimeout(1_000)
+    await other.close()
+    await app.waitForTimeout(2_000)
+    expect(await bars.count()).toBe(before)
+    await app.mouse.move(0, 0)
+    await expect(state).toHaveText('Live')
+    await expect.poll(() => bars.count(), { timeout: 10_000 }).toBeGreaterThan(before)
+
+    await hand.click()
+    await expect(hand).toHaveAttribute('aria-pressed', 'false')
+    await track.hover()
+    await expect(state).toHaveText('Live')
+
+    // The choice outlives a reload.
+    await app.reload()
+    await expect(app.getByTestId('live-hold-on-hover')).toHaveAttribute('aria-pressed', 'false')
+  })
 })
 
 test.describe('live timeline links', () => {
