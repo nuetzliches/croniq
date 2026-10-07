@@ -8,7 +8,7 @@ import FavoriteButton from '~/components/FavoriteButton.vue'
 import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
-import { DETAIL_PANE_MIN_WIDTH, JOB_DETAIL_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
+import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Jobs — the configuration screen, and the one the audit hit hardest.
@@ -445,7 +445,7 @@ function ruleOf(row: Row): string {
           v-model="jobDetailWidth"
           :min="DETAIL_PANE_MIN_WIDTH"
           :max="maxDetailWidth"
-          :default-width="JOB_DETAIL_DEFAULT_WIDTH"
+          :default-width="DETAIL_PANE_WIDE_DEFAULT_WIDTH"
           label="Resize job detail"
         />
         <JobDetail

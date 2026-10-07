@@ -30,11 +30,15 @@ const TIME_DISPLAY_KEY = 'croniq_time_display'
 const RUN_DETAIL_WIDTH_KEY = 'croniq_run_detail_width'
 const DEAD_LETTER_DETAIL_WIDTH_KEY = 'croniq_dead_letter_detail_width'
 const JOB_DETAIL_WIDTH_KEY = 'croniq_job_detail_width'
+const CALENDAR_DETAIL_WIDTH_KEY = 'croniq_calendar_detail_width'
 
 /** A detail pane's width until someone drags it — the old fixed `26rem`. */
 export const DETAIL_PANE_DEFAULT_WIDTH = 416
-/** The job detail's, which was `30rem`: it carries tabs and a schedule table. */
-export const JOB_DETAIL_DEFAULT_WIDTH = 480
+/**
+ * The job and calendar details', which were `30rem`: they carry tabs, a
+ * schedule table, a list of dates — more than a run's facts.
+ */
+export const DETAIL_PANE_WIDE_DEFAULT_WIDTH = 480
 /** Narrower than this and a detail's header and toolbars start to wrap. */
 export const DETAIL_PANE_MIN_WIDTH = 320
 
@@ -136,7 +140,10 @@ export const useUiStore = defineStore('ui', () => {
   const timeDisplay = ref<TimeDisplay>(readTimeDisplay())
   const runDetailWidth = ref<number>(readPaneWidth(RUN_DETAIL_WIDTH_KEY))
   const deadLetterDetailWidth = ref<number>(readPaneWidth(DEAD_LETTER_DETAIL_WIDTH_KEY))
-  const jobDetailWidth = ref<number>(readPaneWidth(JOB_DETAIL_WIDTH_KEY, JOB_DETAIL_DEFAULT_WIDTH))
+  const jobDetailWidth = ref<number>(readPaneWidth(JOB_DETAIL_WIDTH_KEY, DETAIL_PANE_WIDE_DEFAULT_WIDTH))
+  const calendarDetailWidth = ref<number>(
+    readPaneWidth(CALENDAR_DETAIL_WIDTH_KEY, DETAIL_PANE_WIDE_DEFAULT_WIDTH),
+  )
 
   // Write the new shape back on boot, so a browser carrying a React-tree value
   // stops carrying it. The watchers below only fire on change, and a
@@ -174,6 +181,10 @@ export const useUiStore = defineStore('ui', () => {
     write(JOB_DETAIL_WIDTH_KEY, String(Math.round(width)))
   })
 
+  watch(calendarDetailWidth, (width) => {
+    write(CALENDAR_DETAIL_WIDTH_KEY, String(Math.round(width)))
+  })
+
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
@@ -206,6 +217,7 @@ export const useUiStore = defineStore('ui', () => {
     runDetailWidth,
     deadLetterDetailWidth,
     jobDetailWidth,
+    calendarDetailWidth,
     toggleSidebar,
     toggleTimeDisplay,
     reapplyTheme,

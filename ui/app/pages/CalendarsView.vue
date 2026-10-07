@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { useCalendars, useJobStates, useSchedules } from '~/api/queries'
 import type { CalendarDefinition } from '~/api/types'
+import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { formatRelative } from '~/lib/format'
+import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
  * Calendars — the gates a schedule fires through.
@@ -46,6 +49,11 @@ const rows = computed(() =>
 const selected = computed(
   () => rows.value.find((calendar) => calendar.calendar_id === selectedId.value) ?? null,
 )
+
+/** The detail's width: dragged by its left edge, remembered per browser. */
+const { calendarDetailWidth } = storeToRefs(useUiStore())
+const splitEl = ref<HTMLElement | null>(null)
+const { max: maxDetailWidth, width: detailWidth } = useDetailPaneWidth(splitEl, calendarDetailWidth)
 
 function open(calendar: CalendarDefinition) {
   void router.push(`/calendars/${encodeURIComponent(calendar.calendar_id)}`)
@@ -98,7 +106,10 @@ function nextThrough(calendar: CalendarDefinition): string {
       </div>
     </div>
 
-    <div class="flex min-h-0 flex-1 gap-4">
+    <div
+      ref="splitEl"
+      class="flex min-h-0 flex-1 gap-1.5"
+    >
       <div class="cq-list min-w-0 flex-1">
         <AppLoading
           v-if="isPending"
@@ -222,13 +233,22 @@ function nextThrough(calendar: CalendarDefinition): string {
         </table>
       </div>
 
-      <CalendarDetail
-        v-if="selectedId"
-        :calendar="selected"
-        :calendar-id="selectedId"
-        class="w-[30rem] shrink-0"
-        @close="close"
-      />
+      <template v-if="selectedId">
+        <PaneResizer
+          v-model="calendarDetailWidth"
+          :min="DETAIL_PANE_MIN_WIDTH"
+          :max="maxDetailWidth"
+          :default-width="DETAIL_PANE_WIDE_DEFAULT_WIDTH"
+          label="Resize calendar detail"
+        />
+        <CalendarDetail
+          :calendar="selected"
+          :calendar-id="selectedId"
+          class="shrink-0"
+          :style="{ width: `${detailWidth}px` }"
+          @close="close"
+        />
+      </template>
     </div>
 
     <CalendarForm
