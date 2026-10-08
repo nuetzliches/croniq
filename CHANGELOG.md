@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-10-08
+
 ### Fixed
 
 - **A restart restores a triggered run as it was asked for
