@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-08
+
 ### Changed
 
 - **`catch_up all` replays the fires missed while the server was down
