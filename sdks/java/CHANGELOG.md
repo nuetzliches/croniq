@@ -4,6 +4,19 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A freed slot ends the at-capacity back-off
+  ([#845](https://github.com/nuetzliches/croniq/issues/845)).** At
+  `maxInflight()` the poll loop waited the full `capacityBackoff()` before
+  polling again, even when a handler finished a few milliseconds into it. With
+  short handlers the back-off, not the work, set the pace of dispatch: a wave
+  of jobs drained at `maxInflight()` per back-off. The wait now ends as soon
+  as an in-flight execution completes; `capacityBackoff()` is an upper bound
+  that still keeps a full runner from polling in a tight loop.
+
 ## [0.7.1] - 2026-10-06
 
 ### Fixed

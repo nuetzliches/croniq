@@ -152,8 +152,9 @@ func WithDrainTimeout(d time.Duration) Option { return func(o *Options) { o.Drai
 // any non-2xx server response).
 func WithPollRetryDelay(d time.Duration) Option { return func(o *Options) { o.PollRetryDelay = d } }
 
-// WithCapacityBackoff sets the wait applied when the runner is at
-// max_inflight and cannot accept more work.
+// WithCapacityBackoff sets the longest wait applied when the runner is at
+// max_inflight and cannot accept more work. The wait ends early as soon
+// as an in-flight execution completes.
 func WithCapacityBackoff(d time.Duration) Option {
 	return func(o *Options) { o.CapacityBackoff = d }
 }
@@ -204,6 +205,11 @@ type Runner struct {
 
 	inflightMu sync.Mutex
 	inflight   map[string]context.CancelFunc
+
+	// slotFreed holds one token once a handler has released its in-flight
+	// slot, ending the at-capacity backoff early (issue #845). Buffered so
+	// the signal survives until the loop waits on it.
+	slotFreed chan struct{}
 }
 
 type jobSchedule struct {
@@ -271,6 +277,8 @@ func NewRunner(serverURL, runnerID string, opts ...Option) *Runner {
 		client:   client,
 		handlers: newHandlerRegistry(),
 		inflight: make(map[string]context.CancelFunc),
+
+		slotFreed: make(chan struct{}, 1),
 	}
 }
 
@@ -363,6 +371,14 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 		// Reading the count and the ids separately let a handler finish in
 		// between: the request then reported a free slot, the server handed
 		// out work, and the loop still believed it was full (issue #817).
+		//
+		// A stale slot-freed token is discarded before the snapshot: a
+		// handler that finishes after it leaves a fresh one, and one that
+		// finished before it is already missing from the snapshot.
+		select {
+		case <-r.slotFreed:
+		default:
+		}
 		inflight := r.inflightIDs()
 		atCapacity := len(inflight) >= r.opts.MaxInflight
 
@@ -536,12 +552,18 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 
 		// At capacity: the server returned immediately (no long-poll); back
 		// off so we don't busy-poll. Cancels and any delivered work above
-		// are already processed.
+		// are already processed. A handler finishing ends the wait early —
+		// with short handlers a fixed sleep made the backoff, not the work,
+		// the pace of dispatch (issue #845).
 		if atCapacity {
+			backoff := time.NewTimer(r.opts.CapacityBackoff)
 			select {
 			case <-ctx.Done():
+				backoff.Stop()
 				return nil
-			case <-time.After(r.opts.CapacityBackoff):
+			case <-r.slotFreed:
+				backoff.Stop()
+			case <-backoff.C:
 			}
 		}
 	}
@@ -828,6 +850,10 @@ func (r *Runner) removeInflight(executionID string) {
 	r.inflightMu.Lock()
 	delete(r.inflight, executionID)
 	r.inflightMu.Unlock()
+	select {
+	case r.slotFreed <- struct{}{}:
+	default:
+	}
 }
 
 // safeRun protects the poll loop from a panicking handler — surfacing

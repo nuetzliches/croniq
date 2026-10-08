@@ -12,7 +12,7 @@ import {
   isOwnershipDenied,
   isUnauthorized,
 } from './client.js';
-import { sleep } from './deferred.js';
+import { deferred, sleep, type Deferred } from './deferred.js';
 import { ExecutionDispatcher } from './dispatcher.js';
 import {
   HandlerRegistry,
@@ -52,6 +52,10 @@ export class CroniqRunner {
   readonly #instanceId = randomBytes(16).toString('hex');
   readonly #inflight = new Map<string, AbortController>();
   readonly #drainAC = new AbortController();
+  // Resolved by a dispatch once it has released its in-flight slot; the poll
+  // loop swaps in a fresh one before each snapshot. Ends the at-capacity
+  // backoff as soon as there is room (issue #845).
+  #slotFreed: Deferred<void> = deferred();
 
   #runnerId: string | undefined;
   #dispatcher: ExecutionDispatcher | undefined;
@@ -194,6 +198,11 @@ export class CroniqRunner {
       // One snapshot drives both the request and the capacity decision, so
       // the two can never disagree about how full the runner is (the
       // .NET/Go/Java SDKs once read them separately and raced — issue #817).
+      //
+      // The slot-freed signal is replaced together with the snapshot, so it
+      // records exactly the handlers that finish after it.
+      const slotFreed = deferred();
+      this.#slotFreed = slotFreed;
       const inflightIds = [...this.#inflight.keys()];
       const atCapacity = inflightIds.length >= this.#options.maxInflight;
 
@@ -333,17 +342,27 @@ export class CroniqRunner {
           .dispatch(assignment, ac, signal)
           .finally(() => {
             this.#inflight.delete(assignment.execution_id);
+            this.#slotFreed.resolve();
           });
       }
 
       if (atCapacity) {
         // The server returned immediately (no long-poll). Cancels and any
-        // delivered work above are already processed; pace the loop.
+        // delivered work above are already processed; pace the loop — but
+        // only until a handler finishes. With short handlers a fixed sleep
+        // made the backoff, not the work, the pace of dispatch (issue #845).
+        const backoffAC = new AbortController();
+        const endBackoff = (): void => backoffAC.abort();
+        signal.addEventListener('abort', endBackoff, { once: true });
+        void slotFreed.promise.then(endBackoff);
         try {
-          await sleep(this.#options.capacityBackoffMs, signal);
+          await sleep(this.#options.capacityBackoffMs, backoffAC.signal);
         } catch {
-          return;
+          // Ended early — by a freed slot, or by the run signal (checked below).
+        } finally {
+          signal.removeEventListener('abort', endBackoff);
         }
+        if (signal.aborted) return;
       }
     }
   }

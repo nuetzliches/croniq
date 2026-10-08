@@ -150,7 +150,10 @@ public sealed class CroniqRunnerOptions
     [Range(1, 100)]
     public int MaxConsecutiveAuthFailures { get; set; } = 3;
 
-    /// <summary>Idle delay when the runner is at <see cref="MaxInflight"/> capacity.</summary>
+    /// <summary>
+    /// Longest idle delay between polls while the runner is at <see cref="MaxInflight"/>
+    /// capacity. The wait ends early as soon as an in-flight execution completes.
+    /// </summary>
     public TimeSpan CapacityBackoff { get; set; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Streaming log-writer tunables.</summary>

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tokio::task::AbortHandle;
 
 use crate::client::{AckRequest, CroniqClient, PollRequest, RegisterJobRequest, RenewRequest};
@@ -193,7 +193,8 @@ impl RunnerBuilder {
     /// admin-issued cancels via `PollResponse.cancel` (issue #176). The
     /// at-capacity branch returns immediately on the server side
     /// (capacity=0), so this is what paces the loop and prevents a
-    /// stampede.
+    /// stampede. It is an upper bound: the wait ends as soon as an in-flight
+    /// handler finishes, so a freed slot is refilled at once (issue #845).
     ///
     /// On a `PollResponse.cancel` the SDK aborts the matching in-flight
     /// handler future and acks the execution as `failure`, matching the
@@ -266,6 +267,7 @@ impl RunnerBuilder {
             schedules: Arc::new(RwLock::new(Vec::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
             aborts: Arc::new(RwLock::new(HashMap::new())),
+            slot_freed: Arc::new(Notify::new()),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -290,6 +292,9 @@ pub struct CroniqRunner {
     /// id. A server-issued cancel (`PollResponse.cancel`) looks the id up
     /// here and aborts just that handler; the dispatch task then acks it.
     aborts: Arc<RwLock<HashMap<String, AbortHandle>>>,
+    /// Woken by a dispatch task once it has released its in-flight slot, so
+    /// the at-capacity backoff ends as soon as there is room (issue #845).
+    slot_freed: Arc<Notify>,
     draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -425,6 +430,14 @@ impl CroniqRunner {
                 continue;
             }
 
+            // Registered before the snapshot: a handler that finishes after it
+            // wakes this future, and one that finished before it is already
+            // missing from the snapshot — so the backoff below cannot sleep
+            // through a slot that freed in between.
+            let slot_freed = self.slot_freed.notified();
+            tokio::pin!(slot_freed);
+            slot_freed.as_mut().enable();
+
             let inflight = self.inflight.read().await.clone();
             let capacity = (self.max_inflight as usize).saturating_sub(inflight.len());
             let at_capacity = capacity == 0;
@@ -511,6 +524,7 @@ impl CroniqRunner {
                         let runner_id = self.runner_id.clone();
                         let inflight = Arc::clone(&self.inflight);
                         let aborts = Arc::clone(&self.aborts);
+                        let slot_freed = Arc::clone(&self.slot_freed);
 
                         tokio::spawn(async move {
                             let attempt = ctx.attempt;
@@ -649,13 +663,20 @@ impl CroniqRunner {
 
                             // Remove from inflight
                             inflight.write().await.retain(|id| id != &exec_id);
+                            slot_freed.notify_waiters();
                         });
                     }
 
                     if at_capacity {
                         // Server returned immediately (capacity=0 branch).
-                        // Pace the loop to avoid hammering the server.
-                        tokio::time::sleep(self.capacity_backoff).await;
+                        // Pace the loop to avoid hammering the server — but
+                        // only until a handler finishes. A fixed sleep made
+                        // the backoff, not the work, the pace of dispatch for
+                        // short handlers (issue #845).
+                        tokio::select! {
+                            () = &mut slot_freed => {}
+                            () = tokio::time::sleep(self.capacity_backoff) => {}
+                        }
                     }
                 }
                 Err(e @ crate::client::ClientError::WorkOwnershipDenied { .. }) => {
