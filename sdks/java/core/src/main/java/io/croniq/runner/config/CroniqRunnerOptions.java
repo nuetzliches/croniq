@@ -333,6 +333,10 @@ public final class CroniqRunnerOptions {
             return this;
         }
 
+        /**
+         * Longest wait between polls while the runner is at {@code maxInflight}.
+         * The wait ends early as soon as an in-flight execution completes.
+         */
         public Builder capacityBackoff(Duration v) {
             this.capacityBackoff = Objects.requireNonNull(v, "capacityBackoff");
             return this;

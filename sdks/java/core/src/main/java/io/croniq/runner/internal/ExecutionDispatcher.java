@@ -12,6 +12,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -33,6 +35,9 @@ public final class ExecutionDispatcher {
     private final String runnerId;
     private final List<CroniqRunnerObserver> observers;
     private final ConcurrentHashMap<String, CancellationHandle> inflight = new ConcurrentHashMap<>();
+    // One permit per released in-flight slot; lets the poll loop end its
+    // at-capacity backoff as soon as there is room (issue #845).
+    private final Semaphore slotFreed = new Semaphore(0);
 
     public ExecutionDispatcher(
             CroniqClient client,
@@ -55,6 +60,26 @@ public final class ExecutionDispatcher {
 
     public java.util.Set<String> inflightIds() {
         return java.util.Set.copyOf(inflight.keySet());
+    }
+
+    /**
+     * Forget slots freed so far. Called before each in-flight snapshot: a
+     * handler that finishes after it leaves a fresh signal, and one that
+     * finished before it is already missing from the snapshot.
+     */
+    public void resetSlotFreed() {
+        slotFreed.drainPermits();
+    }
+
+    /**
+     * Wait up to {@code timeout} for an in-flight slot to be released since the
+     * last {@link #resetSlotFreed()}. Returns early the moment one is.
+     */
+    public void awaitSlotFreed(Duration timeout) throws InterruptedException {
+        long ms = timeout == null ? 0 : Math.max(0, timeout.toMillis());
+        if (ms > 0) {
+            slotFreed.tryAcquire(ms, TimeUnit.MILLISECONDS);
+        }
     }
 
     /** Cancel an in-flight execution by id. No-op if the id is unknown. */
@@ -199,6 +224,7 @@ public final class ExecutionDispatcher {
             // on the server after the execution is already marked complete.
             logWriter.closeAndDrain();
             inflight.remove(work.executionId());
+            slotFreed.release();
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
             notifyEnd(work, status, error, durationMs);
             sendAck(work, status, error, durationMs);

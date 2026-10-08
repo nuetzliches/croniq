@@ -1,0 +1,100 @@
+name: "A freed slot ends the at-capacity backoff"
+description: |
+  Issue #845. A runner at `max_inflight` still polls (control-slot polling,
+  case 04a) and the server answers such a poll at once, so the SDK waits
+  `capacity_backoff` before the next one. That wait exists to keep a full
+  runner from hammering the endpoint. It must not outlast the reason for it:
+  as soon as an in-flight execution completes, the runner has room and polls
+  again.
+
+  The SDKs used to sleep the whole backoff regardless. With short handlers the
+  backoff, not the work, then set the pace of dispatch: a wave of N jobs
+  drained at `max_inflight` per backoff, however quickly each one finished.
+
+  The script makes the difference unmistakable. `max_inflight` is 1 and the
+  backoff is 5 s. The first poll delivers `exec-a`, a handler that sleeps
+  300 ms; the second poll, sent at capacity, gets nothing, and the runner
+  starts its backoff. `exec-a` finishes ~300 ms later. The third poll delivers
+  `exec-b`, which has to be acked well inside the 2.5 s case budget — an SDK
+  that sleeps through the freed slot polls for it only after 5 s.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 500
+  poll_retry_delay_ms: 100
+  drain_timeout_ms: 3000
+  # Far longer than the case budget: the only way to reach exec-b in time is
+  # for exec-a's completion to cut this wait short.
+  capacity_backoff_ms: 5000
+
+handlers:
+  - job_key: "slow:job"
+    behavior: sleep
+    duration_ms: 300             # outlasts poll 2, so the backoff starts at capacity
+  - job_key: "fast:job"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-a"
+            job_key: "slow:job"
+            fire_at: "2026-10-08T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    match_count: 3
+    # The first poll after exec-a completes — the one a fixed backoff delays.
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-b"
+            job_key: "fast:job"
+            fire_at: "2026-10-08T10:00:01Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 2500
+  http:
+    - method: POST
+      path: /v1/work/poll
+      # The at-capacity poll whose backoff exec-a's completion has to end.
+      min_count: 1
+      body_filter:
+        inflight: ["exec-a"]
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_filter:
+        execution_id: "exec-a"
+      body_match:
+        execution_id: "exec-a"
+        status: "success"
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_filter:
+        execution_id: "exec-b"
+      body_match:
+        execution_id: "exec-b"
+        status: "success"

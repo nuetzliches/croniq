@@ -31,6 +31,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The "Success rate (24h)" tile links to the last 24 hours of failed
   runs rather than to all of them.
 
+### Fixed
+
+- **Runner SDKs refill a freed slot at once instead of after the capacity
+  back-off ([#845](https://github.com/nuetzliches/croniq/issues/845)).** A runner at `max_inflight` polls, gets an
+  immediate answer, and then waits the capacity back-off (500 ms by
+  default) before polling again. Every SDK slept that wait out in full,
+  even when a handler finished a few milliseconds into it. With short
+  handlers the back-off, not the work, set the pace: a wave of jobs
+  drained at `max_inflight` per half second, and the priority order that
+  0.47.1 restored mostly showed up as `low` waiting longest. The wait now
+  ends as soon as an in-flight execution completes. It still keeps a full
+  runner from polling in a tight loop, and cancels still arrive within it.
+  Go SDK: fixed in `sdks/go`. Rust SDK (`croniq-runner-sdk`): covered by
+  `tests/at_capacity_work.rs`, since Rust has no runner-case binding.
+  .NET, Java, Python and TypeScript changes are in their changelogs. New
+  conformance case 22 sets a 5 s back-off and requires the next execution
+  to be acked well inside it.
+
 ## [0.47.1] - 2026-10-07
 
 ### Fixed

@@ -88,6 +88,9 @@ class Runner:
         self._runner_id: str | None = None
         self._instance_id = secrets.token_hex(8)
         self._drain_event = asyncio.Event()
+        # Set once a handler releases its in-flight slot; ends the
+        # at-capacity backoff early (issue #845).
+        self._slot_freed = asyncio.Event()
         self._stopped_polling = asyncio.Event()
         self._ran = False
 
@@ -207,6 +210,11 @@ class Runner:
             # so the two can never disagree about how full the runner is
             # (the .NET/Go/Java SDKs once read them separately and raced —
             # issue #817).
+            #
+            # The slot-freed signal is cleared together with the snapshot (no
+            # await in between), so it records exactly the handlers that finish
+            # after it.
+            self._slot_freed.clear()
             inflight_ids = list(self._inflight.keys())
             at_capacity = len(inflight_ids) >= opts.max_inflight
 
@@ -345,8 +353,10 @@ class Runner:
             if at_capacity:
                 # The server returned immediately (no long-poll). Cancels and
                 # any delivered work above are already processed; pace the
-                # loop.
-                await self._sleep_or_drain(opts.capacity_backoff_ms / 1000.0)
+                # loop — but only until a handler finishes. With short
+                # handlers a fixed sleep made the backoff, not the work, the
+                # pace of dispatch (issue #845).
+                await self._sleep_until_slot_freed(opts.capacity_backoff_ms / 1000.0)
 
     def _handle_cancellations(self, cancel_ids: list[str]) -> None:
         for execution_id in cancel_ids:
@@ -428,6 +438,7 @@ class Runner:
 
         def _cleanup(_t: asyncio.Task[None], _eid: str = eid) -> None:
             self._inflight.pop(_eid, None)
+            self._slot_freed.set()
 
         task.add_done_callback(_cleanup)
 
@@ -635,6 +646,18 @@ class Runner:
         """Sleep, but return early if drain was requested."""
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._drain_event.wait(), timeout=seconds)
+
+    async def _sleep_until_slot_freed(self, seconds: float) -> None:
+        """Sleep, but return early if a slot frees or drain was requested."""
+        waiters = [
+            asyncio.create_task(self._slot_freed.wait()),
+            asyncio.create_task(self._drain_event.wait()),
+        ]
+        try:
+            await asyncio.wait(waiters, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
 
 
 async def _await_with_cancel(task: asyncio.Task[Any], cancellation: asyncio.Event) -> None:

@@ -4,6 +4,19 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Fixed
+
+- **A freed slot ends the at-capacity back-off
+  ([#845](https://github.com/nuetzliches/croniq/issues/845)).** At
+  `MaxInflight` the poll loop waited the full `CapacityBackoff` before polling
+  again, even when a handler finished a few milliseconds into it. With short
+  handlers the back-off, not the work, set the pace of dispatch: a wave of
+  jobs drained at `MaxInflight` per back-off. The wait now ends as soon as an
+  in-flight execution completes; `CapacityBackoff` is an upper bound that
+  still keeps a full runner from polling in a tight loop.
+
 ## [0.9.1] - 2026-10-06
 
 ### Fixed

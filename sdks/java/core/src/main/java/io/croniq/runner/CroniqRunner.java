@@ -105,6 +105,7 @@ public final class CroniqRunner implements AutoCloseable {
                 // handler finish in between: the request then reported a free
                 // slot, the server handed out work, and the loop still
                 // believed it was full (issue #817).
+                dispatcher.resetSlotFreed();
                 java.util.List<String> inflightIds = java.util.List.copyOf(dispatcher.inflightIds());
                 boolean atCapacity = inflightIds.size() >= options.maxInflight();
                 PollResponse response;
@@ -225,8 +226,10 @@ public final class CroniqRunner implements AutoCloseable {
                 if (atCapacity) {
                     // The server returned immediately (no long-poll); back off
                     // so we don't busy-poll. Cancels and any delivered work
-                    // above are already processed.
-                    sleep(options.capacityBackoff());
+                    // above are already processed. A handler finishing ends
+                    // the wait early: with short handlers a fixed sleep made
+                    // the backoff, not the work, the pace of dispatch (#845).
+                    dispatcher.awaitSlotFreed(options.capacityBackoff());
                 }
             }
         } finally {

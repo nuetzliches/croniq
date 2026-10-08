@@ -106,7 +106,10 @@ export interface CroniqRunnerOptions {
   /** Backoff after a failed poll request. Default 5 000 ms. */
   pollRetryDelayMs?: number;
 
-  /** Idle delay when the runner is at `maxInflight` capacity. Default 500 ms. */
+  /**
+   * Longest idle delay when the runner is at `maxInflight` capacity. The wait
+   * ends early as soon as an in-flight execution completes. Default 500 ms.
+   */
   capacityBackoffMs?: number;
 
   /**

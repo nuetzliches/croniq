@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A freed slot ends the at-capacity back-off
+  ([#845](https://github.com/nuetzliches/croniq/issues/845)).** At
+  `maxInflight` the poll loop waited the full `capacityBackoffMs` before
+  polling again, even when a handler finished a few milliseconds into it. With
+  short handlers the back-off, not the work, set the pace of dispatch: a wave
+  of jobs drained at `maxInflight` per back-off. The wait now ends as soon as
+  an in-flight execution completes; `capacityBackoffMs` is an upper bound that
+  still keeps a full runner from polling in a tight loop.
+
 ## 0.7.1 - 2026-10-06
 
 ### Fixed

@@ -5,6 +5,19 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A freed slot ends the at-capacity back-off
+  ([#845](https://github.com/nuetzliches/croniq/issues/845)).** At
+  `max_inflight` the poll loop waited the full `capacity_backoff_ms` before
+  polling again, even when a handler finished a few milliseconds into it. With
+  short handlers the back-off, not the work, set the pace of dispatch: a wave
+  of jobs drained at `max_inflight` per back-off. The wait now ends as soon as
+  an in-flight execution completes; `capacity_backoff_ms` is an upper bound
+  that still keeps a full runner from polling in a tight loop.
+
 ## [0.7.1] - 2026-10-06
 
 ### Fixed

@@ -38,6 +38,11 @@ public sealed class CroniqRunner : IAsyncDisposable
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflight = new();
     private readonly CancellationTokenSource _drainCts = new();
 
+    // Completed by a dispatch continuation once it has removed its execution
+    // from _inflight; the poll loop swaps in a fresh one before each in-flight
+    // snapshot. Ends the at-capacity backoff as soon as a slot frees (#845).
+    private TaskCompletionSource _slotFreed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private string? _resolvedRunnerId;
     private ExecutionDispatcher? _dispatcher;
     private int _runOnce;
@@ -290,6 +295,12 @@ public sealed class CroniqRunner : IAsyncDisposable
             // finish in between: the request then reported a free slot, the
             // server handed out work, and the loop still believed it was full
             // (issue #817).
+            //
+            // The slot-freed signal is replaced before the snapshot: a handler
+            // that finishes after it signals the new one, and one that finished
+            // before it is already missing from the snapshot.
+            var slotFreed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _slotFreed, slotFreed);
             var inflightIds = _inflight.Keys.ToArray();
             var atCapacity = inflightIds.Length >= _options.MaxInflight;
             var request = new PollRequest(
@@ -429,6 +440,8 @@ public sealed class CroniqRunner : IAsyncDisposable
                             {
                                 cts.Dispose();
                             }
+
+                            Volatile.Read(ref _slotFreed).TrySetResult();
                         },
                         TaskScheduler.Default);
             }
@@ -446,13 +459,18 @@ public sealed class CroniqRunner : IAsyncDisposable
             // `claimed` until timeout + grace — for a singleton job that blocks
             // every later run (issue #817). Briefly running over MaxInflight is
             // the lesser evil.
+            //
+            // A handler finishing ends the wait early: the backoff exists to
+            // keep a full runner from hammering the endpoint, not to pace
+            // dispatch, and with short handlers a fixed sleep did exactly that
+            // (issue #845).
             if (atCapacity)
             {
-                try
-                {
-                    await Task.Delay(_options.CapacityBackoff, ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
+                using var backoffCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                await Task.WhenAny(slotFreed.Task, Task.Delay(_options.CapacityBackoff, backoffCts.Token))
+                    .ConfigureAwait(false);
+                backoffCts.Cancel();
+                if (ct.IsCancellationRequested)
                 {
                     return;
                 }

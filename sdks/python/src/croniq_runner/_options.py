@@ -87,7 +87,10 @@ class RunnerOptions:
     """Back-off after a failed poll request."""
 
     capacity_backoff_ms: int = 500
-    """Idle delay when the runner is at ``max_inflight`` capacity."""
+    """Longest idle delay when the runner is at ``max_inflight`` capacity.
+
+    The wait ends early as soon as an in-flight execution completes.
+    """
 
     max_consecutive_poll_conflicts: int = 3
     """How many consecutive ``409 Conflict`` poll responses to tolerate.
