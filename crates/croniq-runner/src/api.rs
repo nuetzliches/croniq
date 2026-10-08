@@ -1,7 +1,7 @@
 //! HTTP Pull-API: axum handlers for `POST /v1/poll`, `POST /v1/complete`,
 //! and `GET /health`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -82,6 +82,14 @@ pub struct AppState {
     /// heartbeat drains the map. `BTreeMap` keeps the rendered order stable
     /// across heartbeats.
     pub ephemeral_stats: RwLock<BTreeMap<String, EphemeralTally>>,
+    /// When this process's state was built — server start, in practice
+    /// (issue #848). A `claimed` row older than this was handed out by a
+    /// previous process, and the lease map knows nothing about it.
+    pub started_at: DateTime<Utc>,
+    /// Runner ids whose first poll since `started_at` has had their claims
+    /// from before it checked against the store (issue #848), so each runner
+    /// pays for that query once per process, not on every poll.
+    pub restart_reconciled: RwLock<HashSet<String>>,
 }
 
 impl AppState {
@@ -95,6 +103,8 @@ impl AppState {
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
             ephemeral_stats: RwLock::new(BTreeMap::new()),
+            started_at: Utc::now(),
+            restart_reconciled: RwLock::new(HashSet::new()),
         })
     }
 
@@ -108,6 +118,8 @@ impl AppState {
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
             ephemeral_stats: RwLock::new(BTreeMap::new()),
+            started_at: Utc::now(),
+            restart_reconciled: RwLock::new(HashSet::new()),
         })
     }
 
@@ -284,6 +296,8 @@ impl Default for AppState {
             ephemeral_inflight: RwLock::new(HashMap::new()),
             lease_renewals: RwLock::new(HashMap::new()),
             ephemeral_stats: RwLock::new(BTreeMap::new()),
+            started_at: Utc::now(),
+            restart_reconciled: RwLock::new(HashSet::new()),
         }
     }
 }
