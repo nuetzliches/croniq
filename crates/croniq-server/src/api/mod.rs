@@ -1940,6 +1940,12 @@ async fn handle_trigger(
         croniq_config::compile::TIMEOUT_METADATA_KEY.into(),
         timeout.clone(),
     );
+    // A requested run, not a scheduled fire: a restart keeps it whatever the
+    // job's `catch_up` says (issue #855).
+    croniq_config::compile::mark_requested(
+        &mut metadata,
+        croniq_config::compile::REQUESTED_BY_TRIGGER,
+    );
 
     // Persist the execution record to the store so that the CompletionProcessor
     // can find it when the runner reports success/failure.
@@ -2965,6 +2971,15 @@ mod tests {
             Some(r#"["shell-runner"]"#),
             "metadata must carry __require; got: {:?}",
             items[0].metadata
+        );
+        // Marked as requested, so a restart keeps it whatever `catch_up`
+        // says (issue #855).
+        assert_eq!(
+            items[0]
+                .metadata
+                .get("__requested")
+                .and_then(|v| v.as_str()),
+            Some("trigger")
         );
 
         // A runner without the capability must not be able to claim it; one

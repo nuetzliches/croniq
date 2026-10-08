@@ -780,6 +780,40 @@ pub const PRIORITY_METADATA_KEY: &str = "__priority";
 /// arbitrary grace period against the reaper.
 pub const TIMEOUT_METADATA_KEY: &str = "__timeout";
 
+/// Metadata key marking an execution someone asked for — a trigger, over HTTP
+/// or MCP, or a dead-letter replay — rather than one the schedule produced
+/// (issue #855). The value names which ([`REQUESTED_BY_TRIGGER`],
+/// [`REQUESTED_BY_REPLAY`]).
+///
+/// A restart applies `catch_up` to the queued executions it finds, and
+/// `catch_up` is about fires the schedule produced: `none` cancels them,
+/// `latest` folds them into the newest. An execution somebody requested is
+/// not a missed fire, so restore keeps it whatever `catch_up` says — and it
+/// needs this stamp to tell the two apart, since a scheduled row carries the
+/// job's metadata, capabilities and timeout just as a triggered one does.
+///
+/// Stamped on the row, so a retry, which copies the row's metadata, stays
+/// requested. In the reserved `__` namespace, so a caller cannot set it.
+pub const REQUESTED_METADATA_KEY: &str = "__requested";
+
+/// [`REQUESTED_METADATA_KEY`] value for a trigger (`POST /v1/trigger`, MCP).
+pub const REQUESTED_BY_TRIGGER: &str = "trigger";
+
+/// [`REQUESTED_METADATA_KEY`] value for a dead-letter replay.
+pub const REQUESTED_BY_REPLAY: &str = "replay";
+
+/// Stamp `metadata` as belonging to a requested execution (issue #855).
+pub fn mark_requested(metadata: &mut HashMap<String, String>, by: &str) {
+    metadata.insert(REQUESTED_METADATA_KEY.into(), by.into());
+}
+
+/// Whether an execution's metadata marks it as requested rather than
+/// scheduled (issue #855). Rows written before the stamp existed read as
+/// scheduled.
+pub fn execution_was_requested(metadata: &HashMap<String, String>) -> bool {
+    metadata.contains_key(REQUESTED_METADATA_KEY)
+}
+
 /// Metadata key carrying the resolved `max_concurrent` of the job's
 /// concurrency group (issue #546). Stamped alongside
 /// [`CONCURRENCY_GROUP_METADATA_KEY`] so the claim path can decide from the

@@ -311,7 +311,16 @@ pub async fn handle_replay(
         // (default 10m, #279) is long expired by replay time, and reusing it
         // could wrongly coalesce a legitimate fresh trigger into this replay.
         idempotency_key: None,
-        metadata: dl.metadata.clone(),
+        // Requested by whoever replayed it, so a restart keeps it whatever
+        // the job's `catch_up` says (issue #855).
+        metadata: {
+            let mut metadata = dl.metadata.clone();
+            croniq_config::compile::mark_requested(
+                &mut metadata,
+                croniq_config::compile::REQUESTED_BY_REPLAY,
+            );
+            metadata
+        },
         created_at: now,
     };
 

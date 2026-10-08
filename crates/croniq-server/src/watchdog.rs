@@ -8,7 +8,7 @@
 //!    a. store.requeue_abandoned(runner_id, now)  → Vec<Uuid>
 //!    b. For each requeued execution ID:
 //!       - Load the execution from the store
-//!       - Rebuild a WorkItem (job config look-up for require/prefer/timeout)
+//!       - Rebuild a WorkItem from the execution row (#855; job config only as fallback)
 //!       - Enqueue the WorkItem back in the runner queue
 //! 3. Remove dead runners from the in-memory registry so they don't skew stats
 //! 4. SLA sweep (issue #140 PR-4): list claimed executions, fire
@@ -40,7 +40,7 @@ use crate::loader::job_config_from_job_def;
 use crate::store::DynStore;
 use chrono::{DateTime, Duration, Utc};
 use croniq_config::compile::{AlertsConfig, JobConfig, RuleTrigger};
-use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use croniq_runner::{AppState, RunnerStatus};
 use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_scheduler::trigger::Trigger;
 use croniq_store::models::{Execution, ExecutionState, JobStatus, MaintenanceState};
@@ -570,20 +570,9 @@ where
         }
     };
 
-    let item = WorkItem {
-        execution_id: exec_id.to_string(),
-        job_key: execution.job_key.clone(),
-        fire_at: execution.fire_at,
-        scheduled_for: execution.scheduled_for,
-        attempt: execution.attempt,
-        require: job.runner.require.clone(),
-        prefer: job.runner.prefer.clone(),
-        metadata: serde_json::json!(execution.metadata),
-        // Same precedence the reaper just used, so the requeued item runs under
-        // the timeout it was judged by (issue #558).
-        timeout: crate::duration::effective_timeout(&execution.metadata, job.timeout.as_deref()),
-        is_ephemeral: false,
-    };
+    // Built from the row like a restart's restore (issue #855): its metadata,
+    // its capabilities and the timeout the reaper just judged it by (#558).
+    let item = crate::loader::work_item_from_execution(&execution, &job);
 
     runner.queue.write().await.enqueue(item)
 }
@@ -2696,7 +2685,7 @@ mod tests {
         // The healthy shape: the WorkItem is already in the queue.
         {
             let mut q = runner.queue.write().await;
-            q.enqueue(WorkItem {
+            q.enqueue(croniq_runner::WorkItem {
                 execution_id: exec_id.to_string(),
                 job_key: "test:job".into(),
                 fire_at: Utc::now(),

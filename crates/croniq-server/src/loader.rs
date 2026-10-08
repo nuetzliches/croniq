@@ -600,24 +600,69 @@ fn persist_healed_state(
     }
 }
 
+/// The work item for an execution that is already persisted — rebuilt on a
+/// restart, or after the watchdog requeued it — from the execution's own row.
+///
+/// The row is what the run was asked for: a trigger's metadata, its timeout
+/// override and its capabilities live there and nowhere else, and a reload may
+/// have changed the job since. So metadata comes from the row, the timeout
+/// from its `__timeout` stamp and `require` / `prefer` from its `__require` /
+/// `__prefer` stamps, each falling back to `job` only where the row has
+/// nothing (rows older than the stamps). The same precedence the dead-letter
+/// replay uses. Rebuilding from `job` alone turned a parameterised trigger
+/// into a plain scheduled run on every restart (issue #855).
+pub fn work_item_from_execution(
+    execution: &croniq_store::models::Execution,
+    job: &JobConfig,
+) -> croniq_runner::WorkItem {
+    let capabilities = |key: &str, fallback: &[String]| {
+        execution
+            .metadata
+            .get(key)
+            .and_then(|v| serde_json::from_str::<Vec<String>>(v).ok())
+            .unwrap_or_else(|| fallback.to_vec())
+    };
+    croniq_runner::WorkItem {
+        execution_id: execution.id.to_string(),
+        job_key: execution.job_key.clone(),
+        fire_at: execution.fire_at,
+        scheduled_for: execution.scheduled_for,
+        attempt: execution.attempt,
+        require: capabilities(
+            croniq_bridge::dispatch::REQUIRE_METADATA_KEY,
+            &job.runner.require,
+        ),
+        prefer: capabilities(
+            croniq_bridge::dispatch::PREFER_METADATA_KEY,
+            &job.runner.prefer,
+        ),
+        metadata: serde_json::json!(execution.metadata),
+        timeout: crate::duration::effective_timeout(&execution.metadata, job.timeout.as_deref()),
+        is_ephemeral: false,
+    }
+}
+
 /// Restore queued executions from the database into the in-memory work queue.
 ///
 /// On server restart, executions in `queued` state need to be re-enqueued so
-/// runners can pick them up. Respects each job's `catch_up` and `execution_mode`
-/// policies:
+/// runners can pick them up. Each is rebuilt from its own row
+/// ([`work_item_from_execution`]).
 ///
-/// - `execution_mode: ephemeral` → cancel all queued executions (no catch-up)
-/// - `catch_up: none`            → cancel all queued executions for this job
-/// - `catch_up: latest`          → keep only the most recent queued execution,
-///   cancel the rest
-/// - `catch_up: all`             → restore all queued executions (default)
+/// An execution someone requested — a trigger or a dead-letter replay, see
+/// [`croniq_config::compile::execution_was_requested`] — is always restored
+/// (issue #855). The job's `execution_mode` and `catch_up` apply to the ones
+/// the schedule produced:
+///
+/// - `execution_mode: ephemeral` → cancel them (no catch-up)
+/// - `catch_up: none`            → cancel them
+/// - `catch_up: latest`          → keep only the most recent, cancel the rest
+/// - `catch_up: all`             → restore all of them (default)
 pub async fn restore_queued_executions(
     store: &dyn ExecutionStore,
     jobs: &[JobConfig],
     runner_state: &croniq_runner::AppState,
 ) -> usize {
-    use croniq_bridge::job_to_work_item;
-    use croniq_config::compile::ExecutionMode;
+    use croniq_config::compile::{ExecutionMode, execution_was_requested};
 
     let executions = match store.find_queued_executions(&[], 1000) {
         Ok(execs) => execs,
@@ -636,18 +681,33 @@ pub async fn restore_queued_executions(
         by_job.entry(exec.job_key.clone()).or_default().push(exec);
     }
 
-    for (job_key, mut execs) in by_job {
+    for (job_key, all_execs) in by_job {
         let job = match job_map.get(job_key.as_str()) {
             Some(j) => j,
             None => {
                 tracing::warn!(
                     job_key = %job_key,
-                    count = execs.len(),
+                    count = all_execs.len(),
                     "queued executions for unknown job — skipping restore"
                 );
                 continue;
             }
         };
+
+        // Requested runs first, and regardless of policy (issue #855).
+        let (requested, mut execs): (Vec<_>, Vec<_>) = all_execs
+            .into_iter()
+            .partition(|exec| execution_was_requested(&exec.metadata));
+        if !requested.is_empty() {
+            let mut queue = runner_state.queue.write().await;
+            for exec in &requested {
+                queue.enqueue(work_item_from_execution(exec, job));
+            }
+            restored += requested.len();
+        }
+        if execs.is_empty() {
+            continue;
+        }
 
         // Ephemeral jobs never restore queued executions.
         if job.execution_mode == ExecutionMode::Ephemeral {
@@ -683,13 +743,7 @@ pub async fn restore_queued_executions(
                 for (i, exec) in execs.iter().enumerate() {
                     if i == 0 {
                         // Restore the latest
-                        let item = job_to_work_item(
-                            job,
-                            exec.id.to_string(),
-                            exec.fire_at,
-                            exec.scheduled_for,
-                            exec.attempt,
-                        );
+                        let item = work_item_from_execution(exec, job);
                         runner_state.queue.write().await.enqueue(item);
                         restored += 1;
                     } else {
@@ -709,13 +763,7 @@ pub async fn restore_queued_executions(
             CatchUpPolicy::All => {
                 // Restore all (current behaviour).
                 for exec in &execs {
-                    let item = job_to_work_item(
-                        job,
-                        exec.id.to_string(),
-                        exec.fire_at,
-                        exec.scheduled_for,
-                        exec.attempt,
-                    );
+                    let item = work_item_from_execution(exec, job);
                     runner_state.queue.write().await.enqueue(item);
                     restored += 1;
                 }
@@ -2518,5 +2566,166 @@ mod tests {
             Some(next),
             "job_states follows, so the job does not read as overdue"
         );
+    }
+
+    // ─── #855: restoring queued executions after a restart ────────────────
+
+    /// A queued execution of `job`, persisted as the scheduler (no extra
+    /// metadata) or a trigger (`extra` on top) would have written it.
+    fn seed_queued(
+        store: &SqliteStore,
+        job: &JobConfig,
+        fire_at: chrono::DateTime<Utc>,
+        extra: &[(&str, &str)],
+    ) -> uuid::Uuid {
+        let mut metadata = croniq_bridge::job_execution_metadata(job);
+        for (k, v) in extra {
+            metadata.insert((*k).into(), (*v).into());
+        }
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&croniq_store::models::Execution {
+                id,
+                job_key: job.key.clone(),
+                fire_at,
+                scheduled_for: fire_at,
+                attempt: 1,
+                state: croniq_store::models::ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata,
+                created_at: fire_at,
+            })
+            .unwrap();
+        id
+    }
+
+    fn state_of(store: &SqliteStore, id: uuid::Uuid) -> croniq_store::models::ExecutionState {
+        store.get_execution(id).unwrap().unwrap().state
+    }
+
+    /// What a parameterised `POST /v1/trigger` leaves on the row.
+    const TRIGGERED: &[(&str, &str)] = &[
+        ("scope", "full"),
+        ("__requested", "trigger"),
+        ("__timeout", "2h"),
+        ("__require", r#"["gpu"]"#),
+    ];
+
+    #[tokio::test]
+    async fn restore_keeps_a_triggered_run_with_its_own_data_under_catch_up_none() {
+        let cfg = load_str(
+            r#"job ops:sync {
+                every 1 minute
+                timeout 5m
+                catch_up none
+            }"#,
+        )
+        .unwrap();
+        let job = &cfg.runtime.jobs[0];
+        let store = make_store();
+        let runner = croniq_runner::AppState::new();
+        let t0 = Utc::now() - chrono::Duration::minutes(5);
+
+        let scheduled = seed_queued(&store, job, t0, &[]);
+        let triggered = seed_queued(&store, job, t0, TRIGGERED);
+
+        let restored = restore_queued_executions(&*store, &cfg.runtime.jobs, &runner).await;
+        assert_eq!(restored, 1);
+        assert_eq!(
+            state_of(&store, scheduled),
+            croniq_store::models::ExecutionState::Cancelled,
+            "catch_up none still cancels what the schedule produced"
+        );
+        assert_eq!(
+            state_of(&store, triggered),
+            croniq_store::models::ExecutionState::Queued
+        );
+
+        let queue = runner.queue.read().await;
+        let item = queue
+            .find_for_job("ops:sync", |i| i.execution_id == triggered.to_string())
+            .expect("the triggered run is back in the queue");
+        assert_eq!(item.metadata["scope"], "full", "its metadata survives");
+        assert_eq!(item.timeout, "2h", "its timeout override survives");
+        assert_eq!(item.require, vec!["gpu".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn restore_with_catch_up_latest_folds_only_scheduled_fires() {
+        let cfg = load_str(
+            r#"job ops:sync {
+                every 1 minute
+                catch_up latest
+            }"#,
+        )
+        .unwrap();
+        let job = &cfg.runtime.jobs[0];
+        let store = make_store();
+        let runner = croniq_runner::AppState::new();
+        let t0 = Utc::now() - chrono::Duration::minutes(5);
+
+        // The trigger is the oldest: `latest` used to cancel it.
+        let triggered = seed_queued(&store, job, t0, TRIGGERED);
+        let older = seed_queued(&store, job, t0 + chrono::Duration::minutes(1), &[]);
+        let newer = seed_queued(&store, job, t0 + chrono::Duration::minutes(2), &[]);
+
+        let restored = restore_queued_executions(&*store, &cfg.runtime.jobs, &runner).await;
+        assert_eq!(restored, 2);
+        assert_eq!(
+            state_of(&store, triggered),
+            croniq_store::models::ExecutionState::Queued
+        );
+        assert_eq!(
+            state_of(&store, older),
+            croniq_store::models::ExecutionState::Cancelled
+        );
+        assert_eq!(
+            state_of(&store, newer),
+            croniq_store::models::ExecutionState::Queued
+        );
+    }
+
+    #[test]
+    fn work_item_falls_back_to_the_job_for_rows_without_stamps() {
+        let cfg = load_str(
+            r#"job ops:sync {
+                every 1 minute
+                timeout 7m
+                runner { require linux }
+            }"#,
+        )
+        .unwrap();
+        let job = &cfg.runtime.jobs[0];
+        let now = Utc::now();
+        let execution = croniq_store::models::Execution {
+            id: uuid::Uuid::new_v4(),
+            job_key: job.key.clone(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 2,
+            state: croniq_store::models::ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            idempotency_key: None,
+            // A row written before the stamps existed.
+            metadata: HashMap::new(),
+            created_at: now,
+        };
+        let item = work_item_from_execution(&execution, job);
+        assert_eq!(item.timeout, "7m");
+        assert_eq!(item.require, vec!["linux".to_string()]);
+        assert_eq!(item.attempt, 2);
     }
 }
