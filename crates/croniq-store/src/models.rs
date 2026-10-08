@@ -336,6 +336,15 @@ pub struct JobRuntime {
     pub failed: u64,
     /// Their durations summed, in milliseconds.
     pub total_ms: i64,
+    /// How long one of those runs typically waited for a runner: the lower
+    /// median of `claimed_at` minus `fire_at` (never negative), in
+    /// milliseconds. Kept apart from `total_ms`, which the runner measures
+    /// around the handler alone. A median rather than a sum: a single run
+    /// that came due while the server was down waits for hours, and a sum
+    /// would let it drown every ordinary wait. The *lower* median, so that a
+    /// job with two runs, one of them such a run, is not averaged into hours
+    /// too.
+    pub wait_median_ms: i64,
 }
 
 /// Filter for listing dead letters.

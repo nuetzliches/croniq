@@ -20,6 +20,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   columns, and they link to the job's runs on `/executions` — failures
   to its failed runs — over the window the card is showing.
   `/executions` offers "Last 30 days" to match.
+- **"Run time by job" shows waiting apart from running.** Its figures
+  were, and still are, handler time as the runner measures it; how long
+  a run waited for a runner was nowhere. Each bar now starts with the
+  typical wait (in the timeline's wait colour), followed by the run time,
+  and the header reads "~8m waiting · 9m running". The wait is each job's
+  median wait per run, times its runs, rather than the waits summed: a
+  run that came due while the server was down waits for hours, and a sum
+  turned every bar into that one run. `GET /v1/insights/runtime` gains
+  `wait_median_ms` per job.
+- **Priority shows next to the job.** A job with `priority high` or
+  `priority low` carries a badge after its key in "Run time by job" and
+  in the live timeline's lane labels, as it already did on `/jobs`.
 - **"Recent failures" can hide what is already checked.** A "Hide
   checked" switch leaves out failures someone has marked as checked, so
   the five rows are the ones nobody has looked at yet. Off by default and
@@ -34,9 +46,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **Runner SDKs refill a freed slot at once instead of after the capacity
-  back-off ([#845](https://github.com/nuetzliches/croniq/issues/845)).** A runner at `max_inflight` polls, gets an
-  immediate answer, and then waits the capacity back-off (500 ms by
-  default) before polling again. Every SDK slept that wait out in full,
+  back-off ([#845](https://github.com/nuetzliches/croniq/issues/845)).**
+  A runner at `max_inflight` polls, gets an immediate answer, and then
+  waits the capacity back-off (500 ms by default) before polling again. Every SDK slept that wait out in full,
   even when a handler finished a few milliseconds into it. With short
   handlers the back-off, not the work, set the pace: a wave of jobs
   drained at `max_inflight` per half second, and the priority order that

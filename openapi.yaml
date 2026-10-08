@@ -3417,12 +3417,13 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [job_key, runs, failed, total_ms]
+                      required: [job_key, runs, failed, total_ms, wait_median_ms]
                       properties:
                         job_key: { type: string }
                         runs: { type: integer, description: "Runs counted, each with a duration." }
                         failed: { type: integer, description: "Of those, the ones that ended failed or dead." }
-                        total_ms: { type: integer, description: "Their durations summed, in milliseconds." }
+                        total_ms: { type: integer, description: "Their durations summed, in milliseconds. Measured by the runner around the handler; waiting time is not included." }
+                        wait_median_ms: { type: integer, description: "How long one of those runs typically waited for a runner: the lower median of claimed_at minus fire_at (never negative), in milliseconds. A median so that a run that came due during downtime does not dominate; the lower one so that it does not with two runs either." }
         "400": { description: Unknown window }
 
   /v1/tags:

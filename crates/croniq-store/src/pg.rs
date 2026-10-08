@@ -1187,7 +1187,9 @@ impl ExecutionStore for PgStore {
             .query(
                 "SELECT job_key, COUNT(*)::bigint, \
                  SUM(CASE WHEN state IN ('failed', 'dead') THEN 1 ELSE 0 END)::bigint, \
-                 SUM(duration_ms)::bigint AS total \
+                 SUM(duration_ms)::bigint AS total, \
+                 COALESCE(percentile_disc(0.5) WITHIN GROUP (ORDER BY \
+                   GREATEST(0, ROUND(EXTRACT(EPOCH FROM (claimed_at - fire_at)) * 1000))::bigint), 0) \
                  FROM executions \
                  WHERE completed_at IS NOT NULL AND completed_at >= $1 \
                    AND duration_ms IS NOT NULL \
@@ -1202,6 +1204,7 @@ impl ExecutionStore for PgStore {
                 runs: row.get::<usize, i64>(1) as u64,
                 failed: row.get::<usize, i64>(2) as u64,
                 total_ms: row.get(3),
+                wait_median_ms: row.get(4),
             })
             .collect())
     }
