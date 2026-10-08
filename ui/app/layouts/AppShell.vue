@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { useCurrentUser, useDeadLetterCount } from '~/api/queries'
+import { useCurrentUser, useDeadLetterCount, useNotesSeen } from '~/api/queries'
 import { useHealth, useVersion } from '~/api/queries'
 import { logout } from '~/api/session'
 import { useUiStore } from '~/stores/ui'
-import { useGoToShortcuts } from '~/composables/useGoToShortcuts'
+import { GO_TO, useGoToShortcuts } from '~/composables/useGoToShortcuts'
 import { useIsAdmin } from '~/composables/useIsAdmin'
-import { NAV_SECTIONS } from '~/router/nav'
+import { formatBadgeCount } from '~/lib/format'
+import { NAV_SECTIONS, type NavBadge } from '~/router/nav'
 
 /**
  * The frame: sidebar, topbar and content as cards floating on the ground
@@ -24,6 +25,37 @@ const { data: me } = useCurrentUser()
 const { data: health } = useHealth()
 const { data: version } = useVersion()
 const deadLetters = useDeadLetterCount()
+/**
+ * Threads with something new by someone else since the notes inbox was last
+ * opened. Only for a session with a user — an API key keeps no marker — and
+ * paused while the inbox is open: the page moves the marker and hands this
+ * count over itself, and a poll in between could put back the old one.
+ */
+const notesSeen = useNotesSeen({
+  user: () => me.value !== undefined,
+  paused: () => isCurrent('/notes'),
+})
+
+/** What a badge says, and what it is read out as. `null`: no badge. */
+interface BadgeView {
+  text: string
+  label: string
+  color: 'error' | 'primary'
+}
+
+const badges = computed<Record<NavBadge, BadgeView | null>>(() => {
+  const unread = notesSeen.data.value?.unread_threads ?? 0
+  return {
+    // Exact, not capped: it is how much of a work list is left (#661).
+    'dead-letters':
+      deadLetters.value > 0
+        ? { text: String(deadLetters.value), label: `${deadLetters.value} waiting`, color: 'error' }
+        : null,
+    // Not red: a colleague's note is news, not a failure.
+    notes:
+      unread > 0 ? { text: formatBadgeCount(unread), label: `${unread} unread`, color: 'primary' } : null,
+  }
+})
 
 /**
  * The console tails the server's whole tracing stream, so
@@ -72,9 +104,14 @@ const roleLine = computed(() => {
 const sections = computed(() =>
   NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => !item.adminOnly || isAdmin.value),
+    items: section.items
+      .filter((item) => !item.adminOnly || isAdmin.value)
+      .map((item) => ({ ...item, count: item.badge ? badges.value[item.badge] : null })),
   })).filter((section) => section.items.length > 0),
 )
+
+/** The second keys of the `g` chord, as the hint lists them. */
+const goKeys = GO_TO.map((entry) => entry.key).join(' · ')
 
 /**
  * Which nav entry is the current one.
@@ -200,18 +237,24 @@ async function signOut() {
                   :name="item.icon"
                   class="size-4 shrink-0"
                 />
-                <span
-                  v-if="!ui.sidebarCollapsed"
-                  class="flex-1 truncate"
-                >{{ item.label }}</span>
+                <!--
+                  Hidden, not removed, when collapsed. Removed, a link with a
+                  badge was named by the badge alone — "3" — because the
+                  tooltip only names a link that has no text of its own.
+                -->
+                <span :class="ui.sidebarCollapsed ? 'sr-only' : 'flex-1 truncate'">{{
+                  item.label
+                }}</span>
                 <UBadge
-                  v-if="item.to === '/dead-letters' && deadLetters > 0"
-                  color="error"
+                  v-if="item.count"
+                  :color="item.count.color"
                   variant="subtle"
                   size="sm"
+                  data-testid="nav-badge"
                   :class="ui.sidebarCollapsed && 'absolute top-0.5 right-1.5 px-1'"
                 >
-                  {{ deadLetters }}
+                  <span aria-hidden="true">{{ item.count.text }}</span>
+                  <span class="sr-only">, {{ item.count.label }}</span>
                 </UBadge>
               </RouterLink>
             </li>
@@ -454,7 +497,7 @@ async function signOut() {
         role="status"
       >
         <kbd class="font-mono font-medium">g</kbd>
-        <span class="ml-2 text-muted">then d · r · n · x · j · c · a · l · s</span>
+        <span class="ml-2 text-muted">then {{ goKeys }}</span>
       </div>
     </Transition>
   </div>

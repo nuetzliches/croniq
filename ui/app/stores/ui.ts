@@ -25,7 +25,9 @@ const TIME_DISPLAY_KEY = 'croniq_time_display'
 /**
  * Also new with this tree: the side detail panes' widths in pixels, as decimal
  * strings. One key per screen — a run's logs and a dead letter's error want
- * different room, and widening one should not widen the other.
+ * different room, and widening one should not widen the other. The one
+ * exception is Notes, which shares the run detail's: most of its threads open
+ * that same detail, and it should not change width between the two screens.
  */
 const RUN_DETAIL_WIDTH_KEY = 'croniq_run_detail_width'
 const DEAD_LETTER_DETAIL_WIDTH_KEY = 'croniq_dead_letter_detail_width'

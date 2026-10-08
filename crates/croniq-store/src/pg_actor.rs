@@ -1023,6 +1023,34 @@ impl NoteStore for PgStoreHandle {
     fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
         self.call(move |s| s.delete_note(id))
     }
+
+    fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError> {
+        let query = query.clone();
+        self.call(move |s| s.list_note_threads(&query))
+    }
+
+    fn count_unread_note_threads(
+        &self,
+        reader_id: &str,
+        seen_at: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        let reader_id = reader_id.to_string();
+        self.call(move |s| s.count_unread_note_threads(&reader_id, seen_at))
+    }
+
+    fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+        let user_id = user_id.to_string();
+        self.call(move |s| s.get_notes_seen(&user_id))
+    }
+
+    fn advance_notes_seen(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, StoreError> {
+        let user_id = user_id.to_string();
+        self.call(move |s| s.advance_notes_seen(&user_id, at))
+    }
 }
 
 impl FavoriteStore for PgStoreHandle {

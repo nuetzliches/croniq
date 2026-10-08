@@ -35,6 +35,8 @@ const SCREENS = [
   ["01-dashboard", "/"],
   ["02-jobs", "/jobs"],
   ["03-executions", "/executions"],
+  // `03a`, so the files around it keep their names for before/after comparison.
+  ["03a-notes", "/notes"],
   ["04-runners", "/runners"],
   ["05-dead-letters", "/dead-letters"],
   ["06-alerts", "/alerts"],

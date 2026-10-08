@@ -44,6 +44,29 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Runs' },
       },
       {
+        // The notes inbox. One component for the list and both kinds of
+        // thread, as on Runs — and here it matters twice over: the component
+        // instance is the visit, and a visit is what keeps "new" marked as new
+        // while threads are opened one after another (useNotesInbox).
+        path: 'notes',
+        name: 'notes',
+        component: () => import('~/pages/NotesView.vue'),
+        meta: { title: 'Notes' },
+      },
+      {
+        path: 'notes/runs/:id',
+        name: 'notes-run',
+        component: () => import('~/pages/NotesView.vue'),
+        meta: { title: 'Notes' },
+      },
+      {
+        // A job's own notes — the ones that name no run.
+        path: 'notes/jobs/:jobKey',
+        name: 'notes-job',
+        component: () => import('~/pages/NotesView.vue'),
+        meta: { title: 'Notes' },
+      },
+      {
         path: 'runners',
         name: 'runners',
         component: () => import('~/pages/RunnersView.vue'),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatAbsolute,
+  formatBadgeCount,
   formatClockTime,
   formatDuration,
   formatLogLines,
@@ -213,5 +214,17 @@ describe('formatLogLines', () => {
 
   it('is empty for no events', () => {
     expect(formatLogLines([])).toBe('')
+  })
+})
+
+describe('formatBadgeCount', () => {
+  it('shows a count up to 99 as it is', () => {
+    expect(formatBadgeCount(1)).toBe('1')
+    expect(formatBadgeCount(99)).toBe('99')
+  })
+
+  it('caps a larger one', () => {
+    expect(formatBadgeCount(100)).toBe('99+')
+    expect(formatBadgeCount(4_000)).toBe('99+')
   })
 })

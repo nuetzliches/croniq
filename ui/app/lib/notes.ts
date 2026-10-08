@@ -43,6 +43,31 @@ export function noteIcon(kind: NoteKind): string {
   return NOTE_KINDS.find((entry) => entry.value === kind)?.icon ?? 'i-lucide-message-square'
 }
 
+/** A kind's name, as the composer offers it. */
+export function noteLabel(kind: NoteKind): string {
+  return NOTE_KINDS.find((entry) => entry.value === kind)?.label ?? 'Note'
+}
+
+/**
+ * The colour of a kind's icon: "checked" is the good news, a question is the
+ * one that wants an answer, the rest are context.
+ */
+export function noteTone(kind: NoteKind): 'text-success' | 'text-warning' | 'text-muted' {
+  if (kind === 'ack') return 'text-success'
+  if (kind === 'question') return 'text-warning'
+  return 'text-muted'
+}
+
+/**
+ * One line of a note, for a list row: whitespace folded, and an empty
+ * "checked" said in words, since it has none of its own.
+ */
+export function noteExcerpt(note: Pick<JobNote, 'kind' | 'body'>): string {
+  const text = note.body.replace(/\s+/g, ' ').trim()
+  if (text) return text
+  return note.kind === 'ack' ? 'checked' : ''
+}
+
 export interface NoteSummary {
   /** Who marked it as checked, newest first, each name once. */
   checkedBy: string[]

@@ -161,6 +161,48 @@ export interface JobNote {
   created_at: string
 }
 
+/**
+ * One row of the notes inbox: the notes on one run, or a job's own notes —
+ * the ones that name no run (`execution_id` null).
+ *
+ * The timestamps here are for display only. Nothing in the dashboard compares
+ * them: the server writes 3, 6 or 9 fraction digits, so two of its strings do
+ * not order as text, and a `Date` would cut them to milliseconds.
+ */
+export interface NoteThread {
+  job_key: string
+  execution_id: string | null
+  /** The run while it exists; null for a job's own thread and for a run retention deleted. */
+  execution: Execution | null
+  last_note_at: string
+  /** Every note in the thread; `notes` carries only the newest. */
+  note_count: number
+  /** The reader has written in this thread. */
+  mine: boolean
+  /** Someone else has written in it after the `seen_at` the request named. */
+  unread: boolean
+  /** The newest notes, newest first. */
+  notes: JobNote[]
+}
+
+export interface NoteThreadsPage {
+  threads: NoteThread[]
+  /**
+   * The newest note there is, whatever the filters — handed back verbatim to
+   * mark the inbox read up to it.
+   */
+  latest_note_at: string | null
+  /** A larger `limit` would list more threads. */
+  has_more: boolean
+}
+
+/** How far the signed-in user has read the inbox — the navigation badge. */
+export interface NotesSeen {
+  /** Null until the inbox is first opened. */
+  seen_at: string | null
+  unread_threads: number
+}
+
 export interface DeadLetter {
   id: string
   execution_id: string

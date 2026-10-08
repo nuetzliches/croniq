@@ -705,7 +705,8 @@ pub trait MaintenanceStore {
     fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError>;
 }
 
-/// Operator notes on jobs and their runs (migration 031).
+/// Operator notes on jobs and their runs (migration 031), and how far each
+/// user has read them (migration 033).
 pub trait NoteStore {
     fn create_note(&self, note: &JobNote) -> Result<(), StoreError>;
 
@@ -716,6 +717,32 @@ pub trait NoteStore {
 
     /// Returns `Ok(true)` when a row was removed, `Ok(false)` when none existed.
     fn delete_note(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    /// One page of the notes inbox: threads ordered by their newest note, then
+    /// by job key, a job's own thread before its runs', then by run id. Each
+    /// carries its newest notes and its run while that exists. The page, its
+    /// notes, its runs and `latest_note_at` are read together.
+    fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError>;
+
+    /// How many threads `list_note_threads` would list with `unread_only` for
+    /// this reader and `seen_at` — the number on the navigation badge.
+    fn count_unread_note_threads(
+        &self,
+        reader_id: &str,
+        seen_at: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError>;
+
+    /// The newest note the user has seen in the inbox; `None` if never opened.
+    fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError>;
+
+    /// Move the user's marker to `at` — forward only: a value older than the
+    /// one stored leaves it as it is. Returns the marker in force afterwards.
+    /// The user must exist.
+    fn advance_notes_seen(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, StoreError>;
 }
 
 /// Jobs a user has starred (migration 032). Per user, keyed by job key.

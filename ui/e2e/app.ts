@@ -14,6 +14,7 @@ import type { Page } from '@playwright/test'
 export const NAV: { label: string; path: string }[] = [
   { label: 'Dashboard', path: '/' },
   { label: 'Runs', path: '/executions' },
+  { label: 'Notes', path: '/notes' },
   { label: 'Runners', path: '/runners' },
   { label: 'Dead Letters', path: '/dead-letters' },
   { label: 'Jobs', path: '/jobs' },

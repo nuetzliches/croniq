@@ -172,15 +172,18 @@ merging them produces exactly the confusion that gets in the way when debugging.
 ## Resulting cut
 
 ```
-Operations      Dashboard   Runs   Runners   Dead Letters
+Operations      Dashboard   Runs   Notes   Runners   Dead Letters
 Configuration   Jobs        Calendars   Alerts
 System          Console (admin)   Settings
 ```
+
+*Notes* was added later — see "Decided (2026-10-08)" below.
 
 | Route | Content |
 |---|---|
 | `/` | status board + failure excerpt |
 | `/executions`, `/executions/:id` | the one run list; job/runner/state/time filters in the URL |
+| `/notes`, `/notes/runs/:id`, `/notes/jobs/:jobKey` | work list of note threads; Mine · Unread · All in the URL; a per-user read marker |
 | `/runners` | live list + detail **without** an executions block |
 | `/dead-letters` | work list: replay, delete, bulk action, retention |
 | `/jobs`, `/jobs/:key` | master/detail, **two** tabs (overview including schedule, DSL) |
@@ -229,6 +232,36 @@ Two things the channel view makes visible that were mute before: a
 channel that no rule uses (`unused`), and a rule that names a channel
 that does not exist — the compiler keeps the reference verbatim and warns only
 at fire time, so the rule looks configured and delivers nowhere.
+
+## Decided (2026-10-08): notes
+
+Operator notes (v0.46.0) could only be read where they were written — a
+run's detail, a job's *Notes* tab, the dashboard's failure rows — so a
+colleague's question went unseen until someone happened to open that run.
+They get a screen of their own in the main navigation, under *Runs*, with
+an unread badge.
+
+**Its own screen, not a filter on Runs**, for the reason Dead Letters kept
+one: it is a work list. The question it answers — what have colleagues said
+since I last looked — runs across every job, and a filter on Runs would hide
+the work behind a setting. Nor would Runs have a row for all of it: a job's
+own notes name no run, and a run's notes outlive the run when retention
+deletes it (migration 031).
+
+**A row is a thread, not a run** — one run's notes, or a job's own — ordered
+by its newest note. A run without notes is not in it, so this is not a
+second rendering of the run list; a run's thread opens the same run detail
+the Runs screen uses, beside the list.
+
+**"Read" is one instant per user**, kept on the server: opening the screen
+marks everything up to the newest note it showed. A mark per thread was the
+alternative, and was not needed — "new since I last looked" is the question,
+and a single marker answers it without a table that grows with every note
+and every reader. What was new on arrival stays marked until the next visit,
+so opening the screen does not empty *Unread* under the reader's eyes.
+
+That makes eleven routes. The scope guard above froze capabilities, not the
+number of screens.
 
 ## Build order
 

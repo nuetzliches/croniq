@@ -4,6 +4,7 @@
 //! to match the synchronous store trait signatures.
 
 use crate::models::*;
+use crate::note_threads;
 use crate::retention_sql::DELETABLE_EXECUTION;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
@@ -134,6 +135,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("030_maintenance_active_since", PG_MIGRATION_030),
     ("031_job_notes", PG_MIGRATION_031),
     ("032_user_favorite_jobs", PG_MIGRATION_032),
+    ("033_user_notes_seen", PG_MIGRATION_033),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -331,6 +333,18 @@ CREATE TABLE IF NOT EXISTS user_favorite_jobs (
     created_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (user_id, job_key)
 );
+"#;
+
+// How far each user has read the notes inbox. Mirrors
+// migrations/033_user_notes_seen.sql — see there for why it is a table of its
+// own and why the index carries four columns.
+const PG_MIGRATION_033: &str = r#"
+CREATE TABLE IF NOT EXISTS user_notes_seen (
+    user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    seen_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_notes_created_at
+    ON job_notes(created_at, author_id, job_key, execution_id);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -3197,6 +3211,166 @@ impl NoteStore for PgStore {
             .execute("DELETE FROM job_notes WHERE id = $1", &[&id])
             .map_err(map_err)?;
         Ok(removed > 0)
+    }
+
+    fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError> {
+        // One lock for all four reads: `latest_note_at` must not name a note
+        // written after the page was read.
+        let mut db = self.client.lock().unwrap();
+
+        // Grouping on (job_key, execution_id) puts every note that names no
+        // run into one group per job — the job's own thread. `NULLS FIRST` is
+        // spelled out: Postgres sorts NULL last on ASC, SQLite first, and the
+        // two backends must agree on where a job's own thread goes.
+        let rows = db
+            .query(
+                "SELECT job_key, execution_id, last_note_at, note_count, mine, unread
+                 FROM (
+                     SELECT job_key, execution_id,
+                            MAX(created_at) AS last_note_at,
+                            COUNT(*) AS note_count,
+                            bool_or(author_id = $1) AS mine,
+                            bool_or(author_id <> $1
+                                    AND ($2::timestamptz IS NULL OR created_at > $2::timestamptz))
+                                AS unread
+                     FROM job_notes
+                     GROUP BY job_key, execution_id
+                 ) AS t
+                 WHERE (NOT $3::boolean OR mine) AND (NOT $4::boolean OR unread)
+                 ORDER BY last_note_at DESC, job_key ASC, execution_id ASC NULLS FIRST
+                 LIMIT $5",
+                &[
+                    &query.reader_id,
+                    &query.seen_at,
+                    &query.mine_only,
+                    &query.unread_only,
+                    &i64::from(query.limit),
+                ],
+            )
+            .map_err(map_err)?;
+        let mut threads: Vec<NoteThread> = rows
+            .iter()
+            .map(|row| NoteThread {
+                job_key: row.get(0),
+                execution_id: row.get(1),
+                execution: None,
+                last_note_at: row.get(2),
+                note_count: row.get::<_, i64>(3).max(0) as u64,
+                mine: row.get(4),
+                unread: row.get(5),
+                notes: Vec::new(),
+            })
+            .collect();
+
+        if !threads.is_empty() {
+            let keys = note_threads::thread_keys(&threads);
+            let notes = db
+                .query(
+                    "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+                     FROM (
+                         SELECT id, job_key, execution_id, kind, body, author_id, author_name,
+                                created_at,
+                                ROW_NUMBER() OVER (PARTITION BY job_key, execution_id
+                                                   ORDER BY created_at DESC, id DESC) AS rn
+                         FROM job_notes
+                         WHERE execution_id = ANY($1)
+                            OR (execution_id IS NULL AND job_key = ANY($2))
+                     ) AS t
+                     WHERE rn <= $3
+                     ORDER BY created_at DESC, id DESC",
+                    &[
+                        &keys.run_ids,
+                        &keys.job_keys,
+                        &i64::from(query.notes_per_thread.max(1)),
+                    ],
+                )
+                .map_err(map_err)?
+                .iter()
+                .map(row_to_job_note)
+                .collect();
+            let runs = db
+                .query(
+                    "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
+                     FROM executions WHERE id = ANY($1)",
+                    &[&keys.run_ids],
+                )
+                .map_err(map_err)?
+                .iter()
+                .map(row_to_execution)
+                .collect();
+            note_threads::fill(&mut threads, notes, runs);
+        }
+
+        let latest_note_at: Option<DateTime<Utc>> = db
+            .query_one("SELECT MAX(created_at) FROM job_notes", &[])
+            .map_err(map_err)?
+            .get(0);
+        Ok(NoteThreadPage {
+            threads,
+            latest_note_at,
+        })
+    }
+
+    fn count_unread_note_threads(
+        &self,
+        reader_id: &str,
+        seen_at: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        // Two fixed statements rather than one with `$2 IS NULL OR …`, so the
+        // planner can use the created_at index (migration 033) for the range.
+        let row = match seen_at {
+            Some(seen_at) => db.query_one(
+                "SELECT COUNT(*) FROM (
+                     SELECT 1 FROM job_notes
+                     WHERE created_at > $2 AND author_id <> $1
+                     GROUP BY job_key, execution_id
+                 ) AS t",
+                &[&reader_id, &seen_at],
+            ),
+            None => db.query_one(
+                "SELECT COUNT(*) FROM (
+                     SELECT 1 FROM job_notes
+                     WHERE author_id <> $1
+                     GROUP BY job_key, execution_id
+                 ) AS t",
+                &[&reader_id],
+            ),
+        }
+        .map_err(map_err)?;
+        Ok(row.get::<_, i64>(0).max(0) as u64)
+    }
+
+    fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                "SELECT seen_at FROM user_notes_seen WHERE user_id = $1",
+                &[&user_id],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(|row| row.get(0)))
+    }
+
+    fn advance_notes_seen(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        // One statement, so two tabs marking at once cannot move it backwards.
+        // The column is qualified: unqualified, `seen_at` is ambiguous between
+        // the row and EXCLUDED.
+        let row = db
+            .query_one(
+                "INSERT INTO user_notes_seen (user_id, seen_at) VALUES ($1, $2)
+                 ON CONFLICT (user_id) DO UPDATE
+                     SET seen_at = GREATEST(user_notes_seen.seen_at, EXCLUDED.seen_at)
+                 RETURNING seen_at",
+                &[&user_id, &at],
+            )
+            .map_err(map_err)?;
+        Ok(row.get(0))
     }
 }
 

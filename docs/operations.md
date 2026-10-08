@@ -1576,6 +1576,55 @@ that run — what was learned about a failure stays readable on the job's
 too. Nothing prunes notes automatically; delete them through the dashboard or
 `DELETE /v1/notes/{id}`.
 
+### The Notes inbox
+
+*Notes* in the sidebar (under *Runs*, or `g` then `o`) lists every **thread**
+with a note in it, newest activity first. A thread is the notes on one run,
+or a job's own notes — the ones written on the job rather than on one of its
+runs. A run's thread opens beside the list with the run detail; a job's
+thread, and the thread of a run retention has since deleted, open with just
+their notes, the deleted run's read-only.
+
+Three quick filters, kept in the URL as `?show=`:
+
+| filter | lists |
+|---|---|
+| Mine | threads you have written in, with what colleagues answered |
+| Unread | threads with a note by someone else since you last opened the inbox |
+| All | everything (the default) |
+
+A note of any kind counts as news, a plain *checked* included; your own notes
+never do. The badge on the sidebar entry is the number of unread threads,
+shown up to 99 and then as "99+".
+
+**Opening the inbox marks everything read.** Each user has one marker: the
+newest note their inbox has shown (`user_notes_seen`, migration 033). It is
+kept on the server, so having read the notes in one browser counts in every
+other. It only moves forward and never past the server's clock, and it is
+removed with the user. Threads that were new when you arrived stay marked —
+and listed under Unread — until you leave the inbox or reload; the next visit
+starts from where this one left off. Because it is one instant rather than a
+mark per thread, opening the inbox on *Mine*, or with more new threads than
+one page shows, also marks the ones not on screen as read. Moving the marker
+is your own view state, so — like starring a job — it is not audit-logged.
+
+Through the API:
+
+- `GET /v1/notes/threads?mine=1&unread=1&seen_at=…&limit=…` — the inbox, for
+  any caller with `executions:read`. `seen_at` (RFC 3339; use a `Z` offset or
+  percent-encode the `+`) is what "unread" is measured from; without it every
+  note by someone else counts. Each thread carries its newest ten notes and a
+  `note_count`; a page holds 50 threads by default and 200 at most, and a
+  longer page is asked for with a larger `limit`. `latest_note_at` is the
+  newest note there is.
+- `GET /v1/users/me/notes-seen` — the marker and the unread count.
+- `PUT /v1/users/me/notes-seen` with `{"seen_at": …}` — move the marker,
+  usually to a page's `latest_note_at`.
+
+Both `notes-seen` routes need `executions:read` and a user: an API key or an
+API-client token keeps no marker and gets `403`. For such a caller "mine" in
+the inbox is the notes written with that same credential.
+
 ## Favorite jobs
 
 Each user can star jobs — in the job detail or on the Jobs list. The live

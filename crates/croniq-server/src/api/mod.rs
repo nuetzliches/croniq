@@ -689,6 +689,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/notes",
             get(notes::handle_list).post(notes::handle_create),
         )
+        // The inbox. A static segment, so it is never taken for a note id.
+        .route("/v1/notes/threads", get(notes::handle_list_threads))
         .route("/v1/notes/{id}", delete(notes::handle_delete))
         // Admin
         .route("/v1/admin/reload-config", post(admin::handle_reload_config))
@@ -763,6 +765,11 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route(
             "/v1/users/me/favorites/{job_key}",
             put(favorites::handle_add).delete(favorites::handle_remove),
+        )
+        // How far the user has read the notes inbox (self-service)
+        .route(
+            "/v1/users/me/notes-seen",
+            get(notes::handle_get_seen).put(notes::handle_set_seen),
         )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),

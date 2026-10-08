@@ -3,6 +3,12 @@ import { test as base, expect, type Page } from '@playwright/test'
 /** Matches `scripts/e2e-stack.mjs`. Public demo credentials by design. */
 export const USER = 'admin'
 export const PASSWORD = 'demo-admin'
+/**
+ * The stack's seeded API key, `admin`-scoped (`croniq init --api-key`).
+ * Matches `scripts/e2e-stack.mjs`. For setting up what a spec needs through
+ * the API — a second user, say — without driving the dashboard to do it.
+ */
+export const API_KEY = 'croniq_e2e_local_suite_key_not_for_production_use'
 
 /**
  * Log in through the real form.

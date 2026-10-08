@@ -3620,6 +3620,681 @@ fn notes_survive_the_retention_prune_of_their_run() {
     );
 }
 
+// ─── NoteStore: the inbox (migration 033) ───
+
+/// A note by `author` — whose id and name are the same string here.
+fn note_by(
+    author: &str,
+    job_key: &str,
+    execution_id: Option<Uuid>,
+    kind: NoteKind,
+    at: chrono::DateTime<Utc>,
+) -> JobNote {
+    JobNote {
+        author_id: author.into(),
+        author_name: author.into(),
+        ..make_note(job_key, execution_id, kind, at)
+    }
+}
+
+/// Everyone's threads as `reader` sees them, nothing read yet.
+fn inbox(reader: &str) -> NoteThreadQuery {
+    NoteThreadQuery {
+        reader_id: reader.into(),
+        seen_at: None,
+        mine_only: false,
+        unread_only: false,
+        limit: 100,
+        notes_per_thread: 10,
+    }
+}
+
+fn thread_ids(page: &NoteThreadPage) -> Vec<(String, Option<Uuid>)> {
+    page.threads
+        .iter()
+        .map(|t| (t.job_key.clone(), t.execution_id))
+        .collect()
+}
+
+#[test]
+fn note_threads_are_one_per_run_and_one_per_job() {
+    let store = create_memory_store().unwrap();
+    let run_a = Uuid::new_v4();
+    let run_b = Uuid::new_v4();
+    let older_job_note = note_by(
+        "anna",
+        "mail:send",
+        None,
+        NoteKind::Idea,
+        utc(2026, 3, 29, 9, 0),
+    );
+    let ack_a = note_by(
+        "anna",
+        "mail:send",
+        Some(run_a),
+        NoteKind::Ack,
+        utc(2026, 3, 29, 10, 0),
+    );
+    let question_b = note_by(
+        "ben",
+        "mail:send",
+        Some(run_b),
+        NoteKind::Question,
+        utc(2026, 3, 29, 11, 0),
+    );
+    let newer_job_note = note_by(
+        "ben",
+        "mail:send",
+        None,
+        NoteKind::Note,
+        utc(2026, 3, 29, 12, 0),
+    );
+    let other_job = note_by(
+        "ben",
+        "billing:invoice",
+        None,
+        NoteKind::Note,
+        utc(2026, 3, 29, 8, 0),
+    );
+    for note in [
+        &older_job_note,
+        &ack_a,
+        &question_b,
+        &newer_job_note,
+        &other_job,
+    ] {
+        store.create_note(note).unwrap();
+    }
+
+    let page = store.list_note_threads(&inbox("anna")).unwrap();
+    assert_eq!(
+        thread_ids(&page),
+        vec![
+            ("mail:send".to_string(), None),
+            ("mail:send".to_string(), Some(run_b)),
+            ("mail:send".to_string(), Some(run_a)),
+            ("billing:invoice".to_string(), None),
+        ]
+    );
+
+    // The job's own notes are one thread, and only theirs: the run notes of
+    // the same job are threads of their own.
+    let job_thread = &page.threads[0];
+    assert_eq!(job_thread.note_count, 2);
+    assert_eq!(job_thread.last_note_at, newer_job_note.created_at);
+    let ids: Vec<Uuid> = job_thread.notes.iter().map(|n| n.id).collect();
+    assert_eq!(
+        ids,
+        vec![newer_job_note.id, older_job_note.id],
+        "newest first"
+    );
+
+    let run_thread = &page.threads[1];
+    assert_eq!(run_thread.note_count, 1);
+    assert_eq!(run_thread.notes[0].id, question_b.id);
+}
+
+#[test]
+fn note_threads_are_ordered_by_latest_activity_with_a_stable_tiebreak() {
+    let store = create_memory_store().unwrap();
+    let old_run = Uuid::new_v4();
+    let new_run = Uuid::new_v4();
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            Some(old_run),
+            NoteKind::Question,
+            utc(2026, 3, 29, 9, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            Some(new_run),
+            NoteKind::Question,
+            utc(2026, 3, 29, 10, 0),
+        ))
+        .unwrap();
+    let order = |store: &crate::sqlite::SqliteStore| {
+        thread_ids(&store.list_note_threads(&inbox("ben")).unwrap())
+            .into_iter()
+            .map(|(_, run)| run)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&store), vec![Some(new_run), Some(old_run)]);
+
+    // A reply brings the old thread back to the top.
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(old_run),
+            NoteKind::Note,
+            utc(2026, 3, 29, 11, 0),
+        ))
+        .unwrap();
+    assert_eq!(order(&store), vec![Some(old_run), Some(new_run)]);
+
+    // Equal newest notes: job key, then a job's own thread before its runs,
+    // then run id — so a page never reshuffles between two reads.
+    let store = create_memory_store().unwrap();
+    let at = utc(2026, 3, 29, 12, 0);
+    let (run_1, run_2) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    for note in [
+        note_by("anna", "b:job", Some(run_2), NoteKind::Note, at),
+        note_by("anna", "b:job", Some(run_1), NoteKind::Note, at),
+        note_by("anna", "b:job", None, NoteKind::Note, at),
+        note_by("anna", "a:job", Some(run_2), NoteKind::Note, at),
+    ] {
+        store.create_note(&note).unwrap();
+    }
+    assert_eq!(
+        thread_ids(&store.list_note_threads(&inbox("ben")).unwrap()),
+        vec![
+            ("a:job".to_string(), Some(run_2)),
+            ("b:job".to_string(), None),
+            ("b:job".to_string(), Some(run_1)),
+            ("b:job".to_string(), Some(run_2)),
+        ]
+    );
+}
+
+#[test]
+fn note_threads_mark_and_filter_the_readers_own() {
+    let store = create_memory_store().unwrap();
+    let asked = Uuid::new_v4();
+    let theirs = Uuid::new_v4();
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            Some(asked),
+            NoteKind::Question,
+            utc(2026, 3, 29, 9, 0),
+        ))
+        .unwrap();
+    // A colleague's answer keeps it the reader's thread.
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(asked),
+            NoteKind::Note,
+            utc(2026, 3, 29, 11, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(theirs),
+            NoteKind::Ack,
+            utc(2026, 3, 29, 10, 0),
+        ))
+        .unwrap();
+
+    let page = store.list_note_threads(&inbox("anna")).unwrap();
+    let mine: Vec<(Option<Uuid>, bool)> = page
+        .threads
+        .iter()
+        .map(|t| (t.execution_id, t.mine))
+        .collect();
+    assert_eq!(mine, vec![(Some(asked), true), (Some(theirs), false)]);
+
+    let only_mine = store
+        .list_note_threads(&NoteThreadQuery {
+            mine_only: true,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert_eq!(
+        thread_ids(&only_mine),
+        vec![("mail:send".to_string(), Some(asked))]
+    );
+}
+
+#[test]
+fn note_threads_are_unread_only_through_notes_by_others() {
+    let store = create_memory_store().unwrap();
+    let checked = Uuid::new_v4();
+    let own = Uuid::new_v4();
+    // A plain "checked" by someone else counts like any other note.
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(checked),
+            NoteKind::Ack,
+            utc(2026, 3, 29, 9, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            Some(own),
+            NoteKind::Question,
+            utc(2026, 3, 29, 10, 0),
+        ))
+        .unwrap();
+
+    let page = store.list_note_threads(&inbox("anna")).unwrap();
+    let unread: Vec<(Option<Uuid>, bool)> = page
+        .threads
+        .iter()
+        .map(|t| (t.execution_id, t.unread))
+        .collect();
+    assert_eq!(
+        unread,
+        vec![(Some(own), false), (Some(checked), true)],
+        "nothing read yet: every note by someone else is unread, the reader's own never"
+    );
+
+    let only_unread = store
+        .list_note_threads(&NoteThreadQuery {
+            unread_only: true,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert_eq!(
+        thread_ids(&only_unread),
+        vec![("mail:send".to_string(), Some(checked))]
+    );
+}
+
+#[test]
+fn note_threads_unread_is_strictly_after_seen_at() {
+    let store = create_memory_store().unwrap();
+    let run = Uuid::new_v4();
+    // Fraction lengths differ on purpose — whole second, then milli-, then
+    // microseconds — as `to_rfc3339` writes them: the comparison must order
+    // them as instants, not as strings that happen to share a prefix.
+    let whole = utc(2026, 3, 29, 9, 0);
+    let half = whole + chrono::Duration::milliseconds(500);
+    let just_after = half + chrono::Duration::microseconds(1);
+
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(run),
+            NoteKind::Question,
+            half,
+        ))
+        .unwrap();
+    let unread_at = |seen_at| {
+        store
+            .list_note_threads(&NoteThreadQuery {
+                seen_at: Some(seen_at),
+                ..inbox("anna")
+            })
+            .unwrap()
+            .threads[0]
+            .unread
+    };
+    assert!(
+        unread_at(whole),
+        "a note half a second after the marker is unread"
+    );
+    assert!(
+        !unread_at(half),
+        "a note at the marker itself has been seen"
+    );
+
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(run),
+            NoteKind::Note,
+            just_after,
+        ))
+        .unwrap();
+    assert!(
+        unread_at(half),
+        "a microsecond after the marker is after it"
+    );
+
+    // The reader's own newer note does not make the thread unread.
+    let own_run = Uuid::new_v4();
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(own_run),
+            NoteKind::Note,
+            whole,
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            Some(own_run),
+            NoteKind::Note,
+            just_after,
+        ))
+        .unwrap();
+    let mine_and_unread = store
+        .list_note_threads(&NoteThreadQuery {
+            seen_at: Some(half),
+            mine_only: true,
+            unread_only: true,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert!(
+        mine_and_unread.threads.is_empty(),
+        "both filters at once: the reader's thread has nothing new by others"
+    );
+}
+
+#[test]
+fn unread_note_thread_count_matches_the_unread_filter() {
+    let store = create_memory_store().unwrap();
+    assert_eq!(store.count_unread_note_threads("anna", None).unwrap(), 0);
+
+    let (run_a, run_b) = (Uuid::new_v4(), Uuid::new_v4());
+    for note in [
+        note_by(
+            "ben",
+            "mail:send",
+            Some(run_a),
+            NoteKind::Question,
+            utc(2026, 3, 29, 9, 0),
+        ),
+        note_by(
+            "ben",
+            "mail:send",
+            Some(run_a),
+            NoteKind::Note,
+            utc(2026, 3, 29, 9, 30),
+        ),
+        note_by(
+            "carl",
+            "mail:send",
+            Some(run_b),
+            NoteKind::Ack,
+            utc(2026, 3, 29, 10, 0),
+        ),
+        note_by(
+            "ben",
+            "mail:send",
+            None,
+            NoteKind::Idea,
+            utc(2026, 3, 29, 11, 0),
+        ),
+        note_by(
+            "anna",
+            "report:daily",
+            None,
+            NoteKind::Note,
+            utc(2026, 3, 29, 12, 0),
+        ),
+    ] {
+        store.create_note(&note).unwrap();
+    }
+
+    for seen_at in [
+        None,
+        Some(utc(2026, 3, 29, 9, 15)),
+        Some(utc(2026, 3, 29, 10, 30)),
+        Some(utc(2026, 3, 29, 13, 0)),
+    ] {
+        let listed = store
+            .list_note_threads(&NoteThreadQuery {
+                seen_at,
+                unread_only: true,
+                limit: 1000,
+                ..inbox("anna")
+            })
+            .unwrap()
+            .threads
+            .len() as u64;
+        assert_eq!(
+            store.count_unread_note_threads("anna", seen_at).unwrap(),
+            listed,
+            "badge and Unread filter disagree for seen_at {seen_at:?}"
+        );
+    }
+    assert_eq!(store.count_unread_note_threads("anna", None).unwrap(), 3);
+    assert_eq!(
+        store
+            .count_unread_note_threads("anna", Some(utc(2026, 3, 29, 10, 30)))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn note_threads_page_is_bounded() {
+    let store = create_memory_store().unwrap();
+    let (long, middle, oldest) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(oldest),
+            NoteKind::Note,
+            utc(2026, 3, 29, 8, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "ben",
+            "mail:send",
+            Some(middle),
+            NoteKind::Note,
+            utc(2026, 3, 29, 9, 0),
+        ))
+        .unwrap();
+    let long_thread: Vec<JobNote> = (0..3)
+        .map(|i| {
+            note_by(
+                "ben",
+                "mail:send",
+                Some(long),
+                NoteKind::Note,
+                utc(2026, 3, 29, 10 + i, 0),
+            )
+        })
+        .collect();
+    for note in &long_thread {
+        store.create_note(note).unwrap();
+    }
+
+    let page = store
+        .list_note_threads(&NoteThreadQuery {
+            limit: 2,
+            notes_per_thread: 2,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert_eq!(
+        thread_ids(&page),
+        vec![
+            ("mail:send".to_string(), Some(long)),
+            ("mail:send".to_string(), Some(middle)),
+        ],
+        "the newest threads"
+    );
+    let first = &page.threads[0];
+    let ids: Vec<Uuid> = first.notes.iter().map(|n| n.id).collect();
+    assert_eq!(
+        ids,
+        vec![long_thread[2].id, long_thread[1].id],
+        "the newest notes"
+    );
+    assert_eq!(first.note_count, 3, "the count is the whole thread's");
+}
+
+#[test]
+fn note_threads_carry_their_run_until_it_is_pruned() {
+    let store = create_memory_store().unwrap();
+    let run = make_execution("ret:job", utc(2026, 1, 1, 0, 0));
+    complete_at(&store, &run, ExecutionState::Failed, utc(2026, 1, 10, 0, 0));
+    store
+        .create_note(&note_by(
+            "ben",
+            "ret:job",
+            Some(run.id),
+            NoteKind::Question,
+            utc(2026, 1, 10, 1, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "ben",
+            "ret:job",
+            None,
+            NoteKind::Note,
+            utc(2026, 1, 10, 2, 0),
+        ))
+        .unwrap();
+
+    let page = store.list_note_threads(&inbox("anna")).unwrap();
+    assert!(
+        page.threads[0].execution.is_none(),
+        "a job's own thread has no run"
+    );
+    let run_thread = &page.threads[1];
+    assert_eq!(run_thread.execution.as_ref().map(|e| e.id), Some(run.id));
+    assert_eq!(
+        run_thread.execution.as_ref().map(|e| e.state),
+        Some(ExecutionState::Failed)
+    );
+
+    store
+        .prune_executions_older_than(utc(2026, 2, 1, 0, 0), 100)
+        .unwrap();
+    let page = store.list_note_threads(&inbox("anna")).unwrap();
+    let run_thread = &page.threads[1];
+    assert_eq!(
+        run_thread.execution_id,
+        Some(run.id),
+        "the thread still names its run"
+    );
+    assert!(run_thread.execution.is_none(), "but the run is gone");
+}
+
+#[test]
+fn note_threads_report_the_newest_note_whatever_the_filter() {
+    let store = create_memory_store().unwrap();
+    assert_eq!(
+        store
+            .list_note_threads(&inbox("anna"))
+            .unwrap()
+            .latest_note_at,
+        None
+    );
+
+    store
+        .create_note(&note_by(
+            "anna",
+            "mail:send",
+            None,
+            NoteKind::Note,
+            utc(2026, 3, 29, 9, 0),
+        ))
+        .unwrap();
+    store
+        .create_note(&note_by(
+            "ben",
+            "report:daily",
+            None,
+            NoteKind::Note,
+            utc(2026, 3, 29, 10, 0),
+        ))
+        .unwrap();
+
+    // Opened on "Mine", the inbox has still seen up to the newest note there
+    // is: that is what moves the marker, whichever filter was showing.
+    let mine = store
+        .list_note_threads(&NoteThreadQuery {
+            mine_only: true,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert_eq!(mine.threads.len(), 1);
+    assert_eq!(mine.latest_note_at, Some(utc(2026, 3, 29, 10, 0)));
+
+    let nothing_new = store
+        .list_note_threads(&NoteThreadQuery {
+            seen_at: Some(utc(2026, 3, 29, 10, 0)),
+            unread_only: true,
+            ..inbox("anna")
+        })
+        .unwrap();
+    assert!(nothing_new.threads.is_empty());
+    assert_eq!(nothing_new.latest_note_at, Some(utc(2026, 3, 29, 10, 0)));
+}
+
+#[test]
+fn notes_seen_marker_starts_empty_and_only_moves_forward() {
+    let store = create_memory_store().unwrap();
+    let anna = make_user("anna", Role::Viewer);
+    store.users_create(&anna).unwrap();
+    assert_eq!(store.get_notes_seen(&anna.user_id).unwrap(), None);
+
+    let (t1, t2, t3) = (
+        utc(2026, 3, 29, 9, 0),
+        utc(2026, 3, 29, 10, 0),
+        utc(2026, 3, 29, 11, 0),
+    );
+    assert_eq!(store.advance_notes_seen(&anna.user_id, t2).unwrap(), t2);
+    assert_eq!(
+        store.advance_notes_seen(&anna.user_id, t1).unwrap(),
+        t2,
+        "an older marker does not move it back"
+    );
+    assert_eq!(store.advance_notes_seen(&anna.user_id, t3).unwrap(), t3);
+    assert_eq!(store.get_notes_seen(&anna.user_id).unwrap(), Some(t3));
+
+    // Within a second, where fraction lengths differ.
+    let half = t3 + chrono::Duration::milliseconds(500);
+    assert_eq!(store.advance_notes_seen(&anna.user_id, half).unwrap(), half);
+    assert_eq!(store.advance_notes_seen(&anna.user_id, t3).unwrap(), half);
+    let later = half + chrono::Duration::microseconds(1);
+    assert_eq!(
+        store.advance_notes_seen(&anna.user_id, later).unwrap(),
+        later
+    );
+
+    assert!(
+        store.advance_notes_seen("nobody", t1).is_err(),
+        "only a user has a marker"
+    );
+}
+
+#[test]
+fn notes_seen_marker_is_per_user_and_goes_with_the_user() {
+    let store = create_memory_store().unwrap();
+    let anna = make_user("anna", Role::Operator);
+    let ben = make_user("ben", Role::Operator);
+    store.users_create(&anna).unwrap();
+    store.users_create(&ben).unwrap();
+
+    store
+        .advance_notes_seen(&anna.user_id, utc(2026, 3, 29, 10, 0))
+        .unwrap();
+    store
+        .advance_notes_seen(&ben.user_id, utc(2026, 3, 29, 9, 0))
+        .unwrap();
+    assert_eq!(
+        store.get_notes_seen(&anna.user_id).unwrap(),
+        Some(utc(2026, 3, 29, 10, 0))
+    );
+
+    store.users_delete(&anna.user_id).unwrap();
+    assert_eq!(store.get_notes_seen(&anna.user_id).unwrap(), None);
+    assert_eq!(
+        store.get_notes_seen(&ben.user_id).unwrap(),
+        Some(utc(2026, 3, 29, 9, 0))
+    );
+}
+
 // ─── FavoriteStore ───
 
 #[test]

@@ -40,6 +40,7 @@ await page.waitForSelector("nav");
 
 for (const [name, path, chrome] of [
   ["Runs", "/executions", '[aria-label="Filter by state"]'],
+  ["Notes", "/notes", '[aria-label="Show threads"]'],
   ["Runners", "/runners", "nav"],
   ["Dead letters", "/dead-letters", "nav"],
   ["Dashboard", "/", "nav"],

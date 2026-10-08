@@ -66,6 +66,144 @@ fn pg_backend_exercises_all_traits() {
     register_fires(&store, &s);
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
+    notes_inbox(&store, &s);
+}
+
+/// The notes inbox (migration 033): threads, the unread rule, the marker.
+///
+/// `bool_or`, `GREATEST … RETURNING`, `= ANY` over two array types, a window
+/// function and `NULLS FIRST` — none of which the SQLite contract tests reach.
+/// Re-runnable against a persistent database: everything carries the run's
+/// suffix, and every bound is after this run started, so an earlier run's
+/// notes never count.
+fn notes_inbox(store: &PgStore, s: &str) {
+    // Whole seconds: Postgres keeps microseconds, so a timestamp with
+    // nanoseconds would not compare equal after the round trip.
+    let start = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
+    let at = |secs: i64| start + chrono::Duration::seconds(secs);
+    let job = format!("inbox-{s}");
+    let (anna, ben) = (format!("anna-{s}"), format!("ben-{s}"));
+
+    let run = seed_execution(store, &job, Some((ExecutionState::Failed, ts())));
+    // Named by a note, never created: the run retention has since deleted.
+    let gone = Uuid::new_v4();
+    let note = |author: &str, execution_id: Option<Uuid>, kind: NoteKind, secs: i64| JobNote {
+        id: Uuid::new_v4(),
+        job_key: job.clone(),
+        execution_id,
+        kind,
+        body: if kind == NoteKind::Ack {
+            String::new()
+        } else {
+            "why does this fail?".into()
+        },
+        author_id: author.to_string(),
+        author_name: author.to_string(),
+        created_at: at(secs),
+    };
+    for n in [
+        note(&anna, Some(run), NoteKind::Question, 1),
+        note(&ben, Some(run), NoteKind::Note, 2),
+        note(&ben, None, NoteKind::Idea, 3),
+        note(&ben, Some(gone), NoteKind::Ack, 4),
+    ] {
+        store.create_note(&n).unwrap();
+    }
+
+    let query = NoteThreadQuery {
+        reader_id: anna.clone(),
+        seen_at: Some(start),
+        mine_only: false,
+        unread_only: false,
+        limit: 200,
+        notes_per_thread: 10,
+    };
+    let ours = |query: &NoteThreadQuery| -> Vec<NoteThread> {
+        store
+            .list_note_threads(query)
+            .unwrap()
+            .threads
+            .into_iter()
+            .filter(|t| t.job_key == job)
+            .collect()
+    };
+    let runs_of = |threads: &[NoteThread]| -> Vec<Option<Uuid>> {
+        threads.iter().map(|t| t.execution_id).collect()
+    };
+
+    assert!(store.list_note_threads(&query).unwrap().latest_note_at >= Some(at(4)));
+    let threads = ours(&query);
+    assert_eq!(runs_of(&threads), vec![Some(gone), None, Some(run)]);
+
+    assert!(threads[0].execution.is_none(), "the deleted run is gone");
+    assert!(threads[0].unread && !threads[0].mine);
+    assert!(
+        threads[1].execution.is_none(),
+        "a job's own thread has no run"
+    );
+    let run_thread = &threads[2];
+    assert_eq!(run_thread.execution.as_ref().map(|e| e.id), Some(run));
+    assert!(run_thread.mine, "anna asked");
+    assert!(run_thread.unread, "ben answered");
+    assert_eq!(run_thread.note_count, 2);
+    assert_eq!(run_thread.last_note_at, at(2));
+    assert_eq!(run_thread.notes[0].author_id, ben, "newest first");
+
+    let mine = ours(&NoteThreadQuery {
+        mine_only: true,
+        ..query.clone()
+    });
+    assert_eq!(runs_of(&mine), vec![Some(run)]);
+    let unread_after_answer = ours(&NoteThreadQuery {
+        seen_at: Some(at(2)),
+        unread_only: true,
+        ..query.clone()
+    });
+    assert_eq!(runs_of(&unread_after_answer), vec![Some(gone), None]);
+
+    assert_eq!(
+        store.count_unread_note_threads(&anna, Some(start)).unwrap(),
+        3
+    );
+    assert_eq!(
+        store.count_unread_note_threads(&anna, Some(at(2))).unwrap(),
+        2
+    );
+    assert_eq!(
+        store.count_unread_note_threads(&anna, Some(at(4))).unwrap(),
+        0
+    );
+
+    // The marker: forward only, and it goes with its user.
+    let reader = format!("inbox-reader-{s}");
+    store
+        .users_create(&User {
+            user_id: reader.clone(),
+            username: format!("reader-{s}"),
+            email: None,
+            display_name: None,
+            role: Role::Viewer,
+            is_active: true,
+            created_at: ts(),
+            updated_at: ts(),
+            last_login_at: None,
+        })
+        .unwrap();
+    assert_eq!(store.get_notes_seen(&reader).unwrap(), None);
+    assert_eq!(store.advance_notes_seen(&reader, at(2)).unwrap(), at(2));
+    assert_eq!(
+        store.advance_notes_seen(&reader, at(1)).unwrap(),
+        at(2),
+        "an older marker does not move it back"
+    );
+    assert_eq!(store.advance_notes_seen(&reader, at(3)).unwrap(), at(3));
+    assert!(
+        store
+            .advance_notes_seen(&format!("nobody-{s}"), at(1))
+            .is_err()
+    );
+    store.users_delete(&reader).unwrap();
+    assert_eq!(store.get_notes_seen(&reader).unwrap(), None);
 }
 
 fn auth_api_clients_and_keys(store: &PgStore, s: &str) {

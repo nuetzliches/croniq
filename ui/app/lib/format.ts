@@ -77,6 +77,15 @@ export function shortId(id: string | null | undefined): string {
   return id.length > 8 ? id.slice(0, 8) : id
 }
 
+/**
+ * A count for a navigation badge: exact up to `cap`, then `cap+`. A badge
+ * says "there is something"; past a hundred, the exact number no longer
+ * changes what anyone does, and it would widen the sidebar.
+ */
+export function formatBadgeCount(count: number, cap = 99): string {
+  return count > cap ? `${cap}+` : String(count)
+}
+
 const absoluteFormatters = new Map<string, Intl.DateTimeFormat>()
 
 /**

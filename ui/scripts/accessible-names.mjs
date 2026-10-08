@@ -140,6 +140,7 @@ await Promise.all([
 for (const path of [
   "/",
   "/executions",
+  "/notes",
   "/runners",
   "/dead-letters",
   "/jobs",
@@ -156,6 +157,19 @@ for (const path of [
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1600);
   total += await check(path);
+}
+
+// A thread open beside the inbox: the run detail, or a job's own notes with
+// their composer. Only when the inbox has a row to open.
+await page.goto(`${base}/notes`, { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(1600);
+const thread = page.locator("tbody tr").first();
+if (await thread.count()) {
+  await thread.click();
+  await page.waitForTimeout(1200);
+  total += await check("/notes — thread open");
+} else {
+  console.log("\n/notes — thread open: skipped, no notes to open");
 }
 
 await page.goto(`${base}/jobs`, { waitUntil: "networkidle" });

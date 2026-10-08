@@ -29,6 +29,8 @@ import type {
   Invitation,
   JobStatsResponse,
   MaintenanceResponse,
+  NotesSeen,
+  NoteThreadsPage,
   PersonalAccessToken,
   ReloadSuccess,
   Role,
@@ -518,6 +520,113 @@ export function useDeleteNote() {
   return useMutation({
     mutationFn: (id: string) => apiDelete<void>(`/v1/notes/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
+  })
+}
+
+/**
+ * The navigation badge's key. Under `notes`, so the invalidation after a note
+ * is written or deleted refreshes the count with everything else.
+ */
+export const NOTES_SEEN_KEY = ['notes', 'seen'] as const
+
+/** One request of the notes inbox. */
+export interface NoteThreadFilters {
+  /** Only threads the reader has written in. */
+  mine?: boolean
+  /** Only threads with a note by someone else after `seen_at`. */
+  unread?: boolean
+  /**
+   * The marker this visit started from, exactly as the server wrote it.
+   * Absent, nothing counts as read.
+   */
+  seen_at?: string | null
+  /** Threads per page: server default 50, cap 200. */
+  limit?: number
+}
+
+/**
+ * The query string for an inbox request. `seen_at` goes out verbatim: a
+ * value rebuilt from a `Date` is cut to milliseconds, and the server compares
+ * at full precision — the note that set the marker would read as unread.
+ */
+export function noteThreadsQuery(filters: NoteThreadFilters): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (filters.mine) query.mine = '1'
+  if (filters.unread) query.unread = '1'
+  if (filters.seen_at) query.seen_at = filters.seen_at
+  query.limit = String(filters.limit ?? 50)
+  return query
+}
+
+/**
+ * The notes inbox: every thread with a note, newest activity first.
+ *
+ * Polled like the notes themselves. The previous page stays up while the next
+ * loads, so "Show more" grows the list instead of blanking it.
+ */
+export function useNoteThreads(
+  filters: MaybeRefOrGetter<NoteThreadFilters>,
+  enabled?: MaybeRefOrGetter<boolean>,
+) {
+  const query = computed(() => noteThreadsQuery(toValue(filters)))
+  return useQuery({
+    queryKey: ['notes', 'threads', query],
+    queryFn: () => apiGet<NoteThreadsPage>('/v1/notes/threads', query.value),
+    enabled: authedAnd(enabled),
+    refetchInterval: 15_000,
+    placeholderData: (previous) => previous,
+  })
+}
+
+/** How far the signed-in user has read the inbox, asked for directly. */
+export function fetchNotesSeen(): Promise<NotesSeen> {
+  return apiGet<NotesSeen>('/v1/users/me/notes-seen')
+}
+
+/**
+ * The navigation badge: threads with something new by someone else.
+ *
+ * Only for a session with a user behind it — an API-key session has no marker,
+ * and asking would earn a 403 every thirty seconds. `paused` while the inbox
+ * is open: the page moves the marker and hands over the answer, and a poll in
+ * between could put back a count from before it.
+ *
+ * `refetchInterval` and `refetchOnWindowFocus` are computed refs, not getters:
+ * vue-query unwraps refs into its options and watches them, but calls a getter
+ * only when it sets its timers — so a pause would never lift.
+ */
+export function useNotesSeen(options: {
+  user: MaybeRefOrGetter<boolean>
+  paused?: MaybeRefOrGetter<boolean>
+}) {
+  const paused = computed(() => toValue(options.paused) ?? false)
+  return useQuery({
+    queryKey: NOTES_SEEN_KEY,
+    queryFn: fetchNotesSeen,
+    enabled: authedAnd(options.user),
+    refetchInterval: computed(() => (paused.value ? false : 30_000)),
+    refetchOnWindowFocus: computed(() => !paused.value),
+  })
+}
+
+/**
+ * Move the marker to the newest note an inbox page carried.
+ *
+ * The value goes back exactly as the server sent it, and the server keeps
+ * whichever is later — so the dashboard never has to order two timestamps.
+ * Its answer is the new badge, written straight into the cache after any poll
+ * still in flight is called off: one that left before the PUT would otherwise
+ * land after it and put the old count back.
+ */
+export function useMarkNotesSeen() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (seenAt: string) =>
+      apiPut<NotesSeen>('/v1/users/me/notes-seen', { seen_at: seenAt }),
+    onSuccess: async (seen) => {
+      await queryClient.cancelQueries({ queryKey: NOTES_SEEN_KEY, exact: true })
+      queryClient.setQueryData(NOTES_SEEN_KEY, seen)
+    },
   })
 }
 

@@ -337,6 +337,10 @@ impl NoteStore for FaultStore {
         get_note(id: Uuid) -> Option<JobNote>;
         list_notes(filter: &NoteFilter) -> Vec<JobNote>;
         delete_note(id: Uuid) -> bool;
+        list_note_threads(query: &NoteThreadQuery) -> NoteThreadPage;
+        count_unread_note_threads(reader_id: &str, seen_at: Option<DateTime<Utc>>) -> u64;
+        get_notes_seen(user_id: &str) -> Option<DateTime<Utc>>;
+        advance_notes_seen(user_id: &str, at: DateTime<Utc>) -> DateTime<Utc>;
     }
 }
 

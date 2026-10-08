@@ -99,6 +99,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "032_user_favorite_jobs",
         include_str!("032_user_favorite_jobs.sql"),
     ),
+    (
+        "033_user_notes_seen",
+        include_str!("033_user_notes_seen.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -979,5 +983,111 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(left, vec![uuid_str(2)]);
+    }
+
+    fn migration_033_sql() -> &'static str {
+        MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "033_user_notes_seen")
+            .map(|(_, sql)| *sql)
+            .unwrap()
+    }
+
+    #[test]
+    fn migration_033_notes_seen_is_one_marker_per_user_and_goes_with_the_user() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        apply_through(&conn, "032_user_favorite_jobs").unwrap();
+
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'user_notes_seen'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            before, 0,
+            "or this test would pass without proving anything"
+        );
+
+        conn.execute_batch(migration_033_sql()).unwrap();
+        // Idempotent: a second run is a no-op, not an error.
+        conn.execute_batch(migration_033_sql()).unwrap();
+
+        for (id, name) in [(uuid_str(1), "anna"), (uuid_str(2), "ben")] {
+            conn.execute(
+                "INSERT INTO users (user_id, username, role, is_active, created_at, updated_at)
+                 VALUES (?1, ?2, 'operator', 1, '2026-10-08T00:00:00+00:00', '2026-10-08T00:00:00+00:00')",
+                [id, name.to_string()],
+            )
+            .unwrap();
+        }
+        let mark = |user: &str| {
+            conn.execute(
+                "INSERT INTO user_notes_seen (user_id, seen_at)
+                 VALUES (?1, '2026-10-08T08:00:00+00:00')",
+                [user],
+            )
+        };
+
+        mark(&uuid_str(1)).unwrap();
+        mark(&uuid_str(2)).unwrap();
+        // One marker per user.
+        assert!(mark(&uuid_str(1)).is_err());
+        // Only a real user has one.
+        assert!(mark(&uuid_str(9)).is_err());
+
+        conn.execute("DELETE FROM users WHERE user_id = ?1", [uuid_str(1)])
+            .unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT user_id FROM user_notes_seen")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, vec![uuid_str(2)]);
+    }
+
+    #[test]
+    fn migration_033_indexes_the_unread_count() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "032_user_favorite_jobs").unwrap();
+
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_job_notes_created_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 0);
+
+        conn.execute_batch(migration_033_sql()).unwrap();
+
+        // The plan, not the index's existence: this is the shape of the count
+        // behind the navigation badge, polled by every open dashboard, and an
+        // index it cannot use would pass a name check while changing nothing.
+        let plan: Vec<String> = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT COUNT(*) FROM (
+                     SELECT 1 FROM job_notes
+                     WHERE created_at > '2026-10-08T09:00:00+00:00' AND author_id <> 'u1'
+                     GROUP BY job_key, execution_id)",
+            )
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("idx_job_notes_created_at")),
+            "the unread count must use idx_job_notes_created_at; plan was: {plan:#?}"
+        );
     }
 }

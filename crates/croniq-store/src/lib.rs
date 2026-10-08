@@ -2,6 +2,8 @@ pub mod models;
 pub mod traits;
 
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod note_threads;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod retention_sql;
 
 #[cfg(feature = "sqlite")]

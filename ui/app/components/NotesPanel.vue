@@ -5,15 +5,20 @@ import type { JobNote, NoteKind } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
 import { useCanWriteNotes } from '~/composables/useCanWriteNotes'
 import { formatAbsolute, formatRelative, shortId } from '~/lib/format'
-import { NOTE_KINDS, noteIcon } from '~/lib/notes'
+import { NOTE_KINDS, noteIcon, noteTone } from '~/lib/notes'
 
 /**
  * Notes colleagues left on a run or a job: "checked", questions, ideas.
  *
  * With `executionId` it shows that run's notes and writes new ones against
  * it; without, every note on the job, run-bound ones included, each linking
- * back to its run. A run that retention has since deleted still has its notes
- * here — the link then lands on the Runs screen's "not in this list".
+ * back to its run — or, with `jobOnly`, just the job's own: the notes inbox
+ * shows a job's thread and its runs' threads as separate rows. A run that
+ * retention has since deleted still has its notes here — the link then lands
+ * on the Runs screen's "not in this list".
+ *
+ * `closed` keeps the thread readable and hides the composer: the server
+ * refuses a new note on a run that no longer exists.
  *
  * Plain text, rendered with `whitespace-pre-wrap`. Markdown would mean a
  * dependency and HTML from user input in a page with a strict CSP (ADR-0005),
@@ -22,10 +27,16 @@ import { NOTE_KINDS, noteIcon } from '~/lib/notes'
 const props = defineProps<{
   jobKey: string
   executionId?: string | null
+  jobOnly?: boolean
+  closed?: boolean
 }>()
 
 const { data, isPending } = useNotes(() =>
-  props.executionId ? { execution_ids: [props.executionId] } : { job_key: props.jobKey },
+  props.executionId
+    ? { execution_ids: [props.executionId] }
+    : // The job's own notes share the list with its runs' notes; ask for
+      // enough that a busy job's runs do not crowd them out.
+      { job_key: props.jobKey, limit: props.jobOnly ? 500 : undefined },
 )
 /**
  * Only the notes for what is on screen. `useNotes` keeps the previous answer
@@ -33,12 +44,16 @@ const { data, isPending } = useNotes(() =>
  * switching runs would show the last run's notes for a moment.
  */
 const notes = computed<JobNote[]>(() =>
-  (data.value ?? []).filter((note) =>
-    props.executionId ? note.execution_id === props.executionId : note.job_key === props.jobKey,
-  ),
+  (data.value ?? []).filter((note) => {
+    if (props.executionId) return note.execution_id === props.executionId
+    if (props.jobOnly) return note.job_key === props.jobKey && note.execution_id === null
+    return note.job_key === props.jobKey
+  }),
 )
 
 const canWrite = useCanWriteNotes()
+/** Write here: allowed to, and somewhere the server will take a note. */
+const canCompose = computed(() => canWrite.value && !props.closed)
 const { data: me } = useCurrentUser()
 /** Presentation only — the server checks authorship on delete. */
 function canDelete(note: JobNote): boolean {
@@ -107,7 +122,7 @@ async function confirmDelete() {
       class="text-sm text-muted"
     >
       No notes yet.
-      <template v-if="canWrite">
+      <template v-if="canCompose">
         Mark it as checked, or leave a question for whoever looks next.
       </template>
     </p>
@@ -124,11 +139,7 @@ async function confirmDelete() {
         <UIcon
           :name="noteIcon(note.kind)"
           class="mt-0.5 size-4 shrink-0"
-          :class="{
-            'text-success': note.kind === 'ack',
-            'text-warning': note.kind === 'question',
-            'text-muted': note.kind === 'idea' || note.kind === 'note',
-          }"
+          :class="noteTone(note.kind)"
           aria-hidden="true"
         />
         <div class="min-w-0 flex-1">
@@ -177,7 +188,7 @@ async function confirmDelete() {
     </ul>
 
     <form
-      v-if="canWrite"
+      v-if="canCompose"
       class="mt-4 flex flex-col gap-2"
       @submit.prevent="submit"
     >

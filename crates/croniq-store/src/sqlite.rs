@@ -2,6 +2,7 @@
 
 use crate::migrations;
 use crate::models::*;
+use crate::note_threads;
 use crate::retention_sql::DELETABLE_EXECUTION;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
@@ -2818,6 +2819,221 @@ impl NoteStore for SqliteStore {
             .map_err(map_err)?;
         Ok(removed > 0)
     }
+
+    fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError> {
+        // One lock for all four reads: `latest_note_at` must not name a note
+        // written after the page was read.
+        let conn = self.conn.lock().unwrap();
+
+        // Grouping on (job_key, execution_id) puts every note that names no
+        // run into one group per job — the job's own thread. The comparisons
+        // are on RFC3339 text, which orders like time because every value is
+        // written by `dt_to_sql`, the bound one included.
+        let mut stmt = conn
+            .prepare(
+                "SELECT job_key, execution_id, last_note_at, note_count, mine, unread
+                 FROM (
+                     SELECT job_key, execution_id,
+                            MAX(created_at) AS last_note_at,
+                            COUNT(*) AS note_count,
+                            MAX(author_id = ?1) AS mine,
+                            MAX(author_id <> ?1 AND (?2 IS NULL OR created_at > ?2)) AS unread
+                     FROM job_notes
+                     GROUP BY job_key, execution_id
+                 )
+                 WHERE (?3 = 0 OR mine = 1) AND (?4 = 0 OR unread = 1)
+                 ORDER BY last_note_at DESC, job_key ASC, execution_id ASC NULLS FIRST
+                 LIMIT ?5",
+            )
+            .map_err(map_err)?;
+        let mut threads = stmt
+            .query_map(
+                params![
+                    query.reader_id,
+                    opt_dt_to_sql(&query.seen_at),
+                    query.mine_only,
+                    query.unread_only,
+                    query.limit,
+                ],
+                |row| {
+                    let execution_id: Option<String> = row.get(1)?;
+                    Ok(NoteThread {
+                        job_key: row.get(0)?,
+                        execution_id: execution_id.and_then(|id| Uuid::parse_str(&id).ok()),
+                        execution: None,
+                        last_note_at: sql_to_dt(&row.get::<_, String>(2)?),
+                        note_count: row.get::<_, i64>(3)?.max(0) as u64,
+                        mine: row.get(4)?,
+                        unread: row.get(5)?,
+                        notes: Vec::new(),
+                    })
+                },
+            )
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        drop(stmt);
+
+        if !threads.is_empty() {
+            let keys = note_threads::thread_keys(&threads);
+            let notes = thread_notes(&conn, &keys, query.notes_per_thread.max(1))?;
+            let runs = executions_by_id(&conn, &keys.run_ids)?;
+            note_threads::fill(&mut threads, notes, runs);
+        }
+
+        let latest: Option<String> = conn
+            .query_row("SELECT MAX(created_at) FROM job_notes", [], |r| r.get(0))
+            .map_err(map_err)?;
+        Ok(NoteThreadPage {
+            threads,
+            latest_note_at: sql_to_opt_dt(latest),
+        })
+    }
+
+    fn count_unread_note_threads(
+        &self,
+        reader_id: &str,
+        seen_at: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Two fixed statements rather than one with `?2 IS NULL OR …`: the
+        // planner cannot use the created_at index (migration 033) for a range
+        // that may not be there, and this count is polled by every dashboard.
+        let count: i64 = match seen_at {
+            Some(seen_at) => conn.query_row(
+                "SELECT COUNT(*) FROM (
+                     SELECT 1 FROM job_notes
+                     WHERE created_at > ?2 AND author_id <> ?1
+                     GROUP BY job_key, execution_id)",
+                params![reader_id, dt_to_sql(&seen_at)],
+                |r| r.get(0),
+            ),
+            None => conn.query_row(
+                "SELECT COUNT(*) FROM (
+                     SELECT 1 FROM job_notes
+                     WHERE author_id <> ?1
+                     GROUP BY job_key, execution_id)",
+                params![reader_id],
+                |r| r.get(0),
+            ),
+        }
+        .map_err(map_err)?;
+        Ok(count.max(0) as u64)
+    }
+
+    fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        notes_seen(&conn, user_id)
+    }
+
+    fn advance_notes_seen(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // `MAX` on the text is `MAX` on the instant: both sides come from
+        // `dt_to_sql`, which always writes `+00:00` and 0, 3, 6 or 9 fraction
+        // digits, and `+` sorts below `.` and below every digit — so a shorter
+        // fraction compares as the smaller time, as it is.
+        conn.execute(
+            "INSERT INTO user_notes_seen (user_id, seen_at) VALUES (?1, ?2)
+             ON CONFLICT (user_id) DO UPDATE
+                 SET seen_at = MAX(user_notes_seen.seen_at, excluded.seen_at)",
+            params![user_id, dt_to_sql(&at)],
+        )
+        .map_err(map_err)?;
+        notes_seen(&conn, user_id)?
+            .ok_or_else(|| StoreError::Database("notes-seen marker vanished".to_string()))
+    }
+}
+
+/// The newest `per_thread` notes of each thread named by `keys`, newest first.
+fn thread_notes(
+    conn: &Connection,
+    keys: &note_threads::ThreadKeys,
+    per_thread: u32,
+) -> Result<Vec<JobNote>, StoreError> {
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut alternatives = Vec::new();
+    if !keys.run_ids.is_empty() {
+        let mut marks = Vec::with_capacity(keys.run_ids.len());
+        for id in &keys.run_ids {
+            param_values.push(Box::new(id.to_string()));
+            marks.push(format!("?{}", param_values.len()));
+        }
+        alternatives.push(format!("execution_id IN ({})", marks.join(", ")));
+    }
+    if !keys.job_keys.is_empty() {
+        let mut marks = Vec::with_capacity(keys.job_keys.len());
+        for key in &keys.job_keys {
+            param_values.push(Box::new(key.clone()));
+            marks.push(format!("?{}", param_values.len()));
+        }
+        alternatives.push(format!(
+            "(execution_id IS NULL AND job_key IN ({}))",
+            marks.join(", ")
+        ));
+    }
+    if alternatives.is_empty() {
+        return Ok(Vec::new());
+    }
+    param_values.push(Box::new(per_thread));
+    let sql = format!(
+        "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
+         FROM (
+             SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at,
+                    ROW_NUMBER() OVER (PARTITION BY job_key, execution_id
+                                       ORDER BY created_at DESC, id DESC) AS rn
+             FROM job_notes
+             WHERE {}
+         )
+         WHERE rn <= ?{}
+         ORDER BY created_at DESC, id DESC",
+        alternatives.join(" OR "),
+        param_values.len()
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+    let rows = stmt
+        .query_map(
+            params_from_iter(param_values.iter().map(|p| p.as_ref())),
+            row_to_job_note,
+        )
+        .map_err(map_err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+}
+
+/// The runs among `ids` that still exist, in no particular order.
+fn executions_by_id(conn: &Connection, ids: &[Uuid]) -> Result<Vec<Execution>, StoreError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks: Vec<String> = (1..=ids.len()).map(|n| format!("?{n}")).collect();
+    let sql = format!(
+        "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
+         FROM executions WHERE id IN ({})",
+        marks.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+    let rows = stmt
+        .query_map(
+            params_from_iter(ids.iter().map(|id| id.to_string())),
+            row_to_execution,
+        )
+        .map_err(map_err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+}
+
+fn notes_seen(conn: &Connection, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
+    let seen: Option<String> = conn
+        .query_row(
+            "SELECT seen_at FROM user_notes_seen WHERE user_id = ?1",
+            params![user_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(map_err)?;
+    Ok(sql_to_opt_dt(seen))
 }
 
 impl FavoriteStore for SqliteStore {

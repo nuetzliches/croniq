@@ -5,12 +5,16 @@
  * two cannot disagree about which routes exist — a nav entry pointing at a
  * route nobody registered is a dead link that type checking will not catch.
  */
+/** A count the shell shows beside an entry. */
+export type NavBadge = 'dead-letters' | 'notes'
+
 export interface NavItem {
   to: string
   label: string
   icon: string
   /** Hidden from known non-admins. Currently only the console. */
   adminOnly?: boolean
+  badge?: NavBadge
 }
 
 export interface NavSection {
@@ -24,8 +28,15 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: 'i-lucide-layout-dashboard' },
       { to: '/executions', label: 'Runs', icon: 'i-lucide-list' },
+      // Under Runs, because nearly every note is about a run.
+      { to: '/notes', label: 'Notes', icon: 'i-lucide-messages-square', badge: 'notes' },
       { to: '/runners', label: 'Runners', icon: 'i-lucide-cpu' },
-      { to: '/dead-letters', label: 'Dead Letters', icon: 'i-lucide-mail-x' },
+      {
+        to: '/dead-letters',
+        label: 'Dead Letters',
+        icon: 'i-lucide-mail-x',
+        badge: 'dead-letters',
+      },
     ],
   },
   {

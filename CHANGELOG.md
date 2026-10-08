@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A Notes inbox.** *Notes* in the sidebar, under Runs (`g` then `o`), lists
+  every thread that carries a note — a run's notes, or a job's own — newest
+  activity first, with quick filters *Mine* (threads you have written in),
+  *Unread* and *All*, and a badge counting the threads with something new by
+  someone else. A run's thread opens beside the list with the run detail, so
+  a colleague's question can be read and answered without leaving the inbox.
+  - **Opening the inbox marks it read.** Each user has one marker — the
+    newest note their inbox has shown — kept on the server so it follows
+    them between browsers; it only moves forward and never past the
+    server's clock. What was new on arrival stays highlighted, and listed
+    under *Unread*, until the next visit. Any kind of note by someone else
+    counts as news, a plain *checked* included; your own never do.
+  - New endpoints: `GET /v1/notes/threads` (`executions:read`; any caller)
+    and `GET`/`PUT /v1/users/me/notes-seen` (`executions:read`; users only,
+    `403` for an API key). Migration 033 adds `user_notes_seen` and an index
+    on `job_notes(created_at, author_id, job_key, execution_id)` for the
+    unread count.
+  - Collapsing the sidebar no longer names a link with a badge by its number
+    alone: the Dead Letters entry was announced as just "3".
+
 ### Changed
 
 - **"Run time by job" shows what the failures cost.** A job with many

@@ -993,7 +993,9 @@ pub struct JobNote {
     pub kind: NoteKind,
     /// Plain text. Empty only for an `Ack`.
     pub body: String,
-    /// Caller user_id / api_client_id that wrote the note.
+    /// Who wrote the note: the caller's user_id, or — for a credential with no
+    /// user behind it — its caller id (an API key's key id, a client token's
+    /// client id).
     pub author_id: String,
     /// Display name at write time, so the note still reads correctly after the
     /// user is renamed or deleted.
@@ -1008,4 +1010,56 @@ pub struct NoteFilter {
     pub job_key: Option<String>,
     pub execution_ids: Vec<Uuid>,
     pub limit: Option<u32>,
+}
+
+/// One page of the notes inbox (`GET /v1/notes/threads`), seen by one reader.
+///
+/// A thread is the notes on one run, or a job's own notes — the ones that name
+/// no run. Threads are ordered by their newest note.
+#[derive(Debug, Clone)]
+pub struct NoteThreadQuery {
+    /// Whose inbox this is: decides `mine`, and whose notes never make a
+    /// thread unread. The same identity a note's `author_id` records.
+    pub reader_id: String,
+    /// A note by someone else created strictly after this is unread. `None`
+    /// means nothing has been read, so every note by someone else is unread.
+    pub seen_at: Option<DateTime<Utc>>,
+    /// Only threads the reader has written in.
+    pub mine_only: bool,
+    /// Only threads with an unread note.
+    pub unread_only: bool,
+    pub limit: u32,
+    /// How many of each thread's newest notes to carry; at least one, so a
+    /// thread's newest note is always among them.
+    pub notes_per_thread: u32,
+}
+
+/// The notes on one run, or a job's own notes (`execution_id` is `None`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteThread {
+    pub job_key: String,
+    pub execution_id: Option<Uuid>,
+    /// The run, while it exists. `None` for a job's own thread, and for a run
+    /// retention has since deleted — its notes outlive it (migration 031).
+    pub execution: Option<Execution>,
+    pub last_note_at: DateTime<Utc>,
+    /// Every note in the thread, however many `notes` carries.
+    pub note_count: u64,
+    /// The reader has written in this thread.
+    pub mine: bool,
+    /// Someone else has written in it since the reader's `seen_at`.
+    pub unread: bool,
+    /// The newest notes, newest first, at most `notes_per_thread`.
+    pub notes: Vec<JobNote>,
+}
+
+/// A page of threads and the newest note there is.
+#[derive(Debug, Clone)]
+pub struct NoteThreadPage {
+    pub threads: Vec<NoteThread>,
+    /// The newest note in the store when the page was read, whatever the
+    /// filters — what a reader who opened the inbox has now seen up to. Read
+    /// together with the page, so it never names a note the page could not
+    /// have shown.
+    pub latest_note_at: Option<DateTime<Utc>>,
 }

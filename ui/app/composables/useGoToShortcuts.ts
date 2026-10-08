@@ -19,6 +19,8 @@ const CHORD_WINDOW_MS = 1200
 export const GO_TO: { key: string; label: string; path: string }[] = [
   { key: 'd', label: 'Dashboard', path: '/' },
   { key: 'r', label: 'Runs', path: '/executions' },
+  // `n` was Runners' before Notes existed; `o` is the next letter of it.
+  { key: 'o', label: 'Notes', path: '/notes' },
   { key: 'n', label: 'Runners', path: '/runners' },
   { key: 'x', label: 'Dead Letters', path: '/dead-letters' },
   { key: 'j', label: 'Jobs', path: '/jobs' },

@@ -599,7 +599,9 @@ components:
           description: The run the note was written about; `null` for a note on the job
         kind: { $ref: "#/components/schemas/NoteKind" }
         body: { type: string, description: Plain text; empty only for an `ack` }
-        author_id: { type: string, description: User id or API client id of the writer }
+        author_id:
+          type: string
+          description: The writer's user id; for a credential with no user, its caller id
         author_name: { type: string, description: Display name at write time }
         created_at: { type: string, format: date-time }
 
@@ -617,6 +619,86 @@ components:
           type: string
           maxLength: 4000
           description: Required unless `kind` is `ack`
+
+    NoteThread:
+      type: object
+      description: |
+        One thread of the notes inbox: the notes on one run, or a job's own
+        notes (`execution_id` null). `mine` and `unread` are the caller's view
+        of it.
+      required: [job_key, execution_id, execution, last_note_at, note_count, mine, unread, notes]
+      properties:
+        job_key: { type: string }
+        execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The run; `null` for the notes on the job itself
+        execution:
+          description: |
+            The run while it exists. `null` for a job's own thread, and for a
+            run that retention has deleted since — its notes outlive it.
+          oneOf:
+            - $ref: "#/components/schemas/Execution"
+            - type: "null"
+        last_note_at: { type: string, format: date-time }
+        note_count:
+          type: integer
+          minimum: 1
+          description: Every note in the thread, however many `notes` carries
+        mine:
+          type: boolean
+          description: The caller has written in this thread
+        unread:
+          type: boolean
+          description: Someone other than the caller has written in it after `seen_at`
+        notes:
+          type: array
+          maxItems: 10
+          description: The newest notes, newest first
+          items: { $ref: "#/components/schemas/JobNote" }
+
+    NoteThreadsPage:
+      type: object
+      required: [threads, latest_note_at, has_more]
+      properties:
+        threads:
+          type: array
+          items: { $ref: "#/components/schemas/NoteThread" }
+        latest_note_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            The newest note there is, whatever the filters: what the reader
+            has seen up to by opening the inbox, to hand to
+            `PUT /v1/users/me/notes-seen`.
+        has_more:
+          type: boolean
+          description: A larger `limit` would list more threads
+
+    NotesSeen:
+      type: object
+      required: [seen_at, unread_threads]
+      properties:
+        seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: The newest note the user's inbox has shown; `null` if never opened
+        unread_threads:
+          type: integer
+          minimum: 0
+          description: Threads with a note by someone else after `seen_at`
+
+    NotesSeenUpdate:
+      type: object
+      required: [seen_at]
+      properties:
+        seen_at:
+          type: string
+          format: date-time
+          description: The `latest_note_at` of an inbox page the user was shown
 
     AlertsConfigView:
       type: object
@@ -1532,7 +1614,8 @@ paths:
         Notes on a job and its runs, newest first. Name a `job_key`,
         `execution_ids`, or both (they combine with AND) — a request with
         neither is rejected. `execution_ids` is what a run list uses to fetch
-        the notes of every visible row in one call.
+        the notes of every visible row in one call. The view across every job
+        is `GET /v1/notes/threads`.
 
         Scope: `executions:read`.
       parameters:
@@ -1597,6 +1680,48 @@ paths:
         "400": { description: Invalid note id (not a UUID) }
         "403": { description: Caller lacks notes:write or is not the author }
         "404": { description: Note not found }
+
+  /v1/notes/threads:
+    get:
+      summary: The notes inbox
+      description: |
+        Every thread that carries a note, ordered by its newest note: one per
+        run with notes, and one per job for the notes that name no run. Each
+        carries its newest notes and its run while that exists.
+
+        `mine` keeps the threads the caller has written in; `unread` those
+        with a note by someone else after `seen_at`. Without `seen_at` nothing
+        counts as read, and the stored marker is not substituted — pass the
+        `seen_at` that `GET /v1/users/me/notes-seen` returned when the inbox
+        was opened. Page by asking again with a larger `limit`: a reply moves
+        its thread to the top, which a cursor would show twice.
+
+        Scope: `executions:read`.
+      parameters:
+        - name: mine
+          in: query
+          description: "`1` or `true` for only the threads the caller has written in"
+          schema: { type: string, enum: ["1", "0", "true", "false"] }
+        - name: unread
+          in: query
+          description: "`1` or `true` for only the threads with a note by someone else after `seen_at`"
+          schema: { type: string, enum: ["1", "0", "true", "false"] }
+        - name: seen_at
+          in: query
+          description: "RFC 3339; use a `Z` offset, or percent-encode the `+`"
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Threads per page; defaults to 50, capped at 200
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: One page of threads
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteThreadsPage" }
+        "400": { description: "A malformed `mine`, `unread`, `seen_at` or `limit`" }
+        "403": { description: Caller lacks executions:read }
 
   /v1/dead-letters:
     get:
@@ -3322,6 +3447,42 @@ paths:
       responses:
         "204": { description: Not starred (any more) }
         "403": { description: "Not a user, or missing `jobs:read`" }
+
+  /v1/users/me/notes-seen:
+    get:
+      summary: How far the own notes inbox has been read
+      description: >-
+        The newest note the calling user's inbox has shown, and how many
+        threads have a note by someone else since — the number on the
+        navigation badge. Per user; an API key or API-client token has none
+        and gets `403`. Needs `executions:read`.
+      responses:
+        "200":
+          description: The marker and the unread count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesSeen" }
+        "403": { description: "Not a user, or missing `executions:read`" }
+    put:
+      summary: Move the own inbox marker forward
+      description: >-
+        Hand back the `latest_note_at` of an inbox page once it has been shown.
+        Forward only, so an older value leaves the marker where it is, and
+        never past the server's clock. Answers with the new marker and count.
+        Not audit-logged; it is the user's own view state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotesSeenUpdate" }
+      responses:
+        "200":
+          description: The marker in force and the unread count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesSeen" }
+        "403": { description: "Not a user, or missing `executions:read`" }
+        "422": { description: "The body is not a `seen_at` timestamp" }
 
   # ─── PR-B1 Stats + Audit + Insights ─────────────────────────────────────
 

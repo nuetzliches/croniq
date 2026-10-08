@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { JobNote } from '~/api/types'
-import { notesByExecution, summarizeNotes } from './notes'
+import { noteExcerpt, noteLabel, noteTone, notesByExecution, summarizeNotes } from './notes'
 
 function note(partial: Partial<JobNote>): JobNote {
   return {
@@ -45,5 +45,30 @@ describe('notesByExecution', () => {
     expect(grouped.get('run-a')).toHaveLength(2)
     expect(grouped.get('run-b')).toHaveLength(1)
     expect(grouped.size).toBe(2)
+  })
+})
+
+describe('one line of a note', () => {
+  it('folds a note onto one line', () => {
+    expect(noteExcerpt(note({ body: 'disk full\n\n  again?  ' }))).toBe('disk full again?')
+  })
+
+  it('says "checked" for an empty check, which has no words of its own', () => {
+    expect(noteExcerpt(note({ kind: 'ack', body: '' }))).toBe('checked')
+    expect(noteExcerpt(note({ kind: 'ack', body: 'relay restarted' }))).toBe('relay restarted')
+  })
+})
+
+describe('how a kind is shown', () => {
+  it('colours a check as good news and a question as wanting an answer', () => {
+    expect(noteTone('ack')).toBe('text-success')
+    expect(noteTone('question')).toBe('text-warning')
+    expect(noteTone('idea')).toBe('text-muted')
+    expect(noteTone('note')).toBe('text-muted')
+  })
+
+  it('names a kind as the composer does', () => {
+    expect(noteLabel('ack')).toBe('Checked')
+    expect(noteLabel('question')).toBe('Question')
   })
 })
