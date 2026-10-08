@@ -1567,7 +1567,11 @@ by whoever wrote it or by an admin. Both writes land in the audit log as
 
 The author's display name is stored with the note when it is written, so a
 note still reads correctly after the user is renamed or removed. For an API
-key, which has no user, the client id is shown.
+key, which has no user, it is the name of the key's API client (*Settings →
+API clients*; the client `croniq init --api-key` seeds is called `default`, and
+`PUT /v1/api-clients/{id}` renames it), or the client id when the client has no
+row or a blank name. Notes an API key wrote while the client id was stored
+instead keep showing it.
 
 Notes are **not** subject to execution retention. A note keeps the id of the
 run it was written about after `execution_retention` or `keep_last` has pruned

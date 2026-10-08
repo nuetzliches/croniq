@@ -467,15 +467,24 @@ pub(crate) async fn job_exists(
 }
 
 /// The name shown next to a note: the user's display name, else their
-/// username, else — for an API key, which has no user row — its client id.
+/// username. An API key has no user row, so it is its API client's name, else
+/// — no client row, or a blank name — the client id, which `croniq init` and
+/// the dashboard mint as a UUID nobody would recognise.
+///
+/// Stored with the note, so renaming the user or client later does not
+/// rewrite what was signed; `author_id` is the identity, this is a label.
 fn author_name(store: &DynStore, ctx: &CallerContext) -> String {
-    if let Some(user_id) = ctx.user_id.as_deref()
-        && let Ok(Some(user)) = store.users_get_by_id(user_id)
+    if let Some(user_id) = ctx.user_id.as_deref() {
+        if let Ok(Some(user)) = store.users_get_by_id(user_id) {
+            return user
+                .display_name
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or(user.username);
+        }
+    } else if let Ok(Some(client)) = store.get_client(&ctx.client_id)
+        && !client.name.trim().is_empty()
     {
-        return user
-            .display_name
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or(user.username);
+        return client.name;
     }
     ctx.client_id.clone()
 }
@@ -487,10 +496,11 @@ mod tests {
     use crate::store::sqlite_store;
     use axum::body::Body;
     use axum::http::Request;
+    use croniq_auth::api_key::hash_api_key;
     use croniq_auth::jwt::issue_token_pair;
     use croniq_auth::{AuthMethod, CallerType, Role, default_scopes_for_role};
     use croniq_runner::AppState;
-    use croniq_store::models::{Execution, ExecutionState, JobDefinition, User};
+    use croniq_store::models::{ApiClient, ApiKey, Execution, ExecutionState, JobDefinition, User};
     use croniq_store::sqlite::SqliteStore;
     use http_body_util::BodyExt;
     use tokio::sync::mpsc;
@@ -799,6 +809,79 @@ mod tests {
         assert_eq!(status, 400);
         let (status, _) = call(&app, &viewer(), "GET", "/v1/notes?execution_ids=nope", None).await;
         assert_eq!(status, 400);
+    }
+
+    // ─── Who signed it ───
+
+    /// An API client named `name`, with a UUID id as `croniq init` mints one,
+    /// and a raw key for it. Returns `(client_id, key_id, raw_key)`.
+    fn seed_api_client(store: &DynStore, name: &str) -> (String, String, String) {
+        let client_id = Uuid::new_v4().to_string();
+        let raw_key = format!("croniq_test_{}", Uuid::new_v4().simple());
+        let key_id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        store
+            .create_client(&ApiClient {
+                client_id: client_id.clone(),
+                name: name.into(),
+                scopes: vec![Scope::EXECUTIONS_READ.into(), Scope::NOTES_WRITE.into()],
+                is_active: true,
+                created_at: now,
+                managed_by: "api".into(),
+            })
+            .unwrap();
+        store
+            .create_api_key(&ApiKey {
+                key_id: key_id.clone(),
+                client_id: client_id.clone(),
+                key_hash: hash_api_key(&raw_key),
+                key_prefix: raw_key.chars().take(12).collect(),
+                expires_at: None,
+                revoked_at: None,
+                created_at: now,
+            })
+            .unwrap();
+        (client_id, key_id, raw_key)
+    }
+
+    async fn write_ack(app: &axum::Router, auth: &str) -> serde_json::Value {
+        let (status, note) = call(
+            app,
+            auth,
+            "POST",
+            "/v1/notes",
+            Some(serde_json::json!({"job_key": "mail:send", "kind": "ack"})),
+        )
+        .await;
+        assert_eq!(status, 201, "{note}");
+        note
+    }
+
+    #[tokio::test]
+    async fn an_api_key_signs_with_its_clients_name() {
+        let (app, store, _run) = setup();
+        let (client_id, key_id, raw_key) = seed_api_client(&store, "nightly-ci");
+
+        let note = write_ack(&app, &format!("ApiKey {raw_key}")).await;
+        assert_eq!(note["author_name"], "nightly-ci", "not {client_id}");
+        assert_eq!(
+            note["author_id"], key_id,
+            "the identity behind \"mine\" and delete is still the key"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_api_key_without_a_named_client_signs_with_the_client_id() {
+        let (app, store, _run) = setup();
+
+        // No client row at all: a token minted for a client since deleted.
+        let note = write_ack(&app, &operator("op-a")).await;
+        assert_eq!(note["author_name"], "op-a");
+
+        // A row whose name is blank says no more than its id.
+        let (client_id, _key_id, raw_key) = seed_api_client(&store, "  ");
+        let note = write_ack(&app, &format!("ApiKey {raw_key}")).await;
+        assert_eq!(note["author_name"], client_id);
     }
 
     // ─── The inbox ───

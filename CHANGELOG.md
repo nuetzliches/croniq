@@ -51,6 +51,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the card holds it — the lane labels and their countdowns too, not only
   the track — so a label can be clicked without it sliding away.
 
+### Fixed
+
+- **A note written with an API key is signed with the client's name.** It
+  was signed with the client id, which for a client created by `croniq init`
+  or the dashboard is a UUID — what the Notes inbox, a run's and a job's notes
+  and the note badges then showed as the author. The author name is now the
+  API client's name, falling back to the client id only when the client has
+  no row or a blank name. `author_id`, which decides *Mine* and who may delete
+  a note, is unchanged. The name is still stored when the note is written, so
+  notes signed before this keep showing the id.
+
 ## [0.48.1] - 2026-10-08
 
 ### Fixed
