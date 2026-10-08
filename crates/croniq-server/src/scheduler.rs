@@ -78,15 +78,21 @@ fn carry_over_state(
         // double-fires — but only while it can still belong to the schedule
         // just loaded. A shortened interval used to stay silent until the
         // *old*, longer fire elapsed (#535).
-        if new_trigger.carry_over_pending_fire(pending, now) == PendingFire::HealedOutlivedSchedule
-        {
-            tracing::info!(
-                job_key = %key,
-                pending = %pending,
-                next_fire_at = ?new_trigger.next_fire_at,
-                schedule = %new_trigger.schedule.summary(),
-                "{reason}: pending fire outlived its schedule (shortened?) — recomputed (#535)"
-            );
+        match new_trigger.carry_over_pending_fire(pending, now) {
+            PendingFire::HealedOutlivedSchedule => {
+                tracing::info!(
+                    job_key = %key,
+                    pending = %pending,
+                    next_fire_at = ?new_trigger.next_fire_at,
+                    schedule = %new_trigger.schedule.summary(),
+                    "{reason}: pending fire outlived its schedule (shortened?) — recomputed (#535)"
+                );
+            }
+            // A replay of missed fires in progress carries over with the
+            // fire it is waiting on (#851). A runner re-registers its jobs
+            // right after a restart, which is exactly when a replay runs.
+            PendingFire::Adopted => new_trigger.replay_until = old.replay_until,
+            PendingFire::HealedGateClosed | PendingFire::DroppedDisabled => {}
         }
     }
 }
@@ -1057,6 +1063,7 @@ mod tests {
             metadata: Default::default(),
             execution_mode: croniq_config::compile::ExecutionMode::default(),
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
+            catch_up_explicit: false,
             queue_ttl: None,
             max_queue_depth: None,
             keep_last: None,
@@ -1147,6 +1154,33 @@ mod tests {
             Some(due),
             "the pending fire must survive — losing it drops a run silently"
         );
+    }
+
+    /// A runner re-registers its jobs right after a restart — while a
+    /// `catch_up all` replay of the fires missed meanwhile is running. The
+    /// rebuild must not cut the replay short after its first fire (#851).
+    #[tokio::test]
+    async fn adding_a_job_that_is_replaying_keeps_the_replay() {
+        let mut scheduler = SchedulerLoop::new(HashMap::new(), vec![], make_store(), make_runner());
+
+        let missed = Utc::now() - ChronoDuration::hours(2);
+        let until = Utc::now() - ChronoDuration::minutes(5);
+        let mut replaying = make_trigger_future("etl:nightly");
+        replaying.next_fire_at = Some(missed);
+        replaying.replay_until = Some(until);
+        scheduler.triggers.insert("etl:nightly".into(), replaying);
+        scheduler
+            .jobs
+            .insert("etl:nightly".into(), make_job("etl:nightly"));
+
+        scheduler.apply_command(SchedulerCommand::AddJob {
+            job: Box::new(make_job("etl:nightly")),
+            trigger: Box::new(make_trigger_future("etl:nightly")),
+        });
+
+        let after = &scheduler.triggers["etl:nightly"];
+        assert_eq!(after.next_fire_at, Some(missed));
+        assert_eq!(after.replay_until, Some(until));
     }
 
     /// A job the scheduler has never seen keeps the trigger it was handed.

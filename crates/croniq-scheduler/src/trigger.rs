@@ -46,6 +46,51 @@ pub struct Trigger {
     pub last_fired_at: Option<DateTime<Utc>>,
     pub last_completed_at: Option<DateTime<Utc>>,
     pub fire_count: u64,
+
+    /// What a restart does with the fires this trigger missed while the
+    /// server was down (issue #851). Applied once, by
+    /// [`Trigger::plan_missed_fires`], to the pending fire a restart adopted.
+    pub missed_fires: MissedFires,
+    /// While replaying missed fires: the last of them. Until a fire reaches
+    /// it, [`Trigger::mark_fired`] advances from the fire just made rather
+    /// than from now, so each missed instant runs in turn.
+    pub replay_until: Option<DateTime<Utc>>,
+}
+
+/// What a restart does with fires missed while the server was down (issue
+/// #851). Fires missed while it *runs* — a late tick — are not affected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MissedFires {
+    /// Run the earliest missed fire once, then continue from now. What every
+    /// trigger did before #851, and still the default.
+    #[default]
+    Once,
+    /// Run every missed fire, oldest first — at most `max` of them, the most
+    /// recent ones. `catch_up all`, written out explicitly.
+    All { max: u32 },
+    /// Run none; continue with the first fire after now. `catch_up none`.
+    Skip,
+}
+
+/// How many missed instants [`Trigger::plan_missed_fires`] walks at most.
+/// Past this (a one-second interval after a day and more of downtime) it
+/// falls back to a single catch-up fire rather than walk without bound.
+const MISSED_FIRE_WALK_LIMIT: usize = 100_000;
+
+/// Outcome of [`Trigger::plan_missed_fires`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissedPlan {
+    /// No fire was missed.
+    NoneMissed,
+    /// The earliest missed fire runs once.
+    Once,
+    /// `count` missed fires run in turn, oldest first; `dropped` older ones
+    /// beyond the cap do not.
+    Replay { count: usize, dropped: usize },
+    /// The missed fires were skipped; the trigger waits for its next fire.
+    Skipped,
+    /// More instants were missed than the walk covers; one catch-up fire.
+    TooManyToReplay,
 }
 
 /// A daily time window constraint.
@@ -145,6 +190,8 @@ impl Trigger {
             last_fired_at: None,
             last_completed_at: None,
             fire_count: 0,
+            missed_fires: MissedFires::default(),
+            replay_until: None,
         };
 
         // Check if schedule is disabled
@@ -195,8 +242,19 @@ impl Trigger {
         self.last_fired_at = Some(fire_at);
         self.fire_count += 1;
 
-        // Compute next fire time
-        self.next_fire_at = self.compute_next_fire(now);
+        // Compute next fire time — from the fire just made while replaying
+        // missed fires (#851), so the next missed instant comes due at once.
+        let replay_next = self.replay_until.and_then(|until| {
+            self.compute_next_fire(fire_at)
+                .filter(|next| *next <= until)
+        });
+        self.next_fire_at = match replay_next {
+            Some(next) => Some(next),
+            None => {
+                self.replay_until = None;
+                self.compute_next_fire(now)
+            }
+        };
 
         // Determine new state
         if self.next_fire_at.is_none() {
@@ -292,6 +350,54 @@ impl Trigger {
 
         self.next_fire_at = Some(stored);
         PendingFire::Adopted
+    }
+
+    /// Apply [`Trigger::missed_fires`] to the pending fire a restart adopted
+    /// (issue #851). Call it after [`Trigger::carry_over_pending_fire`] on the
+    /// restore path only: a hot reload or a re-registration carries the
+    /// pending fire of a process that never stopped, so nothing was missed.
+    ///
+    /// The fires counted as missed are the pending one and each later one up
+    /// to `now`, as [`Trigger::compute_next_fire`] produces them — the same
+    /// sequence [`Trigger::mark_fired`] then steps through.
+    pub fn plan_missed_fires(&mut self, now: DateTime<Utc>) -> MissedPlan {
+        let Some(first) = self.next_fire_at.filter(|first| *first < now) else {
+            return MissedPlan::NoneMissed;
+        };
+        if self.state != TriggerState::Armed {
+            return MissedPlan::NoneMissed;
+        }
+        match self.missed_fires {
+            MissedFires::Once => MissedPlan::Once,
+            MissedFires::Skip => {
+                self.resume(now);
+                MissedPlan::Skipped
+            }
+            MissedFires::All { max } => {
+                let max = (max as usize).max(1);
+                let mut kept = std::collections::VecDeque::with_capacity(max);
+                kept.push_back(first);
+                let mut total = 1usize;
+                let mut at = first;
+                while let Some(next) = self.compute_next_fire(at).filter(|n| *n <= now) {
+                    if total == MISSED_FIRE_WALK_LIMIT {
+                        return MissedPlan::TooManyToReplay;
+                    }
+                    total += 1;
+                    if kept.len() == max {
+                        kept.pop_front();
+                    }
+                    kept.push_back(next);
+                    at = next;
+                }
+                self.next_fire_at = kept.front().copied();
+                self.replay_until = kept.back().copied();
+                MissedPlan::Replay {
+                    count: kept.len(),
+                    dropped: total - kept.len(),
+                }
+            }
+        }
     }
 
     /// Pause this trigger.
@@ -1288,5 +1394,108 @@ mod tests {
         );
         // 06:00 UTC = 08:00 Vienna.
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 6, 8, 6, 0)));
+    }
+
+    // ─── #851: fires missed while the server was down ─────────────────────
+
+    /// An hourly trigger restored at 06:30 whose pending fire was 02:00 —
+    /// the server was down from before 02:00 until 06:30.
+    fn restored_hourly(missed_fires: MissedFires) -> (Trigger, DateTime<Utc>) {
+        let boot = utc(2026, 10, 8, 6, 30);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 3600 }, boot);
+        trigger.missed_fires = missed_fires;
+        assert_eq!(
+            trigger.carry_over_pending_fire(utc(2026, 10, 8, 2, 0), boot),
+            PendingFire::Adopted
+        );
+        (trigger, boot)
+    }
+
+    /// Fire the trigger once per second from `start` for as long as it stays
+    /// due, as the scheduler's tick does; the instants fired, in order.
+    fn drain(trigger: &mut Trigger, start: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+        let mut fired = Vec::new();
+        let mut now = start;
+        while let Some(at) = trigger.evaluate(now) {
+            trigger.mark_fired(at, now);
+            fired.push(at);
+            now += Duration::seconds(1);
+            assert!(fired.len() < 100, "replay must end");
+        }
+        fired
+    }
+
+    #[test]
+    fn missed_fires_default_runs_the_earliest_once() {
+        let (mut trigger, boot) = restored_hourly(MissedFires::Once);
+        assert_eq!(trigger.plan_missed_fires(boot), MissedPlan::Once);
+        assert_eq!(drain(&mut trigger, boot), vec![utc(2026, 10, 8, 2, 0)]);
+        assert_eq!(trigger.next_fire_at, Some(boot + Duration::hours(1)));
+    }
+
+    #[test]
+    fn catch_up_all_replays_each_missed_fire_then_continues() {
+        let (mut trigger, boot) = restored_hourly(MissedFires::All { max: 10 });
+        assert_eq!(
+            trigger.plan_missed_fires(boot),
+            MissedPlan::Replay {
+                count: 5,
+                dropped: 0
+            }
+        );
+        let fired = drain(&mut trigger, boot);
+        assert_eq!(
+            fired,
+            (2..=6).map(|h| utc(2026, 10, 8, h, 0)).collect::<Vec<_>>()
+        );
+        assert_eq!(trigger.replay_until, None);
+        // Back on the ordinary cadence, from the moment the replay ended.
+        let done = boot + Duration::seconds(4);
+        assert_eq!(trigger.next_fire_at, Some(done + Duration::hours(1)));
+    }
+
+    #[test]
+    fn catch_up_all_keeps_the_most_recent_fires_up_to_the_cap() {
+        let (mut trigger, boot) = restored_hourly(MissedFires::All { max: 2 });
+        assert_eq!(
+            trigger.plan_missed_fires(boot),
+            MissedPlan::Replay {
+                count: 2,
+                dropped: 3
+            }
+        );
+        assert_eq!(
+            drain(&mut trigger, boot),
+            vec![utc(2026, 10, 8, 5, 0), utc(2026, 10, 8, 6, 0)]
+        );
+    }
+
+    #[test]
+    fn catch_up_none_skips_to_the_next_fire() {
+        let (mut trigger, boot) = restored_hourly(MissedFires::Skip);
+        assert_eq!(trigger.plan_missed_fires(boot), MissedPlan::Skipped);
+        assert_eq!(trigger.evaluate(boot), None);
+        assert_eq!(trigger.next_fire_at, Some(boot + Duration::hours(1)));
+    }
+
+    #[test]
+    fn nothing_is_planned_when_no_fire_was_missed() {
+        let boot = utc(2026, 10, 8, 6, 30);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 3600 }, boot);
+        trigger.missed_fires = MissedFires::All { max: 10 };
+        assert_eq!(trigger.plan_missed_fires(boot), MissedPlan::NoneMissed);
+        assert_eq!(trigger.replay_until, None);
+    }
+
+    #[test]
+    fn too_many_missed_fires_fall_back_to_one() {
+        // A one-second interval after two days down: far past the walk limit.
+        let boot = utc(2026, 10, 8, 6, 30);
+        let mut trigger = make_trigger(Schedule::Interval { seconds: 1 }, boot);
+        trigger.missed_fires = MissedFires::All { max: 10 };
+        trigger.carry_over_pending_fire(utc(2026, 10, 6, 6, 30), boot);
+        assert_eq!(trigger.plan_missed_fires(boot), MissedPlan::TooManyToReplay);
+        assert_eq!(trigger.replay_until, None);
+        assert_eq!(trigger.next_fire_at, Some(utc(2026, 10, 6, 6, 30)));
     }
 }

@@ -40,6 +40,7 @@ fn make_job(key: &str, mode: ExecutionMode) -> JobConfig {
         metadata: Default::default(),
         execution_mode: mode,
         catch_up: CatchUpPolicy::default(),
+        catch_up_explicit: false,
         queue_ttl: None,
         max_queue_depth: None,
         keep_last: None,
