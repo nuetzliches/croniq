@@ -45,6 +45,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **API- and runner-registered jobs resume their schedule after a restart
+  ([#850](https://github.com/nuetzliches/croniq/issues/850)).** On boot the
+  server restored each trigger's pending fire from `job_states` before it
+  had added the jobs registered through the API or an SDK, so those started
+  over from the boot instant. An `every` schedule never fired on a server
+  restarted more often than its interval, a fire missed while the server
+  was down was not caught up as it is for Croniqfile jobs, and the
+  dashboard kept the previous process's fire time and showed the job as
+  overdue. They are now restored like Croniqfile jobs: a missed fire runs
+  once at startup and the schedule continues from there. The boot log no
+  longer lists every API job as a state row without a job.
 - **Claims left behind by a server restart are released on the runner's
   first poll ([#848](https://github.com/nuetzliches/croniq/issues/848)).**
   A server restarted on its data — a container restarted on its volume —

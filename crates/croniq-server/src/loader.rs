@@ -2325,4 +2325,40 @@ mod tests {
             Some(chrono_tz::UTC)
         );
     }
+
+    /// Issue #850: an API- or runner-registered job is rebuilt from `now` at
+    /// boot like any other, and has to pick up where the last process left
+    /// it — boot used to restore before these jobs joined the trigger map.
+    #[test]
+    fn restore_resumes_an_api_trigger_from_its_stored_fire() {
+        let store = make_store();
+        let now = fixed_utc(2026, 10, 8, 9, 24);
+        let def = trigger_def("demo:report", "every 15 minutes", None);
+        let built = trigger_from_definition(&def, &resolve_calendars(&[], &[], true), now).unwrap();
+        // Rebuilt from now, the schedule would start over: next fire now + 15m.
+        assert_eq!(
+            built.trigger.next_fire_at,
+            Some(now + chrono::Duration::minutes(15))
+        );
+
+        // The last process had it due two days ago and never got there.
+        let stored = fixed_utc(2026, 10, 6, 16, 47);
+        seed_job_state(
+            &store,
+            "demo:report",
+            croniq_store::models::JobStatus::Active,
+            Some(stored),
+            7,
+        );
+        let mut triggers = HashMap::from([("demo:report".to_string(), built.trigger)]);
+        restore_trigger_states(&mut triggers, &*store, now);
+
+        let trigger = &triggers["demo:report"];
+        assert_eq!(
+            trigger.next_fire_at,
+            Some(stored),
+            "the missed fire is kept, so it fires once now and job_states stays truthful"
+        );
+        assert_eq!(trigger.fire_count, 7);
+    }
 }

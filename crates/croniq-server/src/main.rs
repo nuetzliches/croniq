@@ -186,11 +186,6 @@ async fn main() -> Result<()> {
             .context("failed to reconcile environment-declared API clients")?;
     }
 
-    // Restore persisted trigger states (once-jobs, next_fire_at) from the DB.
-    // Must happen before the scheduler loop starts.
-    restore_trigger_states(&mut loaded.triggers, &*store, chrono::Utc::now());
-    tracing::info!("trigger states restored from database");
-
     // Shared runner state (registry + queue) with lease TTL from config
     let lease_ttl_secs = match loaded.runtime.pull_api.as_ref() {
         Some(p) => parse_duration_secs(&p.lease_ttl).map_err(|e| {
@@ -611,6 +606,18 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Restore persisted trigger states (once-jobs, next_fire_at) from the DB.
+    // Must happen before the scheduler loop starts, and after the API- and
+    // runner-registered jobs above have joined the map (issue #850). Run
+    // before them, it saw only the Croniqfile's triggers: every API job was
+    // rebuilt from now — an `every` schedule started over at each boot and
+    // never fired on a server restarted more often than its interval — while
+    // `job_states` kept the old process's fire time, which the dashboard then
+    // reported as overdue. It also logged every API job as a state row
+    // without a job.
+    restore_trigger_states(&mut triggers, &*store, chrono::Utc::now());
+    tracing::info!("trigger states restored from database");
 
     // Share a snapshot of the triggers map with the API layer so the
     // dashboard forecast endpoint can compute upcoming fires.
