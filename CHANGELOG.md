@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **"Run time by job" shows what the failures cost.** A job with many
+  failures could spend most of its run time failing or hardly any, and the
+  card only counted them. Each bar now ends with the part of the run time
+  its failed and dead runs took, in the error tone, and the header adds
+  "… of it failing". The failed badge's tooltip sets a typical failed run
+  against a typical succeeded one — "a failed run typically took 0.4 s, a
+  succeeded one 38 s" — and, when they differ fourfold and the longer is
+  past a second, says which way: failures that end early point at what
+  fails on start, failures that outlast the successes at timeouts or hangs.
+  `GET /v1/insights/runtime` gains `failed_ms`, `succeeded_median_ms` and
+  `failed_median_ms` per job (lower medians, like `wait_median_ms`; null
+  without such a run). Cancelled runs count in the total but in neither
+  median.
+
 ## [0.48.1] - 2026-10-08
 
 ### Fixed

@@ -22,6 +22,13 @@ import { formatDuration } from '~/lib/format'
  * hours, and a sum turned every bar into that one run. The total and the
  * order are run time only — the card asks which jobs keep the runners busy,
  * and waiting is a symptom of that, not load.
+ *
+ * The run time ends with the part the failed runs took, in the error tone:
+ * a job that fails a lot can spend most of its time failing, or hardly any.
+ * The failed badge's tooltip sets a typical failed run against a typical
+ * succeeded one (medians, as for the wait): failures that end at once point
+ * at a crash on start or bad input, failures that outlast the successes at
+ * timeouts and hangs. A count of failures says neither.
  */
 
 const WINDOW_KEY = 'croniq_runtime_window'
@@ -64,6 +71,7 @@ function waited(job: RuntimeRow): number {
 const peak = computed(() => Math.max(1, ...jobs.value.map((j) => waited(j) + j.total_ms)))
 const total = computed(() => jobs.value.reduce((sum, j) => sum + j.total_ms, 0))
 const totalWaited = computed(() => jobs.value.reduce((sum, j) => sum + waited(j), 0))
+const totalFailed = computed(() => jobs.value.reduce((sum, j) => sum + j.failed_ms, 0))
 
 /** Dispatch priority by job key, for the two non-default levels (#826). */
 const { data: jobList } = useJobs()
@@ -85,12 +93,39 @@ function rowTooltip(job: RuntimeRow): string {
     : ran
 }
 
+/**
+ * The failed badge's tooltip: what the failures cost, and how a failed run's
+ * typical length compares with a succeeded one's. The reading is only given
+ * when the two differ fourfold and the longer is past a second — between
+ * 20 ms and 80 ms there is nothing to read.
+ */
+function failedTooltip(job: RuntimeRow): string {
+  const cost = `${job.failed} failed run${job.failed === 1 ? '' : 's'} took ${formatDuration(job.failed_ms)} of ${formatDuration(job.total_ms)} run time`
+  const failed = job.failed_median_ms
+  const ok = job.succeeded_median_ms
+  if (failed === null) return cost
+  const lines = [
+    cost,
+    ok === null
+      ? `A failed run typically took ${formatDuration(failed)}; none succeeded`
+      : `A failed run typically took ${formatDuration(failed)}, a succeeded one ${formatDuration(ok)}`,
+  ]
+  if (ok !== null && Math.max(failed, ok) >= 1000) {
+    if (failed * 4 <= ok) lines.push('Failures end early: look at what fails on start, such as config or input')
+    else if (failed >= ok * 4) lines.push('Failures run far longer than successes: look for timeouts or hangs')
+  }
+  return lines.join('\n')
+}
+
 /** Bar geometry: the whole bar against the peak, the wait as part of it. */
 function barWidth(job: RuntimeRow): string {
   return `${Math.max(1, ((waited(job) + job.total_ms) / peak.value) * 100)}%`
 }
 function waitWidth(job: RuntimeRow): string {
   return `${(waited(job) / Math.max(1, waited(job) + job.total_ms)) * 100}%`
+}
+function failedWidth(job: RuntimeRow): string {
+  return `${(job.failed_ms / Math.max(1, waited(job) + job.total_ms)) * 100}%`
 }
 
 /** The runs behind a row, over the same window the card is showing. */
@@ -114,7 +149,7 @@ function runsLink(jobKey: string, state?: 'failed') {
       <div class="flex items-center gap-3">
         <span
           v-if="jobs.length"
-          v-tooltip="'Finished runs with a recorded duration: time spent running, and before it the time a run typically waits for a runner (each job\'s median wait, once per run). Runs still going, and history removed by retention, are not counted.'"
+          v-tooltip="'Finished runs with a recorded duration: time spent running, and before it the time a run typically waits for a runner (each job\'s median wait, once per run). The part of the run time that failed runs took is marked at the end. Runs still going, and history removed by retention, are not counted.'"
           class="cq-num flex items-center gap-1.5 text-xs text-muted"
           data-testid="job-runtime-total"
         >
@@ -132,6 +167,15 @@ function runsLink(jobKey: string, state?: 'failed') {
               class="size-2 rounded-xs bg-primary/30"
               aria-hidden="true"
             />{{ formatDuration(total) }} running
+          </span>
+          <span
+            v-if="totalFailed > 0"
+            class="flex items-center gap-1"
+          >
+            · <span
+              class="size-2 rounded-xs bg-error/40"
+              aria-hidden="true"
+            />{{ formatDuration(totalFailed) }} of it failing
           </span>
         </span>
         <USelectMenu
@@ -168,7 +212,7 @@ function runsLink(jobKey: string, state?: 'failed') {
       >
         <!-- The row's background is the bar: one width, so every bar is
              measured against the same length. The wait comes first, as it
-             does in time. -->
+             does in time; the failed runs' share of the run time last. -->
         <div
           class="absolute inset-y-0 left-0 flex overflow-hidden rounded-md"
           :style="{ width: barWidth(job) }"
@@ -182,6 +226,12 @@ function runsLink(jobKey: string, state?: 'failed') {
             data-testid="job-runtime-wait"
           />
           <div class="h-full flex-1 bg-primary/12 dark:bg-primary/20" />
+          <div
+            v-if="job.failed_ms > 0"
+            class="h-full shrink-0 bg-error/15 dark:bg-error/25"
+            :style="{ width: failedWidth(job) }"
+            data-testid="job-runtime-failed"
+          />
         </div>
         <span class="relative flex min-w-0 items-center gap-1.5">
           <RouterLink
@@ -204,6 +254,7 @@ function runsLink(jobKey: string, state?: 'failed') {
         </span>
         <RouterLink
           v-if="job.failed"
+          v-tooltip="failedTooltip(job)"
           :to="runsLink(job.job_key, 'failed')"
           class="relative justify-self-end"
           :aria-label="`${job.failed} failed runs of ${job.job_key}`"

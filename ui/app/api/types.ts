@@ -416,9 +416,20 @@ export interface RuntimeResponse {
   /**
    * `total_ms` is handler time as the runner measured it, summed;
    * `wait_median_ms` is how long one of the same runs typically waited for a
-   * runner (the median of claim minus fire time).
+   * runner (the median of claim minus fire time). `failed_ms` is the part
+   * of `total_ms` the failed and dead runs took; the two medians are how long
+   * a completed and a failed run typically took, null without such a run.
    */
-  jobs: { job_key: string; runs: number; failed: number; total_ms: number; wait_median_ms: number }[]
+  jobs: {
+    job_key: string
+    runs: number
+    failed: number
+    total_ms: number
+    wait_median_ms: number
+    failed_ms: number
+    succeeded_median_ms: number | null
+    failed_median_ms: number | null
+  }[]
 }
 export type RuntimeWindow = '24h' | '7d' | '30d'
 

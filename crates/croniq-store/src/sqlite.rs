@@ -650,9 +650,13 @@ impl ExecutionStore for SqliteStore {
         let mut stmt = conn
             // The lower median wait: row `(n + 1) / 2` of each job's waits in
             // ascending order — what Postgres' `percentile_disc(0.5)` picks.
+            // The duration medians use the same row, ranked per job and
+            // outcome; cancelled runs have no outcome and no median.
             .prepare(
                 "WITH runs AS ( \
                    SELECT job_key, state, duration_ms, \
+                     CASE WHEN state = 'completed' THEN 'ok' \
+                          WHEN state IN ('failed', 'dead') THEN 'failed' END AS outcome, \
                      MAX(0, CAST(ROUND( \
                        (julianday(claimed_at) - julianday(fire_at)) * 86400000) AS INTEGER)) AS wait_ms \
                    FROM executions \
@@ -666,12 +670,25 @@ impl ExecutionStore for SqliteStore {
                  ), medians AS ( \
                    SELECT job_key, wait_ms AS median \
                    FROM ranked WHERE rn = (n + 1) / 2 \
+                 ), ranked_dur AS ( \
+                   SELECT job_key, outcome, duration_ms, \
+                     ROW_NUMBER() OVER (PARTITION BY job_key, outcome ORDER BY duration_ms) AS rn, \
+                     COUNT(*) OVER (PARTITION BY job_key, outcome) AS n \
+                   FROM runs WHERE outcome IS NOT NULL \
+                 ), dur_medians AS ( \
+                   SELECT job_key, \
+                     MAX(CASE WHEN outcome = 'ok' THEN duration_ms END) AS ok_median, \
+                     MAX(CASE WHEN outcome = 'failed' THEN duration_ms END) AS failed_median \
+                   FROM ranked_dur WHERE rn = (n + 1) / 2 GROUP BY job_key \
                  ) \
                  SELECT r.job_key, COUNT(*), \
-                 SUM(CASE WHEN r.state IN ('failed', 'dead') THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN r.outcome = 'failed' THEN 1 ELSE 0 END), \
                  SUM(r.duration_ms) AS total, \
-                 COALESCE(MAX(m.median), 0) \
+                 COALESCE(MAX(m.median), 0), \
+                 SUM(CASE WHEN r.outcome = 'failed' THEN r.duration_ms ELSE 0 END), \
+                 MAX(d.ok_median), MAX(d.failed_median) \
                  FROM runs r LEFT JOIN medians m ON m.job_key = r.job_key \
+                 LEFT JOIN dur_medians d ON d.job_key = r.job_key \
                  GROUP BY r.job_key ORDER BY total DESC, r.job_key",
             )
             .map_err(map_err)?;
@@ -683,6 +700,9 @@ impl ExecutionStore for SqliteStore {
                     failed: row.get::<_, i64>(2)? as u64,
                     total_ms: row.get(3)?,
                     wait_median_ms: row.get(4)?,
+                    failed_ms: row.get(5)?,
+                    succeeded_median_ms: row.get(6)?,
+                    failed_median_ms: row.get(7)?,
                 })
             })
             .map_err(map_err)?;

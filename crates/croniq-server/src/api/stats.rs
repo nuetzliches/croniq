@@ -337,6 +337,9 @@ pub struct JobRuntimeRow {
     pub failed: u64,
     pub total_ms: i64,
     pub wait_median_ms: i64,
+    pub failed_ms: i64,
+    pub succeeded_median_ms: Option<i64>,
+    pub failed_median_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -383,6 +386,9 @@ pub async fn handle_runtime(
             failed: r.failed,
             total_ms: r.total_ms,
             wait_median_ms: r.wait_median_ms,
+            failed_ms: r.failed_ms,
+            succeeded_median_ms: r.succeeded_median_ms,
+            failed_median_ms: r.failed_median_ms,
         })
         .collect();
     Ok(Json(RuntimeResponse {

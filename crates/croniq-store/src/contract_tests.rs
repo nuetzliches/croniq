@@ -1104,6 +1104,25 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
         36_000,
     );
     finish("quick:job", None, ExecutionState::Completed, now(), 0);
+    // A flaky job whose failures end early: one success, a failed and a dead
+    // run (an even count, so the lower of the two), and a cancelled run that
+    // counts in the total but in neither median.
+    finish(
+        "flaky:job",
+        Some(40_000),
+        ExecutionState::Completed,
+        now(),
+        1,
+    );
+    finish("flaky:job", Some(800), ExecutionState::Dead, now(), 1);
+    finish("flaky:job", Some(200), ExecutionState::Failed, now(), 1);
+    finish(
+        "flaky:job",
+        Some(5_000),
+        ExecutionState::Cancelled,
+        now(),
+        1,
+    );
     // Before the window: not counted.
     finish(
         "old:job",
@@ -1143,6 +1162,19 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
                 failed: 1,
                 total_ms: 90_000,
                 wait_median_ms: 2_000,
+                failed_ms: 30_000,
+                succeeded_median_ms: Some(60_000),
+                failed_median_ms: Some(30_000),
+            },
+            JobRuntime {
+                job_key: "flaky:job".into(),
+                runs: 4,
+                failed: 2,
+                total_ms: 46_000,
+                wait_median_ms: 1_000,
+                failed_ms: 1_000,
+                succeeded_median_ms: Some(40_000),
+                failed_median_ms: Some(200),
             },
             JobRuntime {
                 job_key: "quick:job".into(),
@@ -1150,6 +1182,9 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
                 failed: 0,
                 total_ms: 700,
                 wait_median_ms: 2_000,
+                failed_ms: 0,
+                succeeded_median_ms: Some(100),
+                failed_median_ms: None,
             },
             JobRuntime {
                 job_key: "early:job".into(),
@@ -1157,6 +1192,9 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
                 failed: 0,
                 total_ms: 100,
                 wait_median_ms: 0,
+                failed_ms: 0,
+                succeeded_median_ms: Some(100),
+                failed_median_ms: None,
             },
         ]
     );

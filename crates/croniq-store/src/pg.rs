@@ -1189,7 +1189,12 @@ impl ExecutionStore for PgStore {
                  SUM(CASE WHEN state IN ('failed', 'dead') THEN 1 ELSE 0 END)::bigint, \
                  SUM(duration_ms)::bigint AS total, \
                  COALESCE(percentile_disc(0.5) WITHIN GROUP (ORDER BY \
-                   GREATEST(0, ROUND(EXTRACT(EPOCH FROM (claimed_at - fire_at)) * 1000))::bigint), 0) \
+                   GREATEST(0, ROUND(EXTRACT(EPOCH FROM (claimed_at - fire_at)) * 1000))::bigint), 0), \
+                 SUM(CASE WHEN state IN ('failed', 'dead') THEN duration_ms ELSE 0 END)::bigint, \
+                 (percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms) \
+                   FILTER (WHERE state = 'completed'))::bigint, \
+                 (percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms) \
+                   FILTER (WHERE state IN ('failed', 'dead')))::bigint \
                  FROM executions \
                  WHERE completed_at IS NOT NULL AND completed_at >= $1 \
                    AND duration_ms IS NOT NULL \
@@ -1205,6 +1210,9 @@ impl ExecutionStore for PgStore {
                 failed: row.get::<usize, i64>(2) as u64,
                 total_ms: row.get(3),
                 wait_median_ms: row.get(4),
+                failed_ms: row.get(5),
+                succeeded_median_ms: row.get(6),
+                failed_median_ms: row.get(7),
             })
             .collect())
     }

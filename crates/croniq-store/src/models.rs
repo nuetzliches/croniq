@@ -345,6 +345,16 @@ pub struct JobRuntime {
     /// job with two runs, one of them such a run, is not averaged into hours
     /// too.
     pub wait_median_ms: i64,
+    /// Of `total_ms`, the part the `failed` and `dead` runs took.
+    pub failed_ms: i64,
+    /// How long a run that ended `completed` typically took: the lower median
+    /// of their durations, in milliseconds. `None` without such a run.
+    /// Set against `failed_median_ms`, it tells a job whose failures end at
+    /// once (a crash on start) from one whose failures run into a timeout.
+    pub succeeded_median_ms: Option<i64>,
+    /// The same over the runs that ended `failed` or `dead`. Cancelled runs
+    /// count in `runs` and `total_ms` but in neither median.
+    pub failed_median_ms: Option<i64>,
 }
 
 /// Filter for listing dead letters.

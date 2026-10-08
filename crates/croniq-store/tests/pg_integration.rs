@@ -973,6 +973,7 @@ fn execution_completion_cas(store: &PgStore, s: &str) {
 fn job_runtime(store: &PgStore, s: &str) {
     let slow = format!("rt-slow-{s}");
     let quick = format!("rt-quick-{s}");
+    let flaky = format!("rt-flaky-{s}");
     let since = ts() - chrono::Duration::hours(1);
     // Seeded runs fire at ts(); each is claimed `wait_s` after `at`.
     let finish = |job: &str, dur_ms: i64, state: ExecutionState, at: DateTime<Utc>, wait_s| {
@@ -987,6 +988,12 @@ fn job_runtime(store: &PgStore, s: &str) {
     finish(&slow, 60_000, ExecutionState::Completed, ts(), 2);
     finish(&slow, 30_000, ExecutionState::Dead, ts(), 36_000);
     finish(&quick, 500, ExecutionState::Completed, ts(), 2);
+    // Failures that end early, an even count: the lower median. The
+    // cancelled run counts in the total only.
+    finish(&flaky, 40_000, ExecutionState::Completed, ts(), 1);
+    finish(&flaky, 800, ExecutionState::Dead, ts(), 1);
+    finish(&flaky, 200, ExecutionState::Failed, ts(), 1);
+    finish(&flaky, 5_000, ExecutionState::Cancelled, ts(), 1);
     finish(
         &quick,
         900_000,
@@ -1010,6 +1017,19 @@ fn job_runtime(store: &PgStore, s: &str) {
                 failed: 1,
                 total_ms: 90_000,
                 wait_median_ms: 2_000,
+                failed_ms: 30_000,
+                succeeded_median_ms: Some(60_000),
+                failed_median_ms: Some(30_000),
+            },
+            JobRuntime {
+                job_key: flaky,
+                runs: 4,
+                failed: 2,
+                total_ms: 46_000,
+                wait_median_ms: 1_000,
+                failed_ms: 1_000,
+                succeeded_median_ms: Some(40_000),
+                failed_median_ms: Some(200),
             },
             JobRuntime {
                 job_key: quick,
@@ -1017,6 +1037,9 @@ fn job_runtime(store: &PgStore, s: &str) {
                 failed: 0,
                 total_ms: 500,
                 wait_median_ms: 2_000,
+                failed_ms: 0,
+                succeeded_median_ms: Some(500),
+                failed_median_ms: None,
             },
         ]
     );
