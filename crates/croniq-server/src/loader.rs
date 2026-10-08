@@ -17,7 +17,7 @@ use croniq_scheduler::{
     calendar::Calendar,
     misfire::MisfirePolicy,
     schedule::Schedule,
-    trigger::{PendingFire, TimeWindow, Trigger, TriggerState},
+    trigger::{MissedFires, MissedPlan, PendingFire, TimeWindow, Trigger, TriggerState},
 };
 use croniq_store::{
     models::{JobState, JobStatus},
@@ -334,6 +334,7 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             not_after,
             now,
         );
+        trigger.missed_fires = missed_fires_for(job_cfg);
 
         // Fail closed: a job with an unresolved calendar reference is paused so
         // it cannot fire un-gated. `Trigger::evaluate` gates on `state == Armed`,
@@ -352,6 +353,29 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         triggers,
         calendar_faults,
     })
+}
+
+/// What a restart does with the fires a job missed while the server was down
+/// (issue #851), from its `catch_up`.
+///
+/// Only a `catch_up` written out in the job or in `defaults {}` changes it.
+/// Left unset, `catch_up` still defaults to `all` for the executions that were
+/// queued when the server stopped, but a missed fire runs once, as it did
+/// before #851: replaying every one would turn a deploy's downtime into a
+/// burst of runs for jobs whose authors never asked for it. `latest` is that
+/// same single run. An explicit `all` replays the missed fires up to the
+/// job's queue depth — the most recent ones, as a full queue would keep them.
+pub fn missed_fires_for(job: &compile::JobConfig) -> MissedFires {
+    if !job.catch_up_explicit {
+        return MissedFires::Once;
+    }
+    match job.catch_up {
+        CatchUpPolicy::All => MissedFires::All {
+            max: job.max_queue_depth.unwrap_or(10),
+        },
+        CatchUpPolicy::Latest => MissedFires::Once,
+        CatchUpPolicy::None => MissedFires::Skip,
+    }
 }
 
 /// Restore persisted trigger state after a restart (or hot-reload).
@@ -465,6 +489,35 @@ pub fn restore_trigger_states(
                                 next_fire_at = ?job_state.next_fire_at,
                                 "trigger restore: next_fire_at restored"
                             );
+                            match trigger.plan_missed_fires(now) {
+                                MissedPlan::NoneMissed | MissedPlan::Once => {}
+                                MissedPlan::Replay { count, dropped } => {
+                                    tracing::info!(
+                                        job_key = %job_state.job_key,
+                                        count,
+                                        dropped,
+                                        first = ?trigger.next_fire_at,
+                                        "trigger restore: catch_up all — replaying fires missed while the server was down"
+                                    );
+                                    persist_healed_state(store, trigger, &job_state, now);
+                                }
+                                MissedPlan::Skipped => {
+                                    tracing::info!(
+                                        job_key = %job_state.job_key,
+                                        missed = %stored,
+                                        next_fire_at = ?trigger.next_fire_at,
+                                        "trigger restore: catch_up none — skipped fires missed while the server was down"
+                                    );
+                                    persist_healed_state(store, trigger, &job_state, now);
+                                }
+                                MissedPlan::TooManyToReplay => {
+                                    tracing::warn!(
+                                        job_key = %job_state.job_key,
+                                        missed = %stored,
+                                        "trigger restore: catch_up all — too many missed fires to replay; running the earliest once"
+                                    );
+                                }
+                            }
                         }
                         PendingFire::HealedGateClosed => {
                             tracing::warn!(
@@ -990,6 +1043,7 @@ pub fn job_config_from_definition(
         metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
         execution_mode: ExecutionMode::default(),
         catch_up: CatchUpPolicy::default(),
+        catch_up_explicit: false,
         queue_ttl: None,
         max_queue_depth: None,
         // API-registered jobs have no Croniqfile `keep_last` (v1 supports
@@ -1071,6 +1125,7 @@ pub fn job_config_from_job_def(
         metadata: job_def.metadata.clone(),
         execution_mode: ExecutionMode::default(),
         catch_up: CatchUpPolicy::default(),
+        catch_up_explicit: false,
         queue_ttl: None,
         max_queue_depth: None,
         // API-registered jobs have no Croniqfile `keep_last` (v1 supports
@@ -2360,5 +2415,108 @@ mod tests {
             "the missed fire is kept, so it fires once now and job_states stays truthful"
         );
         assert_eq!(trigger.fire_count, 7);
+    }
+
+    // ─── #851: catch_up and fires missed while the server was down ────────
+
+    fn missed_fires_of(cfg: &LoadedConfig, key: &str) -> MissedFires {
+        cfg.triggers[key].missed_fires
+    }
+
+    #[test]
+    fn only_an_explicit_catch_up_changes_missed_fires() {
+        let src = r#"
+            job j:unset { every 1 hour }
+            job j:all {
+                every 1 hour
+                catch_up all
+                max_queue_depth 3
+            }
+            job j:latest {
+                every 1 hour
+                catch_up latest
+            }
+            job j:none {
+                every 1 hour
+                catch_up none
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        assert_eq!(missed_fires_of(&cfg, "j:unset"), MissedFires::Once);
+        assert_eq!(missed_fires_of(&cfg, "j:all"), MissedFires::All { max: 3 });
+        assert_eq!(missed_fires_of(&cfg, "j:latest"), MissedFires::Once);
+        assert_eq!(missed_fires_of(&cfg, "j:none"), MissedFires::Skip);
+    }
+
+    #[test]
+    fn a_catch_up_in_defaults_counts_as_explicit() {
+        let src = r#"
+            defaults { catch_up all }
+            job j:inherits { every 1 hour }
+        "#;
+        let cfg = load_str(src).unwrap();
+        assert_eq!(
+            missed_fires_of(&cfg, "j:inherits"),
+            MissedFires::All { max: 10 }
+        );
+    }
+
+    #[test]
+    fn restore_with_catch_up_all_replays_the_missed_fires() {
+        let src = r#"
+            job j:all {
+                every 1 hour
+                catch_up all
+            }
+        "#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+        let now = Utc::now();
+        let stored = now - chrono::Duration::minutes(270);
+        seed_job_state(
+            &store,
+            "j:all",
+            croniq_store::models::JobStatus::Active,
+            Some(stored),
+            4,
+        );
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["j:all"];
+        assert_eq!(trigger.next_fire_at, Some(stored));
+        assert_eq!(
+            trigger.replay_until,
+            Some(stored + chrono::Duration::hours(4)),
+            "the pending fire and the four after it, up to now"
+        );
+    }
+
+    #[test]
+    fn restore_with_catch_up_none_skips_and_persists_the_next_fire() {
+        let src = r#"
+            job j:none {
+                every 1 hour
+                catch_up none
+            }
+        "#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &store,
+            "j:none",
+            croniq_store::models::JobStatus::Active,
+            Some(now - chrono::Duration::minutes(270)),
+            4,
+        );
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let next = cfg.triggers["j:none"].next_fire_at.unwrap();
+        assert!(next > now, "nothing missed is run: {next}");
+        assert_eq!(
+            store.get_job_state("j:none").unwrap().unwrap().next_fire_at,
+            Some(next),
+            "job_states follows, so the job does not read as overdue"
+        );
     }
 }

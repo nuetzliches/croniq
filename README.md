@@ -44,7 +44,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Retry + dead letter** — exponential, linear, or fixed backoff with jitter. Failed executions go to a dead letter queue for inspection and one-click replay.
 
-**Execution modes** — `queued` (default) persists every execution with full retry and restart recovery. `ephemeral` skips persistence for high-frequency fire-and-forget jobs. Configurable per-job or globally in `defaults {}`. Catch-up policies (`all` / `latest` / `none`) control missed-fire behaviour on restart. Queue TTL and per-job depth limits prevent runaway backlogs.
+**Execution modes** — `queued` (default) persists every execution with full retry and restart recovery. `ephemeral` skips persistence for high-frequency fire-and-forget jobs. Configurable per-job or globally in `defaults {}`. After a restart a job resumes its schedule, and a fire missed while the server was down runs once; an explicit `catch_up all` replays every missed fire (up to the queue depth), `catch_up none` skips them. Queue TTL and per-job depth limits prevent runaway backlogs.
 
 **Deploy-time reconciliation** — `run_on_register` fires a job once when croniq adopts its definition: the first time the key is seen, and again whenever the compiled job changes. Closes the blind window between a deploy that changes what a reconciling job has to do and that job's next scheduled fire, without firing on every restart or `--watch` save. Gated jobs defer to their next permitted instant rather than skipping.
 
@@ -213,8 +213,13 @@ defaults {
   # "ephemeral" skips persistence — ideal for high-frequency heartbeat jobs.
   execution_mode queued
 
-  # What to do with missed fires on server restart:
-  # "all" (default) — replay everything, "latest" — run once, "none" — skip
+  # What a restart does with fires missed while the server was down, and
+  # with executions still queued when it stopped:
+  #   all    — replay every missed fire (up to max_queue_depth, the most
+  #            recent ones) and keep every queued execution
+  #   latest — run the missed fire once; keep only the newest queued one
+  #   none   — skip missed fires; cancel queued executions
+  # Left unset, queued executions are all kept and a missed fire runs once.
   catch_up all
 
   # Cancel queued executions that have been waiting too long (optional)

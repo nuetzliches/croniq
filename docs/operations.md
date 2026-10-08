@@ -1277,6 +1277,33 @@ console (`/console`), which names the zone in its toolbar and keeps the UTC
 instant in each row's hover title. Copying lines and the NDJSON download keep
 the raw UTC `ts`.
 
+### Fires missed while the server was down
+
+A restart resumes every job where the last process left it: the pending fire
+is read back from `job_states`, for Croniqfile jobs and for jobs registered
+through the API or an SDK alike (the latter only since #850). What happens to
+fires that fell due while the server was down is `catch_up`'s call, and only
+when it is written out — in the job or in `defaults { }` (issue #851):
+
+| `catch_up` | Missed fires | Queued executions at shutdown |
+|---|---|---|
+| not set | the earliest runs once, then the schedule continues | all kept |
+| `all` | each runs, oldest first, one per scheduler tick — at most `max_queue_depth` (default 10), the most recent ones | all kept |
+| `latest` | the earliest runs once | only the newest kept |
+| `none` | none runs; the job waits for its next fire | cancelled |
+
+An hourly job with `catch_up all` on a server down from 01:45 to 06:30 runs
+02:00, 03:00, 04:00, 05:00 and 06:00 right after the restart, each execution
+carrying its own `scheduled_for`, then continues on its hourly cadence. Not
+setting `catch_up` keeps the single catch-up run that earlier versions
+made, so a deploy's downtime does not turn into a burst of runs nobody
+asked for. Ephemeral jobs always run a missed fire once. The boot log names
+each replay (`catch_up all — replaying fires missed while the server was
+down`, with `count` and `dropped`) and each skip.
+
+A hot reload is not a restart: it carries the pending fire of a process that
+never stopped, so nothing counts as missed.
+
 ### Reload vs. restart
 
 A reload (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`) re-reads the

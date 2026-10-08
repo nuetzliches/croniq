@@ -567,6 +567,12 @@ pub struct JobConfig {
     pub execution_mode: ExecutionMode,
     /// Restart behaviour for missed fires: `all`, `latest`, or `none`.
     pub catch_up: CatchUpPolicy,
+    /// Whether `catch_up` was written out, in the job or in `defaults {}`,
+    /// rather than left at its default (issue #851). Only an explicit
+    /// `catch_up all` replays every fire missed while the server was down,
+    /// and only an explicit `catch_up none` skips them; left unset, a restart
+    /// runs the earliest missed fire once, as it always has.
+    pub catch_up_explicit: bool,
     /// Max time an execution may sit in the queue before being cancelled.
     /// Duration string (e.g. "30m", "1h", "24h"). `None` means no limit.
     pub queue_ttl: Option<String>,
@@ -1024,6 +1030,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut default_dead_letter = DeadLetterConfig::default();
     let mut default_execution_mode = ExecutionMode::default();
     let mut default_catch_up = CatchUpPolicy::default();
+    let mut default_catch_up_explicit = false;
     let mut default_queue_ttl: Option<String> = None;
     let mut default_max_queue_depth: Option<u32> = None;
     let mut default_keep_last: Option<u32> = None;
@@ -1142,6 +1149,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                         "none" => CatchUpPolicy::None,
                                         _ => CatchUpPolicy::All,
                                     };
+                                    default_catch_up_explicit = true;
                                 }
                             }
                             "queue_ttl" => {
@@ -1200,6 +1208,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         dead_letter: default_dead_letter.clone(),
                         execution_mode: default_execution_mode,
                         catch_up: default_catch_up,
+                        catch_up_explicit: default_catch_up_explicit,
                         queue_ttl: default_queue_ttl.clone(),
                         max_queue_depth: default_max_queue_depth,
                         keep_last: default_keep_last,
@@ -1710,6 +1719,7 @@ struct JobDefaults {
     dead_letter: DeadLetterConfig,
     execution_mode: ExecutionMode,
     catch_up: CatchUpPolicy,
+    catch_up_explicit: bool,
     queue_ttl: Option<String>,
     max_queue_depth: Option<u32>,
     keep_last: Option<u32>,
@@ -1754,6 +1764,7 @@ fn compile_job(
         None => defaults.execution_mode,
     };
     let mut catch_up = defaults.catch_up;
+    let mut catch_up_explicit = defaults.catch_up_explicit;
     let mut queue_ttl = defaults.queue_ttl.clone();
     let mut max_queue_depth = defaults.max_queue_depth;
     let mut keep_last = defaults.keep_last;
@@ -1790,6 +1801,7 @@ fn compile_job(
                             "none" => CatchUpPolicy::None,
                             _ => CatchUpPolicy::All,
                         };
+                        catch_up_explicit = true;
                     }
                 }
                 "queue_ttl" => {
@@ -1906,6 +1918,9 @@ fn compile_job(
     // Silently override queue-only settings to avoid confusing behaviour.
     if execution_mode == ExecutionMode::Ephemeral {
         catch_up = CatchUpPolicy::None;
+        // Not an operator's `catch_up none`: a missed ephemeral fire still
+        // runs once after a restart, as it always has.
+        catch_up_explicit = false;
         queue_ttl = None;
         max_queue_depth = Some(1);
         // Ephemeral executions are never persisted, so there is no run
@@ -2003,6 +2018,7 @@ fn compile_job(
         metadata,
         execution_mode,
         catch_up,
+        catch_up_explicit,
         queue_ttl,
         max_queue_depth,
         keep_last,

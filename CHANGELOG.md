@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`catch_up all` replays the fires missed while the server was down
+  ([#851](https://github.com/nuetzliches/croniq/issues/851)).** A restart
+  used to run the earliest missed fire once and drop the rest, whatever
+  `catch_up` said; the policy only reached executions already queued at
+  shutdown. Now, when `catch_up` is written out — in the job or in
+  `defaults { }` — `all` replays each missed fire, oldest first and at most
+  `max_queue_depth` of them (the most recent), `latest` runs one, and
+  `none` skips them and waits for the next fire. Left unset, nothing
+  changes: a missed fire runs once. **If your Croniqfile writes
+  `catch_up all`, as the README's example does, a restart after downtime
+  now runs each fire it missed** — an hourly job down for four hours runs
+  four times on startup. Ephemeral jobs keep the single run. See "Fires
+  missed while the server was down" in `docs/operations.md`.
+
 - **Hover texts across the dashboard are tooltips.** Every native `title`
   tooltip is replaced by one in the dashboard's own style, which shows
   sooner, wraps long text (a run's whole error, a run's notes one per

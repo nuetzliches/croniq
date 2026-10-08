@@ -1889,6 +1889,7 @@ mod tests {
             metadata: HashMap::new(),
             execution_mode: croniq_config::compile::ExecutionMode::default(),
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
+            catch_up_explicit: false,
             queue_ttl: None,
             max_queue_depth: None,
             keep_last: None,
