@@ -974,21 +974,25 @@ fn job_runtime(store: &PgStore, s: &str) {
     let slow = format!("rt-slow-{s}");
     let quick = format!("rt-quick-{s}");
     let since = ts() - chrono::Duration::hours(1);
-    let finish = |job: &str, dur_ms: i64, state: ExecutionState, at: DateTime<Utc>| {
+    // Seeded runs fire at ts(); each is claimed `wait_s` after `at`.
+    let finish = |job: &str, dur_ms: i64, state: ExecutionState, at: DateTime<Utc>, wait_s| {
+        let at = at + chrono::Duration::seconds(wait_s);
         let id = seed_execution(store, job, None);
         store.claim_execution(id, "r-seed", at).unwrap();
         store
             .complete_execution(id, None, state, Some(dur_ms), None, None, at)
             .unwrap();
     };
-    finish(&slow, 60_000, ExecutionState::Completed, ts());
-    finish(&slow, 30_000, ExecutionState::Dead, ts());
-    finish(&quick, 500, ExecutionState::Completed, ts());
+    // Two waits, one an outlier: the lower median is the ordinary one.
+    finish(&slow, 60_000, ExecutionState::Completed, ts(), 2);
+    finish(&slow, 30_000, ExecutionState::Dead, ts(), 36_000);
+    finish(&quick, 500, ExecutionState::Completed, ts(), 2);
     finish(
         &quick,
         900_000,
         ExecutionState::Completed,
-        since - chrono::Duration::seconds(1),
+        since - chrono::Duration::seconds(10),
+        2,
     );
 
     let ours: Vec<JobRuntime> = store
@@ -1005,12 +1009,14 @@ fn job_runtime(store: &PgStore, s: &str) {
                 runs: 2,
                 failed: 1,
                 total_ms: 90_000,
+                wait_median_ms: 2_000,
             },
             JobRuntime {
                 job_key: quick,
                 runs: 1,
                 failed: 0,
                 total_ms: 500,
+                wait_median_ms: 2_000,
             },
         ]
     );

@@ -130,6 +130,10 @@ const props = defineProps<{ stream: ExecutionsStream }>()
 const { runs, connected, received, unavailable, offset } = props.stream
 const { data: jobStates, refetch: refetchJobStates } = useJobStates()
 const { data: jobs } = useJobs()
+/** Dispatch priority by job key, for the two non-default levels (#826). */
+const priorities = computed(
+  () => new Map((jobs.value ?? []).flatMap((j) => (j.priority ? [[j.job_key, j.priority] as const] : []))),
+)
 const { data: forecast } = useForecast(60, 5)
 const { data: liveForecast } = useLiveForecast(1)
 
@@ -768,6 +772,15 @@ onBeforeUnmount(stopMotion)
               >
                 {{ lane.jobKey }}
               </a>
+              <!-- Dispatch priority (#826), only when it is not the default.
+                   Plain markup for the reason the favorite glyph is. -->
+              <span
+                v-if="priorities.get(lane.jobKey)"
+                v-tooltip="`Dispatch priority: ${priorities.get(lane.jobKey)}`"
+                class="shrink-0 rounded-sm px-1 text-[10px] leading-4 font-medium"
+                :class="priorities.get(lane.jobKey) === 'high' ? 'bg-primary/10 text-primary' : 'bg-elevated text-muted'"
+                data-testid="live-lane-priority"
+              >{{ priorities.get(lane.jobKey) }}</span>
               <!-- Late is not upcoming: an overdue job says so, in red, where
                    its lane shows nothing having run. -->
               <span

@@ -413,7 +413,12 @@ export interface ThroughputResponse {
 export interface RuntimeResponse {
   window: RuntimeWindow
   since: string
-  jobs: { job_key: string; runs: number; failed: number; total_ms: number }[]
+  /**
+   * `total_ms` is handler time as the runner measured it, summed;
+   * `wait_median_ms` is how long one of the same runs typically waited for a
+   * runner (the median of claim minus fire time).
+   */
+  jobs: { job_key: string; runs: number; failed: number; total_ms: number; wait_median_ms: number }[]
 }
 export type RuntimeWindow = '24h' | '7d' | '30d'
 

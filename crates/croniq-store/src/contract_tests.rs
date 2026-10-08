@@ -1065,27 +1065,69 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
     let store = create_memory_store().unwrap();
     let since = utc(2026, 3, 29, 0, 0);
 
-    let finish = |job: &str, dur_ms: Option<i64>, state: ExecutionState, at| {
-        let exec = make_execution(job, utc(2026, 3, 28, 0, 0));
+    // Each run waits `wait_s` between its fire time and its claim.
+    let finish = |job: &str, dur_ms: Option<i64>, state: ExecutionState, at, wait_s: i64| {
+        let exec = make_execution(job, at - chrono::Duration::seconds(wait_s));
         store.create_execution(&exec).unwrap();
         store.claim_execution(exec.id, "r1", at).unwrap();
         store
             .complete_execution(exec.id, None, state, dur_ms, None, None, at)
             .unwrap();
     };
-    // In the window: two runs of a slow job, one of them failed …
-    finish("slow:job", Some(60_000), ExecutionState::Completed, now());
-    finish("slow:job", Some(30_000), ExecutionState::Failed, now());
-    // … one of a quick job, and one that recorded no duration.
-    finish("quick:job", Some(500), ExecutionState::Completed, now());
-    finish("quick:job", None, ExecutionState::Completed, now());
+    // In the window: two runs of a slow job, one of them failed, and one
+    // that came due while the server was down and waited ten hours. With an
+    // even count the lower median is taken, so the outlier is not averaged
+    // in …
+    finish(
+        "slow:job",
+        Some(60_000),
+        ExecutionState::Completed,
+        now(),
+        2,
+    );
+    finish(
+        "slow:job",
+        Some(30_000),
+        ExecutionState::Failed,
+        now(),
+        36_000,
+    );
+    // … three of a quick job, one of which also waited ten hours, and one
+    // that recorded no duration.
+    finish("quick:job", Some(500), ExecutionState::Completed, now(), 1);
+    finish("quick:job", Some(100), ExecutionState::Completed, now(), 2);
+    finish(
+        "quick:job",
+        Some(100),
+        ExecutionState::Completed,
+        now(),
+        36_000,
+    );
+    finish("quick:job", None, ExecutionState::Completed, now(), 0);
     // Before the window: not counted.
     finish(
         "old:job",
         Some(900_000),
         ExecutionState::Completed,
         utc(2026, 3, 28, 23, 59),
+        2,
     );
+    // Claimed before its fire time (a clock step): counts as no wait, not
+    // as a negative one.
+    let early = make_execution("early:job", now() + chrono::Duration::seconds(5));
+    store.create_execution(&early).unwrap();
+    store.claim_execution(early.id, "r1", now()).unwrap();
+    store
+        .complete_execution(
+            early.id,
+            None,
+            ExecutionState::Completed,
+            Some(100),
+            None,
+            None,
+            now(),
+        )
+        .unwrap();
     // Still running: not counted.
     let running = make_execution("running:job", utc(2026, 3, 29, 11, 0));
     store.create_execution(&running).unwrap();
@@ -1100,12 +1142,21 @@ fn job_runtime_since_sums_finished_runs_in_the_window() {
                 runs: 2,
                 failed: 1,
                 total_ms: 90_000,
+                wait_median_ms: 2_000,
             },
             JobRuntime {
                 job_key: "quick:job".into(),
+                runs: 3,
+                failed: 0,
+                total_ms: 700,
+                wait_median_ms: 2_000,
+            },
+            JobRuntime {
+                job_key: "early:job".into(),
                 runs: 1,
                 failed: 0,
-                total_ms: 500,
+                total_ms: 100,
+                wait_median_ms: 0,
             },
         ]
     );

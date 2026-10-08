@@ -648,14 +648,31 @@ impl ExecutionStore for SqliteStore {
     fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
+            // The lower median wait: row `(n + 1) / 2` of each job's waits in
+            // ascending order — what Postgres' `percentile_disc(0.5)` picks.
             .prepare(
-                "SELECT job_key, COUNT(*), \
-                 SUM(CASE WHEN state IN ('failed', 'dead') THEN 1 ELSE 0 END), \
-                 SUM(duration_ms) AS total \
-                 FROM executions \
-                 WHERE completed_at IS NOT NULL AND completed_at >= ?1 \
-                   AND duration_ms IS NOT NULL \
-                 GROUP BY job_key ORDER BY total DESC, job_key",
+                "WITH runs AS ( \
+                   SELECT job_key, state, duration_ms, \
+                     MAX(0, CAST(ROUND( \
+                       (julianday(claimed_at) - julianday(fire_at)) * 86400000) AS INTEGER)) AS wait_ms \
+                   FROM executions \
+                   WHERE completed_at IS NOT NULL AND completed_at >= ?1 \
+                     AND duration_ms IS NOT NULL \
+                 ), ranked AS ( \
+                   SELECT job_key, wait_ms, \
+                     ROW_NUMBER() OVER (PARTITION BY job_key ORDER BY wait_ms) AS rn, \
+                     COUNT(*) OVER (PARTITION BY job_key) AS n \
+                   FROM runs WHERE wait_ms IS NOT NULL \
+                 ), medians AS ( \
+                   SELECT job_key, wait_ms AS median \
+                   FROM ranked WHERE rn = (n + 1) / 2 \
+                 ) \
+                 SELECT r.job_key, COUNT(*), \
+                 SUM(CASE WHEN r.state IN ('failed', 'dead') THEN 1 ELSE 0 END), \
+                 SUM(r.duration_ms) AS total, \
+                 COALESCE(MAX(m.median), 0) \
+                 FROM runs r LEFT JOIN medians m ON m.job_key = r.job_key \
+                 GROUP BY r.job_key ORDER BY total DESC, r.job_key",
             )
             .map_err(map_err)?;
         let rows = stmt
@@ -665,6 +682,7 @@ impl ExecutionStore for SqliteStore {
                     runs: row.get::<_, i64>(1)? as u64,
                     failed: row.get::<_, i64>(2)? as u64,
                     total_ms: row.get(3)?,
+                    wait_median_ms: row.get(4)?,
                 })
             })
             .map_err(map_err)?;
