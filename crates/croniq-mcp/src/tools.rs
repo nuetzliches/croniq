@@ -748,6 +748,12 @@ impl CroniqMcp {
             croniq_config::compile::TIMEOUT_METADATA_KEY.into(),
             timeout.clone(),
         );
+        // A requested run, not a scheduled fire: a server restart keeps it
+        // whatever the job's `catch_up` says (issue #855).
+        croniq_config::compile::mark_requested(
+            &mut metadata,
+            croniq_config::compile::REQUESTED_BY_TRIGGER,
+        );
 
         Ok((metadata, require, prefer, timeout))
     }
@@ -1426,7 +1432,15 @@ impl CroniqMcp {
             error: None,
             dead_reason: None,
             idempotency_key: None,
-            metadata: dl.metadata.clone(),
+            // Requested by whoever replayed it (issue #855).
+            metadata: {
+                let mut metadata = dl.metadata.clone();
+                croniq_config::compile::mark_requested(
+                    &mut metadata,
+                    croniq_config::compile::REQUESTED_BY_REPLAY,
+                );
+                metadata
+            },
             created_at: now,
         };
 

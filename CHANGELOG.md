@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restart restores a triggered run as it was asked for
+  ([#855](https://github.com/nuetzliches/croniq/issues/855)).** Queued
+  executions were rebuilt from the job's config, so a `POST /v1/trigger`
+  with `metadata`, a `timeout` or `require`/`prefer` came back after a
+  restart as a plain run without them — a handler branching on its
+  metadata silently did the narrower work. And `catch_up` treated it like a
+  missed fire: `none` cancelled it, `latest` kept it only if no scheduled
+  fire was queued after it. That hit exactly the triggers deploy
+  maintenance holds back while a server container is recreated. Restored
+  executions, and those the watchdog requeues, are now built from their
+  own row (metadata, `__timeout`, `__require`/`__prefer`; the job only
+  fills what the row lacks). Triggers and dead-letter replays are marked
+  `__requested` and restored whatever `catch_up` says; it still folds or
+  cancels the runs the schedule produced. A trigger queued by an earlier
+  version has no mark, so on the first restart after the upgrade
+  `catch_up` still applies to it, though its metadata is now kept.
+
 ## [0.48.0] - 2026-10-08
 
 ### Changed

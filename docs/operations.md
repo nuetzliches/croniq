@@ -1285,12 +1285,20 @@ through the API or an SDK alike (the latter only since #850). What happens to
 fires that fell due while the server was down is `catch_up`'s call, and only
 when it is written out — in the job or in `defaults { }` (issue #851):
 
-| `catch_up` | Missed fires | Queued executions at shutdown |
+| `catch_up` | Missed fires | Scheduled runs queued at shutdown |
 |---|---|---|
 | not set | the earliest runs once, then the schedule continues | all kept |
 | `all` | each runs, oldest first, one per scheduler tick — at most `max_queue_depth` (default 10), the most recent ones | all kept |
 | `latest` | the earliest runs once | only the newest kept |
 | `none` | none runs; the job waits for its next fire | cancelled |
+
+A run somebody asked for — a trigger (`POST /v1/trigger`, MCP) or a
+dead-letter replay — is not a missed fire. It is restored whatever
+`catch_up` says, with its own metadata, timeout override and capabilities, as
+it was queued (issue #855). Such runs are marked `__requested` on their row; a
+trigger queued by an earlier version has no mark, so on the first restart
+after the upgrade `catch_up` still applies to it — its metadata is kept
+either way.
 
 An hourly job with `catch_up all` on a server down from 01:45 to 06:30 runs
 02:00, 03:00, 04:00, 05:00 and 06:00 right after the restart, each execution
