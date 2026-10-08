@@ -269,6 +269,22 @@ where
 /// a `singleton` job holds every later fire for that long.
 pub const UNREPORTED_CLAIM_GRACE_SECS: i64 = 60;
 
+/// How many claims from before a restart one runner's first poll looks at
+/// (issue #848). The listing spans every runner, oldest first; past this, the
+/// stale-claim reaper still releases the rest after `timeout + grace`.
+const RESTART_RECONCILE_LIMIT: u32 = 10_000;
+
+/// Why [`release_unreported_claims`] considers a claim lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimLoss {
+    /// Dispatched by this process, then left out of the runner's polls for
+    /// longer than [`UNREPORTED_CLAIM_GRACE_SECS`] (issue #817).
+    Unreported,
+    /// Claimed under a previous server process, and left out of the runner's
+    /// first poll to this one (issue #848).
+    BeforeRestart,
+}
+
 /// Requeue the executions `runner_id` holds a claim on but no longer reports
 /// in flight (issue #817). Called by the poll handler with the poll's
 /// `inflight` list, right after those ids' leases were refreshed.
@@ -286,6 +302,17 @@ pub const UNREPORTED_CLAIM_GRACE_SECS: i64 = 60;
 ///
 /// Ephemeral executions have no store row; their lease entry is dropped and
 /// nothing is requeued, because there is no row to requeue.
+///
+/// The lease map lives in memory, so a server restart empties it (issue
+/// #848): a container restarted on its volume while executions were
+/// `claimed` had nothing to compare the next polls against, and those claims
+/// waited for the reaper's `timeout + grace`. So the first poll a runner sends
+/// to this process also brings in, from the store, the claims it held under
+/// the previous one — those claimed before [`AppState::started_at`] — that it
+/// does not report in flight. No grace applies to them: a hand-off made by a
+/// process that has since exited has either reached the runner, which then
+/// reports it, or never will. Once per runner per process, so a healthy
+/// runner's polls still cost no store query.
 pub async fn release_unreported_claims<F>(
     store: &DynStore,
     runner: &Arc<AppState>,
@@ -298,7 +325,7 @@ where
     F: FnMut(&str) -> Option<JobConfig>,
 {
     let cutoff = now - Duration::seconds(UNREPORTED_CLAIM_GRACE_SECS);
-    let candidates: Vec<String> = runner
+    let mut candidates: Vec<(String, ClaimLoss)> = runner
         .lease_renewals
         .read()
         .await
@@ -308,15 +335,45 @@ where
                 && lease.renewed_at < cutoff
                 && !reported.iter().any(|r| r == *id)
         })
-        .map(|(id, _)| id.clone())
+        .map(|(id, _)| (id.clone(), ClaimLoss::Unreported))
         .collect();
+
+    let first_poll = runner
+        .restart_reconciled
+        .write()
+        .await
+        .insert(runner_id.to_string());
+    if first_poll {
+        match store.list_claimed_older_than(runner.started_at, RESTART_RECONCILE_LIMIT) {
+            Ok(rows) => {
+                for execution in rows {
+                    let id = execution.id.to_string();
+                    if execution.runner_id.as_deref() == Some(runner_id)
+                        && !reported.contains(&id)
+                        && !candidates.iter().any(|(c, _)| *c == id)
+                    {
+                        candidates.push((id, ClaimLoss::BeforeRestart));
+                    }
+                }
+            }
+            Err(e) => {
+                // Try again on this runner's next poll.
+                runner.restart_reconciled.write().await.remove(runner_id);
+                tracing::warn!(
+                    runner_id = %runner_id,
+                    error = %e,
+                    "could not list claims held before the restart — retrying on the next poll"
+                );
+            }
+        }
+    }
     if candidates.is_empty() {
         return vec![];
     }
 
     let mut requeued = Vec::new();
     let mut enqueued = 0usize;
-    for id_str in &candidates {
+    for (id_str, loss) in &candidates {
         let execution = match uuid::Uuid::parse_str(id_str)
             .ok()
             .map(|id| store.get_execution(id))
@@ -324,6 +381,11 @@ where
             Some(Ok(Some(e))) => e,
             Some(Err(e)) => {
                 // Transient: keep the lease entry so the next poll retries.
+                // A claim from before the restart has no lease entry, so the
+                // runner is checked against the store once more instead.
+                if *loss == ClaimLoss::BeforeRestart {
+                    runner.restart_reconciled.write().await.remove(runner_id);
+                }
                 tracing::warn!(
                     execution_id = %id_str,
                     error = %e,
@@ -351,6 +413,9 @@ where
                 continue;
             }
             Err(e) => {
+                if *loss == ClaimLoss::BeforeRestart {
+                    runner.restart_reconciled.write().await.remove(runner_id);
+                }
                 tracing::error!(
                     execution_id = %execution.id,
                     error = %e,
@@ -364,23 +429,38 @@ where
             .claimed_at
             .map(|t| t.to_rfc3339())
             .unwrap_or_default();
-        tracing::warn!(
-            job_key = %execution.job_key,
-            execution_id = %execution.id,
-            runner_id = %runner_id,
-            claimed_at = %claimed_at,
-            "requeued claimed execution its runner no longer reports in flight — the \
-             assignment never reached the runner, or the runner dropped it"
-        );
-        record_requeue_in_log(
-            store,
-            &execution,
-            now,
-            format!(
-                "claim by runner {runner_id} at {claimed_at} was lost before the runner \
-                 started the execution (it stopped reporting it in flight) — requeued"
-            ),
-        );
+        let log_line = match loss {
+            ClaimLoss::Unreported => {
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    execution_id = %execution.id,
+                    runner_id = %runner_id,
+                    claimed_at = %claimed_at,
+                    "requeued claimed execution its runner no longer reports in flight — the \
+                     assignment never reached the runner, or the runner dropped it"
+                );
+                format!(
+                    "claim by runner {runner_id} at {claimed_at} was lost before the runner \
+                     started the execution (it stopped reporting it in flight) — requeued"
+                )
+            }
+            ClaimLoss::BeforeRestart => {
+                tracing::warn!(
+                    job_key = %execution.job_key,
+                    execution_id = %execution.id,
+                    runner_id = %runner_id,
+                    claimed_at = %claimed_at,
+                    "requeued an execution claimed before the server restarted — its runner \
+                     does not report it in flight"
+                );
+                format!(
+                    "claim by runner {runner_id} at {claimed_at} predates a server restart, \
+                     and the runner's first poll afterwards did not report it in flight — \
+                     requeued"
+                )
+            }
+        };
+        record_requeue_in_log(store, &execution, now, log_line);
         crate::api::audit::record_event(
             store,
             "system",

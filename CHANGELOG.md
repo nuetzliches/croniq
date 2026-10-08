@@ -45,6 +45,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Claims left behind by a server restart are released on the runner's
+  first poll ([#848](https://github.com/nuetzliches/croniq/issues/848)).**
+  A server restarted on its data — a container restarted on its volume —
+  while executions were `claimed` kept them claimed until the stale-claim
+  reaper's `timeout + grace`, minutes for most jobs and every later fire of
+  a `singleton` job held for as long. The faster release for claims a
+  runner stops reporting (#817) works from an in-memory lease map, which
+  the restart had emptied. Each runner's first poll to the new process now
+  also compares the claims it held under the old one with its `inflight`
+  list, and requeues those it does not report: same attempt, a `warn` line
+  in the execution's log, an `execution.unreported_claim_requeued` audit
+  event. Claims the runner still reports, and those of runners that do not
+  come back, are left as before.
 - **Runner SDKs refill a freed slot at once instead of after the capacity
   back-off ([#845](https://github.com/nuetzliches/croniq/issues/845)).**
   A runner at `max_inflight` polls, gets an immediate answer, and then

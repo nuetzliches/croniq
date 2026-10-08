@@ -6179,7 +6179,16 @@ mod tests {
         job_key: &str,
         runner_id: &str,
     ) -> uuid::Uuid {
-        let now = Utc::now();
+        seed_claimed_execution_at(store, job_key, runner_id, Utc::now())
+    }
+
+    /// A `claimed` execution whose fire and claim both happened at `now`.
+    fn seed_claimed_execution_at(
+        store: &crate::store::DynStore,
+        job_key: &str,
+        runner_id: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
         store
             .create_execution(&Execution {
@@ -6659,6 +6668,90 @@ mod tests {
         // The execution the runner still reports is left alone.
         assert_eq!(
             store.get_execution(held).unwrap().unwrap().state,
+            ExecutionState::Claimed
+        );
+    }
+
+    // ─── #848: claims from before a restart are released on the first poll ──
+    //
+    // The lease map behind #817 lives in memory. After a restart on the same
+    // store (a container restarted on its volume) it is empty, so claims the
+    // previous process handed out waited for the reaper's `timeout + grace`.
+
+    #[tokio::test]
+    async fn first_poll_after_a_restart_requeues_claims_the_runner_does_not_report() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        // Claimed by the previous process: before this state was built.
+        let before = state.runner.started_at - chrono::Duration::minutes(10);
+        let lost = seed_claimed_execution_at(&store, "billing:invoice", "worker-1", before);
+        let held = seed_claimed_execution_at(&store, "billing:invoice", "worker-1", before);
+        let foreign = seed_claimed_execution_at(&store, "billing:invoice", "worker-2", before);
+        // Handed out by this process: only the #817 grace path may touch it.
+        let current = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_reporting("worker-1", &[held]),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        let requeued = store.get_execution(lost).unwrap().unwrap();
+        assert_eq!(requeued.state, ExecutionState::Queued);
+        assert_eq!(requeued.runner_id, None);
+        assert_eq!(
+            requeued.attempt, 1,
+            "a claim lost to a restart must not burn an attempt"
+        );
+        let logs = store.read_logs(lost, 10).unwrap();
+        assert_eq!(logs.len(), 1, "the lost claim stays visible in the log");
+        assert!(
+            logs[0].message.contains("predates a server restart"),
+            "got {:?}",
+            logs[0].message
+        );
+
+        for (id, why) in [
+            (held, "the runner still reports it"),
+            (foreign, "another runner holds it"),
+            (current, "this process handed it out moments ago"),
+        ] {
+            assert_eq!(
+                store.get_execution(id).unwrap().unwrap().state,
+                ExecutionState::Claimed,
+                "left alone: {why}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_restart_check_runs_once_per_runner() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        // Appears only after the first poll — the check is not repeated, so
+        // it is left to the reaper, as before #848.
+        let before = state.runner.started_at - chrono::Duration::minutes(10);
+        let later = seed_claimed_execution_at(&store, "billing:invoice", "worker-1", before);
+
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll_body("worker-1", "iid-1"),
+        )
+        .await;
+        assert_eq!(
+            store.get_execution(later).unwrap().unwrap().state,
             ExecutionState::Claimed
         );
     }
