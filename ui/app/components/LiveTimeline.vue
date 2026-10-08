@@ -52,11 +52,11 @@ import type { JobScheduleState } from '~/api/types'
  * It can be held still: the Pause button, or moving the range's end before
  * "now", freezes the picture at one moment — runs and
  * schedule are snapshotted then, so what was on screen stays readable while
- * the stream moves on underneath. Hovering the track freezes only the motion,
- * and everything that moves with time — lanes greying and releasing, the
- * window's edge, the countdowns — so a tooltip can be read and a short bar
- * clicked. The hand beside the Pause button switches that off, for someone
- * who wants the picture moving under the pointer.
+ * the stream moves on underneath. With the hand beside the Pause button on,
+ * hovering the card freezes the motion and everything that moves with time —
+ * lanes greying and releasing, the window's edge, the countdowns — so a
+ * tooltip can be read, a short bar or a lane label clicked. It is off by
+ * default: the picture keeps moving under the pointer unless asked not to.
  */
 
 const RANGE_KEY = 'croniq_live_range'
@@ -174,10 +174,14 @@ function pause() {
   frozen.value = snapshot()
 }
 
-/** Pointer on the track: hold the motion so a tooltip can be read and a bar clicked. */
+/**
+ * Pointer on the card, not only the track: a lane label slides and its
+ * countdown ticks as much as a bar does, and the way from one to the other
+ * crosses neither.
+ */
 const hovering = ref(false)
-/** Whether a hover holds the motion at all; on by default, this browser's choice. */
-const holdOnHover = ref(readStored(HOLD_ON_HOVER_KEY) !== '0')
+/** Whether a hover holds the motion at all; off by default, this browser's choice. */
+const holdOnHover = ref(readStored(HOLD_ON_HOVER_KEY) === '1')
 watch(holdOnHover, (value) => writeStored(HOLD_ON_HOVER_KEY, value ? '1' : '0'))
 /** The motion held by the pointer, as opposed to frozen by Pause. */
 const pointerHeld = computed(() => holdOnHover.value && hovering.value)
@@ -609,7 +613,10 @@ onBeforeUnmount(stopMotion)
 <template>
   <section
     class="rounded-xl border border-default bg-default p-4 shadow-sm"
+    data-testid="live-card"
     @click="onLinkClick"
+    @pointerenter="hovering = true"
+    @pointerleave="hovering = false"
   >
     <!-- Three columns, the outer two equal: the "Next hour" histogram stays
          centred however wide "Live" / "Paused" or the counts get. -->
@@ -647,7 +654,7 @@ onBeforeUnmount(stopMotion)
           @click="pause"
         />
         <UButton
-          v-tooltip="holdOnHover ? 'Hovering the timeline holds it still — click to keep it moving' : 'The timeline keeps moving under the pointer — click to hold it on hover'"
+          v-tooltip="holdOnHover ? 'Hovering the card holds the timeline still — click to keep it moving' : 'The timeline keeps moving under the pointer — click to hold it while hovering the card'"
           size="xs"
           :variant="holdOnHover ? 'soft' : 'ghost'"
           color="neutral"
@@ -809,8 +816,6 @@ onBeforeUnmount(stopMotion)
             :style="{ height: `${Math.max(1, layout.lanes.length) * LANE_HEIGHT}px` }"
             role="img"
             :aria-label="`${running} running and ${queued} queued; ${layout.lanes.length} jobs shown, window ${windowLabel}`"
-            @pointerenter="hovering = true"
-            @pointerleave="hovering = false"
           >
             <!-- Quarter gridlines, static: the axis is relative to now. -->
             <div

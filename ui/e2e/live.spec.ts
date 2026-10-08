@@ -99,13 +99,22 @@ test.describe('live surfaces', () => {
     await expect(state).toHaveText(/live/i)
   })
 
-  test('hovering the track holds it only while the hand is on', async ({ app }) => {
+  test('hovering the card holds it only while the hand is on', async ({ app }) => {
     await app.goto('/')
     const state = app.getByTestId('live-state')
     await expect(state).toHaveText(/live/i, { timeout: 20_000 })
     const track = app.getByTestId('live-track')
     const hand = app.getByTestId('live-hold-on-hover')
+    // Off by default: the picture moves under the pointer until asked not to.
+    await expect(hand).toHaveAttribute('aria-pressed', 'false')
+    await track.hover()
+    await expect(state).toHaveText('Live')
+    await hand.click()
     await expect(hand).toHaveAttribute('aria-pressed', 'true')
+
+    // The whole card, not only the track: the lane labels hold too.
+    await app.getByTestId('live-lanes').locator('li').first().hover()
+    await expect(state).toHaveText('Live · held')
 
     // Held means everything, not only the bars' motion: a run that starts
     // while the pointer is on the track waits until it leaves. Started from a

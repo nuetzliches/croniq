@@ -22,6 +22,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   without such a run). Cancelled runs count in the total but in neither
   median.
 
+- **Holding the live timeline on hover is off by default, and covers the
+  whole card.** The hand beside Pause now starts switched off, so the
+  picture keeps moving under the pointer unless asked not to; a choice
+  already made in this browser is kept. Switched on, hovering anywhere on
+  the card holds it — the lane labels and their countdowns too, not only
+  the track — so a label can be clicked without it sliding away.
+
 ## [0.48.1] - 2026-10-08
 
 ### Fixed
