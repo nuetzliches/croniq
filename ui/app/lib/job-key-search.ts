@@ -1,7 +1,8 @@
 /**
- * What the job-key search box on Runs asks for.
+ * What the search box on Runs and on Jobs asks for.
  *
- * Unquoted, the box searches: a case-insensitive substring of the job key.
+ * Unquoted, the box searches: a case-insensitive substring of the job key
+ * (on Jobs, of the description as well).
  * Quoted — `"search:journal-sync"` — it names one job, exactly as
  * `?job_key=` does. A substring of `search:journal-sync` also answers for
  * `search:journal-sync-full`, and typing the whole key is no way out of that;

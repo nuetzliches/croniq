@@ -9,6 +9,7 @@ import { useDetailPaneWidth } from '~/composables/useDetailPaneWidth'
 import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
+import { parseJobKeySearch } from '~/lib/job-key-search'
 import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_WIDE_DEFAULT_WIDTH, useUiStore } from '~/stores/ui'
 
 /**
@@ -86,11 +87,15 @@ interface Row {
 }
 
 const rows = computed<Row[]>(() => {
-  const needle = search.value.trim().toLowerCase()
+  // Quoted, the box names one job by its key, as on Runs; unquoted it searches
+  // key and description alike.
+  const { exact, contains } = parseJobKeySearch(search.value)
+  const needle = (contains ?? '').toLowerCase()
   return (jobs.value ?? [])
     .filter((job) => {
       if (tagFilter.value && !(job.tags ?? []).includes(tagFilter.value)) return false
       if (favoritesOnly.value && !favorites.value.has(job.job_key)) return false
+      if (exact) return job.job_key === exact
       if (!needle) return true
       return (
         job.job_key.toLowerCase().includes(needle) ||
@@ -199,6 +204,7 @@ function ruleOf(row: Row): string {
   <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex flex-wrap items-center gap-2">
       <UInput
+        v-tooltip="'Part of a job key or description. In &quot;quotes&quot;, one job key exactly.'"
         :model-value="search"
         placeholder="Job key or description…"
         icon="i-lucide-search"
