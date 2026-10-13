@@ -11,6 +11,7 @@ import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
+import { parseJobKeySearch } from '~/lib/job-key-search'
 import { notesByExecution } from '~/lib/notes'
 import { DETAIL_PANE_DEFAULT_WIDTH, DETAIL_PANE_MIN_WIDTH, useUiStore } from '~/stores/ui'
 
@@ -53,6 +54,9 @@ const filters = computed(() => ({
    * runs", and a substring there would answer with `mail:send-retry`'s runs
    * as well (issue #753). So a deep link keeps meaning one job, and the box
    * gets its own parameter.
+   *
+   * Unless it is quoted: `"mail:send"` in the box asks what `?job_key=` asks,
+   * for the one job and not its namesakes — see `jobKeyFilter`.
    */
   q: (route.query.q as string) || '',
   job_key: (route.query.job_key as string) || '',
@@ -100,6 +104,25 @@ const WINDOWS = [
  */
 const typedSearch = useDebounced(() => filters.value.q)
 
+/**
+ * The box and the chip, as the two job-key parameters the API takes.
+ *
+ * A quoted search is exact, so it travels as `job_key`, the parameter the
+ * chip uses. Both at once is the one case that does not fit in a request: the
+ * API takes one exact key, and filters combine with AND, so two different
+ * keys mean no run can match. That is answered here, as an empty list, rather
+ * than by letting one of the two win quietly.
+ */
+const jobKeyFilter = computed(() => {
+  const pinnedKey = filters.value.job_key
+  const { exact, contains } = parseJobKeySearch(typedSearch.value)
+  return {
+    job_key: pinnedKey || exact || undefined,
+    job_key_contains: contains,
+    contradictory: Boolean(pinnedKey && exact && pinnedKey !== exact),
+  }
+})
+
 const sinceMs = computed(
     () => WINDOWS.find((entry) => entry.value === filters.value.window)?.ms,
 )
@@ -136,8 +159,8 @@ let filterGeneration = 0
 // way. The cursor lives in `loadOlder`, which uses it once and throws it away.
 const { data, isPending, isError, error, refetch } = useExecutions(() => ({
   state: filters.value.state || undefined,
-  job_key: filters.value.job_key || undefined,
-  job_key_contains: typedSearch.value || undefined,
+  job_key: jobKeyFilter.value.job_key,
+  job_key_contains: jobKeyFilter.value.job_key_contains,
   runner_id: filters.value.runner_id || undefined,
   favorites: filters.value.favorites === '1',
   since_ms: sinceMs.value,
@@ -152,6 +175,7 @@ const { data, isPending, isError, error, refetch } = useExecutions(() => ({
  * one is the one that has been refetched.
  */
 const rows = computed<Execution[]>(() => {
+  if (jobKeyFilter.value.contradictory) return []
   const seen = new Set<string>()
   const out: Execution[] = []
   for (const row of [...(data.value ?? []), ...pages.value.flat()]) {
@@ -175,6 +199,7 @@ const notesByRun = computed(() => notesByExecution(rowNotes.value ?? []))
 
 /** A full page back means there is probably more behind it. */
 const mayHaveMore = computed(() => {
+  if (jobKeyFilter.value.contradictory) return false
   const last = pages.value.at(-1) ?? data.value ?? []
   return last.length >= PAGE_SIZE
 })
@@ -206,8 +231,8 @@ async function loadOlder() {
   try {
     const page = await fetchExecutions({
       state: filters.value.state || undefined,
-      job_key: filters.value.job_key || undefined,
-      job_key_contains: typedSearch.value || undefined,
+      job_key: jobKeyFilter.value.job_key,
+      job_key_contains: jobKeyFilter.value.job_key_contains,
       runner_id: filters.value.runner_id || undefined,
       favorites: filters.value.favorites === '1',
       since_ms: sinceMs.value,
@@ -414,6 +439,7 @@ function onKey(event: KeyboardEvent) {
         @update:model-value="(value: string[]) => setFilter('state', (value ?? []).join(','))"
       />
       <UInput
+        v-tooltip="'Part of a job key. In &quot;quotes&quot;, one job exactly.'"
         :model-value="filters.q"
         placeholder="Search job key…"
         icon="i-lucide-search"

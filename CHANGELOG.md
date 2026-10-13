@@ -27,6 +27,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     unread count.
   - Collapsing the sidebar no longer names a link with a badge by its number
     alone: the Dead Letters entry was announced as just "3".
+- **A quoted job key on Runs means that one job.** `"search:journal-sync"`
+  in the job-key search box asks what `?job_key=search:journal-sync` asks —
+  the job with exactly that key — instead of every job whose key contains it,
+  so `search:journal-sync-full` no longer slips in. Unquoted, the box still
+  searches by substring; typographic quotes (“…”, „…“) count too. A quoted key
+  beside a different pinned *Job* chip matches nothing, as both filters apply.
 
 ### Changed
 
