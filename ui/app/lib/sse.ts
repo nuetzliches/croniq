@@ -147,28 +147,30 @@ export function createSseStream(options: SseStreamOptions): () => void {
         // The stream outlives the one-hour access token by design, so a 401
         // here is routine. Refresh and let the backoff reconnect; a genuinely
         // dead session fails the refresh, which clears it (#454).
+        //
+        // Not a `return`: that would leave this function before the reconnect
+        // below, and the stream would stay dead behind a stale last frame
+        // until the page was reloaded.
         if (!(await refresh())) reconnect = false
-        return
-      }
-      if (fatalStatuses.includes(response.status)) {
+      } else if (fatalStatuses.includes(response.status)) {
         reconnect = false
         onFatal?.(response.status)
-        return
-      }
-      if (!response.ok || !response.body) throw new Error(`SSE ${response.status}`)
+      } else {
+        if (!response.ok || !response.body) throw new Error(`SSE ${response.status}`)
 
-      hasOpened = true
-      attempt = 0
-      onOpen?.()
+        hasOpened = true
+        attempt = 0
+        onOpen?.()
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      const parser = new SseFrameParser()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
-          onData(payload)
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        const parser = new SseFrameParser()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
+            onData(payload)
+          }
         }
       }
     } catch {

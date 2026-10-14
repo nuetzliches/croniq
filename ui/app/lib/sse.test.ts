@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { SseFrameParser } from './sse'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createSseStream, SseFrameParser } from './sse'
 
 /**
  * The frame assembly, which is the reason #585 exists. Everything below was
@@ -96,5 +96,143 @@ describe('SseFrameParser', () => {
     const parser = new SseFrameParser()
     expect(parser.push('data: once\n\n')).toEqual(['once'])
     expect(parser.push('data: twice\n\n')).toEqual(['twice'])
+  })
+})
+
+/**
+ * The transport around the parser: which exits reconnect and which end the
+ * stream. Until the 401 case below, nothing here was tested, and a `return`
+ * inside the `try` had quietly stopped a refreshed stream from ever reopening.
+ */
+describe('createSseStream', () => {
+  const encoder = new TextEncoder()
+
+  /** A stream that delivers `chunks` and then ends, as a dropped connection does. */
+  const stream = (...chunks: string[]) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+          controller.close()
+        },
+      }),
+      { status: 200 },
+    )
+  const status = (code: number) => new Response(null, { status: code })
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('reconnects with the renewed token after a 401 whose refresh succeeded', async () => {
+    // The stream outlives the one-hour access token, so the first request after
+    // a drop is the one that finds it expired. The dashboard then showed the
+    // last frame behind a grey dot until it was reloaded.
+    let token = 'stale'
+    const sent: (string | null)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(new Headers(init.headers).get('Authorization'))
+        return sent.length === 1 ? status(401) : stream('data: hello\n\n')
+      }),
+    )
+    const data: string[] = []
+    const stop = createSseStream({
+      url: () => '/v1/stream',
+      getToken: () => token,
+      refresh: async () => {
+        token = 'fresh'
+        return true
+      },
+      onData: (payload) => data.push(payload),
+    })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sent).toEqual(['Bearer stale', 'Bearer fresh'])
+    expect(data).toEqual(['hello'])
+    stop()
+  })
+
+  it('ends for good when the refresh says the session is gone', async () => {
+    const fetchMock = vi.fn(async () => status(401))
+    vi.stubGlobal('fetch', fetchMock)
+    const onClose = vi.fn()
+    createSseStream({
+      url: () => '/v1/stream',
+      getToken: () => 'stale',
+      refresh: async () => false,
+      onData: () => {},
+      onClose,
+    })
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('backs off instead of hammering a server that keeps answering 401', async () => {
+    const fetchMock = vi.fn(async () => status(401))
+    vi.stubGlobal('fetch', fetchMock)
+    const stop = createSseStream({
+      url: () => '/v1/stream',
+      getToken: () => 'token',
+      refresh: async () => true,
+      onData: () => {},
+    })
+
+    // Default backoff: 1 s, then 2 s — attempts at 0, 1 s and 3 s.
+    await vi.advanceTimersByTimeAsync(999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    stop()
+  })
+
+  it('ends on a fatal status and reports it', async () => {
+    const fetchMock = vi.fn(async () => status(403))
+    vi.stubGlobal('fetch', fetchMock)
+    const onFatal = vi.fn()
+    createSseStream({
+      url: () => '/v1/stream',
+      getToken: () => 'token',
+      refresh: async () => true,
+      fatalStatuses: [403],
+      onFatal,
+      onData: () => {},
+    })
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onFatal).toHaveBeenCalledWith(403)
+  })
+
+  it('reconnects after the stream ends, and says it has been open before', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => stream('data: one\n\n')),
+    )
+    const urls: boolean[] = []
+    const data: string[] = []
+    const stop = createSseStream({
+      url: (hasOpened) => {
+        urls.push(hasOpened)
+        return '/v1/stream'
+      },
+      getToken: () => 'token',
+      refresh: async () => true,
+      onData: (payload) => data.push(payload),
+    })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(urls).toEqual([false, true])
+    expect(data).toEqual(['one', 'one'])
+    stop()
   })
 })
