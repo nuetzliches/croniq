@@ -61,15 +61,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
-- **rustls updated to 0.23.46.** It fixes four client-side advisories:
-  `Debug` output of client session values that included TLS secrets
-  (RUSTSEC-2026-0346), application data sent to the outer server after an ECH
-  rejection (RUSTSEC-2026-0347), up to 1 GiB allocated by Brotli certificate
-  decompression before authentication (RUSTSEC-2026-0348), and an
-  unauthenticated ServerHello that could downgrade later connections to
-  classical key exchange (RUSTSEC-2026-0349). Every TLS client in Croniq runs
-  on rustls: the server's outbound HTTPS and SMTP, the Postgres connection,
-  the CLI and the Rust runner SDK.
+- **rustls 0.23.46, rustls-webpki 0.103.16 and webpki-roots 1.0.10
+  ([#866](https://github.com/nuetzliches/croniq/pull/866)).** rustls fixes
+  four client-side advisories: `Debug` output of client session values that
+  included TLS secrets (RUSTSEC-2026-0346), application data sent to the
+  outer server after an ECH rejection (RUSTSEC-2026-0347), up to 1 GiB
+  allocated by Brotli certificate decompression before authentication
+  (RUSTSEC-2026-0348), and an unauthenticated ServerHello that could
+  downgrade later connections to classical key exchange (RUSTSEC-2026-0349).
+  rustls-webpki could accept distrusted intermediates during certificate
+  verification (RUSTSEC-2026-0382), and webpki-roots still trusted the
+  distrusted emSign intermediates (RUSTSEC-2026-0381).
+
+  Every TLS client in Croniq runs on rustls: the server's outbound HTTPS and
+  SMTP, the Postgres connection, the CLI and the Rust runner SDK. Lockfile
+  only; no manifest change.
 
 ### Fixed
 
