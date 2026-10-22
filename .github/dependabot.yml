@@ -4,3 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # init and analyze must be the same release: analyze refuses a
+      # configuration written by another init version, so a PR that bumps
+      # only one of them can never pass (#858, #860).
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
