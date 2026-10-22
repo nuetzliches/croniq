@@ -930,6 +930,24 @@ impl JobAlertAck {
     }
 }
 
+/// A job whose latest runs failed for good, one after the other: each
+/// exhausted its retries and was dead-lettered or dropped. Exists only while
+/// the job is failing; its next successful run ends it.
+///
+/// What `min_consecutive` on an alert rule counts, and what a `job_recovered`
+/// rule reports the end of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobFailureStreak {
+    pub job_key: String,
+    /// Permanent failures in a row, this one included.
+    pub consecutive: u32,
+    /// When the first of them happened.
+    pub since: DateTime<Utc>,
+    pub last_execution_id: String,
+    pub last_error: String,
+    pub last_failed_at: DateTime<Utc>,
+}
+
 /// Global maintenance switch state (singleton row).
 ///
 /// When [`is_active`](MaintenanceState::is_active) is true the scheduler stops

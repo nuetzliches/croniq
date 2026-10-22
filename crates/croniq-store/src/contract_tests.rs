@@ -3115,6 +3115,67 @@ fn last_alert_fire_skips_acknowledged_rows_and_what_a_recovery_ended() {
     );
 }
 
+// ─── AlertStore: failure streaks ───
+
+#[test]
+fn failure_streak_counts_up_and_ends_on_take() {
+    let store = create_memory_store().unwrap();
+    assert!(
+        store
+            .take_job_failure_streak("billing:sync")
+            .unwrap()
+            .is_none()
+    );
+
+    let first = store
+        .record_job_failure("billing:sync", "e-1", "503", utc(2026, 3, 29, 10, 0))
+        .unwrap();
+    assert_eq!(first.consecutive, 1);
+    assert_eq!(first.since, utc(2026, 3, 29, 10, 0));
+
+    let third = {
+        store
+            .record_job_failure("billing:sync", "e-2", "504", utc(2026, 3, 29, 11, 0))
+            .unwrap();
+        store
+            .record_job_failure("billing:sync", "e-3", "timeout", now())
+            .unwrap()
+    };
+    assert_eq!(third.consecutive, 3);
+    assert_eq!(
+        third.since,
+        utc(2026, 3, 29, 10, 0),
+        "since stays the first"
+    );
+    assert_eq!(third.last_execution_id, "e-3");
+    assert_eq!(third.last_error, "timeout");
+    assert_eq!(third.last_failed_at, now());
+
+    // Other jobs keep their own count.
+    let other = store
+        .record_job_failure("other:job", "e-9", "500", now())
+        .unwrap();
+    assert_eq!(other.consecutive, 1);
+
+    let taken = store
+        .take_job_failure_streak("billing:sync")
+        .unwrap()
+        .unwrap();
+    assert_eq!(taken, third);
+    assert!(
+        store
+            .take_job_failure_streak("billing:sync")
+            .unwrap()
+            .is_none()
+    );
+
+    // The next failure starts over.
+    let again = store
+        .record_job_failure("billing:sync", "e-4", "503", now())
+        .unwrap();
+    assert_eq!(again.consecutive, 1);
+}
+
 // ─── Trigger idempotency (issue #279) ───
 
 /// Dedup lookup window used by the tests below: everything created at or

@@ -349,6 +349,20 @@ pub struct RuleConfig {
     /// dead-letter-disabled). Defaults to false (fire on any permanent
     /// failure). `job_failed` only.
     pub dead_letter_only: bool,
+    /// How many of the job's runs in a row must have failed for good before
+    /// the rule fires. Defaults to 1 — every permanent failure. A run that
+    /// fails and then succeeds on retry is not a failure here; one that
+    /// exhausts its retries (dead-lettered or dropped) is.
+    ///
+    /// - `job_failed`: fire on the Nth permanent failure in a row, and on
+    ///   every one after it (subject to `throttle`), not before.
+    /// - `job_recovered`: announce a recovery only when the failure streak it
+    ///   ends was at least this long, so a recovery rule paired with a
+    ///   `min_consecutive 3` failure rule does not report the end of a
+    ///   failure nobody was told about.
+    ///
+    /// Other triggers ignore it.
+    pub min_consecutive: u32,
     /// Per-(rule, job_key) suppression window. `None` disables
     /// throttling — every matching failure fires. Stored as duration
     /// string (parsed by the server at boot, kept as a string in the
@@ -407,6 +421,12 @@ pub enum RuleTrigger {
     /// watchdog fires once per stuck execution (the job's oldest queued one),
     /// and again every `throttle` while it stays stuck when the rule sets one.
     JobBlocked,
+    /// A job succeeded after one or more runs in a row that failed for good
+    /// — the good news after `job_failed`. Fired by the completion processor
+    /// on that success, once per failure streak; `min_consecutive` sets how
+    /// long the streak must have been. It is also where the recovery goes
+    /// when an acknowledgement of the job ends with a success.
+    JobRecovered,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1657,6 +1677,7 @@ fn compile_rule(
     let mut trigger: Option<RuleTrigger> = None;
     let mut job_key_glob = "*".to_string();
     let mut min_attempts: u32 = 1;
+    let mut min_consecutive: u32 = 1;
     let mut dead_letter_only = false;
     let mut throttle: Option<String> = None;
     let mut expected_within: Option<String> = None;
@@ -1676,6 +1697,7 @@ fn compile_rule(
                         "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
                         "maintenance_active" => Some(RuleTrigger::MaintenanceActive),
                         "job_blocked" => Some(RuleTrigger::JobBlocked),
+                        "job_recovered" => Some(RuleTrigger::JobRecovered),
                         // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
@@ -1694,6 +1716,14 @@ fn compile_rule(
                     let v = resolve_str(arg, vars);
                     if let Ok(n) = v.parse::<u32>() {
                         min_attempts = n.max(1);
+                    }
+                }
+            }
+            "min_consecutive" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    if let Ok(n) = v.parse::<u32>() {
+                        min_consecutive = n.max(1);
                     }
                 }
             }
@@ -1738,6 +1768,7 @@ fn compile_rule(
         trigger,
         job_key_glob,
         min_attempts,
+        min_consecutive,
         dead_letter_only,
         throttle,
         expected_within,
@@ -3752,8 +3783,54 @@ job a:b { every 5 minutes; priority urgent }",
         let rule = &cfg.alerts.rules[0];
         assert_eq!(rule.job_key_glob, "*");
         assert_eq!(rule.min_attempts, 1);
+        assert_eq!(rule.min_consecutive, 1);
         assert!(!rule.dead_letter_only);
         assert!(rule.throttle.is_none());
+    }
+
+    #[test]
+    fn compile_alerts_min_consecutive_and_job_recovered() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "flaky-provider" {
+                    when job_failed
+                    job_key "billing:*"
+                    min_consecutive 3
+                    channels "ops"
+                }
+                rule "billing-back" {
+                    when job_recovered
+                    job_key "billing:*"
+                    min_consecutive 3
+                    channels "ops"
+                }
+                rule "zero-means-one" {
+                    when job_failed
+                    min_consecutive 0
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 3);
+        assert!(matches!(
+            cfg.alerts.rules[0].trigger,
+            RuleTrigger::JobFailed
+        ));
+        assert_eq!(cfg.alerts.rules[0].min_consecutive, 3);
+        assert!(matches!(
+            cfg.alerts.rules[1].trigger,
+            RuleTrigger::JobRecovered
+        ));
+        assert_eq!(cfg.alerts.rules[1].min_consecutive, 3);
+        assert_eq!(
+            cfg.alerts.rules[2].min_consecutive, 1,
+            "0 would fire before anything failed; it is read as 1"
+        );
     }
 
     #[test]

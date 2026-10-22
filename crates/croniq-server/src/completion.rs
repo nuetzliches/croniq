@@ -145,6 +145,28 @@ impl CompletionProcessor {
     /// here, so `dead_letter true` matched nothing and channels got a sentence
     /// where the contract promises one of two words.
     async fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
+        let error = event.error.clone().unwrap_or_else(|| "unknown".to_string());
+        // Counted whether or not a rule is listening: the streak is what a
+        // later `min_consecutive` or `job_recovered` rule needs to be right
+        // from the first failure after it is added, not from the reload.
+        // A store error counts as the first failure — the rule fires rather
+        // than staying quiet on a count it cannot read.
+        let consecutive =
+            match self
+                .store
+                .record_job_failure(job_key, &event.execution_id, &error, Utc::now())
+            {
+                Ok(streak) => streak.consecutive,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "croniq::alerts",
+                        job_key = %job_key,
+                        error = %e,
+                        "could not count the job's failure streak"
+                    );
+                    1
+                }
+            };
         // Fast-path: no rules configured means no work to do. Important
         // because the evaluator otherwise walks `alerts.rules` and may
         // open a store cursor — wasteful on the common path.
@@ -154,9 +176,10 @@ impl CompletionProcessor {
         let ctx = crate::alerts::FailureContext {
             job_key: job_key.to_string(),
             execution_id: event.execution_id.clone(),
-            error: event.error.clone().unwrap_or_else(|| "unknown".to_string()),
+            error,
             attempt: event.attempt,
             reason: reason.to_string(),
+            consecutive,
         };
         let _ = crate::alerts::evaluate_failure(
             &self.alerts,
@@ -168,41 +191,55 @@ impl CompletionProcessor {
         .await;
     }
 
-    /// A successful run ends the job's alert acknowledgement, if it has one,
-    /// and sends the recovery. Runs after every success, so it is one
-    /// primary-key lookup when there is nothing to end.
-    async fn end_acknowledgement(&self, job_key: &str, execution_id: &str) {
-        let ack = match self.store.take_job_alert_ack(job_key) {
-            Ok(Some(ack)) => ack,
-            Ok(None) => return,
-            Err(e) => {
-                tracing::warn!(
-                    target: "croniq::alerts",
-                    job_key = %job_key,
-                    error = %e,
-                    "could not end the job's alert acknowledgement"
-                );
-                return;
-            }
+    /// A successful run ends the job's failure streak and its alert
+    /// acknowledgement, if it has them, and sends the recovery. Runs after
+    /// every success, so it is two primary-key lookups when there is nothing
+    /// to end.
+    async fn end_incident(&self, job_key: &str, execution_id: &str) {
+        let take_failed = |what: &str, e: &dyn std::fmt::Display| {
+            tracing::warn!(
+                target: "croniq::alerts",
+                job_key = %job_key,
+                error = %e,
+                "could not end the job's {what}"
+            );
         };
+        let streak = self
+            .store
+            .take_job_failure_streak(job_key)
+            .unwrap_or_else(|e| {
+                take_failed("failure streak", &e);
+                None
+            });
+        let ack = self.store.take_job_alert_ack(job_key).unwrap_or_else(|e| {
+            take_failed("alert acknowledgement", &e);
+            None
+        });
+        if streak.is_none() && ack.is_none() {
+            return;
+        }
         tracing::info!(
             target: "croniq::alerts",
             job_key = %job_key,
             execution_id = %execution_id,
-            suppressed = ack.suppressed_count,
-            "acknowledged job recovered — acknowledgement ended"
+            failed_in_a_row = streak.as_ref().map_or(0, |s| s.consecutive),
+            acknowledged = ack.is_some(),
+            "job recovered"
         );
-        crate::api::audit::record_event(
-            &self.store,
-            "system",
-            None,
-            "alerts.ack.recovered",
-            "job",
-            Some(job_key),
-        );
+        if ack.is_some() {
+            crate::api::audit::record_event(
+                &self.store,
+                "system",
+                None,
+                "alerts.ack.recovered",
+                "job",
+                Some(job_key),
+            );
+        }
         let _ = crate::alerts::send_recovery(
             &self.alerts,
-            &ack,
+            ack.as_ref(),
+            streak.as_ref(),
             execution_id,
             &self.alert_throttle,
             &self.store,
@@ -343,7 +380,7 @@ impl CompletionProcessor {
                 ) {
                     Ok(true) => {
                         tracing::info!(id = %exec_uuid, "execution completed successfully");
-                        self.end_acknowledgement(&execution.job_key, &event.execution_id)
+                        self.end_incident(&execution.job_key, &event.execution_id)
                             .await;
                         ProcessedOutcome::Completed
                     }
@@ -1237,6 +1274,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
 
@@ -1321,6 +1359,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let processor = CompletionProcessor::with_alerts(
@@ -1411,6 +1450,7 @@ mod tests {
             throttle: None,
             expected_within: None,
             channels: vec!["ops".into()],
+            min_consecutive: 1,
         };
         let alerts = AlertsConfig {
             channels: [(
@@ -1461,6 +1501,111 @@ mod tests {
                 ("any".to_string(), "billing:dropped".to_string()),
                 ("dead-only".to_string(), "billing:dead".to_string()),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_third_failure_in_a_row_alerts_and_the_success_after_it_recovers() {
+        use croniq_config::compile::{
+            AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger,
+        };
+        use croniq_store::models::{AlertDeliveryFilter, AlertDeliveryKind};
+
+        let rule = |name: &str, trigger| RuleConfig {
+            name: name.into(),
+            trigger,
+            job_key_glob: "billing:*".into(),
+            min_attempts: 1,
+            min_consecutive: 3,
+            dead_letter_only: false,
+            throttle: None,
+            expected_within: None,
+            channels: vec!["ops".into()],
+        };
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".to_string(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![
+                rule("billing-failing", RuleTrigger::JobFailed),
+                rule("billing-back", RuleTrigger::JobRecovered),
+            ],
+        };
+        let store = make_store();
+        let processor = CompletionProcessor::with_alerts(
+            vec![make_job("billing:sync", 1)],
+            Arc::clone(&store),
+            make_runner(),
+            alerts,
+            crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
+        );
+        let deliveries = || {
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter::default())
+                .unwrap()
+        };
+
+        for n in 1..=3 {
+            let id = seed_execution(&store, "billing:sync");
+            processor
+                .process(event(id, CompletionStatus::Failure, 1))
+                .await;
+            assert_eq!(deliveries().len(), usize::from(n == 3), "after failure {n}");
+        }
+
+        let ok = seed_execution(&store, "billing:sync");
+        processor
+            .process(event(ok, CompletionStatus::Success, 1))
+            .await;
+        let all = deliveries();
+        assert_eq!(all.len(), 2);
+        let recovery = all
+            .iter()
+            .find(|d| d.kind == AlertDeliveryKind::Recovery)
+            .expect("a recovery");
+        assert_eq!(recovery.rule_name, "billing-back");
+        assert!(
+            store
+                .take_job_failure_streak("billing:sync")
+                .unwrap()
+                .is_none()
+        );
+
+        // The next failure is the first of a new streak: quiet again.
+        let id = seed_execution(&store, "billing:sync");
+        processor
+            .process(event(id, CompletionStatus::Failure, 1))
+            .await;
+        assert_eq!(deliveries().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failure_that_succeeds_on_retry_is_not_part_of_a_streak() {
+        let store = make_store();
+        let processor = CompletionProcessor::new(
+            vec![make_job("billing:sync", 3)],
+            Arc::clone(&store),
+            make_runner(),
+        );
+        let id = seed_execution(&store, "billing:sync");
+        let outcome = processor
+            .process(event(id, CompletionStatus::Failure, 1))
+            .await;
+        assert!(matches!(outcome, ProcessedOutcome::Retrying { .. }));
+        assert!(
+            store
+                .take_job_failure_streak("billing:sync")
+                .unwrap()
+                .is_none()
         );
     }
 }

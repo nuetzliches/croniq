@@ -1102,6 +1102,7 @@ impl WatchdogLoop {
                     ),
                     attempt: 0,
                     reason: "missed_fire".to_string(),
+                    consecutive: 1,
                 };
                 crate::alerts::dispatch_rule(
                     rule,
@@ -1240,6 +1241,7 @@ impl WatchdogLoop {
                     ),
                     attempt: oldest.attempt,
                     reason: crate::alerts::JOB_BLOCKED_REASON.to_string(),
+                    consecutive: 1,
                 };
                 crate::alerts::dispatch_rule(
                     rule,
@@ -1312,6 +1314,7 @@ impl WatchdogLoop {
                 ),
                 attempt: 0,
                 reason: crate::alerts::MAINTENANCE_ACTIVE_REASON.to_string(),
+                consecutive: 1,
             };
             crate::alerts::dispatch_rule(
                 rule,
@@ -1488,6 +1491,7 @@ impl WatchdogLoop {
                     ),
                     attempt: execution.attempt,
                     reason: "sla_miss".to_string(),
+                    consecutive: 1,
                 };
                 crate::alerts::dispatch_rule(
                     rule,
@@ -2934,6 +2938,7 @@ mod tests {
             throttle: None,
             expected_within: Some(within.into()),
             channels: vec![channel.into()],
+            min_consecutive: 1,
         }
     }
 
@@ -3144,6 +3149,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
@@ -3196,6 +3202,7 @@ mod tests {
             throttle: None,
             expected_within: Some(grace.into()),
             channels: vec![channel.into()],
+            min_consecutive: 1,
         }
     }
 
@@ -3526,6 +3533,7 @@ mod tests {
             throttle: throttle.map(Into::into),
             expected_within: Some(within.into()),
             channels: vec!["ops".into()],
+            min_consecutive: 1,
         }
     }
 
@@ -3667,6 +3675,7 @@ mod tests {
             throttle: throttle.map(Into::into),
             expected_within: Some(within.into()),
             channels: vec!["ops".into()],
+            min_consecutive: 1,
         }
     }
 
@@ -3905,6 +3914,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         }
     }

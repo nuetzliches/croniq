@@ -104,6 +104,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("033_user_notes_seen.sql"),
     ),
     ("034_job_alert_acks", include_str!("034_job_alert_acks.sql")),
+    (
+        "035_job_failure_streaks",
+        include_str!("035_job_failure_streaks.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -1146,6 +1150,50 @@ mod tests {
                     (job_key, note, acked_by, acked_by_name, acked_at, expires_at)
                  VALUES ('billing:invoice', 'again', 'u-2', 'Bob',
                          '2026-10-01T01:00:00Z', '2026-10-04T01:00:00Z')",
+                [],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn migration_035_creates_job_failure_streaks() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "034_job_alert_acks").unwrap();
+        let exists = |conn: &Connection| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'job_failure_streaks'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        // An upgraded deployment starts with no streaks: the first permanent
+        // failure after the upgrade counts as the first in a row.
+        assert_eq!(exists(&conn), 0);
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "035_job_failure_streaks")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+        assert_eq!(exists(&conn), 1);
+
+        conn.execute(
+            "INSERT INTO job_failure_streaks
+                (job_key, consecutive, since, last_execution_id, last_error, last_failed_at)
+             VALUES ('billing:sync', 1, '2026-10-01T00:00:00Z', 'e-1', '503',
+                     '2026-10-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        // One streak per job.
+        assert!(
+            conn.execute(
+                "INSERT INTO job_failure_streaks
+                    (job_key, consecutive, since, last_execution_id, last_error, last_failed_at)
+                 VALUES ('billing:sync', 1, '2026-10-01T01:00:00Z', 'e-2', '503',
+                         '2026-10-01T01:00:00Z')",
                 [],
             )
             .is_err()

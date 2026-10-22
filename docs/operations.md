@@ -1560,8 +1560,10 @@ guessed, or until someone remembers to lift it.
 
 An **acknowledgement** is scoped to one job and ends by itself:
 
-- the job's **next successful run** ends it, and the channels of the job's
-  `job_failed` rules get a **recovery**;
+- the job's **next successful run** ends it and sends a **recovery** — to
+  the job's `job_recovered` rules when it has any (see
+  [Failures in a row, and the recovery](#failures-in-a-row-and-the-recovery)),
+  otherwise to the channels of its `job_failed` rules;
 - if it **runs out** before that — it always has a deadline, 72 hours unless
   you set one, at most 7 days — the watchdog ends it and alerts that the job
   is **still failing**;
@@ -1620,6 +1622,70 @@ acknowledgement.
 has been waited out for a day. The audit log records `alerts.ack.set`,
 `alerts.ack.cleared`, and — with the system as actor — `alerts.ack.recovered`
 and `alerts.ack.expired`.
+
+## Failures in a row, and the recovery
+
+Croniq counts, per job, how many runs **in a row have failed for good** — run
+out of retries and been dead-lettered or dropped. A run that fails and then
+succeeds on retry is not counted; it never failed for good. The job's next
+successful run ends the count. The count is stored, so a restart in the middle
+of an outage neither starts it over nor forgets that a recovery is owed.
+
+Two things use it.
+
+**`min_consecutive N` on a `job_failed` rule** fires from the Nth failure in a
+row on, not before. For a job that talks to a flaky provider and usually
+manages on the next run, that is the difference between paging on every blip
+and paging when it has stayed broken:
+
+```
+alerts {
+  rule "provider-down" {
+    when job_failed
+    job_key "billing:*"
+    min_consecutive 3   # the 3rd failed run in a row, and every one after
+    throttle 1h
+    channels "ops"
+  }
+
+  rule "provider-back" {
+    when job_recovered
+    job_key "billing:*"
+    min_consecutive 3   # only after a streak someone was told about
+    channels "ops"
+  }
+}
+```
+
+It is not `min_attempts`: that counts the attempts of one run (its retries),
+`min_consecutive` counts runs. Both can be set; a rule fires only when both
+are met.
+
+**`when job_recovered`** is the good news: it fires on the success that ends a
+streak, once per streak, when the streak was at least the rule's
+`min_consecutive` long (default 1, any streak). Give it the same
+`min_consecutive` as the failure rule it answers, so it never announces the
+end of a failure nobody was told about. It needs no `expected_within`;
+`throttle` works as on any rule, so a job flapping between failure and success
+announces its recovery at most once per window.
+
+The recovery names how many runs failed in a row, since when, and the last
+error. Channels see it as a recovery, not a failure: shell
+`CRONIQ_EVENT=job_recovered` / `CRONIQ_REASON=job_recovered`, webhook
+`"event": "job_recovered"`, email subject `[Croniq] <job> recovered (rule: …)`,
+and the delivery log marks it `recovery`.
+
+Once a recovery has gone out, the incident is over: the job's `job_failed`
+windows are cleared, so the next failure alerts at once instead of waiting
+out a window the outage opened. A `job_recovered` rule keeps its own window.
+
+**With an acknowledgement.** When an
+[acknowledgement](#acknowledging-a-failing-job) ends because the job
+succeeded, its recovery goes to the job's `job_recovered` rules — whatever
+the streak, since someone is waiting for exactly that news — and carries who
+acknowledged and why. A job that has no `job_recovered` rule sends it to the
+channels of its `job_failed` rules instead. Without an acknowledgement and
+without a `job_recovered` rule, a streak ends in silence, as it always has.
 
 ## Operator notes
 

@@ -112,13 +112,32 @@ function startComposing(intent: 'snooze' | 'disable' | 'throttle') {
   duration.value = intent === 'throttle' ? '30m' : '1h'
 }
 
+/** `3` → `3rd`. English ordinals for the "in a row" fact. */
+function ordinal(n: number): string {
+  const tens = n % 100
+  if (tens >= 11 && tens <= 13) return `${n}th`
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
+}
+
 const facts = computed(() => {
   const rule = props.rule
   if (!rule) return []
   return [
     { label: 'Jobs', value: rule.job_key_glob, mono: true },
     { label: 'Channels', value: rule.channels.join(' ') || '—', mono: true },
-    { label: 'Min attempts', value: String(rule.min_attempts) },
+    // Attempts count retries within one run, which a recovery has none of.
+    ...(rule.trigger === 'job_recovered'
+      ? []
+      : [{ label: 'Min attempts', value: String(rule.min_attempts) }]),
+    // Only when it says something: 1 is every failure, the default.
+    ...((rule.min_consecutive ?? 1) > 1
+      ? [{
+          label: 'In a row',
+          value: rule.trigger === 'job_recovered'
+            ? `after ${rule.min_consecutive} or more failed runs in a row`
+            : `from the ${ordinal(rule.min_consecutive!)} failed run in a row on`,
+        }]
+      : []),
     ...(rule.dead_letter_only ? [{ label: 'Scope', value: 'dead-lettered runs only' }] : []),
     ...(rule.throttle ? [{ label: 'Throttle', value: rule.throttle, mono: true }] : []),
     ...(rule.expected_within

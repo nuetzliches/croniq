@@ -137,6 +137,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("032_user_favorite_jobs", PG_MIGRATION_032),
     ("033_user_notes_seen", PG_MIGRATION_033),
     ("034_job_alert_acks", PG_MIGRATION_034),
+    ("035_job_failure_streaks", PG_MIGRATION_035),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -366,6 +367,19 @@ CREATE TABLE IF NOT EXISTS job_alert_acks (
 CREATE INDEX IF NOT EXISTS idx_job_alert_acks_expires_at
     ON job_alert_acks(expires_at);
 ALTER TABLE alert_deliveries ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'alert';
+"#;
+
+// Failure streaks per job. Mirrors migrations/035_job_failure_streaks.sql —
+// see there for what each column is for.
+const PG_MIGRATION_035: &str = r#"
+CREATE TABLE IF NOT EXISTS job_failure_streaks (
+    job_key            TEXT PRIMARY KEY,
+    consecutive        BIGINT NOT NULL,
+    since              TIMESTAMPTZ NOT NULL,
+    last_execution_id  TEXT NOT NULL,
+    last_error         TEXT NOT NULL,
+    last_failed_at     TIMESTAMPTZ NOT NULL
+);
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -3234,6 +3248,52 @@ impl AlertStore for PgStore {
             .map_err(map_err)?;
         Ok(rows.iter().map(row_to_job_alert_ack).collect())
     }
+
+    fn record_job_failure(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<JobFailureStreak, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                &format!(
+                    "INSERT INTO job_failure_streaks
+                        (job_key, consecutive, since, last_execution_id, last_error, last_failed_at)
+                     VALUES ($1, 1, $2, $3, $4, $2)
+                     ON CONFLICT (job_key) DO UPDATE SET
+                        consecutive       = job_failure_streaks.consecutive + 1,
+                        last_execution_id = excluded.last_execution_id,
+                        last_error        = excluded.last_error,
+                        last_failed_at    = excluded.last_failed_at
+                     RETURNING {JOB_FAILURE_STREAK_COLUMNS}"
+                ),
+                &[&job_key, &at, &execution_id, &error],
+            )
+            .map_err(map_err)?;
+        rows.first()
+            .map(row_to_job_failure_streak)
+            .ok_or_else(|| StoreError::Database("upsert returned no row".into()))
+    }
+
+    fn take_job_failure_streak(
+        &self,
+        job_key: &str,
+    ) -> Result<Option<JobFailureStreak>, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let rows = db
+            .query(
+                &format!(
+                    "DELETE FROM job_failure_streaks WHERE job_key = $1 \
+                     RETURNING {JOB_FAILURE_STREAK_COLUMNS}"
+                ),
+                &[&job_key],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(row_to_job_failure_streak))
+    }
 }
 
 impl MaintenanceStore for PgStore {
@@ -3792,6 +3852,20 @@ fn row_to_alert_delivery(row: &postgres::Row) -> AlertDelivery {
         fired_at: row.get(7),
         delivered_at: row.get(8),
         kind: AlertDeliveryKind::parse_db(&row.get::<_, String>(9)),
+    }
+}
+
+const JOB_FAILURE_STREAK_COLUMNS: &str =
+    "job_key, consecutive, since, last_execution_id, last_error, last_failed_at";
+
+fn row_to_job_failure_streak(row: &postgres::Row) -> JobFailureStreak {
+    JobFailureStreak {
+        job_key: row.get(0),
+        consecutive: row.get::<_, i64>(1).max(0) as u32,
+        since: row.get(2),
+        last_execution_id: row.get(3),
+        last_error: row.get(4),
+        last_failed_at: row.get(5),
     }
 }
 

@@ -734,6 +734,27 @@ pub trait AlertStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Vec<JobAlertAck>, StoreError>;
+
+    // ─── Failure streaks ───
+
+    /// Count a permanent failure of `job_key` — a run that exhausted its
+    /// retries — and return the streak it is now part of. Starts one at 1
+    /// when the job had none.
+    fn record_job_failure(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<JobFailureStreak, StoreError>;
+
+    /// End the job's failure streak and return it, or `None` when its latest
+    /// finished run did not fail for good. Called on every success; one
+    /// statement, so two completions racing cannot both see the streak.
+    fn take_job_failure_streak(
+        &self,
+        job_key: &str,
+    ) -> Result<Option<JobFailureStreak>, StoreError>;
 }
 
 /// Global maintenance switch persistence (single-row table).

@@ -57,6 +57,7 @@ fn rule(name: &str) -> RuleConfig {
         throttle: Some("10m".into()),
         expected_within: None,
         channels: vec!["ops".into()],
+        min_consecutive: 1,
     }
 }
 
