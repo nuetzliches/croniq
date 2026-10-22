@@ -126,6 +126,10 @@ test.describe('notes inbox', () => {
 
   test('g then o opens the inbox', async ({ app }) => {
     await app.goto('/jobs')
+    // The shortcut listener belongs to the shell, a lazy chunk that mounts
+    // only after the session is restored — `goto` returns on `load`, which
+    // can come first, and a `g` pressed then is lost.
+    await expect(app.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
     await app.keyboard.press('g')
     await app.keyboard.press('o')
     await expect.poll(() => new URL(app.url()).pathname).toBe('/notes')
