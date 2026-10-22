@@ -222,6 +222,28 @@ export function localTimeZone(): string {
 }
 
 /**
+ * A calendar date that is already a day in some zone — `2026-10-22`, a
+ * failure-heatmap row — as "Thu" (`weekday`) or "Thu, Oct 22" (`day`), in the
+ * browser's locale or in `locale`, for tests.
+ *
+ * Read and written in UTC: the date names no instant, and converting it into
+ * the browser's zone would move it a day for everyone west of Greenwich.
+ */
+export function formatCalendarDate(
+  date: string,
+  style: 'weekday' | 'day' = 'day',
+  locale?: string,
+): string {
+  const parsed = new Date(`${date}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime())) return date
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'short',
+    ...(style === 'day' ? { month: 'short', day: 'numeric' } : {}),
+    timeZone: 'UTC',
+  }).format(parsed)
+}
+
+/**
  * The word a state is shown as.
  *
  * `claimed` is the store's name for a run a runner holds, and a runner holds a

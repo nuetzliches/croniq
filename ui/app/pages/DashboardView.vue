@@ -15,7 +15,7 @@ import type { Execution } from '~/api/types'
 import { useActionError } from '~/composables/useActionError'
 import { useCanWriteNotes } from '~/composables/useCanWriteNotes'
 import { useExecutionsStream } from '~/composables/useExecutionsStream'
-import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
+import { formatAbsolute, formatCalendarDate, formatDuration, formatRelative } from '~/lib/format'
 import { ACTIVE_CAP, countActive } from '~/lib/live-timeline'
 import { notesByExecution } from '~/lib/notes'
 
@@ -167,7 +167,8 @@ const successRate = computed(() => {
  */
 const heatRows = computed(() => heatmap.value?.rows ?? [])
 const heatMax = computed(() => Math.max(1, ...heatRows.value.flat()))
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+/** Each row's day, from the date the server sends: the last row is today. */
+const heatDays = computed(() => heatmap.value?.dates ?? [])
 </script>
 
 <template>
@@ -328,6 +329,12 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         <section class="rounded-xl border border-default bg-default p-4 shadow-sm">
           <p class="cq-label mb-3">
             Failures · last 7 days
+            <span
+              v-if="heatmap?.timezone"
+              v-tooltip="'Days and hours are counted in your browser\'s time zone.'"
+              class="font-normal normal-case text-dimmed"
+              data-testid="heatmap-zone"
+            >· {{ heatmap.timezone }}</span>
           </p>
           <AppEmpty
             v-if="heatRows.length === 0"
@@ -344,12 +351,17 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
               :key="dayIndex"
               class="flex items-center gap-1.5"
             >
-              <span class="cq-label w-8 shrink-0 normal-case">{{ WEEKDAYS[dayIndex] }}</span>
+              <span
+                class="cq-label w-8 shrink-0 normal-case"
+                data-testid="heatmap-day"
+              >{{
+                heatDays[dayIndex] ? formatCalendarDate(heatDays[dayIndex], 'weekday') : ''
+              }}</span>
               <div class="flex min-w-0 flex-1 gap-px">
                 <div
                   v-for="(count, hour) in row"
                   :key="hour"
-                  v-tooltip="`${WEEKDAYS[dayIndex]} ${String(hour).padStart(2, '0')}:00 — ${count} failure${count === 1 ? '' : 's'}`"
+                  v-tooltip="`${heatDays[dayIndex] ? formatCalendarDate(heatDays[dayIndex]) : ''} ${String(hour).padStart(2, '0')}:00 — ${count} failure${count === 1 ? '' : 's'}`"
                   class="h-3 min-w-0 flex-1 rounded-[2px]"
                   :class="count ? 'bg-error' : 'bg-elevated'"
                   :style="count ? { opacity: 0.35 + (count / heatMax) * 0.65 } : undefined"

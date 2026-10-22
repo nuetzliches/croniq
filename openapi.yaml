@@ -528,9 +528,16 @@ components:
       type: object
       properties:
         days: { type: integer }
+        timezone:
+          type: string
+          description: IANA zone the days and hours are counted in (the `tz` parameter, UTC by default)
+        dates:
+          type: array
+          description: Each row's calendar date in `timezone`, oldest first; the last is today
+          items: { type: string, format: date }
         rows:
           type: array
-          description: rows[day][hour] = failure count
+          description: rows[day][hour] = failure count, day 0 the oldest, by calendar date and hour of day in `timezone`
           items:
             type: array
             items: { type: integer }
@@ -3543,12 +3550,17 @@ paths:
       summary: Failure heatmap (day × hour) + hourly hotspots
       parameters:
         - { name: days, in: query, schema: { type: integer, default: 28, minimum: 7, maximum: 90 } }
+        - name: tz
+          in: query
+          description: IANA zone to count days and hours in. Defaults to UTC.
+          schema: { type: string, example: Europe/Vienna }
       responses:
         "200":
           description: Heatmap
           content:
             application/json:
               schema: { $ref: "#/components/schemas/FailureHeatmap" }
+        "400": { description: Unknown timezone }
 
   /v1/insights/runtime:
     get:

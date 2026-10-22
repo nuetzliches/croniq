@@ -477,6 +477,10 @@ export type RuntimeWindow = '24h' | '7d' | '30d'
 
 export interface FailureHeatmap {
   days: number
+  /** The IANA zone `dates` and the hour columns are counted in. */
+  timezone: string
+  /** Each row's calendar date (`YYYY-MM-DD`), oldest first; the last is today. */
+  dates: string[]
   rows: number[][]
   hotspots: { hour: number; failures: number }[]
 }

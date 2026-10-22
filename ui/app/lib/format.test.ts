@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatAbsolute,
   formatBadgeCount,
+  formatCalendarDate,
   formatClockTime,
   formatDuration,
   formatLogLines,
@@ -226,5 +227,22 @@ describe('formatBadgeCount', () => {
   it('caps a larger one', () => {
     expect(formatBadgeCount(100)).toBe('99+')
     expect(formatBadgeCount(4_000)).toBe('99+')
+  })
+})
+
+describe('formatCalendarDate', () => {
+  it('names the weekday of the date as written', () => {
+    expect(formatCalendarDate('2026-10-22', 'weekday', 'en-US')).toBe('Thu')
+    expect(formatCalendarDate('2026-10-22', 'day', 'en-US')).toBe('Thu, Oct 22')
+  })
+
+  it('does not move the date into the zone of the machine', () => {
+    // A DST switch day, and a year boundary: both stay the day they are.
+    expect(formatCalendarDate('2026-03-29', 'day', 'en-US')).toBe('Sun, Mar 29')
+    expect(formatCalendarDate('2027-01-01', 'day', 'en-US')).toBe('Fri, Jan 1')
+  })
+
+  it('gives back what it cannot read', () => {
+    expect(formatCalendarDate('not-a-date')).toBe('not-a-date')
   })
 })

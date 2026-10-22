@@ -45,6 +45,7 @@ import type {
   User,
   VersionResponse,
 } from './types'
+import { localTimeZone } from '~/lib/format'
 import { useAuthStore } from '~/stores/auth'
 
 /**
@@ -729,9 +730,12 @@ export function useJobRuntime(window: MaybeRefOrGetter<RuntimeWindow>) {
 }
 
 export function useFailureHeatmap(days = 7) {
+  // Days and hours in the browser's zone, the one every other time on the
+  // dashboard is shown in (#864).
+  const tz = localTimeZone()
   return useQuery({
-    queryKey: ['failure-heatmap', days],
-    queryFn: () => apiGet<FailureHeatmap>('/v1/insights/failures', { days }),
+    queryKey: ['failure-heatmap', days, tz],
+    queryFn: () => apiGet<FailureHeatmap>('/v1/insights/failures', { days, tz }),
     enabled: authedAnd(),
     refetchInterval: 60_000,
   })
