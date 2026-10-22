@@ -94,6 +94,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stopped where the end of the list had been, leaving the row cut off below
   the fold. For a moment after the scroll, until you scroll yourself, the row
   is now kept in view while the list settles.
+- **The dashboard's failure heatmap puts each failure on its own day, in your
+  time zone ([#864](https://github.com/nuetzliches/croniq/issues/864)).**
+  Three things were wrong with it:
+  - **Wrong row.** `GET /v1/insights/failures` counted days back with
+    `(today's midnight − fire_at).num_days()`, which truncates toward zero.
+    Every failure from yesterday landed in today's row, so today could show
+    failures at hours still to come, and every older day slid one row
+    towards it. Failures are now bucketed by calendar date.
+  - **Wrong label.** The rows were labelled from a fixed Mon–Sun list, so
+    today always read "Sun". The response now carries each row's `dates`, and
+    the dashboard labels the rows from them, with the date in the tooltip.
+  - **Unnamed zone.** Days and hours were UTC, and nothing said so. The
+    endpoint takes an IANA `tz` (UTC when absent; an unknown name is a
+    `400`) and reports the zone it counted in as `timezone`. The dashboard
+    asks for the browser's zone, the one it shows every other time in, and
+    names it beside the heading.
 - **A note written with an API key is signed with the client's name.** It
   was signed with the client id, which for a client created by `croniq init`
   or the dashboard is a UUID — what the Notes inbox, a run's and a job's notes

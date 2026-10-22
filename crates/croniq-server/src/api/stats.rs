@@ -10,7 +10,8 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_store::models::{ExecutionFilter, ExecutionState};
@@ -230,11 +231,20 @@ pub struct FailuresParams {
     /// Window in days. Clamped to [7, 90]. Default 28.
     #[serde(default)]
     pub days: Option<u32>,
+    /// IANA zone the days and hours are counted in. Default UTC. The
+    /// dashboard sends the browser's zone, the one it shows every other
+    /// time in; an unknown name is a `400`, not a silent UTC (ADR-0007).
+    #[serde(default)]
+    pub tz: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct FailureHeatmap {
     pub days: u32,
+    /// The zone `dates` and the hour columns are in.
+    pub timezone: String,
+    /// The calendar date of each row, oldest first; the last is today.
+    pub dates: Vec<NaiveDate>,
     /// `rows[day_index][hour_of_day]` = failure count.
     /// `day_index = 0` is the oldest day in the window;
     /// `day_index = days-1` is today.
@@ -260,7 +270,16 @@ pub async fn handle_failure_heatmap(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     let days = params.days.unwrap_or(28).clamp(7, 90);
-    let since = Utc::now() - Duration::days(days as i64);
+    let tz = match params.tz.as_deref().filter(|t| !t.is_empty()) {
+        Some(name) => croniq_config::timezone::parse(name).map_err(|_| StatusCode::BAD_REQUEST)?,
+        None => chrono_tz::UTC,
+    };
+    let now = Utc::now();
+    // A day more than the window. The oldest row starts at a local midnight
+    // less than `days` days ago, but a DST change in between moves that
+    // midnight by an hour; the spare day covers it. What falls outside the
+    // rows is dropped when it is bucketed.
+    let since = now - Duration::days(days as i64 + 1);
     let filter = ExecutionFilter {
         states: vec![ExecutionState::Failed],
         since: Some(since),
@@ -284,23 +303,11 @@ pub async fn handle_failure_heatmap(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     );
 
-    let mut rows = vec![vec![0u32; 24]; days as usize];
-    let mut hourly_totals = [0u32; 24];
-    let today = Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc();
-    for e in &execs {
-        let days_back = ((today - e.fire_at).num_days()).max(0) as usize;
-        let day_index = (days as usize).saturating_sub(1).saturating_sub(days_back);
-        if day_index >= rows.len() {
-            continue;
-        }
-        let hour = e.fire_at.hour() as usize;
-        rows[day_index][hour] = rows[day_index][hour].saturating_add(1);
-        hourly_totals[hour] = hourly_totals[hour].saturating_add(1);
-    }
+    let today = now.with_timezone(&tz).date_naive();
+    let (rows, hourly_totals) = bucket_failures(execs.iter().map(|e| e.fire_at), tz, today, days);
+    let dates = (0..days)
+        .map(|i| today - Duration::days((days - 1 - i) as i64))
+        .collect();
 
     let mut hotspots: Vec<HeatmapHotspot> = hourly_totals
         .iter()
@@ -316,9 +323,41 @@ pub async fn handle_failure_heatmap(
 
     Ok(Json(FailureHeatmap {
         days,
+        timezone: tz.name().to_string(),
+        dates,
         rows,
         hotspots,
     }))
+}
+
+/// Count failures into `days` rows of 24 hours, by the calendar date and the
+/// hour of day each one fired at in `tz`; the last row is `today`. Returns
+/// the rows and the per-hour totals across them.
+///
+/// By date, not by `(today_midnight - fire_at).num_days()`: that truncates
+/// toward zero, so all of yesterday counted as today and every older day
+/// slid one row towards it (#864). A failure outside the rows — before the
+/// oldest day, or dated after `today` by a clock ahead of ours — is left out.
+fn bucket_failures(
+    fire_ats: impl Iterator<Item = DateTime<Utc>>,
+    tz: Tz,
+    today: NaiveDate,
+    days: u32,
+) -> (Vec<Vec<u32>>, [u32; 24]) {
+    let mut rows = vec![vec![0u32; 24]; days as usize];
+    let mut hourly_totals = [0u32; 24];
+    for fire_at in fire_ats {
+        let local = fire_at.with_timezone(&tz);
+        let days_back = (today - local.date_naive()).num_days();
+        if days_back < 0 || days_back >= days as i64 {
+            continue;
+        }
+        let day_index = (days as i64 - 1 - days_back) as usize;
+        let hour = local.hour() as usize;
+        rows[day_index][hour] = rows[day_index][hour].saturating_add(1);
+        hourly_totals[hour] = hourly_totals[hour].saturating_add(1);
+    }
+    (rows, hourly_totals)
 }
 
 // ─── /v1/insights/runtime ────────────────────────────────────────────────────
@@ -396,4 +435,70 @@ pub async fn handle_runtime(
         since,
         jobs,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// The repro from #864: yesterday evening's failures got today's row.
+    #[test]
+    fn yesterday_evening_is_yesterdays_row_not_todays() {
+        let fires = [at("2026-10-21T20:00:00Z"), at("2026-10-22T13:00:00Z")];
+        let (rows, _) = bucket_failures(fires.into_iter(), chrono_tz::UTC, date("2026-10-22"), 7);
+        assert_eq!(rows[6][13], 1, "today, 13:00");
+        assert_eq!(
+            rows[6][20], 0,
+            "nothing at 20:00 today — it has not happened yet"
+        );
+        assert_eq!(rows[5][20], 1, "yesterday, 20:00");
+    }
+
+    #[test]
+    fn each_older_day_keeps_its_own_row() {
+        let fires = [at("2026-10-16T05:00:00Z"), at("2026-10-19T05:00:00Z")];
+        let (rows, _) = bucket_failures(fires.into_iter(), chrono_tz::UTC, date("2026-10-22"), 7);
+        assert_eq!(rows[0][5], 1, "the oldest row is 2026-10-16");
+        assert_eq!(rows[3][5], 1, "2026-10-19 is three rows below it");
+        assert_eq!(rows.iter().flatten().sum::<u32>(), 2);
+    }
+
+    #[test]
+    fn days_and_hours_are_counted_in_the_requested_zone() {
+        // 23:30 UTC on the 21st is 01:30 on the 22nd in Vienna (CEST, +2).
+        let fires = [at("2026-10-21T23:30:00Z")];
+        let (rows, hourly) = bucket_failures(
+            fires.into_iter(),
+            chrono_tz::Europe::Vienna,
+            date("2026-10-22"),
+            7,
+        );
+        assert_eq!(rows[6][1], 1);
+        assert_eq!(hourly[1], 1);
+
+        let (rows, hourly) =
+            bucket_failures(fires.into_iter(), chrono_tz::UTC, date("2026-10-22"), 7);
+        assert_eq!(rows[5][23], 1);
+        assert_eq!(hourly[23], 1);
+    }
+
+    #[test]
+    fn failures_outside_the_rows_are_left_out() {
+        let fires = [
+            at("2026-10-15T12:00:00Z"), // a day before the oldest row
+            at("2026-10-23T00:30:00Z"), // tomorrow, from a clock ahead of ours
+        ];
+        let (rows, hourly) =
+            bucket_failures(fires.into_iter(), chrono_tz::UTC, date("2026-10-22"), 7);
+        assert_eq!(rows.iter().flatten().sum::<u32>(), 0);
+        assert_eq!(hourly.iter().sum::<u32>(), 0);
+    }
 }
