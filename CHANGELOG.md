@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-22
+
 ### Added
 
 - **Alert on failures in a row, and on the recovery.** Croniq now counts,
