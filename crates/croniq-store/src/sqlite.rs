@@ -2816,6 +2816,65 @@ impl AlertStore for SqliteStore {
         }
         Ok(expired)
     }
+
+    fn record_job_failure(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<JobFailureStreak, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let at_sql = dt_to_sql(&at);
+        conn.execute(
+            "INSERT INTO job_failure_streaks
+                (job_key, consecutive, since, last_execution_id, last_error, last_failed_at)
+             VALUES (?1, 1, ?2, ?3, ?4, ?2)
+             ON CONFLICT(job_key) DO UPDATE SET
+                consecutive       = consecutive + 1,
+                last_execution_id = excluded.last_execution_id,
+                last_error        = excluded.last_error,
+                last_failed_at    = excluded.last_failed_at",
+            params![job_key, at_sql, execution_id, error],
+        )
+        .map_err(map_err)?;
+        conn.query_row(
+            &format!(
+                "SELECT {JOB_FAILURE_STREAK_COLUMNS} FROM job_failure_streaks WHERE job_key = ?1"
+            ),
+            params![job_key],
+            row_to_job_failure_streak,
+        )
+        .map_err(map_err)
+    }
+
+    fn take_job_failure_streak(
+        &self,
+        job_key: &str,
+    ) -> Result<Option<JobFailureStreak>, StoreError> {
+        // Read and delete under the one connection lock, so a concurrent
+        // take cannot see the row as well.
+        let conn = self.conn.lock().unwrap();
+        let streak = conn
+            .query_row(
+                &format!(
+                    "SELECT {JOB_FAILURE_STREAK_COLUMNS} FROM job_failure_streaks \
+                     WHERE job_key = ?1"
+                ),
+                params![job_key],
+                row_to_job_failure_streak,
+            )
+            .optional()
+            .map_err(map_err)?;
+        if streak.is_some() {
+            conn.execute(
+                "DELETE FROM job_failure_streaks WHERE job_key = ?1",
+                params![job_key],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(streak)
+    }
 }
 
 impl MaintenanceStore for SqliteStore {
@@ -3295,6 +3354,20 @@ fn row_to_alert_delivery(row: &rusqlite::Row<'_>) -> Result<AlertDelivery, rusql
         fired_at: sql_to_dt(&row.get::<_, String>(7)?),
         delivered_at: sql_to_opt_dt(row.get(8)?),
         kind: AlertDeliveryKind::parse_db(&row.get::<_, String>(9)?),
+    })
+}
+
+const JOB_FAILURE_STREAK_COLUMNS: &str =
+    "job_key, consecutive, since, last_execution_id, last_error, last_failed_at";
+
+fn row_to_job_failure_streak(row: &rusqlite::Row<'_>) -> Result<JobFailureStreak, rusqlite::Error> {
+    Ok(JobFailureStreak {
+        job_key: row.get(0)?,
+        consecutive: row.get::<_, i64>(1)?.max(0) as u32,
+        since: sql_to_dt(&row.get::<_, String>(2)?),
+        last_execution_id: row.get(3)?,
+        last_error: row.get(4)?,
+        last_failed_at: sql_to_dt(&row.get::<_, String>(5)?),
     })
 }
 

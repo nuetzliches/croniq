@@ -327,6 +327,8 @@ impl AlertStore for FaultStore {
         take_job_alert_ack(job_key: &str) -> Option<JobAlertAck>;
         record_job_alert_ack_suppression(job_key: &str, execution_id: &str, error: &str, at: DateTime<Utc>) -> ();
         take_expired_job_alert_acks(now: DateTime<Utc>) -> Vec<JobAlertAck>;
+        record_job_failure(job_key: &str, execution_id: &str, error: &str, at: DateTime<Utc>) -> JobFailureStreak;
+        take_job_failure_streak(job_key: &str) -> Option<JobFailureStreak>;
     }
 }
 

@@ -8,6 +8,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Alert on failures in a row, and on the recovery.** Croniq now counts,
+  per job, the runs in a row that failed for good (dead-lettered or dropped;
+  a run that succeeds on retry is not one), and keeps the count across
+  restarts. `min_consecutive N` on a `job_failed` rule fires from the Nth such
+  failure on — a job that talks to a flaky provider pages when it stays
+  broken, not on every blip. The new trigger `when job_recovered` fires on the
+  success that ends a streak, when the streak was at least its
+  `min_consecutive` long, with how many runs failed, since when, and the last
+  error; `throttle` limits a flapping job to one recovery per window. A
+  recovery closes the incident: the job's `job_failed` throttle windows are
+  cleared, so the next failure alerts at once. The dashboard names the
+  trigger and shows "In a row" on a rule that sets it; the DSL generator
+  offers both. See
+  [Failures in a row, and the recovery](docs/operations.md#failures-in-a-row-and-the-recovery).
+  - When an acknowledgement ends with a success, its recovery now goes to the
+    job's `job_recovered` rules if it has any, and to its `job_failed` rules'
+    channels only when it has none — once, not twice.
+  - Migration 035 adds `job_failure_streaks`.
 - **Acknowledge a failing job instead of snoozing its rule.** A job that
   keeps failing for a reason nobody here can fix — an upstream outage — kept
   alerting while there was nothing to do but wait, and the only way to quiet

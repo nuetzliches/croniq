@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-10-06b'
+const WASM_VERSION = '2026-10-22a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-06b'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-22a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -1401,16 +1401,23 @@ function renderAlertsEditor() {
     const row = document.createElement('div'); row.className = 'rule-row'
     const h = document.createElement('div'); h.className = 'rule-row-head'
     h.appendChild(textInput(r.name, 'name', (v) => { r.name = v }))
-    h.appendChild(selectInput(r.when, ['job_failed', 'job_sla_missed', 'job_missed_fire', 'job_blocked', 'maintenance_active'], (v) => { r.when = v; renderConfigFields() }))
+    h.appendChild(selectInput(r.when, ['job_failed', 'job_recovered', 'job_sla_missed', 'job_missed_fire', 'job_blocked', 'maintenance_active'], (v) => { r.when = v; renderConfigFields() }))
     h.appendChild(removeBtn(() => { A.rules.splice(idx, 1); renderConfigFields(); refreshConfig() }))
     row.appendChild(h)
-    // Every trigger but job_failed needs a duration, or the compiler drops the rule.
-    if (r.when !== 'job_failed') {
+    // Every trigger but job_failed and job_recovered needs a duration, or the
+    // compiler drops the rule.
+    const streakTrigger = r.when === 'job_failed' || r.when === 'job_recovered'
+    if (!streakTrigger) {
       row.appendChild(field('Expected within', textInput(r.expectedWithin, r.when === 'maintenance_active' ? '30m' : '10m', (v) => { r.expectedWithin = v })))
     }
     // Maintenance is global; a job key glob means nothing there.
     if (r.when !== 'maintenance_active') {
       row.appendChild(field('Job key glob', textInput(r.jobKey, 'billing:*', (v) => { r.jobKey = v })))
+    }
+    // How many runs in a row must have failed for good: before a job_failed
+    // rule fires, or for a job_recovered rule to announce the end of it.
+    if (streakTrigger) {
+      row.appendChild(field('Failed runs in a row (optional)', textInput(r.minConsecutive, '3', (v) => { r.minConsecutive = v })))
     }
     row.appendChild(field('Channels (space-separated names)', textInput(r.channels, 'oncall', (v) => { r.channels = v })))
     cfgFieldsEl.appendChild(row)
@@ -1445,7 +1452,9 @@ function buildAlertsDirectives() {
     if (!name) return
     const children = [{ key: 'when', args: [r.when] }]
     const jk = (r.jobKey || '').trim(); if (jk && r.when !== 'maintenance_active') children.push({ key: 'job_key', args: [jk] })
-    const ew = (r.expectedWithin || '').trim(); if (ew && r.when !== 'job_failed') children.push({ key: 'expected_within', args: [ew] })
+    const streakTrigger = r.when === 'job_failed' || r.when === 'job_recovered'
+    const ew = (r.expectedWithin || '').trim(); if (ew && !streakTrigger) children.push({ key: 'expected_within', args: [ew] })
+    const mc = (r.minConsecutive || '').trim(); if (mc && streakTrigger) children.push({ key: 'min_consecutive', args: [mc] })
     const ch = (r.channels || '').split(/\s+/).filter(Boolean); if (ch.length) children.push({ key: 'channels', args: ch })
     dirs.push({ key: 'rule', qualifier: name, quote_qualifier: true, children })
   })

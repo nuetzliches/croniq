@@ -29,7 +29,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use croniq_config::compile::{AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger};
-use croniq_store::models::{AlertDelivery, AlertDeliveryKind, AlertDeliveryState, JobAlertAck};
+use croniq_store::models::{
+    AlertDelivery, AlertDeliveryKind, AlertDeliveryState, JobAlertAck, JobFailureStreak,
+};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use uuid::Uuid;
@@ -106,6 +108,10 @@ pub struct FailureContext {
     /// `"dead_letter"` or `"dropped"` — surfaced as
     /// `CRONIQ_REASON` to shell channels.
     pub reason: String,
+    /// How many of the job's runs in a row have failed for good, this one
+    /// included — what a `job_failed` rule's `min_consecutive` compares
+    /// against. 1 for the alerts that are not about a permanent failure.
+    pub consecutive: u32,
 }
 
 /// Throttle map keyed by `(rule_name, job_key)`. Wrapped in an `Arc<Mutex<_>>`
@@ -274,7 +280,7 @@ pub(crate) async fn dispatch_rule(
             error: None,
             fired_at: now,
             delivered_at: None,
-            kind: AlertDeliveryKind::Alert,
+            kind: delivery_kind(ctx),
         };
         tracing::info!(
             target: "croniq::alerts",
@@ -314,7 +320,7 @@ pub(crate) async fn dispatch_rule(
                 error: None,
                 fired_at: now,
                 delivered_at: None,
-                kind: AlertDeliveryKind::Alert,
+                kind: delivery_kind(ctx),
             };
             tracing::info!(
                 target: "croniq::alerts",
@@ -406,52 +412,129 @@ fn job_failed_rules_for<'a>(
     })
 }
 
-/// An acknowledged job succeeded again: its acknowledgement has been taken
-/// off (the caller did that), and the channels of the job's `job_failed`
-/// rules hear that it is over. Not throttled — it closes the incident the
-/// throttle window belonged to, so the job's windows are cleared too, and its
-/// next failure alerts at once. A rule an operator snoozed or disabled stays
-/// quiet here as well.
+/// The `job_recovered` rules that cover `job_key`.
+fn job_recovered_rules_for<'a>(
+    alerts: &'a AlertsConfig,
+    job_key: &'a str,
+) -> impl Iterator<Item = &'a RuleConfig> {
+    alerts.rules.iter().filter(move |r| {
+        matches!(r.trigger, RuleTrigger::JobRecovered) && glob_match(&r.job_key_glob, job_key)
+    })
+}
+
+/// The incident is over: clear the job's throttle windows, so its next
+/// failure alerts at once instead of waiting out a window the outage opened.
+/// A `job_recovered` rule keeps its own window — that one is about recoveries
+/// of a flapping job, and the recovery just sent is what opened it.
+fn close_incident(alerts: &AlertsConfig, throttle: &ThrottleMap, job_key: &str) {
+    let recovery_rules: Vec<&str> = alerts
+        .rules
+        .iter()
+        .filter(|r| matches!(r.trigger, RuleTrigger::JobRecovered))
+        .map(|r| r.name.as_str())
+        .collect();
+    throttle
+        .lock()
+        .unwrap()
+        .retain(|(rule, key), _| key != job_key || recovery_rules.contains(&rule.as_str()));
+}
+
+/// What a recovery says: how long the job was failing, and who was waiting.
+fn recovery_message(
+    job_key: &str,
+    ack: Option<&JobAlertAck>,
+    streak: Option<&JobFailureStreak>,
+) -> String {
+    let runs = |n: u32| if n == 1 { "run" } else { "runs" };
+    let mut parts = vec![match streak {
+        Some(st) => format!(
+            "{job_key} succeeded again after {n} failed {runs} in a row, failing since {since}. \
+             Last error: {last}",
+            n = st.consecutive,
+            runs = runs(st.consecutive),
+            since = st.since.to_rfc3339(),
+            last = st.last_error,
+        ),
+        None => format!("{job_key} succeeded again."),
+    }];
+    if let Some(ack) = ack {
+        parts.push(format!(
+            "Acknowledged by {by} at {at}: {note} ({count} failed {runs} held back)",
+            by = ack.acked_by_name,
+            at = ack.acked_at.to_rfc3339(),
+            note = ack.note,
+            count = ack.suppressed_count,
+            runs = runs(ack.suppressed_count),
+        ));
+    }
+    parts.join("\n")
+}
+
+/// A job succeeded after failing: its failure streak and its acknowledgement,
+/// if it had them, have been taken off (the caller did that), and the
+/// channels hear that it is over.
+///
+/// Where it goes:
+///
+/// - the job's `job_recovered` rules, when it has any — each when the streak
+///   was at least its `min_consecutive` long, or regardless when an
+///   acknowledgement ended, since someone is waiting for exactly this news;
+/// - otherwise, only when an acknowledgement ended, the channels of the job's
+///   `job_failed` rules: they told someone about the failure, and the
+///   acknowledgement promised them the end of it. A job with neither rule
+///   nor acknowledgement ends its streak in silence, as before.
+///
+/// Overrides apply. A `job_recovered` rule's own `throttle` applies to it;
+/// the acknowledgement's recovery through a `job_failed` rule is never
+/// throttled. Once a recovery has gone out (or been throttled), the incident
+/// is over and the job's failure windows are cleared — see
+/// [`close_incident`].
 pub async fn send_recovery(
     alerts: &AlertsConfig,
-    ack: &JobAlertAck,
+    ack: Option<&JobAlertAck>,
+    streak: Option<&JobFailureStreak>,
     execution_id: &str,
     throttle: &ThrottleMap,
     store: &DynStore,
     email_sender: &Arc<dyn crate::email::EmailSender>,
 ) -> Vec<AlertDelivery> {
+    let Some(job_key) = ack
+        .map(|a| a.job_key.as_str())
+        .or(streak.map(|st| st.job_key.as_str()))
+    else {
+        return Vec::new();
+    };
     let now = Utc::now();
-    throttle
-        .lock()
-        .unwrap()
-        .retain(|(_, job_key), _| job_key != &ack.job_key);
-
     let ctx = FailureContext {
-        job_key: ack.job_key.clone(),
+        job_key: job_key.to_string(),
         execution_id: execution_id.to_string(),
-        error: format!(
-            "{job} succeeded again after {count} failed {runs} held back. \
-             Acknowledged by {by} at {at}: {note}",
-            job = ack.job_key,
-            count = ack.suppressed_count,
-            runs = if ack.suppressed_count == 1 {
-                "run"
-            } else {
-                "runs"
-            },
-            by = ack.acked_by_name,
-            at = ack.acked_at.to_rfc3339(),
-            note = ack.note,
-        ),
+        error: recovery_message(job_key, ack, streak),
         attempt: 0,
         reason: JOB_RECOVERED_REASON.to_string(),
+        consecutive: streak.map_or(0, |st| st.consecutive),
     };
+
     let mut recorded = Vec::new();
-    for rule in job_failed_rules_for(alerts, &ack.job_key) {
-        if suppressed_by_override(rule, store, now) {
-            continue;
+    let recovery_rules: Vec<&RuleConfig> = job_recovered_rules_for(alerts, job_key).collect();
+    if !recovery_rules.is_empty() {
+        for rule in recovery_rules {
+            if ack.is_none() && ctx.consecutive < rule.min_consecutive {
+                continue;
+            }
+            recorded.extend(dispatch_rule(rule, alerts, &ctx, throttle, store, email_sender).await);
         }
-        recorded.extend(deliver_to_channels(rule, alerts, &ctx, store, email_sender, now).await);
+    } else if ack.is_some() {
+        for rule in job_failed_rules_for(alerts, job_key) {
+            if suppressed_by_override(rule, store, now) {
+                continue;
+            }
+            recorded
+                .extend(deliver_to_channels(rule, alerts, &ctx, store, email_sender, now).await);
+        }
+    }
+
+    if !recorded.is_empty() {
+        close_incident(alerts, throttle, job_key);
     }
     recorded
 }
@@ -489,6 +572,7 @@ pub async fn alert_ack_expired(
         ),
         attempt: 0,
         reason: ACK_EXPIRED_REASON.to_string(),
+        consecutive: 1,
     };
     let mut recorded = Vec::new();
     for rule in job_failed_rules_for(alerts, &ack.job_key) {
@@ -505,6 +589,9 @@ fn rule_matches_failure(rule: &RuleConfig, ctx: &FailureContext) -> bool {
         return false;
     }
     if ctx.attempt < rule.min_attempts {
+        return false;
+    }
+    if ctx.consecutive < rule.min_consecutive {
         return false;
     }
     if rule.dead_letter_only && ctx.reason != DEAD_LETTER_REASON {
@@ -998,7 +1085,7 @@ fn compose_recovery_email(
 ) -> (String, String) {
     let subject = format!("[Croniq] {} recovered (rule: {rule_name})", ctx.job_key);
     let body = format!(
-        "A job whose failure was acknowledged succeeded again.\n\
+        "A job that was failing succeeded again.\n\
          \n\
          Job:           {job_key}\n\
          Rule:          {rule_name}\n\
@@ -1162,6 +1249,7 @@ pub fn merge_legacy_env_hook(base: AlertsConfig) -> AlertsConfig {
         throttle: None,
         expected_within: None,
         channels: vec![LEGACY_ENV_CHANNEL_NAME.to_string()],
+        min_consecutive: 1,
     });
     cfg
 }
@@ -1180,6 +1268,7 @@ mod tests {
             error: "boom".into(),
             attempt: 3,
             reason: "dead_letter".into(),
+            consecutive: 1,
         }
     }
 
@@ -1243,6 +1332,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1282,6 +1372,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         }
     }
@@ -1434,6 +1525,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["x".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1473,6 +1565,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["x".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1513,6 +1606,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["x".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1554,6 +1648,7 @@ mod tests {
                 throttle: Some("1h".into()),
                 expected_within: None,
                 channels: vec!["x".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1600,6 +1695,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["future".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1630,6 +1726,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["does-not-exist".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1805,6 +1902,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1882,6 +1980,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["open".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1930,6 +2029,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["flaky".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -1999,6 +2099,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["auth-broken".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -2079,6 +2180,7 @@ mod tests {
             error: "maintenance active since 2026-09-28T09:00:00Z, for 3600s".into(),
             attempt: 0,
             reason: MAINTENANCE_ACTIVE_REASON.into(),
+            consecutive: 1,
         };
         let (subject, body) = compose_email("maintenance-too-long", &ctx, Utc::now());
         assert_eq!(
@@ -2147,6 +2249,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -2199,6 +2302,7 @@ mod tests {
                 throttle: None,
                 expected_within: None,
                 channels: vec!["ops".into()],
+                min_consecutive: 1,
             }],
         };
         let throttle = empty_throttle_map();
@@ -2252,6 +2356,7 @@ mod tests {
                     throttle: Some("1h".into()),
                     expected_within: None,
                     channels: vec!["ops".into()],
+                    min_consecutive: 1,
                 },
                 RuleConfig {
                     name: "slow".into(),
@@ -2262,6 +2367,7 @@ mod tests {
                     throttle: None,
                     expected_within: Some("10m".into()),
                     channels: vec!["ops".into()],
+                    min_consecutive: 1,
                 },
             ],
         }
@@ -2386,7 +2492,16 @@ mod tests {
 
         let mut ack = ack_for("billing:sync", chrono::Duration::hours(3));
         ack.suppressed_count = 4;
-        let recorded = send_recovery(&alerts, &ack, "exec-ok", &throttle, &store, &sender).await;
+        let recorded = send_recovery(
+            &alerts,
+            Some(&ack),
+            None,
+            "exec-ok",
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
         assert_eq!(
             recorded.len(),
             1,
@@ -2403,7 +2518,7 @@ mod tests {
                 "[Croniq] billing:sync recovered (rule: billing-failed)"
             );
             assert!(
-                caps[1].2.contains("after 4 failed runs held back"),
+                caps[1].2.contains("(4 failed runs held back)"),
                 "{}",
                 caps[1].2
             );
@@ -2443,7 +2558,8 @@ mod tests {
         let ack = ack_for("billing:sync", chrono::Duration::hours(3));
         let recorded = send_recovery(
             &alerts,
-            &ack,
+            Some(&ack),
+            None,
             "exec-ok",
             &empty_throttle_map(),
             &store,
@@ -2527,5 +2643,215 @@ mod tests {
         };
         assert_eq!(event_name(&expired), "job_failed");
         assert_eq!(delivery_kind(&expired), AlertDeliveryKind::Alert);
+    }
+
+    // ─── Failure streaks: min_consecutive and job_recovered ───
+
+    /// `job_failed` from the third failure in a row, `job_recovered` after a
+    /// streak of three or more, both mailing ops; the failure rule throttled.
+    fn streak_alerts(with_recovery_rule: bool) -> AlertsConfig {
+        let rule = |name: &str, trigger, throttle: Option<&str>| RuleConfig {
+            name: name.into(),
+            trigger,
+            job_key_glob: "billing:*".into(),
+            min_attempts: 1,
+            min_consecutive: 3,
+            dead_letter_only: false,
+            throttle: throttle.map(Into::into),
+            expected_within: None,
+            channels: vec!["ops".into()],
+        };
+        let mut rules = vec![rule("billing-failing", RuleTrigger::JobFailed, Some("1h"))];
+        if with_recovery_rule {
+            rules.push(rule("billing-back", RuleTrigger::JobRecovered, None));
+        }
+        AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules,
+        }
+    }
+
+    fn streak_of(job_key: &str, consecutive: u32) -> JobFailureStreak {
+        JobFailureStreak {
+            job_key: job_key.into(),
+            consecutive,
+            since: Utc::now() - chrono::Duration::hours(2),
+            last_execution_id: "exec-9".into(),
+            last_error: "HTTP 503 from provider".into(),
+            last_failed_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn min_consecutive_waits_for_the_nth_failure_in_a_row() {
+        let alerts = streak_alerts(false);
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        for (n, fires) in [(1, false), (2, false), (3, true), (4, true)] {
+            let ctx = FailureContext {
+                consecutive: n,
+                execution_id: format!("exec-{n}"),
+                ..make_ctx("billing:sync")
+            };
+            let recorded =
+                evaluate_failure(&alerts, &ctx, &empty_throttle_map(), &store, &sender).await;
+            assert_eq!(!recorded.is_empty(), fires, "failure {n}");
+        }
+        // The 4th fires too — every failure from the 3rd on, throttle aside.
+        assert_eq!(captured.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_recovery_rule_announces_a_streak_long_enough() {
+        let alerts = streak_alerts(true);
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        let throttle = empty_throttle_map();
+
+        let short = streak_of("billing:sync", 2);
+        let recorded = send_recovery(
+            &alerts,
+            None,
+            Some(&short),
+            "exec-ok",
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+        assert!(recorded.is_empty(), "nobody was told about a streak of 2");
+
+        // A streak of three: the failure rule fired and opened its window.
+        let failing = FailureContext {
+            consecutive: 3,
+            ..make_ctx("billing:sync")
+        };
+        evaluate_failure(&alerts, &failing, &throttle, &store, &sender).await;
+        let long = streak_of("billing:sync", 3);
+        let recorded = send_recovery(
+            &alerts,
+            None,
+            Some(&long),
+            "exec-ok",
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].rule_name, "billing-back");
+        assert_eq!(recorded[0].kind, AlertDeliveryKind::Recovery);
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+        {
+            let caps = captured.lock().unwrap();
+            assert_eq!(caps.len(), 2);
+            assert_eq!(
+                caps[1].1,
+                "[Croniq] billing:sync recovered (rule: billing-back)"
+            );
+            assert!(
+                caps[1].2.contains("after 3 failed runs in a row"),
+                "{}",
+                caps[1].2
+            );
+            assert!(caps[1].2.contains("HTTP 503 from provider"));
+        }
+        // The failure window is closed; the next streak alerts at once.
+        assert!(
+            !throttle
+                .lock()
+                .unwrap()
+                .contains_key(&("billing-failing".to_string(), "billing:sync".to_string()))
+        );
+        let recorded = evaluate_failure(&alerts, &failing, &throttle, &store, &sender).await;
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+    }
+
+    #[tokio::test]
+    async fn a_streak_without_a_recovery_rule_ends_in_silence() {
+        let alerts = streak_alerts(false);
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        let recorded = send_recovery(
+            &alerts,
+            None,
+            Some(&streak_of("billing:sync", 5)),
+            "exec-ok",
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+        assert!(recorded.is_empty());
+        assert!(captured.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_recovery_goes_to_the_recovery_rule_whatever_the_streak() {
+        let alerts = streak_alerts(true);
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        let ack = ack_for("billing:sync", chrono::Duration::hours(3));
+        let recorded = send_recovery(
+            &alerts,
+            Some(&ack),
+            Some(&streak_of("billing:sync", 1)),
+            "exec-ok",
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(
+            recorded.len(),
+            1,
+            "once, not again through the failure rule"
+        );
+        assert_eq!(recorded[0].rule_name, "billing-back");
+        let caps = captured.lock().unwrap();
+        assert!(caps[0].2.contains("Acknowledged by Ada"), "{}", caps[0].2);
+    }
+
+    #[tokio::test]
+    async fn a_recovery_rule_keeps_its_own_throttle() {
+        let mut alerts = streak_alerts(true);
+        alerts.rules[1].throttle = Some("1h".into());
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        let throttle = empty_throttle_map();
+        for _ in 0..2 {
+            send_recovery(
+                &alerts,
+                None,
+                Some(&streak_of("billing:sync", 3)),
+                "exec-ok",
+                &throttle,
+                &store,
+                &sender,
+            )
+            .await;
+        }
+        assert_eq!(
+            captured.lock().unwrap().len(),
+            1,
+            "a flapping job announces its recovery once per window"
+        );
+        let throttled = store
+            .list_alert_deliveries(&croniq_store::models::AlertDeliveryFilter::default())
+            .unwrap()
+            .into_iter()
+            .find(|d| d.state == AlertDeliveryState::Throttled)
+            .expect("the second one is recorded as throttled");
+        assert_eq!(throttled.kind, AlertDeliveryKind::Recovery);
     }
 }

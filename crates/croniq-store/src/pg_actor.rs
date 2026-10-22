@@ -1008,6 +1008,27 @@ impl AlertStore for PgStoreHandle {
     ) -> Result<Vec<JobAlertAck>, StoreError> {
         self.call(move |s| s.take_expired_job_alert_acks(now))
     }
+
+    fn record_job_failure(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<JobFailureStreak, StoreError> {
+        let job_key = job_key.to_string();
+        let execution_id = execution_id.to_string();
+        let error = error.to_string();
+        self.call(move |s| s.record_job_failure(&job_key, &execution_id, &error, at))
+    }
+
+    fn take_job_failure_streak(
+        &self,
+        job_key: &str,
+    ) -> Result<Option<JobFailureStreak>, StoreError> {
+        let job_key = job_key.to_string();
+        self.call(move |s| s.take_job_failure_streak(&job_key))
+    }
 }
 
 // ─── ExecutionLogStore ───

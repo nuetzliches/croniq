@@ -67,6 +67,7 @@ fn pg_backend_exercises_all_traits() {
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
     job_alert_acks(&store, &s);
+    job_failure_streaks(&store, &s);
     notes_inbox(&store, &s);
 }
 
@@ -1525,4 +1526,25 @@ fn job_alert_acks(store: &PgStore, s: &str) {
         ))
         .unwrap();
     assert_eq!(store.last_alert_fire_at(&rule, &job).unwrap(), None);
+}
+
+/// Failure streaks (migration 035): the upsert that bumps `consecutive` and
+/// keeps `since`, and `DELETE … RETURNING`.
+fn job_failure_streaks(store: &PgStore, s: &str) {
+    let job = format!("job-streak-{s}");
+    let first = store.record_job_failure(&job, "e-1", "503", ts()).unwrap();
+    assert_eq!(first.consecutive, 1);
+    let later = ts() + chrono::Duration::minutes(5);
+    let second = store.record_job_failure(&job, "e-2", "504", later).unwrap();
+    assert_eq!(second.consecutive, 2);
+    assert_eq!(second.since, ts());
+    assert_eq!(second.last_execution_id, "e-2");
+    assert_eq!(second.last_failed_at, later);
+
+    let taken = store
+        .take_job_failure_streak(&job)
+        .unwrap()
+        .expect("streak");
+    assert_eq!(taken, second);
+    assert!(store.take_job_failure_streak(&job).unwrap().is_none());
 }

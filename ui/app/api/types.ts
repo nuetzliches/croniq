@@ -569,6 +569,7 @@ export interface AlertChannelConfig {
 
 export type AlertRuleTrigger =
   | 'job_failed'
+  | 'job_recovered'
   | 'job_sla_missed'
   | 'job_missed_fire'
   | 'job_blocked'
@@ -579,6 +580,12 @@ export interface AlertRuleConfig {
   trigger: AlertRuleTrigger
   job_key_glob: string
   min_attempts: number
+  /**
+   * Runs in a row that must have failed for good: before a `job_failed` rule
+   * fires, or for a `job_recovered` rule to announce the end of the streak.
+   * Absent from servers that predate it; read it as 1.
+   */
+  min_consecutive?: number
   dead_letter_only: boolean
   throttle: string | null
   expected_within: string | null
