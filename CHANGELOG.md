@@ -118,6 +118,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`dead_letter true` on an alert rule fires again, and channels get the
+  reason they were promised.** The completion processor handed the alerts the
+  retry policy's sentence about why a run gave up ("exhausted after 3
+  attempts…") where the contract has one of two words, `dead_letter` or
+  `dropped`. A rule with `dead_letter true` compares against that word, so it
+  never matched and never fired; shell channels got the sentence as
+  `CRONIQ_REASON`, webhooks as `"reason"`. Both now carry `dead_letter` or
+  `dropped`, as documented.
 - **A deep link to the last rows of a list shows the whole row.** The list
   scrolled to the row as soon as it rendered, but the rows went on growing for
   a frame or two after that, and a scroll aimed at one of the last rows
