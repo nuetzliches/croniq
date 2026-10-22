@@ -46,6 +46,14 @@ pub const LEGACY_ENV_RULE_NAME: &str = "_legacy_env_hook";
 /// Matching sentinel channel name for the env-var path.
 pub const LEGACY_ENV_CHANNEL_NAME: &str = "_legacy_env_hook";
 
+/// `reason` of a `job_failed` alert for a run that exhausted its retries and
+/// was dead-lettered — what a rule's `dead_letter true` selects.
+pub const DEAD_LETTER_REASON: &str = "dead_letter";
+
+/// `reason` of a `job_failed` alert for a run that exhausted its retries
+/// while dead-lettering was off, so nothing was kept.
+pub const DROPPED_REASON: &str = "dropped";
+
 /// `reason` of a `maintenance_active` alert (issue #786). Also what tells the
 /// channels apart from a job alert: there is no job key, the email subject and
 /// the webhook `event` say "maintenance" instead.
@@ -499,7 +507,7 @@ fn rule_matches_failure(rule: &RuleConfig, ctx: &FailureContext) -> bool {
     if ctx.attempt < rule.min_attempts {
         return false;
     }
-    if rule.dead_letter_only && ctx.reason != "dead_letter" {
+    if rule.dead_letter_only && ctx.reason != DEAD_LETTER_REASON {
         return false;
     }
     if !glob_match(&rule.job_key_glob, &ctx.job_key) {

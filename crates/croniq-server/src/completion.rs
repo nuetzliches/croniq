@@ -137,6 +137,13 @@ impl CompletionProcessor {
     /// `notify::notify_failure()` env-var hook — back-compat for that
     /// env var lives in [`crate::alerts::merge_legacy_env_hook`] at
     /// boot, so this method needs no special-cases.
+    ///
+    /// `reason` is [`crate::alerts::DEAD_LETTER_REASON`] or
+    /// [`crate::alerts::DROPPED_REASON`] — the word a rule's `dead_letter
+    /// true` and a channel's `CRONIQ_REASON` compare against, not the
+    /// policy's prose about why the run gave up. That prose used to be passed
+    /// here, so `dead_letter true` matched nothing and channels got a sentence
+    /// where the contract promises one of two words.
     async fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
         // Fast-path: no rules configured means no work to do. Important
         // because the evaluator otherwise walks `alerts.rules` and may
@@ -510,7 +517,12 @@ impl CompletionProcessor {
                                 ),
                             }
                         }
-                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        let kind = if dead_lettered {
+                            crate::alerts::DEAD_LETTER_REASON
+                        } else {
+                            crate::alerts::DROPPED_REASON
+                        };
+                        self.fire_alerts(&execution.job_key, &event, kind).await;
                         if dead_lettered {
                             ProcessedOutcome::DeadLettered { reason }
                         } else {
@@ -559,7 +571,12 @@ impl CompletionProcessor {
                 ) {
                     Ok(true) => {
                         tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        self.fire_alerts(
+                            &execution.job_key,
+                            &event,
+                            crate::alerts::DEAD_LETTER_REASON,
+                        )
+                        .await;
                         ProcessedOutcome::DeadLettered { reason }
                     }
                     Ok(false) => {
@@ -581,7 +598,12 @@ impl CompletionProcessor {
                             "failed to record dead-lettered execution — execution row may now be inconsistent with dead_letters table"
                         );
                         tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        self.fire_alerts(
+                            &execution.job_key,
+                            &event,
+                            crate::alerts::DEAD_LETTER_REASON,
+                        )
+                        .await;
                         ProcessedOutcome::DeadLettered { reason }
                     }
                 }
@@ -607,7 +629,8 @@ impl CompletionProcessor {
                     }
                     Ok(true) | Err(_) => {
                         tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
-                        self.fire_alerts(&execution.job_key, &event, &reason).await;
+                        self.fire_alerts(&execution.job_key, &event, crate::alerts::DROPPED_REASON)
+                            .await;
                         ProcessedOutcome::Dropped { reason }
                     }
                 }
@@ -1369,6 +1392,75 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dead_letter_rule_fires_on_a_dead_letter_and_not_on_a_drop() {
+        use croniq_config::compile::{
+            AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger,
+        };
+        use croniq_store::models::AlertDeliveryFilter;
+
+        let rule = |name: &str, dead_letter_only: bool| RuleConfig {
+            name: name.into(),
+            trigger: RuleTrigger::JobFailed,
+            job_key_glob: "*".into(),
+            min_attempts: 1,
+            dead_letter_only,
+            throttle: None,
+            expected_within: None,
+            channels: vec!["ops".into()],
+        };
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".to_string(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![rule("dead-only", true), rule("any", false)],
+        };
+        let store = make_store();
+        let mut dropped = make_job("billing:dropped", 1);
+        dropped.dead_letter.enabled = false;
+        let processor = CompletionProcessor::with_alerts(
+            vec![make_job("billing:dead", 1), dropped],
+            Arc::clone(&store),
+            make_runner(),
+            alerts,
+            crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
+        );
+
+        let dead = seed_execution(&store, "billing:dead");
+        processor
+            .process(event(dead, CompletionStatus::Failure, 1))
+            .await;
+        let gone = seed_execution(&store, "billing:dropped");
+        processor
+            .process(event(gone, CompletionStatus::Failure, 1))
+            .await;
+
+        let mut fired: Vec<(String, String)> = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap()
+            .into_iter()
+            .map(|d| (d.rule_name, d.job_key))
+            .collect();
+        fired.sort();
+        assert_eq!(
+            fired,
+            vec![
+                ("any".to_string(), "billing:dead".to_string()),
+                ("any".to_string(), "billing:dropped".to_string()),
+                ("dead-only".to_string(), "billing:dead".to_string()),
+            ]
         );
     }
 }
