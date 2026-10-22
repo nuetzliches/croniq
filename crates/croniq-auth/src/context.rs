@@ -184,6 +184,11 @@ impl Scope {
     /// Admin-only for v1 — not granted to Operator/Viewer role defaults.
     /// Implied by the `admin` wildcard.
     pub const ALERTS_WRITE: &str = "alerts:write";
+    /// Acknowledge a failing job: its alerts are held back until it
+    /// succeeds again or the acknowledgement runs out. Narrower than
+    /// `alerts:write` — one job, and it ends by itself — so Operator has it
+    /// by default; admin's wildcard implies it.
+    pub const ALERTS_ACK: &str = "alerts:ack";
 
     /// Write operator notes on jobs and their runs: "seen and checked",
     /// questions, ideas. Reading them needs only `executions:read`. Granted
@@ -225,6 +230,7 @@ impl Scope {
         Self::MCP_WRITE,
         Self::ALERTS_READ,
         Self::ALERTS_WRITE,
+        Self::ALERTS_ACK,
         Self::NOTES_WRITE,
     ];
 
@@ -254,6 +260,7 @@ pub fn default_scopes_for_role(role: Role) -> Vec<String> {
             Scope::DEAD_LETTERS_WRITE.to_string(),
             Scope::RUNNERS_READ.to_string(),
             Scope::ALERTS_READ.to_string(),
+            Scope::ALERTS_ACK.to_string(),
             Scope::NOTES_WRITE.to_string(),
         ],
         Role::Viewer => vec![
@@ -296,7 +303,7 @@ mod tests {
         }
         assert_eq!(
             Scope::ALL.len(),
-            28,
+            29,
             "Scope::ALL changed — add the new scope here and to the docs"
         );
         assert!(Scope::is_known(Scope::WORK_POLL));

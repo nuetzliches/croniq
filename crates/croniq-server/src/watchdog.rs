@@ -126,6 +126,10 @@ pub struct WatchdogResult {
     /// this sweep (issue #231). Each emits an `alerts.override.cleared`
     /// audit event.
     pub cleared_overrides: Vec<String>,
+    /// Job keys whose alert acknowledgement ran out this sweep without the
+    /// job recovering. Each emits an `alerts.ack.expired` audit event and,
+    /// while the job still exists, an alert that it is still failing.
+    pub expired_acks: Vec<String>,
 }
 
 /// Cumulative process-lifetime counters for the watchdog's recovery actions,
@@ -976,6 +980,11 @@ impl WatchdogLoop {
         //    operator follow-up. Each cleared row gets an audit event.
         self.sweep_expired_overrides(now, &mut result);
 
+        // 10. Acknowledgements that ran out before their job recovered: a
+        //     success would have ended them, so the job is still failing,
+        //     and the channels hear it again instead of staying quiet.
+        self.sweep_expired_acks(now, &mut result).await;
+
         result
     }
 
@@ -1347,6 +1356,54 @@ impl WatchdogLoop {
                     "watchdog: failed to sweep expired alert-rule overrides"
                 );
             }
+        }
+    }
+
+    /// Remove acknowledgements whose deadline has passed and alert on each:
+    /// none of them saw a successful run, or it would have ended them. A job
+    /// that no longer exists gets the audit event but no alert. Best-effort —
+    /// a store error is logged and the next sweep retries.
+    async fn sweep_expired_acks(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
+        let expired = match self.store.take_expired_job_alert_acks(now) {
+            Ok(expired) => expired,
+            Err(e) => {
+                tracing::warn!(
+                    target: "croniq::alerts",
+                    error = %e,
+                    "watchdog: failed to sweep expired job alert acknowledgements"
+                );
+                return;
+            }
+        };
+        for ack in expired {
+            crate::api::audit::record_event(
+                &self.store,
+                "system",
+                None,
+                "alerts.ack.expired",
+                "job",
+                Some(&ack.job_key),
+            );
+            let exists = self.jobs.contains_key(&ack.job_key)
+                || matches!(self.store.get_job_definition(&ack.job_key), Ok(Some(_)));
+            tracing::warn!(
+                target: "croniq::alerts",
+                job_key = %ack.job_key,
+                suppressed = ack.suppressed_count,
+                job_exists = exists,
+                "job alert acknowledgement ran out before the job recovered"
+            );
+            if exists {
+                crate::alerts::alert_ack_expired(
+                    &self.alerts,
+                    &ack,
+                    &self.alert_throttle,
+                    &self.store,
+                    &self.email_sender,
+                )
+                .await;
+            }
+            result.expired_acks.push(ack.job_key);
         }
     }
 
@@ -3807,5 +3864,96 @@ mod tests {
                 .maintenance_alerts
                 .is_empty()
         );
+    }
+
+    // ─── Per-job acknowledgements ───
+
+    fn ack_until(job_key: &str, expires_at: DateTime<Utc>) -> croniq_store::models::JobAlertAck {
+        croniq_store::models::JobAlertAck {
+            job_key: job_key.into(),
+            note: "provider outage".into(),
+            acked_by: "user-1".into(),
+            acked_by_name: "Ada".into(),
+            acked_at: expires_at - ChronoDuration::hours(3),
+            expires_at,
+            suppressed_count: 2,
+            last_execution_id: Some("exec-7".into()),
+            last_error: Some("HTTP 503".into()),
+            last_suppressed_at: None,
+        }
+    }
+
+    fn failed_rule_mailing_ops() -> AlertsConfig {
+        AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "billing-fail".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "billing:*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                expected_within: None,
+                channels: vec!["ops".into()],
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn an_acknowledgement_that_runs_out_alerts_that_the_job_still_fails() {
+        let store = make_store();
+        let now = Utc::now();
+        store
+            .upsert_job_alert_ack(&ack_until("billing:sync", now - ChronoDuration::minutes(1)))
+            .unwrap();
+        store
+            .upsert_job_alert_ack(&ack_until("billing:gone", now - ChronoDuration::minutes(1)))
+            .unwrap();
+        store
+            .upsert_job_alert_ack(&ack_until("billing:later", now + ChronoDuration::hours(1)))
+            .unwrap();
+        let watchdog = WatchdogLoop::with_alerts(
+            vec![make_job("billing:sync"), make_job("billing:later")],
+            Arc::clone(&store),
+            make_runner(),
+            failed_rule_mailing_ops(),
+            crate::alerts::empty_throttle_map(),
+            empty_sla_fired_set(),
+            Arc::new(crate::email::NoopSender),
+        );
+
+        let mut result = watchdog.sweep(now).await;
+        result.expired_acks.sort();
+        assert_eq!(
+            result.expired_acks,
+            vec!["billing:gone".to_string(), "billing:sync".to_string()]
+        );
+        assert!(store.get_job_alert_ack("billing:sync").unwrap().is_none());
+        assert!(store.get_job_alert_ack("billing:later").unwrap().is_some());
+
+        // One alert, for the job that still exists; none for the deleted one.
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].job_key, "billing:sync");
+        assert_eq!(deliveries[0].execution_id.as_deref(), Some("exec-7"));
+        assert_eq!(
+            deliveries[0].state,
+            croniq_store::models::AlertDeliveryState::Delivered
+        );
+
+        // Once is enough.
+        assert!(watchdog.sweep(now).await.expired_acks.is_empty());
     }
 }

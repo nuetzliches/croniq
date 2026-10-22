@@ -1546,6 +1546,81 @@ Is this a permanent change to how the rule should behave?
 Rule of thumb: if you'd want the change to survive a redeploy, it belongs in
 the Croniqfile, not an override.
 
+One job failing for a reason you can only wait out — an upstream outage — is
+neither: don't snooze the rule, [acknowledge the job](#acknowledging-a-failing-job).
+It quiets that job alone and ends on its own.
+
+## Acknowledging a failing job
+
+A job that fails over and over because of something you cannot fix — the
+payment provider is down, a partner's SFTP is unreachable — keeps alerting
+while there is nothing to do but wait. A rule override is the wrong tool for
+that: it quiets every job the rule matches, and it lasts until a time someone
+guessed, or until someone remembers to lift it.
+
+An **acknowledgement** is scoped to one job and ends by itself:
+
+- the job's **next successful run** ends it, and the channels of the job's
+  `job_failed` rules get a **recovery**;
+- if it **runs out** before that — it always has a deadline, 72 hours unless
+  you set one, at most 7 days — the watchdog ends it and alerts that the job
+  is **still failing**;
+- or someone ends it by hand.
+
+While it lasts, the job's alerts are not sent. Each is recorded in the
+delivery log with the state `acknowledged`, and the acknowledgement counts the
+failed runs it held back (per run: one failure that three rules match counts
+once). Every other job alerts as before. It covers all of the job's alerts —
+`job_failed`, `job_sla_missed`, `job_missed_fire`, `job_blocked` — since all
+of them say the same thing about a job someone is already watching.
+
+| action | endpoint | scope |
+|---|---|---|
+| acknowledge | `POST /v1/jobs/{job_key}/alert-ack` with `note` (required) and `until` (optional) | `alerts:ack` |
+| look | `GET /v1/jobs/{job_key}/alert-ack`, `GET /v1/alerts/acks` | `alerts:read` |
+| end now | `DELETE /v1/jobs/{job_key}/alert-ack` | `alerts:ack` |
+
+`alerts:ack` is part of the `operator` role; admins have it through the
+wildcard, and an API client needs it granted explicitly. In the dashboard the
+control sits on the job's overview, next to its last failure: *Acknowledge
+failure*, then *Renew* or *Resume alerts* while it lasts.
+
+Only a failing job can be acknowledged: when the job's latest finished run did
+not fail, the request is refused with `409` (`job_not_failing`). There is
+nothing to wait out, and a recovery would announce the end of a failure
+nobody saw. Acknowledging again replaces the acknowledgement — new note, new
+deadline, count from zero — which is how an outage that outlasts seven days is
+carried on: with a fresh note that says it is still being waited for.
+
+Ending it by hand sends no recovery; the job has not recovered. An
+acknowledgement whose job is deleted runs out without an alert.
+
+**What the channels receive.** A recovery is its own event, so a receiver that
+pages on failures can tell it apart:
+
+| | shell | webhook | email subject |
+|---|---|---|---|
+| recovery | `CRONIQ_EVENT=job_recovered`, `CRONIQ_REASON=job_recovered` | `"event": "job_recovered"` | `[Croniq] <job> recovered (rule: …)` |
+| ran out | `CRONIQ_EVENT=job_failed`, `CRONIQ_REASON=ack_expired` | `"event": "job_failed"`, `"reason": "ack_expired"` | `[Croniq] <job> failed (rule: …)` |
+
+`CRONIQ_EVENT` is new for shell channels and set on every alert: `job_failed`,
+`maintenance_active` or `job_recovered`, the same values a webhook's `event`
+carries. The recovery names who acknowledged, their note and how many failed
+runs were held back; the ran-out alert adds the last error.
+
+A rule that is snoozed or disabled sends no recovery either. A recovery is not
+throttled, and it closes the throttle windows the incident left open: the
+job's next failure alerts at once rather than waiting out a window opened by
+the outage. The ran-out alert is not throttled either; it comes once per
+acknowledgement.
+
+**Watching acknowledgements.** `/metrics` exports, per acknowledged job,
+`croniq_job_alert_ack_since_timestamp` and `croniq_job_alert_ack_suppressed`.
+`time() - croniq_job_alert_ack_since_timestamp > 86400` finds an outage that
+has been waited out for a day. The audit log records `alerts.ack.set`,
+`alerts.ack.cleared`, and — with the system as actor — `alerts.ack.recovered`
+and `alerts.ack.expired`.
+
 ## Operator notes
 
 Operators can leave notes on a job and on its runs, so a colleague opening a

@@ -614,7 +614,15 @@ export interface AlertsConfig {
   overrides?: AlertRuleOverride[]
 }
 
-export type AlertDeliveryState = 'delivered' | 'failed' | 'throttled'
+/**
+ * What became of one rule match. `acknowledged`: the job's failure was
+ * acknowledged, so nothing was sent — recorded so the log shows what the
+ * acknowledgement held back.
+ */
+export type AlertDeliveryState = 'delivered' | 'failed' | 'throttled' | 'acknowledged'
+
+/** A problem, or the end of one: an acknowledged job that succeeded again. */
+export type AlertDeliveryKind = 'alert' | 'recovery'
 
 /// One row from `alert_deliveries`. Returned by `GET /v1/alerts/deliveries`
 /// (list) and `GET /v1/alerts/deliveries/{id}` (single).
@@ -628,6 +636,27 @@ export interface AlertDelivery {
   error: string | null
   fired_at: string
   delivered_at: string | null
+  /** Absent from servers that predate acknowledgements; read it as `alert`. */
+  kind?: AlertDeliveryKind
+}
+
+/**
+ * `GET /v1/alerts/acks`: a failing job someone is waiting out. Its alerts are
+ * held back until it succeeds again (which sends a recovery) or `expires_at`
+ * passes (which alerts that it is still failing).
+ */
+export interface JobAlertAck {
+  job_key: string
+  note: string
+  acked_by: string
+  acked_by_name: string
+  acked_at: string
+  expires_at: string
+  /** Failed runs whose alerts were held back, one per run. */
+  suppressed_count: number
+  last_execution_id: string | null
+  last_error: string | null
+  last_suppressed_at: string | null
 }
 
 export interface AlertDeliveryListQuery {

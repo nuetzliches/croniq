@@ -18,7 +18,7 @@ use croniq_auth::jwt::{JwtConfig, issue_token_pair};
 use croniq_config::compile::{AlertsConfig, ChannelConfig, ChannelKind};
 use croniq_runner::AppState;
 use croniq_server::api::{ServerState, server_router};
-use croniq_store::models::{AlertDelivery, AlertDeliveryState};
+use croniq_store::models::{AlertDelivery, AlertDeliveryKind, AlertDeliveryState};
 use croniq_store::sqlite::SqliteStore;
 use http_body_util::BodyExt;
 use tokio::sync::mpsc;
@@ -164,6 +164,7 @@ fn delivery(id: &str, job_key: &str, rule: &str, state: AlertDeliveryState) -> A
         } else {
             None
         },
+        kind: AlertDeliveryKind::Alert,
     }
 }
 

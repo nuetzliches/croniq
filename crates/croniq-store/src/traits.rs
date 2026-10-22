@@ -650,6 +650,10 @@ pub trait AlertStore {
     /// map so a server restart doesn't reset the suppression window
     /// for jobs that were recently quieted. Returns `None` when the
     /// rule has never fired for that job_key.
+    ///
+    /// Neither an `Acknowledged` row nor a recovery counts as a fire, and a
+    /// fire older than the job's latest recovery is ignored: that incident is
+    /// over, and the next failure must alert at once.
     fn last_alert_fire_at(
         &self,
         rule_name: &str,
@@ -693,6 +697,43 @@ pub trait AlertStore {
         &self,
         valid_rule_names: &[String],
     ) -> Result<Vec<String>, StoreError>;
+
+    // ─── Per-job alert acknowledgements ───
+
+    /// Insert or replace the acknowledgement of a job (PRIMARY KEY on
+    /// `job_key`). Replacing starts over: note, caller, deadline and the
+    /// suppression count are all the new row's.
+    fn upsert_job_alert_ack(&self, ack: &JobAlertAck) -> Result<(), StoreError>;
+
+    /// The acknowledgement of one job, expired or not.
+    fn get_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError>;
+
+    /// Every acknowledgement, newest first.
+    fn list_job_alert_acks(&self) -> Result<Vec<JobAlertAck>, StoreError>;
+
+    /// Remove the acknowledgement of a job and return it, or `None` when the
+    /// job had none. One statement, so a recovery and a manual clear racing
+    /// each other cannot both see the row.
+    fn take_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError>;
+
+    /// Note that the acknowledgement held back an alert for `execution_id`.
+    /// `suppressed_count` goes up only when the execution differs from the
+    /// last one recorded, so several rules matching one failure count once.
+    /// A no-op when the job has no acknowledgement.
+    fn record_job_alert_ack_suppression(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    /// Remove and return every acknowledgement whose `expires_at <= now`, so
+    /// the watchdog can alert once for each.
+    fn take_expired_job_alert_acks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<JobAlertAck>, StoreError>;
 }
 
 /// Global maintenance switch persistence (single-row table).

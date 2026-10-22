@@ -66,6 +66,7 @@ fn pg_backend_exercises_all_traits() {
     register_fires(&store, &s);
     alert_deliveries(&store, &s);
     alert_rule_overrides(&store, &s);
+    job_alert_acks(&store, &s);
     notes_inbox(&store, &s);
 }
 
@@ -1336,6 +1337,7 @@ fn alert_deliveries(store: &PgStore, s: &str) {
         error: None,
         fired_at: ts(),
         delivered_at: Some(ts()),
+        kind: AlertDeliveryKind::Alert,
     };
     store.record_alert_delivery(&delivery).unwrap();
     // Idempotent on delivery_id (ON CONFLICT DO NOTHING).
@@ -1432,4 +1434,95 @@ fn alert_rule_overrides(store: &PgStore, s: &str) {
 
     store.delete_alert_rule_override(&rule_a).unwrap();
     assert!(store.get_alert_rule_override(&rule_a).unwrap().is_none());
+}
+
+/// Per-job acknowledgements and delivery kinds (migration 034):
+/// `IS NOT DISTINCT FROM`, `DELETE … RETURNING`, and the recovery cut-off in
+/// the throttle seed, which the SQLite contract tests reach only in their
+/// own dialect.
+fn job_alert_acks(store: &PgStore, s: &str) {
+    let job = format!("job-ack-{s}");
+    let ack = |expires_at| JobAlertAck {
+        job_key: job.clone(),
+        note: "provider outage".into(),
+        acked_by: "user-1".into(),
+        acked_by_name: "Ada".into(),
+        acked_at: ts(),
+        expires_at,
+        suppressed_count: 0,
+        last_execution_id: None,
+        last_error: None,
+        last_suppressed_at: None,
+    };
+    store
+        .upsert_job_alert_ack(&ack(ts() + chrono::Duration::hours(1)))
+        .unwrap();
+    store
+        .upsert_job_alert_ack(&ack(ts() + chrono::Duration::hours(2)))
+        .unwrap();
+    for exec in ["e-1", "e-1", "e-2"] {
+        store
+            .record_job_alert_ack_suppression(&job, exec, "503", ts())
+            .unwrap();
+    }
+    let got = store.get_job_alert_ack(&job).unwrap().expect("ack");
+    assert_eq!(got.expires_at, ts() + chrono::Duration::hours(2));
+    assert_eq!(got.suppressed_count, 2);
+    assert_eq!(got.last_execution_id.as_deref(), Some("e-2"));
+    assert!(
+        store
+            .list_job_alert_acks()
+            .unwrap()
+            .iter()
+            .any(|a| a.job_key == job)
+    );
+
+    let taken = store.take_job_alert_ack(&job).unwrap().expect("taken");
+    assert_eq!(taken.suppressed_count, 2);
+    assert!(store.take_job_alert_ack(&job).unwrap().is_none());
+
+    store
+        .upsert_job_alert_ack(&ack(ts() - chrono::Duration::hours(1)))
+        .unwrap();
+    let expired = store.take_expired_job_alert_acks(ts()).unwrap();
+    assert!(expired.iter().any(|a| a.job_key == job));
+    assert!(store.get_job_alert_ack(&job).unwrap().is_none());
+
+    // The throttle seed skips acknowledged rows and anything a recovery ended.
+    let rule = format!("rule-ack-{s}");
+    let delivery = |at, state, kind| AlertDelivery {
+        delivery_id: Uuid::new_v4().to_string(),
+        rule_name: rule.clone(),
+        channel_name: "slack".into(),
+        job_key: job.clone(),
+        execution_id: None,
+        state,
+        error: None,
+        fired_at: at,
+        delivered_at: None,
+        kind,
+    };
+    store
+        .record_alert_delivery(&delivery(
+            ts(),
+            AlertDeliveryState::Delivered,
+            AlertDeliveryKind::Alert,
+        ))
+        .unwrap();
+    store
+        .record_alert_delivery(&delivery(
+            ts() + chrono::Duration::minutes(1),
+            AlertDeliveryState::Acknowledged,
+            AlertDeliveryKind::Alert,
+        ))
+        .unwrap();
+    assert_eq!(store.last_alert_fire_at(&rule, &job).unwrap(), Some(ts()));
+    store
+        .record_alert_delivery(&delivery(
+            ts() + chrono::Duration::minutes(2),
+            AlertDeliveryState::Delivered,
+            AlertDeliveryKind::Recovery,
+        ))
+        .unwrap();
+    assert_eq!(store.last_alert_fire_at(&rule, &job).unwrap(), None);
 }

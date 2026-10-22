@@ -321,6 +321,12 @@ impl AlertStore for FaultStore {
         delete_alert_rule_override(rule_name: &str) -> bool;
         delete_expired_alert_rule_overrides(now: DateTime<Utc>) -> Vec<String>;
         prune_alert_rule_overrides(valid_rule_names: &[String]) -> Vec<String>;
+        upsert_job_alert_ack(ack: &JobAlertAck) -> ();
+        get_job_alert_ack(job_key: &str) -> Option<JobAlertAck>;
+        list_job_alert_acks() -> Vec<JobAlertAck>;
+        take_job_alert_ack(job_key: &str) -> Option<JobAlertAck>;
+        record_job_alert_ack_suppression(job_key: &str, execution_id: &str, error: &str, at: DateTime<Utc>) -> ();
+        take_expired_job_alert_acks(now: DateTime<Utc>) -> Vec<JobAlertAck>;
     }
 }
 

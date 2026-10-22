@@ -2475,8 +2475,8 @@ impl AlertStore for SqliteStore {
         conn.execute(
             "INSERT OR IGNORE INTO alert_deliveries
                 (delivery_id, rule_name, channel_name, job_key, execution_id,
-                 state, error, fired_at, delivered_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 state, error, fired_at, delivered_at, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 d.delivery_id,
                 d.rule_name,
@@ -2487,6 +2487,7 @@ impl AlertStore for SqliteStore {
                 d.error,
                 dt_to_sql(&d.fired_at),
                 opt_dt_to_sql(&d.delivered_at),
+                d.kind.as_str(),
             ],
         )
         .map_err(map_err)?;
@@ -2500,7 +2501,7 @@ impl AlertStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
             "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
-                    state, error, fired_at, delivered_at
+                    state, error, fired_at, delivered_at, kind
              FROM alert_deliveries WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -2538,6 +2539,10 @@ impl AlertStore for SqliteStore {
             .prepare(
                 "SELECT fired_at FROM alert_deliveries
                  WHERE rule_name = ?1 AND job_key = ?2
+                   AND kind = 'alert' AND state <> 'acknowledged'
+                   AND fired_at > COALESCE(
+                       (SELECT MAX(fired_at) FROM alert_deliveries
+                        WHERE job_key = ?2 AND kind = 'recovery'), '')
                  ORDER BY fired_at DESC LIMIT 1",
             )
             .map_err(map_err)?;
@@ -2554,7 +2559,7 @@ impl AlertStore for SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
-                        state, error, fired_at, delivered_at
+                        state, error, fired_at, delivered_at, kind
                  FROM alert_deliveries WHERE delivery_id = ?1",
             )
             .map_err(map_err)?;
@@ -2693,6 +2698,123 @@ impl AlertStore for SqliteStore {
             .map_err(map_err)?;
         }
         Ok(orphans)
+    }
+
+    fn upsert_job_alert_ack(&self, ack: &JobAlertAck) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            &format!(
+                "INSERT OR REPLACE INTO job_alert_acks ({JOB_ALERT_ACK_COLUMNS})
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            ),
+            params![
+                ack.job_key,
+                ack.note,
+                ack.acked_by,
+                ack.acked_by_name,
+                dt_to_sql(&ack.acked_at),
+                dt_to_sql(&ack.expires_at),
+                ack.suppressed_count as i64,
+                ack.last_execution_id,
+                ack.last_error,
+                opt_dt_to_sql(&ack.last_suppressed_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE job_key = ?1"),
+            params![job_key],
+            row_to_job_alert_ack,
+        )
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn list_job_alert_acks(&self) -> Result<Vec<JobAlertAck>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks ORDER BY acked_at DESC"
+            ))
+            .map_err(map_err)?;
+        let rows = stmt.query_map([], row_to_job_alert_ack).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn take_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
+        // Read and delete under the one connection lock, so a concurrent
+        // take cannot see the row as well.
+        let conn = self.conn.lock().unwrap();
+        let ack = conn
+            .query_row(
+                &format!("SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE job_key = ?1"),
+                params![job_key],
+                row_to_job_alert_ack,
+            )
+            .optional()
+            .map_err(map_err)?;
+        if ack.is_some() {
+            conn.execute(
+                "DELETE FROM job_alert_acks WHERE job_key = ?1",
+                params![job_key],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(ack)
+    }
+
+    fn record_job_alert_ack_suppression(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE job_alert_acks SET
+                suppressed_count = suppressed_count
+                    + CASE WHEN last_execution_id IS ?2 THEN 0 ELSE 1 END,
+                last_execution_id = ?2,
+                last_error = ?3,
+                last_suppressed_at = ?4
+             WHERE job_key = ?1",
+            params![job_key, execution_id, error, dt_to_sql(&at)],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn take_expired_job_alert_acks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<JobAlertAck>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let now_sql = dt_to_sql(&now);
+        let expired = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE expires_at <= ?1"
+                ))
+                .map_err(map_err)?;
+            let rows = stmt
+                .query_map(params![now_sql], row_to_job_alert_ack)
+                .map_err(map_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?
+        };
+        for ack in &expired {
+            conn.execute(
+                "DELETE FROM job_alert_acks WHERE job_key = ?1",
+                params![ack.job_key],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(expired)
     }
 }
 
@@ -3172,6 +3294,25 @@ fn row_to_alert_delivery(row: &rusqlite::Row<'_>) -> Result<AlertDelivery, rusql
         error: row.get(6)?,
         fired_at: sql_to_dt(&row.get::<_, String>(7)?),
         delivered_at: sql_to_opt_dt(row.get(8)?),
+        kind: AlertDeliveryKind::parse_db(&row.get::<_, String>(9)?),
+    })
+}
+
+const JOB_ALERT_ACK_COLUMNS: &str = "job_key, note, acked_by, acked_by_name, acked_at, expires_at,
+     suppressed_count, last_execution_id, last_error, last_suppressed_at";
+
+fn row_to_job_alert_ack(row: &rusqlite::Row<'_>) -> Result<JobAlertAck, rusqlite::Error> {
+    Ok(JobAlertAck {
+        job_key: row.get(0)?,
+        note: row.get(1)?,
+        acked_by: row.get(2)?,
+        acked_by_name: row.get(3)?,
+        acked_at: sql_to_dt(&row.get::<_, String>(4)?),
+        expires_at: sql_to_dt(&row.get::<_, String>(5)?),
+        suppressed_count: row.get::<_, i64>(6)?.max(0) as u32,
+        last_execution_id: row.get(7)?,
+        last_error: row.get(8)?,
+        last_suppressed_at: sql_to_opt_dt(row.get(9)?),
     })
 }
 

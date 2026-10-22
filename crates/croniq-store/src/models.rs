@@ -730,6 +730,44 @@ pub struct AlertDelivery {
     pub error: Option<String>,
     pub fired_at: DateTime<Utc>,
     pub delivered_at: Option<DateTime<Utc>>,
+    /// What the row reports: a problem, or the end of one. Rows written
+    /// before the column existed are alerts.
+    #[serde(default)]
+    pub kind: AlertDeliveryKind,
+}
+
+/// Whether a delivery reported a problem or its end.
+///
+/// A recovery is not a fire of the rule: it does not start a throttle window,
+/// and it closes the one the incident left behind, so a new failure after it
+/// alerts at once.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlertDeliveryKind {
+    /// A rule fired: a failure, a missed SLA, a missed fire, a blocked queue,
+    /// maintenance left on, or an acknowledgement that ran out.
+    #[default]
+    Alert,
+    /// An acknowledged job succeeded again, and its acknowledgement ended.
+    Recovery,
+}
+
+impl AlertDeliveryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Alert => "alert",
+            Self::Recovery => "recovery",
+        }
+    }
+
+    /// Parse a kind from the DB; anything unknown reads as an alert, the
+    /// value every row had before the column existed.
+    pub fn parse_db(s: &str) -> Self {
+        match s {
+            "recovery" => Self::Recovery,
+            _ => Self::Alert,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -743,6 +781,10 @@ pub enum AlertDeliveryState {
     /// suppressed the fire. Recorded so operators can see what *would*
     /// have fired without the throttle.
     Throttled,
+    /// Rule matched, but an operator had acknowledged the job's failure
+    /// (see [`JobAlertAck`]), so nothing was sent. Recorded so the delivery
+    /// log shows what the acknowledgement held back.
+    Acknowledged,
 }
 
 impl AlertDeliveryState {
@@ -751,6 +793,7 @@ impl AlertDeliveryState {
             Self::Delivered => "delivered",
             Self::Failed => "failed",
             Self::Throttled => "throttled",
+            Self::Acknowledged => "acknowledged",
         }
     }
 
@@ -763,6 +806,7 @@ impl AlertDeliveryState {
             "delivered" => Some(Self::Delivered),
             "failed" => Some(Self::Failed),
             "throttled" => Some(Self::Throttled),
+            "acknowledged" => Some(Self::Acknowledged),
             _ => None,
         }
     }
@@ -838,6 +882,51 @@ impl AlertRuleOverride {
             return None;
         }
         self.throttle_secs
+    }
+}
+
+// ─── Per-job alert acknowledgements ───
+
+/// An operator's "we know this job is failing, and we are waiting it out",
+/// on one job. While it lasts, the job's alerts are recorded as
+/// [`AlertDeliveryState::Acknowledged`] instead of being sent; every other
+/// job keeps alerting as before.
+///
+/// It ends by itself, so there is nothing to remember to undo:
+///
+/// - on the job's first successful run, which sends a recovery to the
+///   channels of the job's `job_failed` rules;
+/// - at `expires_at`, which is always set and capped, and which alerts that
+///   the job has still not recovered;
+/// - or when someone clears it by hand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobAlertAck {
+    pub job_key: String,
+    /// Why — mandatory, captured when the acknowledgement is written.
+    pub note: String,
+    /// Caller user_id / api_client_id that acknowledged.
+    pub acked_by: String,
+    /// Display name of the caller at that moment, so the acknowledgement
+    /// still reads correctly after the user is renamed or removed.
+    pub acked_by_name: String,
+    pub acked_at: DateTime<Utc>,
+    /// When the acknowledgement runs out if the job has not recovered by then.
+    pub expires_at: DateTime<Utc>,
+    /// Failed runs whose alerts it held back. Counted per execution, not per
+    /// rule: one failure that three rules match counts once.
+    pub suppressed_count: u32,
+    /// The run whose alerts it held back last, its error, and when.
+    pub last_execution_id: Option<String>,
+    pub last_error: Option<String>,
+    pub last_suppressed_at: Option<DateTime<Utc>>,
+}
+
+impl JobAlertAck {
+    /// Whether the acknowledgement still holds alerts back at `now`. One past
+    /// its deadline holds nothing back while it waits for the watchdog,
+    /// which removes it and alerts.
+    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+        now < self.expires_at
     }
 }
 

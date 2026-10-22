@@ -103,6 +103,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "033_user_notes_seen",
         include_str!("033_user_notes_seen.sql"),
     ),
+    ("034_job_alert_acks", include_str!("034_job_alert_acks.sql")),
 ];
 
 /// Run all pending migrations.
@@ -1088,6 +1089,66 @@ mod tests {
             plan.iter()
                 .any(|step| step.contains("idx_job_notes_created_at")),
             "the unread count must use idx_job_notes_created_at; plan was: {plan:#?}"
+        );
+    }
+
+    #[test]
+    fn migration_034_creates_job_alert_acks_and_marks_old_deliveries_as_alerts() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "033_user_notes_seen").unwrap();
+
+        // A delivery an older binary wrote, before deliveries had a kind.
+        conn.execute(
+            "INSERT INTO alert_deliveries
+                (delivery_id, rule_name, channel_name, job_key, state, fired_at)
+             VALUES ('d-1', 'failures', 'ops', 'billing:invoice', 'delivered',
+                     '2026-10-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "034_job_alert_acks")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        let kind: String = conn
+            .query_row(
+                "SELECT kind FROM alert_deliveries WHERE delivery_id = 'd-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kind, "alert", "a pre-034 delivery reads as an alert");
+
+        conn.execute(
+            "INSERT INTO job_alert_acks
+                (job_key, note, acked_by, acked_by_name, acked_at, expires_at)
+             VALUES ('billing:invoice', 'provider down', 'u-1', 'Ada',
+                     '2026-10-01T00:00:00Z', '2026-10-04T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT suppressed_count FROM job_alert_acks WHERE job_key = 'billing:invoice'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // One acknowledgement per job.
+        assert!(
+            conn.execute(
+                "INSERT INTO job_alert_acks
+                    (job_key, note, acked_by, acked_by_name, acked_at, expires_at)
+                 VALUES ('billing:invoice', 'again', 'u-2', 'Bob',
+                         '2026-10-01T01:00:00Z', '2026-10-04T01:00:00Z')",
+                [],
+            )
+            .is_err()
         );
     }
 }

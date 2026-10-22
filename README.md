@@ -651,6 +651,11 @@ X-Croniq-Signature: sha256=<hex(hmac-sha256(secret, raw_body))>
 }
 ```
 
+When an operator has acknowledged a failing job (see
+[Acknowledging a failing job](docs/operations.md#acknowledging-a-failing-job)),
+the job's next success sends the same envelope with `"event": "job_recovered"`
+— a receiver that pages on every POST should match on `event`.
+
 The envelope is a stable contract; future versions only add fields. To verify
 a receiver, recompute `sha256=hex(hmac_sha256(secret, raw_body))` and
 constant-time-compare against `X-Croniq-Signature`. One retry on 5xx /
@@ -737,7 +742,7 @@ Every endpoint requires the matching scope on the caller's token. `admin` acts a
 | Runners | `runners:read` (incl. SSE) | `runners:write` |
 | Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |
 | Dashboard forecast | `jobs:read` | — |
-| Failure alerts (`/v1/alerts/config`, `/v1/alerts/deliveries`) | `alerts:read` | — (rules + channels are DSL-managed; no write API yet) |
+| Failure alerts (`/v1/alerts/config`, `/v1/alerts/deliveries`, `/v1/alerts/acks`) | `alerts:read` | `alerts:write` (rule overrides, admin) · `alerts:ack` (acknowledge a failing job, `/v1/jobs/{key}/alert-ack`, operator) — rules + channels themselves are DSL-managed |
 | API clients | `api-clients:admin` | `api-clients:admin` |
 | API keys | — | `api-keys:admin` |
 | Live Console stream (`/v1/events/stream`) | `admin` — the raw server-wide tracing feed | — |

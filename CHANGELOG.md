@@ -8,6 +8,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Acknowledge a failing job instead of snoozing its rule.** A job that
+  keeps failing for a reason nobody here can fix — an upstream outage — kept
+  alerting while there was nothing to do but wait, and the only way to quiet
+  it was a rule snooze: every job the rule matched went quiet, until a time
+  someone guessed, or until someone remembered to lift it. An
+  acknowledgement quiets that one job and ends by itself: its next
+  successful run ends it and sends the channels a **recovery**; if it runs
+  out first (72 hours by default, 7 days at most) the watchdog ends it and
+  alerts that the job is **still failing**. *Acknowledge failure* on the
+  job's overview, next to its last failure; *Renew* or *Resume alerts* while
+  it lasts. See [Acknowledging a failing job](docs/operations.md#acknowledging-a-failing-job).
+  - Held-back alerts are recorded in the delivery log with the new state
+    `acknowledged`, and counted per failed run. A delivery now carries a
+    `kind`, `alert` or `recovery`; the Deliveries list marks recoveries.
+  - A recovery reaches webhooks as `"event": "job_recovered"` and shell
+    channels as `CRONIQ_REASON=job_recovered`; shell channels also get
+    `CRONIQ_EVENT` on every alert, with the values a webhook's `event` has.
+    A recovery is not throttled and clears the job's throttle windows, so a
+    failure after it alerts at once. The ran-out alert is a `job_failed`
+    with `"reason": "ack_expired"`, not throttled either.
+  - Only a job whose latest finished run failed can be acknowledged
+    (`409 job_not_failing` otherwise).
+  - New endpoints `GET`/`POST`/`DELETE /v1/jobs/{job_key}/alert-ack` and
+    `GET /v1/alerts/acks`, and a new scope `alerts:ack`, granted to the
+    `operator` role. New metrics `croniq_job_alert_ack_since_timestamp` and
+    `croniq_job_alert_ack_suppressed`; audit events `alerts.ack.set`,
+    `alerts.ack.cleared`, `alerts.ack.recovered`, `alerts.ack.expired`.
+    Migration 034 adds `job_alert_acks` and `alert_deliveries.kind`.
+  - The throttle seed at boot no longer counts a held-back row as a fire,
+    nor a fire from before the job's latest recovery.
 - **A Notes inbox.** *Notes* in the sidebar, under Runs (`g` then `o`), lists
   every thread that carries a note — a run's notes, or a job's own — newest
   activity first, with quick filters *Mine* (threads you have written in),

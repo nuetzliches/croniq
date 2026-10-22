@@ -736,17 +736,48 @@ components:
         execution_id: { type: string, nullable: true }
         state:
           type: string
-          enum: [delivered, failed, throttled]
+          enum: [delivered, failed, throttled, acknowledged]
           description: >
             `delivered` = channel handler succeeded; `failed` = handler
             errored (see `error`); `throttled` = rule matched but the
-            per-(rule, job_key) throttle window suppressed the fire.
+            per-(rule, job_key) throttle window suppressed the fire;
+            `acknowledged` = rule matched but an operator had acknowledged
+            the job's failure, so nothing was sent.
         error:
           type: string
           nullable: true
           description: Failure reason; set when `state` is `failed`.
         fired_at: { type: string, format: date-time }
         delivered_at: { type: string, format: date-time, nullable: true }
+        kind:
+          type: string
+          enum: [alert, recovery]
+          description: >
+            `recovery` = an acknowledged job succeeded again and this told the
+            channel so; `alert` = everything else. Rows written before the
+            field existed read as `alert`.
+
+    JobAlertAck:
+      type: object
+      description: |
+        A failing job someone is waiting out. Its alerts are recorded as
+        `acknowledged` instead of being sent, until the job succeeds again
+        (which sends a recovery) or `expires_at` passes (which alerts that the
+        job is still failing). A row past `expires_at` holds nothing back.
+      required: [job_key, note, acked_by, acked_by_name, acked_at, expires_at, suppressed_count]
+      properties:
+        job_key: { type: string }
+        note: { type: string, description: Why — mandatory }
+        acked_by: { type: string, description: user_id or api_client_id }
+        acked_by_name: { type: string, description: Display name at the time }
+        acked_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        suppressed_count:
+          type: integer
+          description: Failed runs whose alerts were held back, counted once per run
+        last_execution_id: { type: string, nullable: true }
+        last_error: { type: string, nullable: true }
+        last_suppressed_at: { type: string, format: date-time, nullable: true }
 
     TagCount:
       type: object
@@ -2038,6 +2069,73 @@ paths:
         "204": { description: Cleared }
         "403": { description: Caller lacks alerts:write }
         "404": { description: Nothing to clear }
+
+  /v1/alerts/acks:
+    get:
+      summary: List job alert acknowledgements
+      description: Every acknowledgement, newest first. Requires `alerts:read`.
+      responses:
+        "200":
+          description: Acknowledgements
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/JobAlertAck" }
+        "403": { description: Caller lacks alerts:read }
+
+  /v1/jobs/{job_key}/alert-ack:
+    parameters:
+      - { name: job_key, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Inspect a job's alert acknowledgement
+      description: Requires `alerts:read`.
+      responses:
+        "200":
+          description: The job's acknowledgement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAlertAck" }
+        "404": { description: The job has none }
+    post:
+      summary: Acknowledge a failing job
+      description: |
+        Holds back the job's alerts until its next successful run (which sends
+        the channels of its `job_failed` rules a recovery) or until `until`
+        (which alerts that the job is still failing). Acknowledging again
+        replaces the acknowledgement. Requires `alerts:ack`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, maxLength: 2000 }
+                until:
+                  type: string
+                  format: date-time
+                  description: Defaults to 72 hours from now; at most 7 days from now
+      responses:
+        "200":
+          description: The stored acknowledgement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAlertAck" }
+        "400": { description: "Blank note, or `until` in the past or more than 7 days away (`invalid_ack`)" }
+        "403": { description: Caller lacks alerts:ack }
+        "404": { description: Unknown job }
+        "409": { description: "The job's latest finished run did not fail (`job_not_failing`)" }
+    delete:
+      summary: End a job's alert acknowledgement
+      description: |
+        The job's alerts go out again. No recovery is sent. Requires
+        `alerts:ack`.
+      responses:
+        "204": { description: Ended }
+        "403": { description: Caller lacks alerts:ack }
+        "404": { description: The job had none }
 
   /v1/calendars:
     get:
