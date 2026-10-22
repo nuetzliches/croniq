@@ -1,0 +1,152 @@
+# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.19.0/docs/stack-file.md
+#
+# The same stack as `node scripts/dev-stack.mjs` (API, demo runner, dashboard
+# on croniq's 4230-4233 dev block), run by devstack: every process is built
+# into an immutable artifact, a saved change goes live once it is healthy.
+# Run one or the other — both want 4230 and 4231.
+#
+# Nothing runs in a container, so there is no `[compose.*]` group: croniq's
+# only infrastructure is the SQLite file in its data directory (Postgres is an
+# opt-in feature), and both services of docker-compose.yml — `server` and
+# `runner` — run natively here. devstack requires a group to start at least one
+# container, so their environment cannot be borrowed with `compose = {…}`; the
+# values that matter are copied from docker-compose.yml below. Keep the admin
+# login and API key in step with it.
+#
+# Windows: the first build of each binary compiles the workspace in the lane's
+# snapshot from scratch. If it dies with os error 1455 (paging file), start the
+# daemon with CARGO_BUILD_JOBS=2 in the environment.
+
+version = 1
+
+[stack]
+name     = "croniq"
+requires = "0.7.0"                         # `prepare` (services.ui)
+
+# ------------------------------------------------------------------ services
+#
+# `cargo install --root` rather than `cargo build`: it puts just the binary in
+# a directory of its own, so `output` copies one file instead of target/debug.
+# `--target-dir target` keeps the snapshot's incremental state warm between
+# builds, which `cargo install` would otherwise build in a fresh temp dir.
+
+[services.seed]
+kind    = "job"
+build   = "cargo install --path crates/croniq-cli --bin croniq --debug --locked --force --target-dir target --root target/devstack/cli"
+output  = "target/devstack/cli/bin"
+run     = "node {repo}/scripts/devstack-seed.mjs"
+# The workspace crates `croniq` links (`cargo tree -p croniq-cli`).
+watch   = [
+  "crates/croniq-cli/**", "crates/croniq-config/**", "crates/croniq-runner/**",
+  "crates/croniq-store/**", "crates/croniq-auth/**", "Cargo.toml", "Cargo.lock",
+]
+ensure_dirs = ["{repo}/.data/devstack"]
+
+[services.seed.env]
+CRONIQ_BIN_DIR        = "{artifact}"
+CRONIQ_DATA_DIR       = "{repo}/.data/devstack"
+# From docker-compose.yml's `server`. Its CRONIQ_DEMO_MFA=1 is left out on
+# purpose: TOTP pre-enrolled for a marketing walkthrough is one more prompt
+# per login in development (dev-stack.mjs leaves it out too).
+CRONIQ_ADMIN_USER     = "admin"
+CRONIQ_ADMIN_PASSWORD = "demo-admin"
+CRONIQ_INIT_API_KEY   = "croniq_demo_local_stack_key_not_for_production_use"
+
+[services.api]
+build   = "cargo install --path crates/croniq-server --bin croniq-server --debug --locked --force --target-dir target --root target/devstack/server"
+output  = "target/devstack/server/bin"
+# `--watch` reloads the Croniqfile in place, without a rebuild.
+run     = "{artifact}/croniq-server --config {repo}/Croniqfile.demo --watch --listen 127.0.0.1:{port} --data-dir {repo}/.data/devstack"
+port    = 4230
+health  = { http = "/health", timeout = "120s" }
+after   = ["seed"]
+# The workspace crates croniq-server links (`cargo tree -p croniq-server`);
+# a change to a runner or the CLI does not restart the API.
+watch   = [
+  "crates/croniq-server/**", "crates/croniq-config/**", "crates/croniq-scheduler/**",
+  "crates/croniq-store/**", "crates/croniq-execution/**", "crates/croniq-runner/**",
+  "crates/croniq-bridge/**", "crates/croniq-auth/**", "crates/croniq-mcp/**",
+  "Cargo.toml", "Cargo.lock",
+]
+# The scheduler cannot be switched off, so a candidate beside the main
+# instance would fire every job twice into the same SQLite file. In place it
+# is: a few seconds' gap per change, which the runner rides out by reconnecting.
+proxy   = false
+# A new migration is a one-way change to the dev database: look before it runs.
+promote = { hold_if_changed = ["crates/croniq-store/src/migrations/**"] }
+
+[services.api.env]
+CRONIQ_DATA_DIR  = "{repo}/.data/devstack"
+CRONIQ_DEMO_MODE = "1"                     # binds loopback only (issue #431)
+RUST_LOG         = "${RUST_LOG:-info}"
+
+[services.runner]
+build   = "cargo install --path crates/croniq-demo-runner --bin croniq-demo-runner --debug --locked --force --target-dir target --root target/devstack/runner"
+output  = "target/devstack/runner/bin"
+run     = "{artifact}/croniq-demo-runner"
+after   = ["api"]
+watch   = ["crates/croniq-demo-runner/**", "crates/croniq-runner-sdk/**", "Cargo.toml", "Cargo.lock"]
+# A runner is a queue consumer and listens on nothing: no candidate beside it.
+proxy   = false
+
+[services.runner.env]                     # docker-compose.yml's `runner`
+CRONIQ_SERVER_URL   = "{service.api.url}"
+CRONIQ_API_KEY      = "croniq_demo_local_stack_key_not_for_production_use"
+RUNNER_FAIL_RATE    = "${RUNNER_FAIL_RATE:-0.05}"
+RUNNER_MAX_INFLIGHT = "4"
+RUNNER_TAGS         = "${RUNNER_TAGS:-env=dev,role=worker}"
+RUST_LOG            = "${RUST_LOG:-warn}"
+
+[services.ui]
+kind   = "devserver"
+cwd    = "ui"
+# `--host 127.0.0.1`: vite's `localhost` is ::1 here (see dev-stack.mjs).
+# `predev` builds the croniq-config wasm bridge first, hence the timeout.
+# 4231 is devstack's: vite listens on the port `{port}` gives it, which is
+# what its log prints, and devstack forwards 4231 there (HMR included).
+run    = "npm run dev -- --host 127.0.0.1 --port {port}"
+port   = 4231
+health = { http = "/", timeout = "300s" }
+# A worktree's lane runs vite from a snapshot without node_modules; the main
+# tree uses its own and never runs this.
+prepare = { run = "npm ci", inputs = ["ui/package-lock.json"] }
+env    = { CRONIQ_API_ORIGIN = "{service.api.url}" }
+# Vite reloads app code itself; these it only reads on start. The wasm bridge
+# is rebuilt by `predev`, so a DSL change needs a restart too.
+restart_on = [
+  "ui/package.json",
+  "ui/vite.config.ts",
+  "ui/tsconfig*.json",
+  "crates/croniq-config/src/**",
+  "crates/croniq-config-wasm/src/**",
+]
+
+# ------------------------------------------------------------------ commands
+
+[commands.install]
+description = "Install the dashboard's npm dependencies"
+steps = [{ exec = "npm ci", cwd = "ui" }]
+
+[commands.reset-db]
+description = "Delete the dev database and seed a fresh one"
+confirm     = "The dev database in .data/devstack (jobs, history, users, API keys) is deleted. Continue?"
+steps = [
+  { stop = "runner" },
+  { stop = "api" },
+  { exec = "node -e \"require('fs').rmSync('.data/devstack', {{ recursive: true, force: true }})\"", cwd = "." },
+  { run = "seed" },
+  { start = "api" },
+  { start = "runner" },
+]
+
+# -------------------------------------------------------------------- groups
+
+[groups.backend]
+label   = "Backend"
+order   = 1
+members = ["api", "runner", "seed", "command.reset-db"]
+
+[groups.frontend]
+label   = "Dashboard"
+order   = 2
+members = ["ui", "command.install"]
