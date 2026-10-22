@@ -34,7 +34,7 @@ test.describe('job lifecycle', () => {
     await app.goto('/jobs')
     await app.getByRole('button', { name: 'New job' }).first().click()
     await app.getByLabel('Job key', { exact: true }).fill(key)
-    await app.getByLabel('Description').fill('Created by the e2e suite')
+    await app.getByLabel('Description', { exact: true }).fill('Created by the e2e suite')
 
     const [created] = await Promise.all([
       app.waitForResponse((r) => r.url().includes('/v1/jobs') && r.request().method() === 'POST'),
