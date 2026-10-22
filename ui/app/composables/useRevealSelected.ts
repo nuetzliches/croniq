@@ -1,4 +1,4 @@
-import { nextTick, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
+import { nextTick, onScopeDispose, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
 
 /**
  * Scroll a list to its selected row when the selection arrives from outside
@@ -19,12 +19,14 @@ export function useRevealSelected(
   rendered: MaybeRefOrGetter<unknown>,
 ) {
   let revealed: string | null = null
+  let release: (() => void) | null = null
 
   watch(
     () => [toValue(selected), toValue(rendered)] as const,
     async ([key]) => {
       if (!key) {
         revealed = null
+        release?.()
         return
       }
       if (key === revealed) return
@@ -32,14 +34,54 @@ export function useRevealSelected(
       const row = list.value?.querySelector<HTMLElement>('[data-selected]')
       if (!row) return
       revealed = key
-      if (fullyVisible(row)) return
-      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-      // `center`, not `start`: a sticky table header would cover a row
-      // scrolled to the top.
-      row.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+      release?.()
+      reveal(row)
+      release = settle(row)
     },
     { immediate: true, flush: 'post' },
   )
+
+  onScopeDispose(() => release?.())
+}
+
+function reveal(row: HTMLElement) {
+  if (fullyVisible(row)) return
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  // `center`, not `start`: a sticky table header would cover a row
+  // scrolled to the top.
+  row.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+}
+
+/** How long a revealed row is kept in view while the rows around it settle. */
+const SETTLE_MS = 1000
+/** What says the operator has taken over the scrolling. */
+const OPERATOR_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
+
+/**
+ * Rows go on growing for a frame or two after they first render — icons and
+ * cells fill in — and a scroll aimed at the last row stops at the end of the
+ * list as it was, leaving that row cut off. For a moment after the reveal, and
+ * only until the operator scrolls, reveal the row again whenever the rows
+ * around it change size. Returns the function that stops this early.
+ */
+function settle(row: HTMLElement): () => void {
+  const rows = row.parentElement
+  if (!rows || typeof ResizeObserver === 'undefined') return () => {}
+  const observer = new ResizeObserver(() => {
+    if (row.isConnected) reveal(row)
+  })
+  observer.observe(rows)
+  const scroller = document.documentElement
+  const stop = () => {
+    observer.disconnect()
+    clearTimeout(timer)
+    for (const type of OPERATOR_EVENTS) scroller.removeEventListener(type, stop, true)
+  }
+  const timer = setTimeout(stop, SETTLE_MS)
+  for (const type of OPERATOR_EVENTS) {
+    scroller.addEventListener(type, stop, { capture: true, passive: true })
+  }
+  return stop
 }
 
 /**
