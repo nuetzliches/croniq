@@ -116,7 +116,7 @@ jobs:
         run: ./gradlew --no-daemon check
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.os }}
           path: |
@@ -148,7 +148,7 @@ jobs:
         run: ./gradlew --no-daemon :conformance-tests:test
       - name: Upload conformance results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-results
           path: |
@@ -186,7 +186,7 @@ jobs:
         # io/github/nuetzliches in the local Maven repo layout.
         run: |
           find ~/.m2/repository/io/github/nuetzliches -type f \( -name "*.jar" -o -name "*.pom" \) | sort
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: maven-local-smoke
           path: |

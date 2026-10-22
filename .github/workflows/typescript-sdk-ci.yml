@@ -151,7 +151,7 @@ jobs:
             tar -tzf "$tgz" | grep -q 'package/dist/index.js$' || { echo "missing dist/index.js"; exit 1; }
             tar -tzf "$tgz" | grep -q 'package/dist/index.d.ts$' || { echo "missing dist/index.d.ts"; exit 1; }
           done
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-smoke
           path: sdks/typescript/artifacts/
