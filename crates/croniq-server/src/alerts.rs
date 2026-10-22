@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use croniq_config::compile::{AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger};
-use croniq_store::models::{AlertDelivery, AlertDeliveryState};
+use croniq_store::models::{AlertDelivery, AlertDeliveryKind, AlertDeliveryState, JobAlertAck};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use uuid::Uuid;
@@ -54,6 +54,35 @@ pub const MAINTENANCE_ACTIVE_REASON: &str = "maintenance_active";
 /// `reason` of a `job_blocked` alert (issue #796): a fire has waited in the
 /// queue, undispatched, longer than the rule allows.
 pub const JOB_BLOCKED_REASON: &str = "job_blocked";
+
+/// `reason` of a recovery: a job whose failure was acknowledged succeeded
+/// again. Webhooks get it as their `event` too, so a receiver that pages on
+/// `job_failed` does not page on the good news.
+pub const JOB_RECOVERED_REASON: &str = "job_recovered";
+
+/// `reason` of the alert sent when an acknowledgement runs out before the job
+/// has recovered. It is a `job_failed` event: the job is still failing.
+pub const ACK_EXPIRED_REASON: &str = "ack_expired";
+
+/// The `event` a channel reports: what happened, where `reason` says why.
+fn event_name(ctx: &FailureContext) -> &'static str {
+    // Every job-scoped trigger has always sent `job_failed` (with `reason`
+    // telling them apart), and receivers match on it. The maintenance alert is
+    // not about a job, and a recovery is not a failure, so each gets its own.
+    match ctx.reason.as_str() {
+        MAINTENANCE_ACTIVE_REASON => MAINTENANCE_ACTIVE_REASON,
+        JOB_RECOVERED_REASON => JOB_RECOVERED_REASON,
+        _ => "job_failed",
+    }
+}
+
+fn delivery_kind(ctx: &FailureContext) -> AlertDeliveryKind {
+    if ctx.reason == JOB_RECOVERED_REASON {
+        AlertDeliveryKind::Recovery
+    } else {
+        AlertDeliveryKind::Alert
+    }
+}
 
 /// Failure context the evaluator sees on every dead-letter / drop.
 ///
@@ -95,10 +124,11 @@ pub fn load_throttle_state(store: &DynStore, alerts: &AlertsConfig) -> ThrottleM
     let map = empty_throttle_map();
     for rule in &alerts.rules {
         // We don't know up-front which job_keys have fired for this
-        // rule, so the helper queries per (rule, "*") combo isn't
-        // useful here. Instead, we list recent deliveries for the
-        // rule and pick the newest per job_key. 200 rows max keeps
-        // the boot cost bounded.
+        // rule, so we list recent deliveries for the rule to find them
+        // (200 rows max keeps the boot cost bounded), then ask the store
+        // for each one's last fire. The store decides what counts: a row
+        // an acknowledgement held back does not, nor a recovery, nor a fire
+        // from before the job's latest recovery — that incident is over.
         let filter = croniq_store::models::AlertDeliveryFilter {
             rule_name: Some(rule.name.clone()),
             limit: Some(200),
@@ -106,12 +136,13 @@ pub fn load_throttle_state(store: &DynStore, alerts: &AlertsConfig) -> ThrottleM
         };
         match store.list_alert_deliveries(&filter) {
             Ok(rows) => {
-                let mut guard = map.lock().unwrap();
-                for row in rows {
-                    let key = (rule.name.clone(), row.job_key.clone());
-                    // list_alert_deliveries returns rows newest-first,
-                    // so only insert if we haven't seen this key yet.
-                    guard.entry(key).or_insert(row.fired_at);
+                let mut job_keys: Vec<String> = rows.into_iter().map(|r| r.job_key).collect();
+                job_keys.sort();
+                job_keys.dedup();
+                for job_key in job_keys {
+                    if let Ok(Some(at)) = store.last_alert_fire_at(&rule.name, &job_key) {
+                        map.lock().unwrap().insert((rule.name.clone(), job_key), at);
+                    }
                 }
             }
             Err(e) => {
@@ -206,12 +237,58 @@ pub(crate) async fn dispatch_rule(
         return recorded;
     }
 
+    // An acknowledged job (see `JobAlertAck`): someone knows it is failing
+    // and is waiting it out. Record what it held back instead of sending it.
+    // Maintenance alerts have no job, so nothing can acknowledge them.
+    if !ctx.job_key.is_empty()
+        && let Ok(Some(ack)) = store.get_job_alert_ack(&ctx.job_key)
+        && ack.is_active(now)
+    {
+        if !ctx.execution_id.is_empty() {
+            let _ = store.record_job_alert_ack_suppression(
+                &ctx.job_key,
+                &ctx.execution_id,
+                &ctx.error,
+                now,
+            );
+        }
+        let delivery = AlertDelivery {
+            delivery_id: Uuid::new_v4().to_string(),
+            rule_name: rule.name.clone(),
+            channel_name: rule
+                .channels
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "<none>".into()),
+            job_key: ctx.job_key.clone(),
+            execution_id: Some(ctx.execution_id.clone()),
+            state: AlertDeliveryState::Acknowledged,
+            error: None,
+            fired_at: now,
+            delivered_at: None,
+            kind: AlertDeliveryKind::Alert,
+        };
+        tracing::info!(
+            target: "croniq::alerts",
+            rule = %rule.name,
+            job_key = %ctx.job_key,
+            acked_by = %ack.acked_by_name,
+            "alerts.fired held back by acknowledgement"
+        );
+        let _ = store.record_alert_delivery(&delivery);
+        recorded.push(delivery);
+        return recorded;
+    }
+
     // Override throttle, when set, replaces the DSL window; otherwise the
-    // DSL value applies.
+    // DSL value applies. The alert that an acknowledgement ran out is not
+    // throttled: it comes once per acknowledgement, and the window it would
+    // fall into was opened by the failure that was acknowledged.
     let throttle_window = override_row
         .as_ref()
         .and_then(|o| o.effective_throttle_secs(now))
-        .or_else(|| rule.throttle.as_deref().and_then(parse_throttle_secs));
+        .or_else(|| rule.throttle.as_deref().and_then(parse_throttle_secs))
+        .filter(|_| ctx.reason != ACK_EXPIRED_REASON);
     let throttle_state = check_throttle(throttle, &rule.name, &ctx.job_key, throttle_window, now);
     match throttle_state {
         ThrottleDecision::Suppress { last_at } => {
@@ -229,6 +306,7 @@ pub(crate) async fn dispatch_rule(
                 error: None,
                 fired_at: now,
                 delivered_at: None,
+                kind: AlertDeliveryKind::Alert,
             };
             tracing::info!(
                 target: "croniq::alerts",
@@ -250,6 +328,32 @@ pub(crate) async fn dispatch_rule(
         }
     }
 
+    recorded.extend(deliver_to_channels(rule, alerts, ctx, store, email_sender, now).await);
+    recorded
+}
+
+/// Whether an operational override keeps `rule` from sending anything at
+/// `now`. A store error counts as no override.
+fn suppressed_by_override(rule: &RuleConfig, store: &DynStore, now: DateTime<Utc>) -> bool {
+    store
+        .get_alert_rule_override(&rule.name)
+        .ok()
+        .flatten()
+        .is_some_and(|ov| ov.is_suppressing(now))
+}
+
+/// Send `ctx` to every channel of `rule` and record a delivery row per
+/// channel. No override, acknowledgement or throttle check: the caller has
+/// decided that it goes out.
+async fn deliver_to_channels(
+    rule: &RuleConfig,
+    alerts: &AlertsConfig,
+    ctx: &FailureContext,
+    store: &DynStore,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
+    now: DateTime<Utc>,
+) -> Vec<AlertDelivery> {
+    let mut recorded = Vec::new();
     for channel_name in &rule.channels {
         let Some(channel) = alerts.channels.get(channel_name) else {
             tracing::warn!(
@@ -268,6 +372,7 @@ pub(crate) async fn dispatch_rule(
                 error: Some("unknown channel".into()),
                 fired_at: now,
                 delivered_at: None,
+                kind: delivery_kind(ctx),
             };
             let _ = store.record_alert_delivery(&delivery);
             recorded.push(delivery);
@@ -279,6 +384,108 @@ pub(crate) async fn dispatch_rule(
         recorded.push(delivery);
     }
 
+    recorded
+}
+
+/// The `job_failed` rules that cover `job_key`, whatever their attempt and
+/// dead-letter filters: the rules an acknowledgement of the job answers to.
+fn job_failed_rules_for<'a>(
+    alerts: &'a AlertsConfig,
+    job_key: &'a str,
+) -> impl Iterator<Item = &'a RuleConfig> {
+    alerts.rules.iter().filter(move |r| {
+        matches!(r.trigger, RuleTrigger::JobFailed) && glob_match(&r.job_key_glob, job_key)
+    })
+}
+
+/// An acknowledged job succeeded again: its acknowledgement has been taken
+/// off (the caller did that), and the channels of the job's `job_failed`
+/// rules hear that it is over. Not throttled — it closes the incident the
+/// throttle window belonged to, so the job's windows are cleared too, and its
+/// next failure alerts at once. A rule an operator snoozed or disabled stays
+/// quiet here as well.
+pub async fn send_recovery(
+    alerts: &AlertsConfig,
+    ack: &JobAlertAck,
+    execution_id: &str,
+    throttle: &ThrottleMap,
+    store: &DynStore,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
+) -> Vec<AlertDelivery> {
+    let now = Utc::now();
+    throttle
+        .lock()
+        .unwrap()
+        .retain(|(_, job_key), _| job_key != &ack.job_key);
+
+    let ctx = FailureContext {
+        job_key: ack.job_key.clone(),
+        execution_id: execution_id.to_string(),
+        error: format!(
+            "{job} succeeded again after {count} failed {runs} held back. \
+             Acknowledged by {by} at {at}: {note}",
+            job = ack.job_key,
+            count = ack.suppressed_count,
+            runs = if ack.suppressed_count == 1 {
+                "run"
+            } else {
+                "runs"
+            },
+            by = ack.acked_by_name,
+            at = ack.acked_at.to_rfc3339(),
+            note = ack.note,
+        ),
+        attempt: 0,
+        reason: JOB_RECOVERED_REASON.to_string(),
+    };
+    let mut recorded = Vec::new();
+    for rule in job_failed_rules_for(alerts, &ack.job_key) {
+        if suppressed_by_override(rule, store, now) {
+            continue;
+        }
+        recorded.extend(deliver_to_channels(rule, alerts, &ctx, store, email_sender, now).await);
+    }
+    recorded
+}
+
+/// An acknowledgement ran out and the job has not succeeded since: tell the
+/// channels of its `job_failed` rules that it is still failing. The watchdog
+/// has already removed the acknowledgement, so this goes through like any
+/// alert — overrides apply, the throttle does not (see `dispatch_rule`).
+pub async fn alert_ack_expired(
+    alerts: &AlertsConfig,
+    ack: &JobAlertAck,
+    throttle: &ThrottleMap,
+    store: &DynStore,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
+) -> Vec<AlertDelivery> {
+    let ctx = FailureContext {
+        job_key: ack.job_key.clone(),
+        execution_id: ack.last_execution_id.clone().unwrap_or_default(),
+        error: format!(
+            "The acknowledgement by {by} ran out at {until}, and {job} has not succeeded \
+             since {at}. {count} failed {runs} held back. Note: {note}\n\
+             Last error: {last}",
+            by = ack.acked_by_name,
+            until = ack.expires_at.to_rfc3339(),
+            job = ack.job_key,
+            at = ack.acked_at.to_rfc3339(),
+            count = ack.suppressed_count,
+            runs = if ack.suppressed_count == 1 {
+                "run"
+            } else {
+                "runs"
+            },
+            note = ack.note,
+            last = ack.last_error.as_deref().unwrap_or("none recorded"),
+        ),
+        attempt: 0,
+        reason: ACK_EXPIRED_REASON.to_string(),
+    };
+    let mut recorded = Vec::new();
+    for rule in job_failed_rules_for(alerts, &ack.job_key) {
+        recorded.extend(dispatch_rule(rule, alerts, &ctx, throttle, store, email_sender).await);
+    }
     recorded
 }
 
@@ -408,6 +615,7 @@ async fn dispatch(
                 error: Some(reason.clone()),
                 fired_at: now,
                 delivered_at: None,
+                kind: delivery_kind(ctx),
             }
         }
     }
@@ -428,6 +636,7 @@ fn deliver_shell(
         .env("CRONIQ_ERROR", &ctx.error)
         .env("CRONIQ_ATTEMPT", ctx.attempt.to_string())
         .env("CRONIQ_REASON", &ctx.reason)
+        .env("CRONIQ_EVENT", event_name(ctx))
         .env("CRONIQ_RULE", rule_name)
         .env("CRONIQ_CHANNEL", &channel.name)
         .output();
@@ -474,6 +683,7 @@ fn deliver_shell(
         error,
         fired_at: now,
         delivered_at: Some(now),
+        kind: delivery_kind(ctx),
     }
 }
 
@@ -523,14 +733,7 @@ async fn deliver_webhook(
     let delivery_id = Uuid::new_v4().to_string();
     let payload = WebhookPayload {
         rule: rule_name,
-        // Every job-scoped trigger has always sent `job_failed` here (with
-        // `reason` telling them apart), and receivers match on it. The
-        // maintenance alert is not about a job, so it gets its own event.
-        event: if ctx.reason == MAINTENANCE_ACTIVE_REASON {
-            MAINTENANCE_ACTIVE_REASON
-        } else {
-            "job_failed"
-        },
+        event: event_name(ctx),
         job_key: &ctx.job_key,
         execution_id: &ctx.execution_id,
         attempt: ctx.attempt,
@@ -670,6 +873,7 @@ async fn deliver_webhook(
         error,
         fired_at: now,
         delivered_at: Some(Utc::now()),
+        kind: delivery_kind(ctx),
     }
 }
 
@@ -698,6 +902,7 @@ fn webhook_failed(
         error: Some(error),
         fired_at: now,
         delivered_at: None,
+        kind: delivery_kind(ctx),
     }
 }
 
@@ -720,6 +925,9 @@ fn hmac_sha256_hex(key: &[u8], body: &[u8]) -> String {
 fn compose_email(rule_name: &str, ctx: &FailureContext, now: DateTime<Utc>) -> (String, String) {
     if ctx.reason == MAINTENANCE_ACTIVE_REASON {
         return compose_maintenance_email(rule_name, ctx, now);
+    }
+    if ctx.reason == JOB_RECOVERED_REASON {
+        return compose_recovery_email(rule_name, ctx, now);
     }
     let subject = format!("[Croniq] {} failed (rule: {})", ctx.job_key, rule_name);
     let body = format!(
@@ -768,6 +976,35 @@ fn compose_maintenance_email(
          Sent by Croniq {version}.\n",
         fired_at = now.to_rfc3339(),
         error = ctx.error,
+        version = env!("CARGO_PKG_VERSION"),
+    );
+    (subject, body)
+}
+
+/// The `job_recovered` variant of [`compose_email`]: the job succeeded again,
+/// so there is no error or attempt to report.
+fn compose_recovery_email(
+    rule_name: &str,
+    ctx: &FailureContext,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let subject = format!("[Croniq] {} recovered (rule: {rule_name})", ctx.job_key);
+    let body = format!(
+        "A job whose failure was acknowledged succeeded again.\n\
+         \n\
+         Job:           {job_key}\n\
+         Rule:          {rule_name}\n\
+         Execution ID:  {execution_id}\n\
+         Recovered at:  {fired_at}\n\
+         Details:\n\
+         {details}\n\
+         \n\
+         -- \n\
+         Sent by Croniq {version}.\n",
+        job_key = ctx.job_key,
+        execution_id = ctx.execution_id,
+        fired_at = now.to_rfc3339(),
+        details = ctx.error,
         version = env!("CARGO_PKG_VERSION"),
     );
     (subject, body)
@@ -860,6 +1097,7 @@ async fn deliver_email(
         error,
         fired_at: now,
         delivered_at: Some(Utc::now()),
+        kind: delivery_kind(ctx),
     }
 }
 
@@ -1976,5 +2214,310 @@ mod tests {
             "first recipient succeeds, then we stop on the failure"
         );
         assert_eq!(caps[0].0, "good@example.com");
+    }
+
+    // ─── Per-job acknowledgements ───
+
+    /// One `job_failed` rule on `billing:*` with a 1h throttle, mailing ops,
+    /// and an SLA rule on everything — enough to tell what an acknowledgement
+    /// holds back, what a recovery reaches, and what it leaves alone.
+    fn ack_alerts() -> AlertsConfig {
+        AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![
+                RuleConfig {
+                    name: "billing-failed".into(),
+                    trigger: RuleTrigger::JobFailed,
+                    job_key_glob: "billing:*".into(),
+                    min_attempts: 1,
+                    dead_letter_only: false,
+                    throttle: Some("1h".into()),
+                    expected_within: None,
+                    channels: vec!["ops".into()],
+                },
+                RuleConfig {
+                    name: "slow".into(),
+                    trigger: RuleTrigger::JobSlaMissed,
+                    job_key_glob: "*".into(),
+                    min_attempts: 1,
+                    dead_letter_only: false,
+                    throttle: None,
+                    expected_within: Some("10m".into()),
+                    channels: vec!["ops".into()],
+                },
+            ],
+        }
+    }
+
+    fn ack_for(job_key: &str, expires_in: chrono::Duration) -> JobAlertAck {
+        JobAlertAck {
+            job_key: job_key.into(),
+            note: "provider outage, status page says hours".into(),
+            acked_by: "user-1".into(),
+            acked_by_name: "Ada".into(),
+            acked_at: Utc::now(),
+            expires_at: Utc::now() + expires_in,
+            suppressed_count: 0,
+            last_execution_id: None,
+            last_error: None,
+            last_suppressed_at: None,
+        }
+    }
+
+    fn failure(job_key: &str, execution_id: &str) -> FailureContext {
+        FailureContext {
+            execution_id: execution_id.into(),
+            ..make_ctx(job_key)
+        }
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_job_records_its_alerts_instead_of_sending_them() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let throttle = empty_throttle_map();
+        let (sender, captured) = recording_sender();
+        store
+            .upsert_job_alert_ack(&ack_for("billing:sync", chrono::Duration::hours(3)))
+            .unwrap();
+
+        for exec in ["exec-1", "exec-2"] {
+            let recorded = evaluate_failure(
+                &alerts,
+                &failure("billing:sync", exec),
+                &throttle,
+                &store,
+                &sender,
+            )
+            .await;
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].state, AlertDeliveryState::Acknowledged);
+            assert_eq!(recorded[0].kind, AlertDeliveryKind::Alert);
+        }
+        assert!(captured.lock().unwrap().is_empty(), "nothing was sent");
+
+        let ack = store.get_job_alert_ack("billing:sync").unwrap().unwrap();
+        assert_eq!(ack.suppressed_count, 2);
+        assert_eq!(ack.last_execution_id.as_deref(), Some("exec-2"));
+        assert_eq!(ack.last_error.as_deref(), Some("boom"));
+        assert!(
+            throttle.lock().unwrap().is_empty(),
+            "a held-back alert opens no throttle window"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_acknowledgement_covers_one_job_only() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        store
+            .upsert_job_alert_ack(&ack_for("billing:sync", chrono::Duration::hours(3)))
+            .unwrap();
+
+        let recorded = evaluate_failure(
+            &alerts,
+            &failure("billing:invoice", "exec-9"),
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+        assert_eq!(captured.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_acknowledgement_past_its_deadline_holds_nothing_back() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        store
+            .upsert_job_alert_ack(&ack_for("billing:sync", -chrono::Duration::minutes(1)))
+            .unwrap();
+
+        let recorded = evaluate_failure(
+            &alerts,
+            &failure("billing:sync", "exec-1"),
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+        assert_eq!(captured.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_recovery_reaches_the_jobs_failure_rules_and_clears_their_throttle() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let throttle = empty_throttle_map();
+        let (sender, captured) = recording_sender();
+
+        // The failure that got acknowledged opened a 1h window.
+        evaluate_failure(
+            &alerts,
+            &failure("billing:sync", "exec-1"),
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(captured.lock().unwrap().len(), 1);
+
+        let mut ack = ack_for("billing:sync", chrono::Duration::hours(3));
+        ack.suppressed_count = 4;
+        let recorded = send_recovery(&alerts, &ack, "exec-ok", &throttle, &store, &sender).await;
+        assert_eq!(
+            recorded.len(),
+            1,
+            "only the job_failed rule, not the SLA rule"
+        );
+        assert_eq!(recorded[0].rule_name, "billing-failed");
+        assert_eq!(recorded[0].kind, AlertDeliveryKind::Recovery);
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+        {
+            let caps = captured.lock().unwrap();
+            assert_eq!(caps.len(), 2);
+            assert_eq!(
+                caps[1].1,
+                "[Croniq] billing:sync recovered (rule: billing-failed)"
+            );
+            assert!(
+                caps[1].2.contains("after 4 failed runs held back"),
+                "{}",
+                caps[1].2
+            );
+            assert!(caps[1].2.contains("Ada"));
+        }
+
+        // The incident is over: the next failure alerts at once, inside what
+        // was the old window.
+        let recorded = evaluate_failure(
+            &alerts,
+            &failure("billing:sync", "exec-2"),
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+    }
+
+    #[tokio::test]
+    async fn a_recovery_respects_a_disabled_rule() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        store
+            .upsert_alert_rule_override(&croniq_store::models::AlertRuleOverride {
+                rule_name: "billing-failed".into(),
+                enabled: Some(false),
+                snooze_until: None,
+                throttle_secs: None,
+                note: "noisy".into(),
+                set_by_user_id: "u".into(),
+                set_at: Utc::now(),
+                expires_at: None,
+            })
+            .unwrap();
+        let ack = ack_for("billing:sync", chrono::Duration::hours(3));
+        let recorded = send_recovery(
+            &alerts,
+            &ack,
+            "exec-ok",
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+        assert!(recorded.is_empty());
+        assert!(captured.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_expired_acknowledgement_alerts_through_the_throttle() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let throttle = empty_throttle_map();
+        let (sender, captured) = recording_sender();
+
+        evaluate_failure(
+            &alerts,
+            &failure("billing:sync", "exec-1"),
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+
+        let mut ack = ack_for("billing:sync", chrono::Duration::minutes(30));
+        ack.suppressed_count = 1;
+        ack.last_execution_id = Some("exec-2".into());
+        ack.last_error = Some("HTTP 503 from provider".into());
+        // Thirty minutes later, still inside the 1h window the first failure
+        // opened: the expiry alert goes out anyway.
+        let recorded = alert_ack_expired(&alerts, &ack, &throttle, &store, &sender).await;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+        assert_eq!(recorded[0].kind, AlertDeliveryKind::Alert);
+        assert_eq!(recorded[0].execution_id.as_deref(), Some("exec-2"));
+        let caps = captured.lock().unwrap();
+        assert_eq!(caps.len(), 2);
+        assert!(caps[1].1.contains("billing:sync failed"), "{}", caps[1].1);
+        assert!(caps[1].2.contains("ack_expired"));
+        assert!(caps[1].2.contains("HTTP 503 from provider"));
+    }
+
+    #[tokio::test]
+    async fn the_boot_seed_skips_what_an_acknowledgement_held_back() {
+        let alerts = ack_alerts();
+        let store = make_store();
+        let (sender, _) = recording_sender();
+        store
+            .upsert_job_alert_ack(&ack_for("billing:sync", chrono::Duration::hours(3)))
+            .unwrap();
+        evaluate_failure(
+            &alerts,
+            &failure("billing:sync", "exec-1"),
+            &empty_throttle_map(),
+            &store,
+            &sender,
+        )
+        .await;
+
+        let seeded = load_throttle_state(&store, &alerts);
+        assert!(
+            seeded.lock().unwrap().is_empty(),
+            "an acknowledged row is not a fire to throttle after"
+        );
+    }
+
+    #[test]
+    fn a_recovery_is_its_own_event() {
+        let recovered = FailureContext {
+            reason: JOB_RECOVERED_REASON.into(),
+            ..make_ctx("billing:sync")
+        };
+        assert_eq!(event_name(&recovered), "job_recovered");
+        assert_eq!(delivery_kind(&recovered), AlertDeliveryKind::Recovery);
+
+        let expired = FailureContext {
+            reason: ACK_EXPIRED_REASON.into(),
+            ..make_ctx("billing:sync")
+        };
+        assert_eq!(event_name(&expired), "job_failed");
+        assert_eq!(delivery_kind(&expired), AlertDeliveryKind::Alert);
     }
 }

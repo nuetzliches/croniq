@@ -1,6 +1,7 @@
 //! Extended HTTP API: runner Pull-API, auth, and management endpoints.
 
 pub mod admin;
+pub mod alert_acks;
 pub mod alerts;
 pub mod audit;
 pub mod auth_endpoints;
@@ -658,6 +659,16 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route(
             "/v1/alerts/rules/{name}/override",
             get(alerts::handle_get_override).delete(alerts::handle_clear_override),
+        )
+        // Per-job acknowledgements: one failing job's alerts held back until
+        // it succeeds again or the acknowledgement runs out. `alerts:ack`
+        // (operator) to set or clear; `alerts:read` to look.
+        .route("/v1/alerts/acks", get(alert_acks::handle_list))
+        .route(
+            "/v1/jobs/{job_key}/alert-ack",
+            get(alert_acks::handle_get)
+                .post(alert_acks::handle_ack)
+                .delete(alert_acks::handle_clear),
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))

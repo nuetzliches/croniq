@@ -473,7 +473,7 @@ pub(crate) async fn job_exists(
 ///
 /// Stored with the note, so renaming the user or client later does not
 /// rewrite what was signed; `author_id` is the identity, this is a label.
-fn author_name(store: &DynStore, ctx: &CallerContext) -> String {
+pub(crate) fn author_name(store: &DynStore, ctx: &CallerContext) -> String {
     if let Some(user_id) = ctx.user_id.as_deref() {
         if let Ok(Some(user)) = store.users_get_by_id(user_id) {
             return user

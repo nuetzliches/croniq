@@ -8,6 +8,7 @@ import {
   useThrottleRule,
 } from '~/api/queries'
 import type { AlertRuleConfig, AlertRuleOverride } from '~/api/types'
+import { deadlineFrom } from '~/lib/deadline'
 import { formatAbsolute, formatRelative } from '~/lib/format'
 import { useActionError } from '~/composables/useActionError'
 
@@ -56,22 +57,6 @@ async function run(fn: () => Promise<unknown>) {
     composing.value = null
     note.value = ''
   }
-}
-
-/**
- * Durations are entered as `30m` / `2h` / `1d` and sent as an instant.
- *
- * The snooze endpoint takes a deadline, not a length, because the deadline is
- * what it stores and auto-clears on. Converting here rather than asking for a
- * timestamp is the difference between "quiet for an hour" and doing date
- * arithmetic in your head at 3am.
- */
-function deadlineFrom(input: string): string | null {
-  const match = /^(\d+)\s*(m|h|d)$/i.exec(input.trim())
-  if (!match) return null
-  const value = Number.parseInt(match[1]!, 10)
-  const ms = { m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!.toLowerCase() as 'm' | 'h' | 'd']
-  return new Date(Date.now() + value * ms).toISOString()
 }
 
 function submit() {

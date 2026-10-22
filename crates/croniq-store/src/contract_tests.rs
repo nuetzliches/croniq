@@ -2920,6 +2920,201 @@ fn alert_override_model_helpers_respect_expiry() {
     assert!(!snz.is_suppressing(n));
 }
 
+// ─── AlertStore: per-job acknowledgements ───
+
+fn make_ack(job_key: &str, expires_at: chrono::DateTime<Utc>) -> JobAlertAck {
+    JobAlertAck {
+        job_key: job_key.into(),
+        note: "provider outage, waiting".into(),
+        acked_by: "user-1".into(),
+        acked_by_name: "Ada".into(),
+        acked_at: now(),
+        expires_at,
+        suppressed_count: 0,
+        last_execution_id: None,
+        last_error: None,
+        last_suppressed_at: None,
+    }
+}
+
+fn make_delivery(
+    job_key: &str,
+    fired_at: chrono::DateTime<Utc>,
+    state: AlertDeliveryState,
+    kind: AlertDeliveryKind,
+) -> AlertDelivery {
+    AlertDelivery {
+        delivery_id: Uuid::new_v4().to_string(),
+        rule_name: "failures".into(),
+        channel_name: "ops".into(),
+        job_key: job_key.into(),
+        execution_id: None,
+        state,
+        error: None,
+        fired_at,
+        delivered_at: None,
+        kind,
+    }
+}
+
+#[test]
+fn job_alert_ack_upsert_get_take() {
+    let store = create_memory_store().unwrap();
+    assert!(store.get_job_alert_ack("billing:sync").unwrap().is_none());
+
+    store
+        .upsert_job_alert_ack(&make_ack("billing:sync", utc(2026, 4, 1, 12, 0)))
+        .unwrap();
+    let loaded = store.get_job_alert_ack("billing:sync").unwrap().unwrap();
+    assert_eq!(loaded.acked_by_name, "Ada");
+    assert_eq!(loaded.expires_at, utc(2026, 4, 1, 12, 0));
+    assert_eq!(loaded.suppressed_count, 0);
+
+    // Replacing starts over, count included.
+    store
+        .record_job_alert_ack_suppression("billing:sync", "exec-1", "503", now())
+        .unwrap();
+    let mut again = make_ack("billing:sync", utc(2026, 4, 2, 12, 0));
+    again.note = "still down".into();
+    store.upsert_job_alert_ack(&again).unwrap();
+    let replaced = store.get_job_alert_ack("billing:sync").unwrap().unwrap();
+    assert_eq!(replaced.note, "still down");
+    assert_eq!(replaced.suppressed_count, 0);
+    assert_eq!(store.list_job_alert_acks().unwrap().len(), 1);
+
+    let taken = store.take_job_alert_ack("billing:sync").unwrap().unwrap();
+    assert_eq!(taken.note, "still down");
+    assert!(store.take_job_alert_ack("billing:sync").unwrap().is_none());
+    assert!(store.get_job_alert_ack("billing:sync").unwrap().is_none());
+}
+
+#[test]
+fn job_alert_ack_counts_each_execution_once() {
+    let store = create_memory_store().unwrap();
+    store
+        .upsert_job_alert_ack(&make_ack("billing:sync", utc(2026, 4, 1, 12, 0)))
+        .unwrap();
+
+    // Two rules matching one failure, then a second failure.
+    store
+        .record_job_alert_ack_suppression("billing:sync", "exec-1", "503", now())
+        .unwrap();
+    store
+        .record_job_alert_ack_suppression("billing:sync", "exec-1", "503", now())
+        .unwrap();
+    store
+        .record_job_alert_ack_suppression("billing:sync", "exec-2", "504", utc(2026, 3, 29, 13, 0))
+        .unwrap();
+
+    let ack = store.get_job_alert_ack("billing:sync").unwrap().unwrap();
+    assert_eq!(ack.suppressed_count, 2);
+    assert_eq!(ack.last_execution_id.as_deref(), Some("exec-2"));
+    assert_eq!(ack.last_error.as_deref(), Some("504"));
+    assert_eq!(ack.last_suppressed_at, Some(utc(2026, 3, 29, 13, 0)));
+
+    // A job without an acknowledgement is left alone.
+    store
+        .record_job_alert_ack_suppression("other:job", "exec-3", "500", now())
+        .unwrap();
+    assert!(store.get_job_alert_ack("other:job").unwrap().is_none());
+}
+
+#[test]
+fn job_alert_ack_take_expired_only_returns_past_deadlines() {
+    let store = create_memory_store().unwrap();
+    store
+        .upsert_job_alert_ack(&make_ack("job:past", utc(2026, 3, 29, 11, 0)))
+        .unwrap();
+    store
+        .upsert_job_alert_ack(&make_ack("job:due", now()))
+        .unwrap();
+    store
+        .upsert_job_alert_ack(&make_ack("job:future", utc(2026, 3, 29, 13, 0)))
+        .unwrap();
+
+    let mut expired: Vec<String> = store
+        .take_expired_job_alert_acks(now())
+        .unwrap()
+        .into_iter()
+        .map(|a| a.job_key)
+        .collect();
+    expired.sort();
+    assert_eq!(expired, vec!["job:due".to_string(), "job:past".to_string()]);
+    assert!(store.get_job_alert_ack("job:past").unwrap().is_none());
+    assert!(store.get_job_alert_ack("job:future").unwrap().is_some());
+    assert!(store.take_expired_job_alert_acks(now()).unwrap().is_empty());
+}
+
+#[test]
+fn job_alert_ack_is_active_until_its_deadline() {
+    let ack = make_ack("j", now());
+    assert!(ack.is_active(utc(2026, 3, 29, 11, 59)));
+    assert!(!ack.is_active(now()));
+}
+
+#[test]
+fn delivery_kind_round_trips() {
+    let store = create_memory_store().unwrap();
+    let d = make_delivery(
+        "billing:sync",
+        now(),
+        AlertDeliveryState::Delivered,
+        AlertDeliveryKind::Recovery,
+    );
+    store.record_alert_delivery(&d).unwrap();
+    let loaded = store.get_alert_delivery(&d.delivery_id).unwrap().unwrap();
+    assert_eq!(loaded.kind, AlertDeliveryKind::Recovery);
+}
+
+#[test]
+fn last_alert_fire_skips_acknowledged_rows_and_what_a_recovery_ended() {
+    let store = create_memory_store().unwrap();
+    let key = "billing:sync";
+    let alert = |at, state| make_delivery(key, at, state, AlertDeliveryKind::Alert);
+
+    store
+        .record_alert_delivery(&alert(
+            utc(2026, 3, 29, 10, 0),
+            AlertDeliveryState::Delivered,
+        ))
+        .unwrap();
+    store
+        .record_alert_delivery(&alert(
+            utc(2026, 3, 29, 11, 0),
+            AlertDeliveryState::Acknowledged,
+        ))
+        .unwrap();
+    // An acknowledged row is not a fire: the 10:00 one is still the last.
+    assert_eq!(
+        store.last_alert_fire_at("failures", key).unwrap(),
+        Some(utc(2026, 3, 29, 10, 0))
+    );
+
+    // The recovery ends that incident; nothing before it seeds the throttle,
+    // and the recovery itself does not either.
+    store
+        .record_alert_delivery(&make_delivery(
+            key,
+            utc(2026, 3, 29, 11, 30),
+            AlertDeliveryState::Delivered,
+            AlertDeliveryKind::Recovery,
+        ))
+        .unwrap();
+    assert_eq!(store.last_alert_fire_at("failures", key).unwrap(), None);
+
+    // A fire after the recovery counts again.
+    store
+        .record_alert_delivery(&alert(
+            utc(2026, 3, 29, 12, 0),
+            AlertDeliveryState::Delivered,
+        ))
+        .unwrap();
+    assert_eq!(
+        store.last_alert_fire_at("failures", key).unwrap(),
+        Some(utc(2026, 3, 29, 12, 0))
+    );
+}
+
 // ─── Trigger idempotency (issue #279) ───
 
 /// Dedup lookup window used by the tests below: everything created at or

@@ -25,7 +25,7 @@ const router = useRouter()
 /** "Fired" as "3 min ago" or as the clock time — see `useTimeDisplay`. */
 const fired = useTimeDisplay()
 
-const STATES = ['delivered', 'failed', 'throttled']
+const STATES = ['delivered', 'failed', 'throttled', 'acknowledged']
 
 const filters = computed(() => ({
   rule_name: (route.query.rule as string) || '',
@@ -188,10 +188,24 @@ function latency(delivery: AlertDelivery): string {
             class="cq-row border-b border-default/60"
           >
             <td class="px-[var(--cq-cell-x)]">
-              <StatusPill
-                :state="delivery.state"
-                :title="delivery.error ?? undefined"
-              />
+              <div class="flex items-center gap-1.5">
+                <StatusPill
+                  :state="delivery.state"
+                  :title="delivery.error ?? undefined"
+                />
+                <!-- The good news goes through the same channels as the bad,
+                     and a row that looked like one more failure would read as
+                     the opposite of what it says. -->
+                <UBadge
+                  v-if="delivery.kind === 'recovery'"
+                  v-tooltip="'An acknowledged job succeeded again; this told the channel so.'"
+                  color="success"
+                  variant="outline"
+                  size="sm"
+                >
+                  recovery
+                </UBadge>
+              </div>
             </td>
             <td class="max-w-[12rem] truncate px-[var(--cq-cell-x)]">
               <RouterLink

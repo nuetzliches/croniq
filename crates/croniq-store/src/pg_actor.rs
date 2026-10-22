@@ -969,6 +969,45 @@ impl AlertStore for PgStoreHandle {
         let valid_rule_names = valid_rule_names.to_vec();
         self.call(move |s| s.prune_alert_rule_overrides(&valid_rule_names))
     }
+
+    fn upsert_job_alert_ack(&self, ack: &JobAlertAck) -> Result<(), StoreError> {
+        let ack = ack.clone();
+        self.call(move |s| s.upsert_job_alert_ack(&ack))
+    }
+
+    fn get_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
+        let job_key = job_key.to_string();
+        self.call(move |s| s.get_job_alert_ack(&job_key))
+    }
+
+    fn list_job_alert_acks(&self) -> Result<Vec<JobAlertAck>, StoreError> {
+        self.call(|s| s.list_job_alert_acks())
+    }
+
+    fn take_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
+        let job_key = job_key.to_string();
+        self.call(move |s| s.take_job_alert_ack(&job_key))
+    }
+
+    fn record_job_alert_ack_suppression(
+        &self,
+        job_key: &str,
+        execution_id: &str,
+        error: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let job_key = job_key.to_string();
+        let execution_id = execution_id.to_string();
+        let error = error.to_string();
+        self.call(move |s| s.record_job_alert_ack_suppression(&job_key, &execution_id, &error, at))
+    }
+
+    fn take_expired_job_alert_acks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<JobAlertAck>, StoreError> {
+        self.call(move |s| s.take_expired_job_alert_acks(now))
+    }
 }
 
 // ─── ExecutionLogStore ───

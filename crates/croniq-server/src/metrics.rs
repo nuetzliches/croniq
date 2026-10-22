@@ -169,6 +169,14 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
             }
             Err(e) => tracing::warn!(error = %e, "metrics: list_job_states query failed"),
         }
+        // Acknowledged jobs: whose alerts are being held back, since when, and
+        // how many failed runs so far. An acknowledgement ends by itself, but
+        // `time() - croniq_job_alert_ack_since_timestamp` still tells a
+        // dashboard which outage has been waited out for days.
+        match store.list_job_alert_acks() {
+            Ok(acks) => render_alert_ack_metrics(&mut body, &acks),
+            Err(e) => tracing::warn!(error = %e, "metrics: list_job_alert_acks query failed"),
+        }
     }
 
     (
@@ -179,6 +187,36 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoRespo
         )],
         body,
     )
+}
+
+/// Per-job alert acknowledgements. Nothing at all when there are none, so an
+/// install that never acknowledges anything exports no empty families.
+fn render_alert_ack_metrics(out: &mut String, acks: &[croniq_store::models::JobAlertAck]) {
+    if acks.is_empty() {
+        return;
+    }
+    out.push_str(
+        "# HELP croniq_job_alert_ack_since_timestamp Unix time (seconds) a job's failure was acknowledged; its alerts are held back.\n\
+         # TYPE croniq_job_alert_ack_since_timestamp gauge\n",
+    );
+    for ack in acks {
+        let key = escape_label(&ack.job_key);
+        out.push_str(&format!(
+            "croniq_job_alert_ack_since_timestamp{{job_key=\"{key}\"}} {}\n",
+            ack.acked_at.timestamp()
+        ));
+    }
+    out.push_str(
+        "# HELP croniq_job_alert_ack_suppressed Failed runs of an acknowledged job whose alerts were held back.\n\
+         # TYPE croniq_job_alert_ack_suppressed gauge\n",
+    );
+    for ack in acks {
+        let key = escape_label(&ack.job_key);
+        out.push_str(&format!(
+            "croniq_job_alert_ack_suppressed{{job_key=\"{key}\"}} {}\n",
+            ack.suppressed_count
+        ));
+    }
 }
 
 /// Append the per-job metric families to the exposition body. Each family

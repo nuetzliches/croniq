@@ -161,6 +161,49 @@ impl CompletionProcessor {
         .await;
     }
 
+    /// A successful run ends the job's alert acknowledgement, if it has one,
+    /// and sends the recovery. Runs after every success, so it is one
+    /// primary-key lookup when there is nothing to end.
+    async fn end_acknowledgement(&self, job_key: &str, execution_id: &str) {
+        let ack = match self.store.take_job_alert_ack(job_key) {
+            Ok(Some(ack)) => ack,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(
+                    target: "croniq::alerts",
+                    job_key = %job_key,
+                    error = %e,
+                    "could not end the job's alert acknowledgement"
+                );
+                return;
+            }
+        };
+        tracing::info!(
+            target: "croniq::alerts",
+            job_key = %job_key,
+            execution_id = %execution_id,
+            suppressed = ack.suppressed_count,
+            "acknowledged job recovered — acknowledgement ended"
+        );
+        crate::api::audit::record_event(
+            &self.store,
+            "system",
+            None,
+            "alerts.ack.recovered",
+            "job",
+            Some(job_key),
+        );
+        let _ = crate::alerts::send_recovery(
+            &self.alerts,
+            &ack,
+            execution_id,
+            &self.alert_throttle,
+            &self.store,
+            &self.email_sender,
+        )
+        .await;
+    }
+
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
         if let Some(c) = self.jobs.get(job_key) {
             return Some(c.clone());
@@ -293,6 +336,8 @@ impl CompletionProcessor {
                 ) {
                     Ok(true) => {
                         tracing::info!(id = %exec_uuid, "execution completed successfully");
+                        self.end_acknowledgement(&execution.job_key, &event.execution_id)
+                            .await;
                         ProcessedOutcome::Completed
                     }
                     Ok(false) => {
@@ -1220,5 +1265,110 @@ mod tests {
             .list_alert_deliveries(&AlertDeliveryFilter::default())
             .unwrap();
         assert!(deliveries.is_empty(), "no alerts config = no deliveries");
+    }
+
+    #[tokio::test]
+    async fn a_success_ends_the_acknowledgement_and_sends_the_recovery() {
+        use croniq_config::compile::{
+            AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger,
+        };
+        use croniq_store::models::{
+            AlertDeliveryFilter, AlertDeliveryKind, AlertDeliveryState, JobAlertAck,
+        };
+
+        let store = make_store();
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".to_string(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["ops@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "billing-fail".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "billing:*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                expected_within: None,
+                channels: vec!["ops".into()],
+            }],
+        };
+        let processor = CompletionProcessor::with_alerts(
+            vec![make_job("billing:sync", 1)],
+            Arc::clone(&store),
+            make_runner(),
+            alerts,
+            crate::alerts::empty_throttle_map(),
+            crate::email::default_sender(),
+        );
+        store
+            .upsert_job_alert_ack(&JobAlertAck {
+                job_key: "billing:sync".into(),
+                note: "provider outage".into(),
+                acked_by: "user-1".into(),
+                acked_by_name: "Ada".into(),
+                acked_at: Utc::now(),
+                expires_at: Utc::now() + chrono::Duration::hours(3),
+                suppressed_count: 0,
+                last_execution_id: None,
+                last_error: None,
+                last_suppressed_at: None,
+            })
+            .unwrap();
+
+        // Still failing: held back.
+        let failed = seed_execution(&store, "billing:sync");
+        processor
+            .process(event(failed, CompletionStatus::Failure, 1))
+            .await;
+        let ack = store.get_job_alert_ack("billing:sync").unwrap().unwrap();
+        assert_eq!(ack.suppressed_count, 1);
+
+        // Back: the acknowledgement ends, the channel hears it.
+        let ok = seed_execution(&store, "billing:sync");
+        let outcome = processor
+            .process(event(ok, CompletionStatus::Success, 1))
+            .await;
+        assert_eq!(outcome, ProcessedOutcome::Completed);
+        assert!(store.get_job_alert_ack("billing:sync").unwrap().is_none());
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 2);
+        assert!(
+            deliveries
+                .iter()
+                .any(|d| d.state == AlertDeliveryState::Acknowledged
+                    && d.kind == AlertDeliveryKind::Alert
+                    && d.execution_id.as_deref() == Some(failed.to_string().as_str()))
+        );
+        assert!(
+            deliveries
+                .iter()
+                .any(|d| d.state == AlertDeliveryState::Delivered
+                    && d.kind == AlertDeliveryKind::Recovery
+                    && d.execution_id.as_deref() == Some(ok.to_string().as_str()))
+        );
+
+        // A second success has nothing left to end.
+        let again = seed_execution(&store, "billing:sync");
+        processor
+            .process(event(again, CompletionStatus::Success, 1))
+            .await;
+        assert_eq!(
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter::default())
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

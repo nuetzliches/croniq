@@ -23,6 +23,7 @@ import type {
   Favorites,
   ForecastResponse,
   HealthResponse,
+  JobAlertAck,
   JobDefinition,
   JobNote,
   JobScheduleState,
@@ -1240,6 +1241,44 @@ export function useClearOverride() {
   return useMutation({
     mutationFn: (name: string) =>
       apiDelete(`/v1/alerts/rules/${encodeURIComponent(name)}/override`),
+    onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+/**
+ * Acknowledged jobs, all of them in one request.
+ *
+ * The list rather than `GET /v1/jobs/{key}/alert-ack`, which answers `404` for
+ * the common case of a job nobody has acknowledged — and one cached list
+ * answers every job detail opened after it.
+ */
+export function useJobAlertAcks() {
+  return useQuery({
+    queryKey: ['alerts', 'acks'],
+    queryFn: () => apiGet<JobAlertAck[]>('/v1/alerts/acks'),
+    enabled: authedAnd(),
+    // An acknowledgement ends on its own when the job succeeds; a minute is
+    // soon enough to stop showing one that has.
+    refetchInterval: 60_000,
+  })
+}
+
+/** Acknowledge a failing job, or acknowledge it again with a new deadline. */
+export function useAckJob() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ jobKey, note, until }: { jobKey: string; note: string; until: string }) =>
+      apiPost<JobAlertAck>(`/v1/jobs/${encodeURIComponent(jobKey)}/alert-ack`, { note, until }),
+    onSuccess: () => invalidateAlerts(queryClient),
+  })
+}
+
+/** End an acknowledgement by hand: the job's alerts go out again. */
+export function useClearJobAck() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) =>
+      apiDelete(`/v1/jobs/${encodeURIComponent(jobKey)}/alert-ack`),
     onSuccess: () => invalidateAlerts(queryClient),
   })
 }

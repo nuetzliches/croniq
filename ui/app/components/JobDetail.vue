@@ -15,6 +15,7 @@ import {
 import type { JobDefinition, TriggerDefinition } from '~/api/types'
 import { formatAbsolute, formatDuration, formatRelative } from '~/lib/format'
 import { renderJobDsl } from '~/lib/render-dsl'
+import AlertAckPanel from '~/components/AlertAckPanel.vue'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 import FavoriteButton from '~/components/FavoriteButton.vue'
 import { useActionError } from '~/composables/useActionError'
@@ -472,6 +473,13 @@ const deadLetterFacts = computed(() => {
                 see the failures
               </RouterLink>
             </p>
+
+            <!-- Next to the failure it is about: a job someone is waiting
+                 out, or the control to say so. -->
+            <AlertAckPanel
+              :job-key="jobKey"
+              :last-failure-at="stats?.last_failure_at ?? null"
+            />
 
             <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
               <template
