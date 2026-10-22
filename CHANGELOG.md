@@ -36,6 +36,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Runs, a quoted key beside a different pinned *Job* chip matches nothing, as
   both filters apply.
 
+- **`devstack up` runs the dev stack under
+  [devstack](https://github.com/nuetzliches/devstack)** (0.7.0 or newer).
+  `devstack.toml` describes the same API, demo runner and dashboard as
+  `node scripts/dev-stack.mjs`, on the same ports 4230 and 4231 (run one or
+  the other). devstack builds each binary in the background and switches to
+  a change once it is healthy, and it gives each git worktree a stack of its
+  own on ports moved by 100. A new migration waits for `devstack promote api`,
+  and `devstack run reset-db` seeds a fresh dev database.
+
 ### Changed
 
 - **"Run time by job" shows what the failures cost.** A job with many

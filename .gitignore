@@ -16,6 +16,9 @@ site/wasm/
 # Claude Code
 .claude/
 
+# devstack: lane snapshots, build artifacts, daemon state (devstack.toml)
+.devstack/
+
 # IDE
 .vs/
 .idea/
