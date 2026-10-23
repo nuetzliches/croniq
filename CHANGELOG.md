@@ -24,7 +24,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
   versions don't know, so an older devstack asks to be updated before it
-  starts the stack. The stack itself is unchanged.
+  starts the stack. Apart from the `CRONIQ_REFRESH_COOKIE` line above, the
+  stack itself is unchanged.
 
 ### Fixed
 
