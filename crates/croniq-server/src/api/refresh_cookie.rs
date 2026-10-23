@@ -113,6 +113,26 @@ pub fn resolve_name(raw: Option<&str>) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+/// The cookie name this process should use: [`COOKIE_NAME_ENV`] read from the
+/// environment and run through [`resolve_name`].
+///
+/// Reads the raw `OsString` on purpose. `std::env::var(..).ok()` turns a value
+/// that is not valid Unicode into `None`, which [`resolve_name`] would answer
+/// with the shared default — the silent fallback it exists to rule out.
+pub fn name_from_env() -> Result<String, String> {
+    resolve_os_name(std::env::var_os(COOKIE_NAME_ENV).as_deref())
+}
+
+fn resolve_os_name(raw: Option<&std::ffi::OsStr>) -> Result<String, String> {
+    match raw.map(|v| v.to_str().ok_or(v)) {
+        None => resolve_name(None),
+        Some(Ok(s)) => resolve_name(Some(s)),
+        Some(Err(v)) => Err(format!(
+            "{COOKIE_NAME_ENV}={v:?} is not valid Unicode, so it cannot be a cookie name"
+        )),
+    }
+}
+
 /// The punctuation an RFC 9110 `token` allows besides letters and digits.
 const TOKEN_PUNCTUATION: &str = "!#$%&'*+-.^_`|~";
 
@@ -393,6 +413,39 @@ mod tests {
         }
         // Only the exact prefixes: two underscores alone are fine.
         assert_eq!(resolve_name(Some("__croniq")).unwrap(), "__croniq");
+    }
+
+    #[test]
+    fn a_name_that_is_not_unicode_is_refused() {
+        #[cfg(unix)]
+        let raw = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(b"croniq_\xff").to_os_string()
+        };
+        #[cfg(windows)]
+        let raw = {
+            use std::os::windows::ffi::OsStringExt;
+            // An unpaired surrogate: valid UTF-16 code unit, not Unicode.
+            std::ffi::OsString::from_wide(&[0x63, 0xD800])
+        };
+        let err = resolve_os_name(Some(&raw)).unwrap_err();
+        assert!(err.contains(COOKIE_NAME_ENV), "{err}");
+        assert!(err.contains("not valid Unicode"), "{err}");
+    }
+
+    #[test]
+    fn name_from_env_reads_the_variable() {
+        // SAFETY: `set_var` / `remove_var` are unsafe in Rust 2024 because they
+        // mutate process-global state. Nothing else in this test binary reads
+        // CRONIQ_REFRESH_COOKIE (main.rs is the only caller of
+        // `name_from_env`), and this is the only test that writes it.
+        unsafe { std::env::remove_var(COOKIE_NAME_ENV) };
+        assert_eq!(name_from_env().unwrap(), DEFAULT_COOKIE_NAME);
+        unsafe { std::env::set_var(COOKIE_NAME_ENV, " croniq_refresh_lane-a ") };
+        assert_eq!(name_from_env().unwrap(), "croniq_refresh_lane-a");
+        unsafe { std::env::set_var(COOKIE_NAME_ENV, "a;b") };
+        assert!(name_from_env().is_err());
+        unsafe { std::env::remove_var(COOKIE_NAME_ENV) };
     }
 
     #[test]

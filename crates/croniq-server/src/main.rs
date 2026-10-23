@@ -133,11 +133,18 @@ async fn main() -> Result<()> {
         "configuration loaded"
     );
 
+    // Issue #880: a per-server refresh-cookie name, so two croniq servers on
+    // one host (devstack lanes on `localhost`) keep separate sessions. An
+    // unusable name stops the boot instead of falling back to the shared one.
+    // Resolved before the `doctor` return so doctor reports it too.
+    let refresh_cookie_name = croniq_server::api::refresh_cookie::name_from_env();
+
     // `croniq-server doctor`: report config health and exit without binding
     // ports, opening the DB, or starting any task.
     if matches!(cli.command, Some(Command::Doctor)) {
-        return run_doctor(&loaded.runtime);
+        return run_doctor(&loaded.runtime, refresh_cookie_name.err());
     }
+    let refresh_cookie_name = refresh_cookie_name.map_err(anyhow::Error::msg)?;
 
     // Resolve UI sign-in method gates (issue #138). DSL beats env beats default.
     // The both-disabled check must run before we bind the HTTP listener so the
@@ -165,14 +172,6 @@ async fn main() -> Result<()> {
     if require_totp {
         tracing::warn!("{}", croniq_server::diagnostics::ENFORCED_TOTP_BOOT_NOTICE);
     }
-
-    // Issue #880: a per-server refresh-cookie name, so two croniq servers on
-    // one host (devstack lanes on `localhost`) keep separate sessions. An
-    // unusable name stops the boot instead of falling back to the shared one.
-    let refresh_cookie_name = {
-        use croniq_server::api::refresh_cookie::{COOKIE_NAME_ENV, resolve_name};
-        resolve_name(std::env::var(COOKIE_NAME_ENV).ok().as_deref()).map_err(anyhow::Error::msg)?
-    };
 
     // Open (or create) the persistence store. The backend is chosen from
     // `server { db … }` (the CRONIQ_DB env var overrides it): `sqlite`
@@ -1289,9 +1288,17 @@ fn report_doctor_load_failure(path: &Path, err: &croniq_server::loader::LoadErro
 /// `GET /v1/system/diagnostics`, but from the loaded Croniqfile + env only
 /// (no server, DB, or ports). Exits non-zero on any `Critical` finding so it
 /// can gate a deploy.
-fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
+///
+/// `refresh_cookie_error` is why `CRONIQ_REFRESH_COOKIE` did not resolve, if it
+/// did not. It is env-only and stops the boot, so it is reported here rather
+/// than by `run_diagnostics`, which a running server (whose name is by then
+/// known to be valid) shares.
+fn run_doctor(
+    rt: &croniq_config::compile::RuntimeConfig,
+    refresh_cookie_error: Option<String>,
+) -> Result<()> {
     use croniq_server::diagnostics::{
-        DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
+        Diagnostic, DiagnosticsInput, RuntimeFacts, Severity, retention_configured, run_diagnostics,
     };
 
     let smtp_feature = croniq_server::email::smtp_feature_compiled();
@@ -1310,7 +1317,24 @@ fn run_doctor(rt: &croniq_config::compile::RuntimeConfig) -> Result<()> {
         previous_jwt_secret: None,
     });
 
-    let findings = run_diagnostics(&input);
+    let mut findings = run_diagnostics(&input);
+    if let Some(err) = refresh_cookie_error {
+        findings.insert(
+            0,
+            Diagnostic {
+                id: "auth.refresh_cookie",
+                severity: Severity::Critical,
+                title: "CRONIQ_REFRESH_COOKIE is not a usable cookie name".to_string(),
+                detail: format!("{err}. The server refuses to start with it."),
+                remedy: Some(
+                    "Unset CRONIQ_REFRESH_COOKIE to use the default `croniq_refresh`, or set \
+                     it to letters, digits and !#$%&'*+-.^_`|~ without a __Host- or \
+                     __Secure- prefix."
+                        .to_string(),
+                ),
+            },
+        );
+    }
     if findings.is_empty() {
         println!("[OK] croniq configuration looks healthy — no findings.");
         return Ok(());

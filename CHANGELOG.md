@@ -26,6 +26,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions don't know, so an older devstack asks to be updated before it
   starts the stack. The stack itself is unchanged.
 
+### Fixed
+
+- **`CRONIQ_REFRESH_COOKIE` holds its boot contract in every case** (#880).
+  A value that is not valid Unicode was read as unset and fell back to the
+  shared `croniq_refresh` name; it now stops the boot like any other unusable
+  name. `croniq-server doctor` reports an unusable name as a critical finding
+  instead of calling a configuration healthy that the next start refuses.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
