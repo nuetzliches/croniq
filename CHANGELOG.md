@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
+  with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
+  versions don't know, so an older devstack asks to be updated before it
+  starts the stack. The stack itself is unchanged.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

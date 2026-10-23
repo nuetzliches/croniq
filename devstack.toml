@@ -1,4 +1,4 @@
-# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.19.0/docs/stack-file.md
+# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.20.0/docs/stack-file.md
 #
 # The same stack as `node scripts/dev-stack.mjs` (API, demo runner, dashboard
 # on croniq's 4230-4233 dev block), run by devstack: every process is built
@@ -21,7 +21,8 @@ version = 1
 
 [stack]
 name     = "croniq"
-requires = "0.7.0"                         # `prepare` (services.ui)
+requires = "0.20.0"                        # `reviewed`; `prepare` (services.ui) needs 0.7.0
+reviewed = "0.20.0"
 
 # ------------------------------------------------------------------ services
 #
