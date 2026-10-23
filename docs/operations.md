@@ -110,6 +110,21 @@ as the official Docker image does — the split is now:
 | Access token | Memory only (never persisted) | Yes, by design — it is sent as `Authorization: Bearer …` |
 | Refresh token | `croniq_refresh` cookie: `HttpOnly; SameSite=Strict; Path=/v1/auth` | **No** |
 
+The cookie's name is `croniq_refresh` unless `CRONIQ_REFRESH_COOKIE` says
+otherwise. Browsers keep cookies per host, not per port, so two croniq servers
+reached under one host name — staging on `:4001` beside production on `:4000`,
+or devstack lanes on `localhost` — share a single `croniq_refresh` slot: a
+login on one replaces the other's cookie, and the other's next refresh presents
+a token its own database has never issued, so its user is signed out. Give each
+server its own name (`CRONIQ_REFRESH_COOKIE=croniq_refresh_staging`). A server
+reads and clears only its own cookie and ignores the others. The name must be a
+cookie-name token — letters, digits, `-`, `_`, `.` and the other RFC 9110
+token characters — and not start with `__Host-` or `__Secure-`, which browsers
+honour only on cookies croniq cannot promise to make; anything else stops the
+server at boot. Renaming it on a running deployment signs everyone out once,
+since the browsers still hold the token under the old name. Nothing in the
+dashboard changes: the cookie is `HttpOnly`, so the SPA never sees its name.
+
 Consequences worth knowing:
 
 - **A reload starts with no access token.** The dashboard silently calls

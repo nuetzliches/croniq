@@ -259,6 +259,7 @@ fn resolve_delivery(
 fn deliver(
     mut tokens: TokenResponse,
     delivery: refresh_cookie::Delivery,
+    cookie_name: &str,
     secure: bool,
     refresh_ttl_secs: i64,
 ) -> (HeaderMap, TokenResponse) {
@@ -268,7 +269,7 @@ fn deliver(
             let value = tokens.refresh_token.take();
             let cookie = value
                 .as_deref()
-                .and_then(|v| refresh_cookie::set(v, refresh_ttl_secs, secure));
+                .and_then(|v| refresh_cookie::set(cookie_name, v, refresh_ttl_secs, secure));
             (refresh_cookie::header_map(cookie), tokens)
         }
     }
@@ -455,7 +456,13 @@ pub async fn handle_login(
         "user",
         Some(&user.user_id),
     );
-    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    let (headers, tokens) = deliver(
+        tokens,
+        delivery,
+        &state.refresh_cookie_name,
+        secure,
+        jwt_config.refresh_ttl_secs,
+    );
     Ok((headers, Json(LoginResponse::Tokens(tokens))))
 }
 
@@ -560,7 +567,13 @@ pub async fn handle_totp_login(
         "user",
         Some(&user.user_id),
     );
-    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    let (headers, tokens) = deliver(
+        tokens,
+        delivery,
+        &state.refresh_cookie_name,
+        secure,
+        jwt_config.refresh_ttl_secs,
+    );
     Ok((headers, Json(tokens)))
 }
 
@@ -668,7 +681,13 @@ pub async fn handle_enroll_totp_confirm(
         Some(&user.user_id),
     );
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
-    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    let (headers, tokens) = deliver(
+        tokens,
+        delivery,
+        &state.refresh_cookie_name,
+        secure,
+        jwt_config.refresh_ttl_secs,
+    );
     Ok((headers, Json(tokens)))
 }
 
@@ -865,7 +884,7 @@ pub async fn handle_refresh(
 
     let (presented, delivery) = match req.refresh_token {
         Some(body_token) => (body_token, refresh_cookie::Delivery::Body),
-        None => match refresh_cookie::read(&headers) {
+        None => match refresh_cookie::read(&headers, &state.refresh_cookie_name) {
             Some(cookie_token) => (cookie_token, refresh_cookie::Delivery::Cookie),
             // Neither source. Still a 401 — "you have no session" is exactly
             // what the SPA's bootstrap refresh needs to hear on a first visit
@@ -1001,7 +1020,13 @@ pub async fn handle_refresh(
         token_type: "Bearer".into(),
         expires_in: jwt_config.access_ttl_secs,
     };
-    let (headers, tokens) = deliver(tokens, delivery, secure, jwt_config.refresh_ttl_secs);
+    let (headers, tokens) = deliver(
+        tokens,
+        delivery,
+        &state.refresh_cookie_name,
+        secure,
+        jwt_config.refresh_ttl_secs,
+    );
     Ok((headers, Json(tokens)))
 }
 
@@ -1018,14 +1043,18 @@ pub async fn handle_logout(
     Json(req): Json<LogoutRequest>,
 ) -> (HeaderMap, StatusCode) {
     let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
-    let clearing = refresh_cookie::header_map(refresh_cookie::clear(secure));
+    let clearing =
+        refresh_cookie::header_map(refresh_cookie::clear(&state.refresh_cookie_name, secure));
     let Some(store) = state.store.as_ref() else {
         return (clearing, StatusCode::SERVICE_UNAVAILABLE);
     };
     let now = Utc::now();
-    for raw in [req.refresh_token, refresh_cookie::read(&headers)]
-        .into_iter()
-        .flatten()
+    for raw in [
+        req.refresh_token,
+        refresh_cookie::read(&headers, &state.refresh_cookie_name),
+    ]
+    .into_iter()
+    .flatten()
     {
         let _ = store.revoke_refresh_token(&hash_api_key(&raw), now);
     }

@@ -166,6 +166,14 @@ async fn main() -> Result<()> {
         tracing::warn!("{}", croniq_server::diagnostics::ENFORCED_TOTP_BOOT_NOTICE);
     }
 
+    // Issue #880: a per-server refresh-cookie name, so two croniq servers on
+    // one host (devstack lanes on `localhost`) keep separate sessions. An
+    // unusable name stops the boot instead of falling back to the shared one.
+    let refresh_cookie_name = {
+        use croniq_server::api::refresh_cookie::{COOKIE_NAME_ENV, resolve_name};
+        resolve_name(std::env::var(COOKIE_NAME_ENV).ok().as_deref()).map_err(anyhow::Error::msg)?
+    };
+
     // Open (or create) the persistence store. The backend is chosen from
     // `server { db … }` (the CRONIQ_DB env var overrides it): `sqlite`
     // (default) opens the embedded DB under --data-dir, while a `postgres://…`
@@ -358,6 +366,7 @@ async fn main() -> Result<()> {
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
+        s.refresh_cookie_name = refresh_cookie_name;
         s.require_totp = require_totp;
         s.retention_configured = croniq_server::diagnostics::retention_configured(&loaded.runtime);
         // Snapshot what a reload cannot change, so every reload path can warn
@@ -411,6 +420,12 @@ async fn main() -> Result<()> {
     }
     if let Some(url) = &server_state.app_base_url {
         tracing::info!(app_base_url = %url, "public base URL pinned (server.app_url / CRONIQ_APP_URL)");
+    }
+    if server_state.refresh_cookie_name != croniq_server::api::refresh_cookie::DEFAULT_COOKIE_NAME {
+        tracing::info!(
+            cookie = %server_state.refresh_cookie_name,
+            "dashboard refresh cookie renamed (CRONIQ_REFRESH_COOKIE)"
+        );
     }
     // Surface configuration health at boot (missing SMTP, unpinned URL, …).
     // The same checks back `croniq-server doctor` and GET /v1/system/diagnostics.

@@ -77,9 +77,13 @@ proxy   = false
 promote = { hold_if_changed = ["crates/croniq-store/src/migrations/**"] }
 
 [services.api.env]
-CRONIQ_DATA_DIR  = "{repo}/.data/devstack"
-CRONIQ_DEMO_MODE = "1"                     # binds loopback only (issue #431)
-RUST_LOG         = "${RUST_LOG:-info}"
+CRONIQ_DATA_DIR       = "{repo}/.data/devstack"
+CRONIQ_DEMO_MODE      = "1"                # binds loopback only (issue #431)
+RUST_LOG              = "${RUST_LOG:-info}"
+# The main tree and every lane are on `localhost`, where the browser keeps one
+# cookie per name whatever the port: a login in a lane's dashboard would
+# otherwise replace the main tree's and sign it out (issue #880).
+CRONIQ_REFRESH_COOKIE = "croniq_refresh{lane_suffix}"
 
 [services.runner]
 build   = "cargo install --path crates/croniq-demo-runner --bin croniq-demo-runner --debug --locked --force --target-dir target --root target/devstack/runner"
