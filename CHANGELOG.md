@@ -13,6 +13,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions don't know, so an older devstack asks to be updated before it
   starts the stack. The stack itself is unchanged.
 
+### Security
+
+- **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
+  crates use for constant-time comparisons, generated masks and compared
+  `u128` values in non-constant time (RUSTSEC-2026-0385); in Croniq it sits
+  under the Postgres client's SCRAM authentication (`hmac`, `sha2`, `md-5`).
+  tokio's safe `AsyncFd` constructors accepted any raw file descriptor,
+  including one that was closed or owned elsewhere (RUSTSEC-2026-0386, an
+  unsoundness advisory); Croniq does not construct an `AsyncFd` itself.
+  Lockfile only; no manifest change.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
