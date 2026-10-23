@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`CRONIQ_REFRESH_COOKIE` renames the dashboard's refresh cookie** (#880).
+  Browsers keep cookies per host, not per port, so two croniq servers on one
+  host — devstack lanes on `localhost`, staging beside production — shared the
+  one `croniq_refresh` cookie, and a login on either signed the other out. Each
+  server now reads, sets and clears the cookie under its own name; the default
+  stays `croniq_refresh`. A name that is not a cookie-name token, or that
+  starts with `__Host-`/`__Secure-`, stops the server at boot. `devstack.toml`
+  sets `croniq_refresh{lane_suffix}`, so a lane's dashboard no longer logs the
+  main tree's out. See
+  [Where the dashboard keeps its tokens](docs/operations.md#where-the-dashboard-keeps-its-tokens).
+
 ### Changed
 
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date

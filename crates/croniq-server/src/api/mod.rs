@@ -157,6 +157,11 @@ pub struct ServerState {
     /// (see `resolve_link_base`). An explicit value is authoritative and
     /// immune to `Host`-header spoofing, which is why it stays configurable.
     pub app_base_url: Option<String>,
+    /// Name of the dashboard's refresh-token cookie: `croniq_refresh`, or
+    /// `CRONIQ_REFRESH_COOKIE` so two servers on one host (devstack lanes on
+    /// `localhost`) do not overwrite each other's (issue #880). Validated at
+    /// boot by [`refresh_cookie::resolve_name`].
+    pub refresh_cookie_name: String,
     /// OIDC provider for SSO login. `None` disables the OIDC routes.
     /// Discovered once at startup (see `oidc::OidcProvider::discover`).
     pub oidc: SharedOidcProvider,
@@ -253,6 +258,7 @@ impl ServerState {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -293,6 +299,7 @@ impl ServerState {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -332,6 +339,7 @@ impl ServerState {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -2751,6 +2759,7 @@ mod tests {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -3393,6 +3402,7 @@ mod tests {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,
@@ -3482,6 +3492,7 @@ mod tests {
             config_faults: Arc::new(std::sync::RwLock::new(HashMap::new())),
             email_sender: crate::email::default_sender(),
             app_base_url: None,
+            refresh_cookie_name: refresh_cookie::DEFAULT_COOKIE_NAME.to_string(),
             oidc: None,
             password_login_enabled: true,
             require_totp: false,

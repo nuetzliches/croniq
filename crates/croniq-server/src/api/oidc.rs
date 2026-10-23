@@ -230,9 +230,12 @@ pub async fn handle_callback(
     // SPA mints a fresh one from the cookie on boot, which costs one request.
     let secure = refresh_cookie::is_secure_request(&headers, state.app_base_url.as_deref());
     let mut response = Redirect::to(&provider.config.post_login_redirect).into_response();
-    if let Some(cookie) =
-        refresh_cookie::set(&pair.refresh_token, jwt_config.refresh_ttl_secs, secure)
-    {
+    if let Some(cookie) = refresh_cookie::set(
+        &state.refresh_cookie_name,
+        &pair.refresh_token,
+        jwt_config.refresh_ttl_secs,
+        secure,
+    ) {
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
     Ok(response)

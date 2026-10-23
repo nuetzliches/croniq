@@ -39,6 +39,12 @@ const ORIGIN: &str = "https://cron.example.com";
 const HOST: &str = "cron.example.com";
 
 fn fixture() -> (axum::Router, DynStore) {
+    fixture_with_cookie_name(None)
+}
+
+/// `cookie_name` stands in for `CRONIQ_REFRESH_COOKIE`; `None` keeps the
+/// default `croniq_refresh`.
+fn fixture_with_cookie_name(cookie_name: Option<&str>) -> (axum::Router, DynStore) {
     let store = sqlite_store(SqliteStore::in_memory().unwrap());
     let now = Utc::now();
     store
@@ -66,12 +72,17 @@ fn fixture() -> (axum::Router, DynStore) {
         .unwrap();
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let state = ServerState::with_auth(
+    let mut state = ServerState::with_auth(
         AppState::new(),
         tx,
         Some(JwtConfig::new(JWT_SECRET)),
         Some(store.clone()),
     );
+    if let Some(name) = cookie_name {
+        std::sync::Arc::get_mut(&mut state)
+            .unwrap()
+            .refresh_cookie_name = name.to_string();
+    }
     (server_router(state), store)
 }
 
@@ -85,12 +96,18 @@ impl Reply {
     /// The `croniq_refresh` value out of `Set-Cookie`, if one was set to a
     /// non-empty value.
     fn cookie_value(&self) -> Option<String> {
+        self.named_cookie_value("croniq_refresh")
+    }
+
+    /// Same, for a cookie renamed by `CRONIQ_REFRESH_COOKIE`.
+    fn named_cookie_value(&self, name: &str) -> Option<String> {
         let raw = self.set_cookie.as_deref()?;
         let v = raw
             .split(';')
             .next()?
             .trim()
-            .strip_prefix("croniq_refresh=")?;
+            .strip_prefix(name)?
+            .strip_prefix('=')?;
         (!v.is_empty()).then(|| v.to_string())
     }
 }
@@ -103,6 +120,19 @@ async fn post(
     cookie: Option<&str>,
     browser: bool,
 ) -> Reply {
+    let cookie_header = cookie.map(|c| format!("croniq_refresh={c}"));
+    post_with_cookie_header(app, uri, body, cookie_header.as_deref(), browser).await
+}
+
+/// [`post`] with the whole `Cookie` header spelled out, for a browser that
+/// holds more than one cookie for this host.
+async fn post_with_cookie_header(
+    app: axum::Router,
+    uri: &str,
+    body: serde_json::Value,
+    cookie_header: Option<&str>,
+    browser: bool,
+) -> Reply {
     let mut req = Request::builder()
         .method("POST")
         .uri(uri)
@@ -111,8 +141,8 @@ async fn post(
     if browser {
         req = req.header("origin", ORIGIN);
     }
-    if let Some(c) = cookie {
-        req = req.header("cookie", format!("croniq_refresh={c}"));
+    if let Some(c) = cookie_header {
+        req = req.header("cookie", c);
     }
     let resp = app
         .oneshot(req.body(Body::from(body.to_string())).unwrap())
@@ -483,4 +513,112 @@ async fn plain_http_gets_a_cookie_without_the_secure_flag() {
         !cookie.contains("Secure"),
         "no evidence of https means no Secure flag: {cookie}"
     );
+}
+
+// ─── CRONIQ_REFRESH_COOKIE (issue #880) ─────────────────────────────────────
+//
+// Browsers keep cookies per host, not per port: a devstack lane on
+// `localhost:4331` and the main tree on `localhost:4231` share one cookie jar,
+// so each server needs a name of its own, and must ignore the other's.
+
+const LANE_COOKIE: &str = "croniq_refresh_lane-a";
+
+#[tokio::test]
+async fn a_renamed_cookie_carries_login_refresh_and_logout() {
+    let (app, _store) = fixture_with_cookie_name(Some(LANE_COOKIE));
+
+    let login = login_with_cookie(app.clone()).await;
+    let set = login.set_cookie.clone().expect("cookie mode sets a cookie");
+    assert!(set.starts_with("croniq_refresh_lane-a="), "{set}");
+    assert!(
+        set.contains("HttpOnly") && set.contains("Path=/v1/auth"),
+        "{set}"
+    );
+    let token = login
+        .named_cookie_value(LANE_COOKIE)
+        .expect("login set the renamed cookie");
+
+    // The browser sends the main tree's cookie along with the lane's, and
+    // puts it first. The lane server must pick its own.
+    let refreshed = post_with_cookie_header(
+        app.clone(),
+        "/v1/auth/refresh",
+        serde_json::json!({}),
+        Some(&format!(
+            "croniq_refresh=11111111-2222-3333-4444-555555555555; {LANE_COOKIE}={token}"
+        )),
+        true,
+    )
+    .await;
+    assert_eq!(refreshed.status, StatusCode::OK, "{}", refreshed.body);
+    assert!(refreshed.body.get("refresh_token").is_none());
+    let rotated = refreshed
+        .named_cookie_value(LANE_COOKIE)
+        .expect("the refresh rotates the renamed cookie");
+    assert_ne!(rotated, token);
+
+    let out = post_with_cookie_header(
+        app.clone(),
+        "/v1/auth/logout",
+        serde_json::json!({}),
+        Some(&format!("{LANE_COOKIE}={rotated}")),
+        true,
+    )
+    .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    let cleared = out.set_cookie.clone().expect("logout clears the cookie");
+    assert!(
+        cleared.starts_with("croniq_refresh_lane-a=;") && cleared.contains("Max-Age=0"),
+        "logout must clear the renamed cookie, not the default one: {cleared}"
+    );
+
+    let after = post_with_cookie_header(
+        app,
+        "/v1/auth/refresh",
+        serde_json::json!({}),
+        Some(&format!("{LANE_COOKIE}={rotated}")),
+        true,
+    )
+    .await;
+    assert_eq!(after.status, StatusCode::UNAUTHORIZED, "logout revoked it");
+}
+
+#[tokio::test]
+async fn a_renamed_server_ignores_the_default_cookie() {
+    // Its own token, but under the main tree's name: not this server's cookie.
+    let (app, _store) = fixture_with_cookie_name(Some(LANE_COOKIE));
+    let token = login_with_cookie(app.clone())
+        .await
+        .named_cookie_value(LANE_COOKIE)
+        .unwrap();
+
+    let reply = post(
+        app.clone(),
+        "/v1/auth/refresh",
+        serde_json::json!({}),
+        Some(&token),
+        true,
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.body);
+
+    // Logout with only the default cookie leaves the lane's token alive.
+    let out = post(
+        app.clone(),
+        "/v1/auth/logout",
+        serde_json::json!({}),
+        Some(&token),
+        true,
+    )
+    .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    let still = post_with_cookie_header(
+        app,
+        "/v1/auth/refresh",
+        serde_json::json!({}),
+        Some(&format!("{LANE_COOKIE}={token}")),
+        true,
+    )
+    .await;
+    assert_eq!(still.status, StatusCode::OK, "{}", still.body);
 }

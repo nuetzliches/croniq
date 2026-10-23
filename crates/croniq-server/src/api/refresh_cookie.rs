@@ -1,5 +1,6 @@
 //! The `croniq_refresh` cookie — refresh-token delivery for the dashboard
-//! SPA (issue #454).
+//! SPA (issue #454). `CRONIQ_REFRESH_COOKIE` renames it (issue #880, see
+//! [`COOKIE_NAME_ENV`]).
 //!
 //! ## Why a cookie at all
 //!
@@ -64,8 +65,56 @@
 
 use axum::http::{HeaderMap, HeaderValue, header};
 
-/// Cookie name.
-pub const COOKIE_NAME: &str = "croniq_refresh";
+/// Cookie name unless [`COOKIE_NAME_ENV`] names another one.
+pub const DEFAULT_COOKIE_NAME: &str = "croniq_refresh";
+
+/// Environment variable that renames the cookie (issue #880).
+///
+/// Browsers keep cookies per host, not per port, so every croniq server on
+/// `localhost` — a devstack lane beside the main tree, a second checkout,
+/// staging beside production on one box — shares the one `croniq_refresh`
+/// slot. A login on one replaces the other's cookie, whose next refresh then
+/// presents a token its own store has never seen and signs the user out.
+/// A distinct name per server keeps the two sessions apart.
+pub const COOKIE_NAME_ENV: &str = "CRONIQ_REFRESH_COOKIE";
+
+/// The cookie name to use, from the raw value of [`COOKIE_NAME_ENV`]. Unset or
+/// blank means [`DEFAULT_COOKIE_NAME`]; surrounding whitespace is trimmed.
+///
+/// Anything else must be a usable cookie name, or the server refuses to start:
+/// falling back to the default would quietly bring back the collision the
+/// operator set the variable to avoid.
+pub fn resolve_name(raw: Option<&str>) -> Result<String, String> {
+    let Some(name) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(DEFAULT_COOKIE_NAME.to_string());
+    };
+    // RFC 6265 makes a cookie name an RFC 9110 `token`: visible ASCII minus
+    // the separators. That also keeps `=` and `;` out, which `read` relies on.
+    if let Some(c) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || TOKEN_PUNCTUATION.contains(*c)))
+    {
+        return Err(format!(
+            "{COOKIE_NAME_ENV}={name:?}: {c:?} is not allowed in a cookie name \
+             (letters, digits and {TOKEN_PUNCTUATION} are)"
+        ));
+    }
+    // Browsers accept these prefixes only on a `Secure` cookie, and `__Host-`
+    // only with `Path=/`. Ours is `Path=/v1/auth` and `Secure` only over HTTPS,
+    // so the browser would drop it and nobody would stay signed in.
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("__host-") || lower.starts_with("__secure-") {
+        return Err(format!(
+            "{COOKIE_NAME_ENV}={name:?}: browsers refuse a __Host- or __Secure- cookie \
+             unless it is Secure (and, for __Host-, on Path=/), which croniq's \
+             refresh cookie cannot promise"
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// The punctuation an RFC 9110 `token` allows besides letters and digits.
+const TOKEN_PUNCTUATION: &str = "!#$%&'*+-.^_`|~";
 
 /// Path scope. Narrow enough that the cookie never rides along on a job,
 /// runner or execution call, wide enough that `/v1/auth/refresh` *and*
@@ -154,27 +203,27 @@ fn first_header(headers: &HeaderMap, name: &str) -> Option<String> {
 /// is entirely ours: refresh tokens are hyphenated UUIDv4s
 /// (`croniq_auth::jwt::issue_token_pair`), so there is no quoting, escaping or
 /// percent-encoding to get subtly wrong.
-pub fn read(headers: &HeaderMap) -> Option<String> {
+pub fn read(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|raw| raw.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_NAME)
+        .find(|(n, _)| *n == name)
         .map(|(_, value)| value.trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
-/// `Set-Cookie` value that installs the refresh token.
-pub fn set(value: &str, ttl_secs: i64, secure: bool) -> Option<HeaderValue> {
-    render(&format!("{COOKIE_NAME}={value}"), ttl_secs.max(0), secure)
+/// `Set-Cookie` value that installs the refresh token under `name`.
+pub fn set(name: &str, value: &str, ttl_secs: i64, secure: bool) -> Option<HeaderValue> {
+    render(&format!("{name}={value}"), ttl_secs.max(0), secure)
 }
 
 /// `Set-Cookie` value that removes it. `Max-Age=0` plus an empty value, so a
 /// browser that ignores one of the two still drops the cookie.
-pub fn clear(secure: bool) -> Option<HeaderValue> {
-    render(&format!("{COOKIE_NAME}="), 0, secure)
+pub fn clear(name: &str, secure: bool) -> Option<HeaderValue> {
+    render(&format!("{name}="), 0, secure)
 }
 
 fn render(name_value: &str, max_age: i64, secure: bool) -> Option<HeaderValue> {
@@ -213,7 +262,13 @@ mod tests {
 
     #[test]
     fn set_cookie_carries_the_hardening_attributes() {
-        let v = set("11111111-2222-3333-4444-555555555555", 604800, true).unwrap();
+        let v = set(
+            DEFAULT_COOKIE_NAME,
+            "11111111-2222-3333-4444-555555555555",
+            604800,
+            true,
+        )
+        .unwrap();
         assert_eq!(
             v.to_str().unwrap(),
             "croniq_refresh=11111111-2222-3333-4444-555555555555; Path=/v1/auth; HttpOnly; \
@@ -223,7 +278,7 @@ mod tests {
 
     #[test]
     fn clear_cookie_expires_immediately_and_carries_no_value() {
-        let s = clear(false).unwrap();
+        let s = clear(DEFAULT_COOKIE_NAME, false).unwrap();
         let s = s.to_str().unwrap();
         assert!(s.starts_with("croniq_refresh=;"), "{s}");
         assert!(s.contains("Max-Age=0"), "{s}");
@@ -232,7 +287,7 @@ mod tests {
 
     #[test]
     fn negative_ttl_never_becomes_a_negative_max_age() {
-        let s = set("t", -5, false).unwrap();
+        let s = set(DEFAULT_COOKIE_NAME, "t", -5, false).unwrap();
         assert!(s.to_str().unwrap().contains("Max-Age=0"));
     }
 
@@ -242,7 +297,7 @@ mod tests {
             "cookie",
             "croniq_theme=dark; croniq_refresh=abc-123; other=x",
         )]);
-        assert_eq!(read(&h).as_deref(), Some("abc-123"));
+        assert_eq!(read(&h, DEFAULT_COOKIE_NAME).as_deref(), Some("abc-123"));
     }
 
     #[test]
@@ -251,16 +306,93 @@ mod tests {
             ("cookie", "croniq_theme=dark"),
             ("cookie", "croniq_refresh=v"),
         ]);
-        assert_eq!(read(&h).as_deref(), Some("v"));
+        assert_eq!(read(&h, DEFAULT_COOKIE_NAME).as_deref(), Some("v"));
     }
 
     #[test]
     fn absent_and_empty_cookies_read_as_none() {
-        assert_eq!(read(&headers(&[])), None);
-        assert_eq!(read(&headers(&[("cookie", "croniq_refresh=")])), None);
-        assert_eq!(read(&headers(&[("cookie", "croniq_refreshx=v")])), None);
+        assert_eq!(read(&headers(&[]), DEFAULT_COOKIE_NAME), None);
+        assert_eq!(
+            read(
+                &headers(&[("cookie", "croniq_refresh=")]),
+                DEFAULT_COOKIE_NAME
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                &headers(&[("cookie", "croniq_refreshx=v")]),
+                DEFAULT_COOKIE_NAME
+            ),
+            None
+        );
         // A prefix match must not win: `xcroniq_refresh` is a different name.
-        assert_eq!(read(&headers(&[("cookie", "xcroniq_refresh=v")])), None);
+        assert_eq!(
+            read(
+                &headers(&[("cookie", "xcroniq_refresh=v")]),
+                DEFAULT_COOKIE_NAME
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_renamed_cookie_is_read_beside_the_default_one() {
+        // The case #880 is about: a browser on `localhost` holds the main
+        // tree's cookie and a lane's, and sends both to every port.
+        let h = headers(&[("cookie", "croniq_refresh=main; croniq_refresh_lane-a=lane")]);
+        assert_eq!(read(&h, "croniq_refresh_lane-a").as_deref(), Some("lane"));
+        assert_eq!(read(&h, DEFAULT_COOKIE_NAME).as_deref(), Some("main"));
+        let s = set("croniq_refresh_lane-a", "t", 60, false).unwrap();
+        assert!(s.to_str().unwrap().starts_with("croniq_refresh_lane-a=t;"));
+        let s = clear("croniq_refresh_lane-a", false).unwrap();
+        assert!(s.to_str().unwrap().starts_with("croniq_refresh_lane-a=;"));
+    }
+
+    #[test]
+    fn unset_or_blank_name_is_the_default() {
+        assert_eq!(resolve_name(None).unwrap(), DEFAULT_COOKIE_NAME);
+        assert_eq!(resolve_name(Some("")).unwrap(), DEFAULT_COOKIE_NAME);
+        assert_eq!(resolve_name(Some("  ")).unwrap(), DEFAULT_COOKIE_NAME);
+    }
+
+    #[test]
+    fn a_devstack_lane_name_is_accepted() {
+        // `croniq_refresh{lane_suffix}`: a lane name is lowercase letters,
+        // digits and `-`.
+        assert_eq!(
+            resolve_name(Some(" croniq_refresh_feat-880 ")).unwrap(),
+            "croniq_refresh_feat-880"
+        );
+        assert_eq!(
+            resolve_name(Some("a!#$%&'*+-.^_`|~z")).unwrap(),
+            "a!#$%&'*+-.^_`|~z"
+        );
+    }
+
+    #[test]
+    fn a_name_with_a_separator_is_refused() {
+        for bad in [
+            "a=b", "a;b", "a b", "a,b", "a\"b", "a/b", "a(b)", "a@b", "a:b", "café",
+        ] {
+            let err = resolve_name(Some(bad)).unwrap_err();
+            assert!(err.contains(COOKIE_NAME_ENV), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn host_and_secure_prefixes_are_refused() {
+        for bad in [
+            "__Host-croniq",
+            "__Secure-croniq",
+            "__host-croniq",
+            "__SECURE-x",
+        ] {
+            let err = resolve_name(Some(bad)).unwrap_err();
+            assert!(err.contains("__Host-"), "{bad}: {err}");
+        }
+        // Only the exact prefixes: two underscores alone are fine.
+        assert_eq!(resolve_name(Some("__croniq")).unwrap(), "__croniq");
     }
 
     #[test]
