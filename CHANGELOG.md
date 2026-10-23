@@ -24,7 +24,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
   versions don't know, so an older devstack asks to be updated before it
-  starts the stack. The stack itself is unchanged.
+  starts the stack. Apart from the `CRONIQ_REFRESH_COOKIE` line above, the
+  stack itself is unchanged.
+
+### Fixed
+
+- **`CRONIQ_REFRESH_COOKIE` holds its boot contract in every case** (#880).
+  A value that is not valid Unicode was read as unset and fell back to the
+  shared `croniq_refresh` name; it now stops the boot like any other unusable
+  name. `croniq-server doctor` reports an unusable name as a critical finding
+  instead of calling a configuration healthy that the next start refuses.
 
 ### Security
 

@@ -933,7 +933,10 @@ paths:
                     dashboard sets this so no script can read the refresh
                     token; non-browser clients leave it unset. Only useful to a
                     caller on this server's own origin — a `SameSite=Strict`
-                    cookie is never sent cross-site.
+                    cookie is never sent cross-site. The cookie is named
+                    `croniq_refresh` unless the server sets
+                    `CRONIQ_REFRESH_COOKIE` (see docs/operations.md); every
+                    mention of `croniq_refresh` in this spec means that name.
       responses:
         "200":
           description: >

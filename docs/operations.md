@@ -121,8 +121,11 @@ reads and clears only its own cookie and ignores the others. The name must be a
 cookie-name token — letters, digits, `-`, `_`, `.` and the other RFC 9110
 token characters — and not start with `__Host-` or `__Secure-`, which browsers
 honour only on cookies croniq cannot promise to make; anything else stops the
-server at boot. Renaming it on a running deployment signs everyone out once,
-since the browsers still hold the token under the old name. Nothing in the
+server at boot, and `croniq-server doctor` reports it as critical. Renaming it
+on a running deployment signs everyone out once, since the browsers still hold
+the token under the old name. The old cookie is not cleared, and the token in
+it stays valid until it expires (seven days by default): the browser still
+sends it to `/v1/auth`, where the renamed server ignores it. Nothing in the
 dashboard changes: the cookie is `HttpOnly`, so the SPA never sees its name.
 
 Consequences worth knowing:
