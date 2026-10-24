@@ -248,11 +248,18 @@ impl Trigger {
             self.compute_next_fire(fire_at)
                 .filter(|next| *next <= until)
         });
+        // The end of a replay restarts the cadence from `now`, as `catch_up
+        // all` documents; only an ordinary fire keeps its phase.
+        let from = if self.replay_until.is_some() {
+            now
+        } else {
+            self.advance_anchor(fire_at, now)
+        };
         self.next_fire_at = match replay_next {
             Some(next) => Some(next),
             None => {
                 self.replay_until = None;
-                self.compute_next_fire(now)
+                self.compute_next_fire(from)
             }
         };
 
@@ -528,6 +535,27 @@ impl Trigger {
     /// instant instead of stepping raw schedule ticks (#391 — the old
     /// 366-tick walk gave `every 1 minute` a ~6h horizon, so any overnight
     /// calendar gap wrongly exhausted the trigger).
+    /// The instant [`Self::mark_fired`] computes the next fire from.
+    ///
+    /// Wall-clock schedules re-derive their own instant, so `now` serves. An
+    /// interval has nothing but its phase: computed from the tick time, each
+    /// fire added the tick's latency, and `every 10 seconds` drifted later
+    /// with every fire (review 2026-10-24, D-10). A fire made within one beat
+    /// of its instant — the ordinary tick latency — therefore advances from
+    /// the instant itself. One made later than that is a missed fire being
+    /// caught up, and the cadence restarts from `now` as it always has, so
+    /// the next fire is a full interval away rather than due at once.
+    fn advance_anchor(&self, fire_at: DateTime<Utc>, now: DateTime<Utc>) -> DateTime<Utc> {
+        match self.schedule {
+            Schedule::Interval { seconds }
+                if fire_at <= now && now - fire_at < Duration::seconds(seconds as i64) =>
+            {
+                fire_at
+            }
+            _ => now,
+        }
+    }
+
     fn compute_next_fire(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         // Counts gate JUMPS, not schedule ticks. Wall-clock schedules fire at
         // most once per day, so each iteration advances >= 1 day; 1500
@@ -614,6 +642,32 @@ mod tests {
             MisfirePolicy::FireNow,
             now,
         )
+    }
+
+    // Review 2026-10-24, D-10: the next interval fire was computed from the
+    // tick time, so each fire added the tick latency and the cadence drifted.
+    #[test]
+    fn interval_keeps_its_phase_through_late_ticks() {
+        let start = utc(2026, 3, 29, 10, 0);
+        let mut t = make_trigger(Schedule::Interval { seconds: 10 }, start);
+        let late = Duration::milliseconds(900);
+        for _ in 0..5 {
+            let fire_at = t.evaluate(t.next_fire_at.unwrap() + late).unwrap();
+            t.mark_fired(fire_at, fire_at + late);
+        }
+        assert_eq!(t.next_fire_at, Some(start + Duration::seconds(60)));
+    }
+
+    // A fire caught up more than a beat late restarts the cadence from `now`,
+    // as `catch_up` documents — the anchor change is for tick latency only.
+    #[test]
+    fn interval_caught_up_late_restarts_from_now() {
+        let start = utc(2026, 3, 29, 10, 0);
+        let mut t = make_trigger(Schedule::Interval { seconds: 10 }, start);
+        let fire_at = t.next_fire_at.unwrap();
+        let now = fire_at + Duration::seconds(35);
+        t.mark_fired(fire_at, now);
+        assert_eq!(t.next_fire_at, Some(now + Duration::seconds(10)));
     }
 
     #[test]

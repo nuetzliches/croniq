@@ -110,11 +110,14 @@ pub enum SchedulerCommand {
     /// Replace the full trigger + job set (hot-reload).
     ///
     /// The ack sender fires once the swap is applied so callers (e.g. the
-    /// admin reload endpoint) can wait for completion before responding.
+    /// admin reload endpoint) can wait for completion before responding. It
+    /// carries the trigger map as the scheduler now holds it — with each
+    /// surviving job's phase and history carried over — which is what the
+    /// shared snapshot must show, not the freshly built triggers that went in.
     Reload {
         triggers: HashMap<String, Trigger>,
         jobs: Vec<JobConfig>,
-        ack: oneshot::Sender<()>,
+        ack: oneshot::Sender<HashMap<String, Trigger>>,
     },
 }
 
@@ -659,7 +662,7 @@ impl SchedulerLoop {
                 self.reload(triggers, jobs);
                 // The receiver may have dropped (caller lost interest);
                 // ignore send failure.
-                let _ = ack.send(());
+                let _ = ack.send(self.triggers.clone());
             }
         }
     }

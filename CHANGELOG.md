@@ -146,6 +146,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retries to the defaults. A reload now fails with the store error and leaves
   the running state as it was; at boot, the server stops and its restart
   retries.
+- **Interval jobs keep their phase** (review 2026-10-24, D-10). After a
+  reload, the dashboard forecast and `gate_closed_reason` showed every
+  `every …` job as anchored at the reload, while the scheduler kept firing on
+  its old phase. The next interval fire was also computed from the tick that
+  made the fire, so the tick latency added up: `every 10 seconds` drifted
+  later with every run. A fire made within one interval of its instant now
+  advances from the instant itself. A fire caught up after downtime still
+  restarts the cadence from the moment it ran, as `catch_up` describes.
 
 ### Security
 

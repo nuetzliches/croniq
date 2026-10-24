@@ -545,7 +545,6 @@ pub async fn apply_plan(
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
     config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) -> Result<(), ApplyError> {
-    let post_triggers = plan.merged_triggers.clone();
     let post_dsl = plan.dsl_jobs;
     let post_dsl_cals = plan.dsl_calendars;
     let post_policy = plan.policy_dsl_adopt_on_mutate;
@@ -561,7 +560,11 @@ pub async fn apply_plan(
         })
         .map_err(|_| ApplyError::SchedulerDown)?;
 
-    ack_rx.await.map_err(|_| ApplyError::SchedulerDown)?;
+    // The scheduler's map after the swap, not `plan.merged_triggers`: those
+    // are built from the reload instant, so the forecast and
+    // `gate_closed_reason` showed every interval job re-anchored at the
+    // reload until the next one (review 2026-10-24, D-10).
+    let post_triggers = ack_rx.await.map_err(|_| ApplyError::SchedulerDown)?;
 
     *dsl_jobs_shared.write().await = post_dsl;
     *dsl_calendars_shared.write().await = post_dsl_cals;
@@ -588,11 +591,12 @@ pub async fn apply_plan_direct(
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
     config_faults: &std::sync::RwLock<HashMap<String, String>>,
 ) {
-    let post_triggers = plan.merged_triggers.clone();
     let post_policy = plan.policy_dsl_adopt_on_mutate;
     let post_strict = plan.policy_strict_calendars;
     let post_faults = plan.calendar_faults;
     scheduler.reload(plan.merged_triggers, plan.merged_jobs);
+    // See `apply_plan`: the snapshot takes the carried-over map (D-10).
+    let post_triggers = scheduler.triggers.clone();
     *dsl_jobs_shared.write().await = plan.dsl_jobs;
     *dsl_calendars_shared.write().await = plan.dsl_calendars;
     policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
@@ -744,6 +748,70 @@ mod tests {
             .expect("the job is in the plan");
         assert_eq!(job.timeout.as_deref(), Some("90s"));
         assert_eq!(job.retry.max_attempts, 7);
+    }
+
+    /// Review 2026-10-24, D-10: the snapshot the forecast and
+    /// `gate_closed_reason` read took the plan's freshly built triggers, so
+    /// an interval job showed a phase anchored at the reload instead of the
+    /// one the scheduler carried over and kept firing on.
+    #[tokio::test]
+    async fn the_snapshot_keeps_the_carried_over_phase_on_both_apply_paths() {
+        const SRC: &str = "job dsl:one { every 1 hours }";
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), SRC).unwrap();
+        let store = empty_store();
+        let pending = chrono::Utc::now() + chrono::Duration::minutes(7);
+
+        let running = || {
+            let loaded = load_str(SRC).unwrap();
+            let mut triggers = loaded.triggers;
+            triggers.get_mut("dsl:one").unwrap().next_fire_at = Some(pending);
+            SchedulerLoop::new(
+                triggers,
+                loaded.runtime.jobs,
+                Arc::clone(&store),
+                croniq_runner::AppState::new(),
+            )
+        };
+        let (cur_tr, cur_dsl) = state_from(SRC).await;
+        let cals = RwLock::new(Vec::new());
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        let strict = std::sync::atomic::AtomicBool::new(false);
+        let faults = std::sync::RwLock::new(HashMap::new());
+
+        // From inside the scheduler task.
+        let mut scheduler = running();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+        apply_plan_direct(
+            plan,
+            &mut scheduler,
+            &cur_dsl,
+            &cals,
+            &flag,
+            &strict,
+            &cur_tr,
+            &faults,
+        )
+        .await;
+        assert_eq!(cur_tr.read().await["dsl:one"].next_fire_at, Some(pending));
+
+        // Through the command channel.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut scheduler = running();
+        let task = tokio::spawn(async move {
+            let cmd = rx.recv().await.unwrap();
+            scheduler.apply_command(cmd);
+        });
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+        apply_plan(plan, &tx, &cur_dsl, &cals, &flag, &strict, &cur_tr, &faults)
+            .await
+            .unwrap();
+        task.await.unwrap();
+        assert_eq!(cur_tr.read().await["dsl:one"].next_fire_at, Some(pending));
     }
 
     /// Review 2026-10-24, D-9: a store error reading the job's row read as
