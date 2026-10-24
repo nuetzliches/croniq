@@ -1,0 +1,25 @@
+// The Playwright suite and the two test-runner configs. They belonged to no
+// project before, so `vue-tsc --build` never type-checked them and a broken
+// fixture surfaced only when the suite ran (review 2026-10-24, U-6). `DOM` is
+// in `lib` because `page.evaluate` callbacks run in the browser.
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["playwright.config.ts", "vitest.config.ts", "e2e/**/*.ts"]
+}

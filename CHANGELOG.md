@@ -286,6 +286,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   could not be reached. A 401 for a token that was already renewed by another
   request repeats with the new token instead of rotating the refresh token a
   second time.
+- **The dashboard type check covers the e2e suite** (review 2026-10-24, U-6).
+  `playwright.config.ts`, `vitest.config.ts` and `ui/e2e/*.ts` belonged to no
+  TypeScript project, so `vue-tsc --build` never checked them; a new
+  `tsconfig.e2e.json` brings them in.
 
 ### Security
 
