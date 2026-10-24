@@ -2871,6 +2871,7 @@ paths:
       summary: Revoke an API key
       responses:
         "204": { description: Revoked }
+        "403": { description: "Missing api_keys:admin, or the key's client holds scopes the caller does not" }
 
   /v1/jobs/register:
     post:

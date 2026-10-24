@@ -947,6 +947,12 @@ Operational notes:
   every request, so demoting a user takes effect for their PATs at once: a
   PAT minted with `admin` loses it, and keeps only those of its scopes the
   new role grants.
+* **Access tokens minted for an API client are not re-checked.** A JWT
+  issued through `POST /v1/api-clients/{id}/tokens` carries no generation and
+  its client is not looked up per request. Deactivating the client or
+  narrowing its scopes stops the next refresh, but an access token already
+  issued keeps working until its `exp` — one hour. To cut a client off at
+  once, rotate `CRONIQ_JWT_SECRET` as well, which ends every session.
 * **Rolling restarts are safe.** Tokens minted by an older binary carry no
   claim and are read as generation `0`, which is what every existing row was
   backfilled to. Nobody is signed out by the upgrade itself; the first bump on

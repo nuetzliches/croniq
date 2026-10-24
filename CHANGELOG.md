@@ -744,6 +744,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is audited as `auth.refresh_reuse_detected`. Two new store methods back
   this (`refresh_token_get`, `revoke_refresh_tokens_for_user`); no migration.
 
+- **OIDC sign-in uses PKCE and caches the IdP's keys; API-key revocation is
+  bounded** (review 2026-10-24, A-10). The authorization-code flow now sends
+  an S256 PKCE challenge, derived per login from its `state` so no stored
+  state changes. The IdP's JWKS is cached for ten minutes, refetched for an
+  unknown key id, and the cached set is used when a refetch fails, so a JWKS
+  outage at the IdP no longer fails every sign-in. `GET /v1/auth/oidc/login`,
+  which writes a pending-login row per anonymous request, is throttled per
+  client address like the password login. `DELETE /v1/api-keys/{id}` is now
+  bounded like minting a key: a caller without `admin` may revoke only keys of
+  clients whose scopes it holds itself. `docs/operations.md` now states that
+  an access token issued to an API client stays valid until it expires after
+  the client is deactivated.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
