@@ -24,7 +24,7 @@ site/wasm/
 .idea/
 *.suo
 *.user
-.vscode/settings.json
+.vscode/
 
 # Environment & secrets
 .env
