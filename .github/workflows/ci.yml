@@ -296,10 +296,10 @@ jobs:
           workspaces: ". -> target"
           shared-key: wasm
       - name: Install wasm-pack
-        run: |
-          if ! command -v wasm-pack >/dev/null 2>&1; then
-            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-          fi
+        # Pinned version, SHA-256-verified tarball; the pins live in the
+        # script and the Dockerfile uses the same one (review 2026-10-24,
+        # C-5). ~/.cargo/bin is on PATH after the toolchain step.
+        run: sh scripts/install-wasm-pack.sh "$HOME/.cargo/bin"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -364,10 +364,10 @@ jobs:
           # artefacts and would churn against this one.
           shared-key: e2e
       - name: Install wasm-pack
-        run: |
-          if ! command -v wasm-pack >/dev/null 2>&1; then
-            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-          fi
+        # Pinned version, SHA-256-verified tarball; the pins live in the
+        # script and the Dockerfile uses the same one (review 2026-10-24,
+        # C-5). ~/.cargo/bin is on PATH after the toolchain step.
+        run: sh scripts/install-wasm-pack.sh "$HOME/.cargo/bin"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22

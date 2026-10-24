@@ -66,25 +66,12 @@ RUN set -eux; \
 # fetched as a pre-built binary (cargo install wasm-pack would add ~2 min).
 FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS wasm-builder
 
-ARG WASM_PACK_VERSION=0.13.1
-# Pinned SHA256 of the release tarballs — the download is verified before
-# extraction so a tampered artefact fails the build instead of shipping.
-# When bumping WASM_PACK_VERSION, recompute both:
-#   curl -fsSL <release tarball url> | sha256sum
-ARG WASM_PACK_SHA256_X86_64=c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539
-ARG WASM_PACK_SHA256_AARCH64=2e65038769f8bbaa5fc237ad4bb523e692df99458cbd3e3d92525b89d8762379
-RUN set -eux; \
-    case "$(uname -m)" in \
-      x86_64)  arch=x86_64;  sha256="$WASM_PACK_SHA256_X86_64" ;; \
-      aarch64) arch=aarch64; sha256="$WASM_PACK_SHA256_AARCH64" ;; \
-      *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    url="https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${arch}-unknown-linux-musl.tar.gz"; \
-    curl -fsSL "$url" -o /tmp/wasm-pack.tar.gz; \
-    echo "${sha256}  /tmp/wasm-pack.tar.gz" | sha256sum -c -; \
-    tar xzf /tmp/wasm-pack.tar.gz -C /usr/local/bin --strip-components=1 --wildcards '*/wasm-pack'; \
-    rm /tmp/wasm-pack.tar.gz; \
-    wasm-pack --version
+# Version and SHA-256 pins of the release tarballs live in the script, which
+# CI and the Pages deploy call too — one set of pins for every place that
+# installs wasm-pack (review 2026-10-24, C-5). The download is verified before
+# extraction, so a tampered artefact fails the build instead of shipping.
+COPY scripts/install-wasm-pack.sh /tmp/install-wasm-pack.sh
+RUN sh /tmp/install-wasm-pack.sh /usr/local/bin && rm /tmp/install-wasm-pack.sh
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -97,11 +84,12 @@ FROM node:24-bookworm-slim AS ui-builder
 
 WORKDIR /build/ui
 COPY ui/package.json ui/package-lock.json ./
-# `npm ci` enforces the lockfile; fall back to `npm install` only when the
-# lockfile is out of sync (e.g. mid-bump). The previous `--frozen-lockfile`
-# flag is a yarn/pnpm option — npm silently ignores it, so the lockfile was
-# never actually enforced.
-RUN npm ci || npm install
+# `npm ci` and nothing else. A fallback to `npm install` on a lockfile
+# mismatch would resolve unpinned versions into the shipped bundle without a
+# word in the build log; a mismatched lockfile has to fail the build instead
+# (review 2026-10-24, C-13). The `ui` CI job runs `npm ci` on every PR, so a
+# mismatch never gets this far.
+RUN npm ci
 COPY ui/ .
 # `vite.config.ts` reads the dev port block from `scripts/lib/stack.mjs`, which
 # is outside this stage's WORKDIR — the ports are declared once for the whole

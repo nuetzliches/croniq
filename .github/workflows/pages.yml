@@ -3,12 +3,9 @@ name: Deploy site
 on:
   push:
     branches: [main]
-  # Manual redeploy escape hatch: a transient "Deployment failed, try again
-  # later" from actions/deploy-pages cannot be fixed by re-running the failed
-  # job — the rerun's rebuilt artifact joins the first attempt's one and
-  # deploy-pages hard-errors on the duplicate "github-pages" name. A fresh
-  # dispatch gets a clean run (and a clean artifact slate) instead.
-  workflow_dispatch:
+    # The filter belongs to `push`. #297 inserted `workflow_dispatch:` above
+    # it, which made it a (meaningless) dispatch key, so every push to main
+    # redeployed the site.
     paths:
       - 'site/**'
       # The deploy bundles a fresh build of croniq-config-wasm into
@@ -16,6 +13,15 @@ on:
       # need to re-publish the docs even when the HTML is untouched.
       - 'crates/croniq-config-wasm/**'
       - 'crates/croniq-config/**'
+      # The wasm-pack pins this deploy installs from.
+      - 'scripts/install-wasm-pack.sh'
+      - '.github/workflows/pages.yml'
+  # Manual redeploy escape hatch: a transient "Deployment failed, try again
+  # later" from actions/deploy-pages cannot be fixed by re-running the failed
+  # job — the rerun's rebuilt artifact joins the first attempt's one and
+  # deploy-pages hard-errors on the duplicate "github-pages" name. A fresh
+  # dispatch gets a clean run (and a clean artifact slate) instead.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -50,10 +56,10 @@ jobs:
         with:
           shared-key: wasm
       - name: Install wasm-pack
-        run: |
-          if ! command -v wasm-pack >/dev/null 2>&1; then
-            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-          fi
+        # Pinned version, SHA-256-verified tarball; the pins live in the
+        # script and the Dockerfile uses the same one (review 2026-10-24,
+        # C-5). ~/.cargo/bin is on PATH after the toolchain step.
+        run: sh scripts/install-wasm-pack.sh "$HOME/.cargo/bin"
       - name: Build wasm bridge
         run: |
           cd crates/croniq-config-wasm
