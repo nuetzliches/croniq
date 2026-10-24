@@ -1664,8 +1664,42 @@ pub async fn handle_revoke_api_key(
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
+    // The same bound as minting a key for the client: revoking one is the
+    // kill switch for a credential that carries the client's scopes, so a
+    // narrow `api_keys:admin` credential must not cut off a client that
+    // holds more than it does (review 2026-10-24, A-10). Admins skip the
+    // lookup; everyone else is bounded by the owning client's scopes.
+    if !ctx.is_admin() {
+        match owning_client_of_key(store, &key_id) {
+            Ok(Some(client)) => {
+                if let Err(s) = require_grantable_scopes(&ctx, &client.scopes) {
+                    return s;
+                }
+            }
+            Ok(None) => {}
+            Err(s) => return s,
+        }
+    }
     let _ = store.revoke_api_key(&key_id, Utc::now());
     StatusCode::NO_CONTENT
+}
+
+fn owning_client_of_key(
+    store: &crate::store::DynStore,
+    key_id: &str,
+) -> Result<Option<ApiClient>, StatusCode> {
+    let clients = store
+        .list_clients()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for client in clients {
+        let keys = store
+            .list_api_keys(&client.client_id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if keys.iter().any(|k| k.key_id == key_id) {
+            return Ok(Some(client));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1721,6 +1755,45 @@ mod tests {
                 managed_by: managed_by.into(),
             })
             .unwrap();
+    }
+
+    /// Review 2026-10-24, A-10: revoking a key is bounded like minting one.
+    #[tokio::test]
+    async fn key_revocation_is_bounded_by_the_callers_scopes() {
+        let store = make_store();
+        seed_client(&store, "powerful", &["admin"]);
+        seed_client(&store, "narrow", &[Scope::JOBS_READ]);
+        let key = |id: &str, client: &str| ApiKey {
+            key_id: id.into(),
+            client_id: client.into(),
+            key_hash: format!("hash-{id}"),
+            key_prefix: "croniq_".into(),
+            expires_at: None,
+            revoked_at: None,
+            created_at: Utc::now(),
+        };
+        store.create_api_key(&key("k-admin", "powerful")).unwrap();
+        store.create_api_key(&key("k-narrow", "narrow")).unwrap();
+        let state = state_with(&store);
+        let ctx = key_ctx(&[Scope::API_KEYS_ADMIN, Scope::JOBS_READ]);
+        let revoke = |id: &str| {
+            handle_revoke_api_key(
+                State(Arc::clone(&state)),
+                Extension(ctx.clone()),
+                axum::extract::Path(id.to_string()),
+            )
+        };
+
+        assert_eq!(revoke("k-admin").await, StatusCode::FORBIDDEN);
+        assert!(
+            store
+                .find_api_key_by_hash("hash-k-admin")
+                .unwrap()
+                .unwrap()
+                .revoked_at
+                .is_none()
+        );
+        assert_eq!(revoke("k-narrow").await, StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]

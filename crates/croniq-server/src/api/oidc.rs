@@ -39,6 +39,7 @@ use uuid::Uuid;
 use super::ServerState;
 use crate::api::audit;
 use crate::api::auth_endpoints::TokenResponse;
+use crate::api::login_throttle::ClientIp;
 use crate::api::refresh_cookie;
 
 const PENDING_TTL: Duration = Duration::from_secs(600); // 10 min
@@ -80,9 +81,23 @@ pub struct TotpConfigResponse {
     pub required: bool,
 }
 
+/// Throttle key for the OIDC login start, which names no username. Not a
+/// valid username key for the password endpoints (those are lower-cased and
+/// cannot start with a NUL), so the budgets stay apart.
+const OIDC_THROTTLE_KEY: &str = "\0oidc";
+
 /// `GET /v1/auth/oidc/login` — 302-redirect to the IdP's authorize URL.
-pub async fn handle_login(State(state): State<Arc<ServerState>>) -> Result<Response, StatusCode> {
+pub async fn handle_login(
+    State(state): State<Arc<ServerState>>,
+    ClientIp(peer_ip): ClientIp,
+) -> Result<Response, StatusCode> {
     let provider = state.oidc.clone().ok_or(StatusCode::NOT_FOUND)?;
+    // Every anonymous GET writes an `oidc_pending` row, so it is throttled
+    // per client address like a login attempt; a completed callback refunds
+    // it (review 2026-10-24, A-10).
+    if !state.login_throttle.allow_login(peer_ip, OIDC_THROTTLE_KEY) {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
     let store = state
         .store
         .as_ref()
@@ -111,6 +126,7 @@ pub async fn handle_login(State(state): State<Arc<ServerState>>) -> Result<Respo
 /// for a browser navigation, `TokenResponse` JSON for an explicit JSON caller.
 pub async fn handle_callback(
     State(state): State<Arc<ServerState>>,
+    ClientIp(peer_ip): ClientIp,
     headers: HeaderMap,
     Query(params): Query<CallbackParams>,
 ) -> Result<Response, StatusCode> {
@@ -136,12 +152,15 @@ pub async fn handle_callback(
     }
 
     let oidc_user = provider
-        .exchange(&params.code, &pending.nonce)
+        .exchange(&params.code, &params.state, &pending.nonce)
         .await
         .map_err(|e| {
             tracing::warn!(target: "croniq::oidc", error = %e, "OIDC token exchange failed");
             StatusCode::UNAUTHORIZED
         })?;
+    state
+        .login_throttle
+        .refund_login(peer_ip, OIDC_THROTTLE_KEY);
 
     // Look up existing identity → linked user. If none, JIT-create
     // with default_role from the OIDC config.
@@ -351,4 +370,39 @@ fn jit_create_user(
         .users_create(&user)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(user)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::login_throttle::IP_MAX_ATTEMPTS;
+
+    /// Review 2026-10-24, A-10: the anonymous OIDC login start writes a row
+    /// per request, so it is throttled per client address.
+    #[tokio::test]
+    async fn oidc_login_start_is_throttled_per_address() {
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut state =
+            ServerState::with_auth(croniq_runner::AppState::new(), tx, None, Some(store));
+        Arc::get_mut(&mut state).unwrap().oidc =
+            Some(Arc::new(crate::oidc::tests::offline_provider()));
+        let ip = Some(std::net::IpAddr::from([203, 0, 113, 5]));
+
+        for attempt in 1..=IP_MAX_ATTEMPTS {
+            assert!(
+                handle_login(State(Arc::clone(&state)), ClientIp(ip))
+                    .await
+                    .is_ok(),
+                "attempt {attempt}"
+            );
+        }
+        assert_eq!(
+            handle_login(State(Arc::clone(&state)), ClientIp(ip))
+                .await
+                .err(),
+            Some(StatusCode::TOO_MANY_REQUESTS)
+        );
+    }
 }

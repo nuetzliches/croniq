@@ -129,7 +129,15 @@ pub struct OidcProvider {
     /// refuses to follow redirects. See [`OidcProvider::discover`].
     http_credentialed: HttpClient,
     discovery: Discovery,
+    /// Last JWKS fetched, and when. See [`JWKS_CACHE_TTL`].
+    jwks_cache: std::sync::Mutex<Option<(std::time::Instant, Jwks)>>,
 }
+
+/// How long a fetched JWKS is used without asking the IdP again. A `kid` the
+/// cached set does not know triggers a refetch regardless (key rotation), and
+/// a failed fetch falls back to the cached set however old it is, so a JWKS
+/// hiccup at the IdP no longer fails every login (review 2026-10-24, A-10).
+const JWKS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 impl OidcProvider {
     /// Fetch discovery doc, build the long-lived HTTP client.
@@ -201,7 +209,22 @@ impl OidcProvider {
             http,
             http_credentialed,
             discovery,
+            jwks_cache: std::sync::Mutex::new(None),
         })
+    }
+
+    /// The PKCE `code_verifier` for one login, derived from its `state`
+    /// rather than stored: HMAC-SHA256 keyed with the client secret, so it is
+    /// reproducible at the callback (which has the state) and unguessable to
+    /// anyone who only sees the redirect URLs. Deriving it keeps PKCE free of
+    /// a schema change to `oidc_pending` (review 2026-10-24, A-10).
+    fn pkce_verifier(&self, state: &str) -> String {
+        use hmac::{Hmac, Mac};
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(self.config.client_secret.as_bytes())
+            .expect("HMAC accepts any key length");
+        mac.update(b"croniq-oidc-pkce:");
+        mac.update(state.as_bytes());
+        B64.encode(mac.finalize().into_bytes())
     }
 
     /// Build the authorize URL plus the (state, nonce) pair the caller
@@ -209,14 +232,17 @@ impl OidcProvider {
     pub fn authorize(&self) -> (String, String, String) {
         let state = random_token();
         let nonce = random_token();
+        let challenge = pkce_challenge(&self.pkce_verifier(&state));
         let url = format!(
-            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&nonce={}",
+            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&nonce={}\
+             &code_challenge={}&code_challenge_method=S256",
             self.discovery.authorization_endpoint,
             url_enc(&self.config.client_id),
             url_enc(&self.config.redirect_url),
             url_enc("openid email profile"),
             url_enc(&state),
             url_enc(&nonce),
+            url_enc(&challenge),
         );
         (url, state, nonce)
     }
@@ -224,7 +250,13 @@ impl OidcProvider {
     /// Exchange `code` for tokens, validate the ID token (signature,
     /// issuer, audience, nonce), and fetch userinfo. Returns the
     /// caller-shaped `OidcUser`.
-    pub async fn exchange(&self, code: &str, expected_nonce: &str) -> Result<OidcUser, OidcError> {
+    pub async fn exchange(
+        &self,
+        code: &str,
+        state: &str,
+        expected_nonce: &str,
+    ) -> Result<OidcUser, OidcError> {
+        let verifier = self.pkce_verifier(state);
         // Token exchange via Basic auth on the token endpoint.
         let resp = self
             .http_credentialed
@@ -235,6 +267,7 @@ impl OidcProvider {
                 ("code", code),
                 ("redirect_uri", &self.config.redirect_url),
                 ("client_id", &self.config.client_id),
+                ("code_verifier", &verifier),
             ])
             .send()
             .await
@@ -290,24 +323,7 @@ impl OidcProvider {
             .kid
             .ok_or_else(|| OidcError::InvalidToken("id_token has no kid header".into()))?;
 
-        // Fetch + cache-less JWKS lookup (good enough for PR-A5; can
-        // memoise later if the call site grows).
-        let jwks: Jwks = self
-            .http
-            .get(&self.discovery.jwks_uri)
-            .send()
-            .await
-            .map_err(|e| OidcError::Discovery(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| OidcError::Discovery(e.to_string()))?
-            .json()
-            .await
-            .map_err(|e| OidcError::Discovery(e.to_string()))?;
-        let jwk = jwks
-            .keys
-            .into_iter()
-            .find(|k| k.kid.as_deref() == Some(&kid))
-            .ok_or_else(|| OidcError::InvalidToken(format!("kid {kid} not found in JWKS")))?;
+        let jwk = self.jwk_for(&kid).await?;
         if jwk.kty != "RSA" {
             return Err(OidcError::InvalidToken(format!(
                 "unsupported kty: {} (expected RSA)",
@@ -344,6 +360,61 @@ impl OidcProvider {
         }
         Ok(data.claims)
     }
+}
+
+impl OidcProvider {
+    /// The JWK for `kid`: from the cache while it is fresh and knows the
+    /// kid, otherwise from a fresh fetch, otherwise — the IdP's JWKS
+    /// endpoint failing — from the cache however old.
+    async fn jwk_for(&self, kid: &str) -> Result<Jwk, OidcError> {
+        let find = |jwks: &Jwks| {
+            jwks.keys
+                .iter()
+                .find(|k| k.kid.as_deref() == Some(kid))
+                .cloned()
+        };
+        let cached = self.jwks_cache.lock().unwrap().clone();
+        if let Some((at, jwks)) = &cached
+            && at.elapsed() < JWKS_CACHE_TTL
+            && let Some(jwk) = find(jwks)
+        {
+            return Ok(jwk);
+        }
+        let fetched = self.fetch_jwks().await;
+        let jwks = match fetched {
+            Ok(jwks) => {
+                *self.jwks_cache.lock().unwrap() = Some((std::time::Instant::now(), jwks.clone()));
+                jwks
+            }
+            Err(e) => match cached {
+                Some((_, jwks)) => {
+                    tracing::warn!(error = %e, "OIDC JWKS fetch failed; using the cached key set");
+                    jwks
+                }
+                None => return Err(e),
+            },
+        };
+        find(&jwks).ok_or_else(|| OidcError::InvalidToken(format!("kid {kid} not found in JWKS")))
+    }
+
+    async fn fetch_jwks(&self) -> Result<Jwks, OidcError> {
+        self.http
+            .get(&self.discovery.jwks_uri)
+            .send()
+            .await
+            .map_err(|e| OidcError::Discovery(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| OidcError::Discovery(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| OidcError::Discovery(e.to_string()))
+    }
+}
+
+/// RFC 7636 S256: `BASE64URL(SHA256(verifier))`, unpadded.
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::Digest;
+    B64.encode(sha2::Sha256::digest(verifier.as_bytes()))
 }
 
 #[derive(Debug, Clone)]
@@ -494,14 +565,100 @@ fn url_enc(s: &str) -> String {
     out
 }
 
-// Compile-time unused-import suppressor: keep HashMap pulled in for
-// the inevitable future JWKS-cache without making the lint angry.
+// Compile-time unused-import suppressor: keep HashMap pulled in without
+// making the lint angry.
 #[allow(dead_code)]
 const _: fn() -> HashMap<String, String> = HashMap::new;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn offline_provider() -> OidcProvider {
+        OidcProvider {
+            config: OidcConfig {
+                issuer: "https://idp.example".into(),
+                client_id: "croniq".into(),
+                client_secret: "client-secret".into(),
+                redirect_url: "https://croniq.example/v1/auth/oidc/callback".into(),
+                default_role: Role::Viewer,
+                post_login_redirect: "/".into(),
+                provider_name: "oidc".into(),
+            },
+            http: HttpClient::new(),
+            http_credentialed: HttpClient::new(),
+            discovery: Discovery {
+                authorization_endpoint: "https://idp.example/authorize".into(),
+                token_endpoint: "https://idp.example/token".into(),
+                // Nothing listens here: every fetch fails fast.
+                jwks_uri: "http://127.0.0.1:9/jwks".into(),
+                userinfo_endpoint: None,
+                issuer: "https://idp.example".into(),
+            },
+            jwks_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn jwks(kid: &str) -> Jwks {
+        Jwks {
+            keys: vec![Jwk {
+                kid: Some(kid.into()),
+                kty: "RSA".into(),
+                usage: None,
+                alg: None,
+                n: Some("AQAB".into()),
+                e: Some("AQAB".into()),
+            }],
+        }
+    }
+
+    /// Review 2026-10-24, A-10: the authorize URL carries an S256 challenge
+    /// whose verifier the callback can rebuild from the state alone.
+    #[test]
+    fn authorize_sends_a_pkce_challenge_derived_from_the_state() {
+        let p = offline_provider();
+        let (url, state, _) = p.authorize();
+        let challenge = pkce_challenge(&p.pkce_verifier(&state));
+        assert!(url.contains("&code_challenge_method=S256"), "{url}");
+        assert!(
+            url.contains(&format!("&code_challenge={challenge}")),
+            "{url}"
+        );
+        let verifier = p.pkce_verifier(&state);
+        assert_eq!(verifier, p.pkce_verifier(&state), "reproducible");
+        assert_eq!(verifier.len(), 43, "RFC 7636 minimum length");
+        assert_ne!(verifier, p.pkce_verifier("another-state"));
+    }
+
+    /// Review 2026-10-24, A-10: a fresh cached JWKS answers without a fetch,
+    /// and a stale one still answers when the IdP cannot be reached.
+    #[tokio::test]
+    async fn jwks_cache_serves_fresh_and_falls_back_when_the_idp_is_down() {
+        let p = offline_provider();
+        assert!(p.jwk_for("k1").await.is_err(), "no cache, no IdP");
+
+        *p.jwks_cache.lock().unwrap() = Some((std::time::Instant::now(), jwks("k1")));
+        assert!(p.jwk_for("k1").await.is_ok(), "fresh cache");
+
+        let stale = std::time::Instant::now()
+            .checked_sub(JWKS_CACHE_TTL * 2)
+            .unwrap_or_else(std::time::Instant::now);
+        *p.jwks_cache.lock().unwrap() = Some((stale, jwks("k1")));
+        assert!(
+            p.jwk_for("k1").await.is_ok(),
+            "stale cache when the fetch fails"
+        );
+        assert!(p.jwk_for("k2").await.is_err(), "unknown kid still fails");
+    }
+
+    /// S256 is unpadded base64url of SHA-256 (the FIPS 180-2 "abc" vector).
+    #[test]
+    fn pkce_challenge_is_unpadded_base64url_sha256() {
+        assert_eq!(
+            pkce_challenge("abc"),
+            "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0"
+        );
+    }
 
     #[test]
     fn https_endpoints_pass() {
