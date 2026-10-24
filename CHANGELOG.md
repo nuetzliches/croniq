@@ -89,6 +89,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `until` plus `until_id` (the `event_id` / `delivery_id` of the last row
   seen), the keyset cursor `GET /v1/executions` has had since #654; without
   `until_id`, `until` keeps its inclusive meaning.
+- **A dead completion processor or watchdog now restarts the server** (review
+  2026-10-24, D-1). Only the scheduler task was supervised; a panic in either
+  of the other two ended it without a word. Runners then got
+  `200 {received: true}` for results nothing would process, and every claim
+  stayed `claimed` until the reaper ran it again. All three tasks now exit the
+  process with code 70 when they stop, so the orchestrator's restart policy
+  brings back a whole server. `POST /v1/work/ack` answers `503` when the
+  completion processor is not running, so the runner keeps the result and
+  retries. A panic source is gone too: alert error texts were cut at a byte
+  count, which panicked when the cut fell inside a multibyte character, such
+  as an umlaut in an alert script's stderr.
+- **A hanging `shell` alert channel no longer stalls completion processing**
+  (review 2026-10-24, D-7). The script ran synchronously inside the completion
+  processor, which handles one completion at a time, so a `curl` without
+  `--max-time` against an endpoint that never answered stopped every
+  completion behind it and held a runtime worker. The script now runs
+  asynchronously and is killed after 30 seconds; the delivery is recorded as
+  failed.
 
 ### Security
 

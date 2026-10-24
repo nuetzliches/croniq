@@ -253,6 +253,7 @@ calendar business-days {
 # webhook, and email channels all ship today.
 alerts {
   channel "ops-paging" {
+    # Killed after 30 s; the delivery is then recorded as failed.
     shell "/usr/local/bin/page-oncall.sh"
   }
   channel "slack" {

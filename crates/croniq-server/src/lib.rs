@@ -52,6 +52,7 @@ pub mod register_fire;
 pub mod reload;
 pub mod scheduler;
 pub mod store;
+pub mod supervise;
 pub mod telemetry;
 pub mod totp_rewrap;
 pub mod trace_propagation;

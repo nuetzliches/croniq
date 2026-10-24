@@ -841,25 +841,13 @@ async fn main() -> Result<()> {
     // jobs simply stopped firing with no log and no restart. Now we watch the
     // handle and, on unexpected completion, log loudly and exit non-zero so
     // the container's `restart:` policy (or systemd) brings the process — and
-    // a fresh scheduler — back.
-    tokio::spawn(async move {
-        match scheduler_handle.await {
-            Ok(()) => tracing::error!(
-                "scheduler task exited unexpectedly (loop returned) — aborting process so it restarts"
-            ),
-            Err(e) if e.is_panic() => tracing::error!(
-                error = %e,
-                "scheduler task panicked — aborting process so it restarts"
-            ),
-            Err(e) => tracing::error!(
-                error = %e,
-                "scheduler task was cancelled — aborting process so it restarts"
-            ),
-        }
-        // Hard-exit (EX_SOFTWARE) so the supervisor/orchestrator restarts us
-        // rather than running on with a dead scheduler.
-        std::process::exit(70);
-    });
+    // a fresh scheduler — back. The completion and watchdog tasks below are
+    // supervised the same way (review 2026-10-24, D-1).
+    croniq_server::supervise::supervise(
+        "scheduler",
+        scheduler_handle,
+        croniq_server::supervise::OnReturn::Fatal,
+    );
 
     // ── Completion processor task ─────────────────────────────────────────────
     let proc_store = Arc::clone(&store);
@@ -909,12 +897,19 @@ async fn main() -> Result<()> {
         Arc::clone(&server_state.email_sender),
     ));
 
-    let _completion_task = tokio::spawn(async move {
+    let completion_task = tokio::spawn(async move {
         while let Some(event) = completion_rx.recv().await {
             let outcome = processor.process(event).await;
             tracing::debug!(?outcome, "completion processed");
         }
     });
+    // The loop ends on its own only when every sender is gone, i.e. on
+    // shutdown; a panic is what must not go unnoticed.
+    croniq_server::supervise::supervise(
+        "completion",
+        completion_task,
+        croniq_server::supervise::OnReturn::Expected,
+    );
 
     // ── Watchdog task ─────────────────────────────────────────────────────────
     //
@@ -976,7 +971,7 @@ async fn main() -> Result<()> {
     }
 
     let watchdog_counters = Arc::clone(&server_state.watchdog_counters);
-    let _watchdog_task = tokio::spawn(async move {
+    let watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -1027,6 +1022,11 @@ async fn main() -> Result<()> {
             }
         }
     });
+    croniq_server::supervise::supervise(
+        "watchdog",
+        watchdog_task,
+        croniq_server::supervise::OnReturn::Fatal,
+    );
 
     // ── Metrics server (from CLI --metrics or observability.metrics in Croniqfile)
     let metrics_listen = cli.metrics.clone().or_else(|| {
