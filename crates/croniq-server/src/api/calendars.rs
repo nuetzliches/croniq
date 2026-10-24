@@ -142,7 +142,7 @@ fn validate_rules(rules: &str) -> Result<(), String> {
 /// reference (renamed/deleted calendar) fails closed under `strict_calendars`
 /// — the trigger is paused and a `config_error` recorded — instead of running
 /// with a gate that no longer exists. Returns the number of triggers rebuilt.
-async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize {
+pub(crate) async fn propagate_calendar_change(state: &ServerState, names: &[&str]) -> usize {
     // `sync_job` no-ops without a channel, but there is no point walking every
     // trigger to find that out.
     if state.scheduler_tx.is_none() {

@@ -274,6 +274,31 @@ impl croniq_mcp::JobSync for SchedulerJobSync {
     fn job_removed(&self, job_key: &str) {
         remove_job(&self.state, job_key);
     }
+
+    fn calendar_changed(&self, names: &[String]) {
+        // The rebuild `PUT /v1/calendars/{id}` runs (issue #393), reached from
+        // `/mcp` too (review 2026-10-24, P-8). Spawned for the reason
+        // `job_changed` is: the trait is sync and the tool has already
+        // written the store.
+        let state = Arc::clone(&self.state);
+        let names = names.to_vec();
+        tokio::spawn(async move {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let rebuilt = crate::api::calendars::propagate_calendar_change(&state, &names).await;
+            if rebuilt > 0 {
+                tracing::info!(
+                    rebuilt,
+                    "MCP calendar change propagated to running triggers"
+                );
+            }
+        });
+    }
+
+    fn dsl_calendars(
+        &self,
+    ) -> Option<Arc<tokio::sync::RwLock<Vec<croniq_config::compile::CalendarConfig>>>> {
+        self.state.dsl_calendars.clone()
+    }
 }
 
 #[cfg(test)]
@@ -520,5 +545,34 @@ mod tests {
             SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "dsl:job"),
             other => panic!("expected RemoveJob, got {other:?}"),
         }
+    }
+
+    /// A calendar written over `/mcp` re-attaches the gate on the running
+    /// triggers that name it, as `PUT /v1/calendars/{id}` does (review
+    /// 2026-10-24, P-8). The MCP tool wrote the row and stopped before.
+    #[tokio::test]
+    async fn a_calendar_change_from_the_mcp_rebuilds_the_triggers_that_use_it() {
+        use croniq_mcp::JobSync as _;
+        let (state, store, mut rx) = wired();
+        let mut gated = trigger("etl:gated", true);
+        gated.calendar = Some("biz".into());
+        store.create_trigger(&gated).unwrap();
+        store.create_trigger(&trigger("etl:free", true)).unwrap();
+
+        let sync = SchedulerJobSync::new(Arc::clone(&state));
+        sync.calendar_changed(&["biz".to_string()]);
+
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the propagation never reached the scheduler")
+            .unwrap();
+        match cmd {
+            SchedulerCommand::AddJob { job, .. } => assert_eq!(job.key, "etl:gated"),
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "only the job that names the calendar"
+        );
     }
 }

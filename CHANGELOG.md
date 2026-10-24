@@ -52,6 +52,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `409 dsl_managed`, and the scheduler sync leaves a Croniqfile key alone
   whatever API rows still carry it.
 
+- **The MCP calendar and schedule tools refuse what the HTTP endpoints
+  refuse** (review 2026-10-24, P-8). `create_calendar` stored a calendar named
+  like a Croniqfile one (which then shadowed it), took any timezone, and ran
+  the rule parser without the semantic checks, so `include weekly funday`
+  was stored over `/mcp` and refused over HTTP. `update_calendar` could
+  rename a calendar onto a Croniqfile name, and calendar edits did not reach
+  running triggers until the next reload. `create_schedule` and
+  `update_schedule` checked neither the expression, the window, the timezone
+  nor the calendar. Both surfaces now call the same checks, and a calendar
+  write over `/mcp` re-attaches the gate on running triggers as
+  `PUT /v1/calendars/{id}` does.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
