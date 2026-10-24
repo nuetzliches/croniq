@@ -126,6 +126,11 @@ pub struct LoadedConfig {
     /// `strict_calendars` policy these jobs are loaded **paused** (fail closed,
     /// issue #361); the map is surfaced through `ServerState.config_faults`.
     /// Empty when `policy { strict_calendars false }` restores legacy behavior.
+    ///
+    /// Also holds jobs paused because a `window`, `not_before`, `not_after` or
+    /// `once at` value does not parse (review 2026-10-24, D-8 / F-5) —
+    /// regardless of `strict_calendars`, which is about calendars only. Both
+    /// reasons are joined when both apply.
     pub calendar_faults: HashMap<String, String>,
 }
 
@@ -195,12 +200,15 @@ pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
 
 /// Semantic validation options used on every server load path.
 ///
-/// Only the calendar checks are off: a calendar that fails to compile and a
-/// reference that resolves to nothing are both the loader's own business (see
-/// [`ResolvedCalendars`] and issue #361) and must pause the affected jobs
-/// rather than abort the boot.
+/// Only the calendar and job-time checks are off: a calendar that fails to
+/// compile and a reference that resolves to nothing are both the loader's own
+/// business (see [`ResolvedCalendars`] and issue #361), and so is a `window`,
+/// `not_before`, `not_after` or `once at` value that does not parse (review
+/// 2026-10-24, D-8 / F-5). Each must pause the affected job rather than abort
+/// the boot.
 const LOADER_VALIDATE: croniq_config::validate::Options = croniq_config::validate::Options {
     check_calendars: false,
+    check_job_times: false,
 };
 
 /// Run semantic validation over the resolved AST and fail closed on any
@@ -272,13 +280,31 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             .find(|j| j.key.raw == job_cfg.key)
             .expect("compiled job must have matching AST job");
 
-        // Build the runtime Schedule from the AST ScheduleKind
+        // Time values the job cannot be held to as written: an unparseable
+        // `window` / `not_before` / `not_after` used to be dropped (`.ok()`),
+        // so the job ran unbounded, and an impossible `once at` date aborted
+        // the whole boot. Both now pause just this job with a fault, the
+        // calendar contract below (review 2026-10-24, D-8 / F-5). The same
+        // function backs `croniq validate`, so the two cannot disagree.
+        let mut time_faults: Vec<String> = croniq_config::validate::job_time_errors(ast_job)
+            .into_iter()
+            .map(|(_, msg)| msg)
+            .collect();
+
+        // Build the runtime Schedule from the AST ScheduleKind. A schedule the
+        // scheduler cannot build leaves the job disabled and faulted; the
+        // check above already names the cause for every case it knows.
         let schedule = match &ast_job.schedule {
             None => Schedule::Disabled,
-            Some(s) => Schedule::from_ast(&s.kind).map_err(|e| LoadError::Schedule {
-                job: job_cfg.key.clone(),
-                reason: e.to_string(),
-            })?,
+            Some(s) => match Schedule::from_ast(&s.kind) {
+                Ok(schedule) => schedule,
+                Err(e) => {
+                    if time_faults.is_empty() {
+                        time_faults.push(e.to_string());
+                    }
+                    Schedule::Disabled
+                }
+            },
         };
 
         // Resolve the timezone. An unparseable zone aborts the load (issue
@@ -304,20 +330,41 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         let (calendar, calendar_fault) =
             resolved_calendars.resolve(&job_cfg.key, job_cfg.calendar.as_deref());
 
-        // Parse time window constraint (e.g. "08:00..18:00")
-        let window = job_cfg.window.as_deref().and_then(TimeWindow::parse);
-
-        // Parse not_before / not_after bounds
-        let not_before = job_cfg.not_before.as_deref().and_then(|s| {
-            DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        });
-        let not_after = job_cfg.not_after.as_deref().and_then(|s| {
-            DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        });
+        // Time window constraint (e.g. "08:00..18:00") and the
+        // not_before / not_after bounds. These are the compiled (placeholder-
+        // resolved) values, so a placeholder that resolved to garbage is
+        // caught here rather than by `job_time_errors` above.
+        let mut bound = |value: Option<&str>, parse: fn(&str) -> Result<DateTime<Utc>, String>| {
+            value.and_then(|s| match parse(s) {
+                Ok(dt) => Some(dt),
+                Err(e) => {
+                    if !time_faults.contains(&e) {
+                        time_faults.push(e);
+                    }
+                    None
+                }
+            })
+        };
+        let not_before = bound(
+            job_cfg.not_before.as_deref(),
+            croniq_config::job_bounds::parse_bound,
+        );
+        let not_after = bound(
+            job_cfg.not_after.as_deref(),
+            croniq_config::job_bounds::parse_bound,
+        );
+        let window =
+            job_cfg.window.as_deref().and_then(
+                |s| match croniq_config::job_bounds::parse_job_window(s) {
+                    Ok(_) => TimeWindow::parse(s),
+                    Err(e) => {
+                        if !time_faults.contains(&e) {
+                            time_faults.push(e);
+                        }
+                        None
+                    }
+                },
+            );
 
         let mut trigger = Trigger::with_bounds(
             job_cfg.key.clone(),
@@ -335,9 +382,10 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         // it cannot fire un-gated. `Trigger::evaluate` gates on `state == Armed`,
         // so pausing suppresses firing regardless of `next_fire_at`. Triggers are
         // rebuilt on every load, so fixing the calendar self-heals on reload.
-        if let Some(reason) = calendar_fault {
+        let reasons: Vec<String> = calendar_fault.into_iter().chain(time_faults).collect();
+        if !reasons.is_empty() {
             trigger.pause();
-            calendar_faults.insert(job_cfg.key.clone(), reason);
+            calendar_faults.insert(job_cfg.key.clone(), reasons.join("; "));
         }
 
         triggers.insert(job_cfg.key.clone(), trigger);
@@ -988,13 +1036,14 @@ pub struct BuiltTrigger {
     /// `Some(reason)` when the definition could not be honoured as written and
     /// the trigger is returned already **paused** (fail closed, mirroring the
     /// DSL path / issue #361). Callers surface the reason through
-    /// `ServerState.config_faults`. Two conditions raise it:
+    /// `ServerState.config_faults`. Three conditions raise it:
     ///
     /// - the `calendar` reference did not resolve under `strict_calendars`;
     /// - the `timezone` is not an IANA zone name (issue #426). A stored row
     ///   cannot abort a boot the way a Croniqfile can, so it pauses instead —
     ///   firing a wall-clock schedule in the wrong zone is worse than not
-    ///   firing it visibly.
+    ///   firing it visibly;
+    /// - the `window` does not parse (review 2026-10-24, D-8).
     pub config_fault: Option<String>,
 }
 
@@ -1024,7 +1073,17 @@ pub fn trigger_from_definition(
         None => (chrono_tz::UTC, None),
     };
 
-    let window = def.window.as_deref().and_then(TimeWindow::parse);
+    // A stored window that does not parse pauses the trigger rather than
+    // dropping the gate, which let it fire around the clock (review
+    // 2026-10-24, D-8). The API validates windows on write; this covers rows
+    // written before it did.
+    let (window, window_fault) = match def.window.as_deref() {
+        Some(s) => match croniq_config::job_bounds::parse_job_window(s) {
+            Ok(_) => (TimeWindow::parse(s), None),
+            Err(e) => (None, Some(e)),
+        },
+        None => (None, None),
+    };
 
     let not_before = def.not_before;
     let not_after = def.not_after;
@@ -1047,10 +1106,11 @@ pub fn trigger_from_definition(
     // a schedule whose declared zone is unknown. Both reasons are reported when
     // both apply — fixing one and re-registering must not reveal the other as a
     // surprise.
-    let config_fault = match (calendar_fault, timezone_fault) {
-        (Some(cal), Some(tz)) => Some(format!("{cal}; {tz}")),
-        (cal, tz) => cal.or(tz),
-    };
+    let faults: Vec<String> = [calendar_fault, timezone_fault, window_fault]
+        .into_iter()
+        .flatten()
+        .collect();
+    let config_fault = (!faults.is_empty()).then(|| faults.join("; "));
     if config_fault.is_some() {
         trigger.pause();
     }
@@ -2370,6 +2430,88 @@ mod tests {
         let reason = built.config_fault.expect("fault");
         assert!(reason.contains("not defined"), "reason: {reason}");
         assert!(reason.contains("unknown timezone"), "reason: {reason}");
+    }
+
+    #[test]
+    fn stored_trigger_with_unparseable_window_faults_closed() {
+        // Review 2026-10-24, D-8: the window used to be dropped, so the
+        // trigger fired around the clock.
+        let resolved = resolve_calendars(&[], &[], true);
+        let mut def = trigger_def("api:tick", "every 5 minutes", None);
+        def.window = Some("8:00-18:00".into());
+
+        let built = trigger_from_definition(&def, &resolved, Utc::now()).unwrap();
+        assert_eq!(built.trigger.state, TriggerState::Paused);
+        let reason = built.config_fault.expect("fault");
+        assert!(reason.contains("invalid window"), "reason: {reason}");
+    }
+
+    #[test]
+    fn unparseable_job_times_pause_the_job_instead_of_running_unbounded() {
+        // Review 2026-10-24, D-8 / F-5: `.ok()` turned each of these into
+        // "no constraint" — unbounded or around the clock.
+        for (body, needle) in [
+            ("every 5 minutes; window 8:00-18:00", "invalid window"),
+            (
+                r#"every 5 minutes { not_after "2026-12-31" }"#,
+                "invalid bound",
+            ),
+            (
+                r#"every 5 minutes { not_before "tomorrow" }"#,
+                "invalid bound",
+            ),
+        ] {
+            let src = format!("job ops:bad {{ {body} }}\njob ops:fine {{ every 5 minutes }}");
+            let cfg = load_str(&src).unwrap_or_else(|e| panic!("{body}: load failed: {e}"));
+            assert_eq!(
+                cfg.triggers["ops:bad"].state,
+                TriggerState::Paused,
+                "{body}"
+            );
+            let reason = &cfg.calendar_faults["ops:bad"];
+            assert!(reason.contains(needle), "{body}: {reason}");
+            assert_eq!(cfg.triggers["ops:fine"].state, TriggerState::Armed);
+            assert!(!cfg.calendar_faults.contains_key("ops:fine"));
+        }
+    }
+
+    #[test]
+    fn impossible_once_at_date_faults_the_job_not_the_boot() {
+        // Review 2026-10-24, F-5: April has 30 days. This used to abort the
+        // whole load with `LoadError::Schedule`.
+        let src = "job ops:once { once at 2026-04-31T03:00:00Z }\njob ops:fine { every 5 minutes }";
+        let cfg = load_str(src).expect("a bad date must not abort the boot");
+        assert_eq!(cfg.triggers["ops:once"].state, TriggerState::Paused);
+        assert!(cfg.calendar_faults["ops:once"].contains("once at"));
+        assert_eq!(cfg.triggers["ops:fine"].state, TriggerState::Armed);
+    }
+
+    #[test]
+    fn job_bounds_once_at_matches_the_scheduler_parser() {
+        // `croniq_config::job_bounds::parse_once_at` mirrors the scheduler's
+        // private `parse_datetime`; this pins the two together.
+        for at in [
+            "2026-04-30T03:00:00Z",
+            "2026-04-30T03:00:00",
+            "2026-04-30T03:00:00+02:00",
+            "2026-04-31T03:00:00Z",
+            "2026-13-01T00:00:00",
+            "tomorrow",
+        ] {
+            let kind = croniq_config::ast::ScheduleKind::Once {
+                at: croniq_config::ast::StringValue {
+                    value: at.into(),
+                    quoted: false,
+                    is_placeholder: false,
+                    span: croniq_config::lexer::Span::empty(0),
+                },
+            };
+            assert_eq!(
+                Schedule::from_ast(&kind).is_ok(),
+                croniq_config::job_bounds::parse_once_at(at).is_ok(),
+                "{at}"
+            );
+        }
     }
 
     #[test]

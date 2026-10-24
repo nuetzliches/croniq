@@ -181,6 +181,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing had changed. The map is now written in key order, and the
   fingerprint re-renders the embedded document instead of hashing it
   verbatim. Jobs with at most one env variable keep their stored fingerprint.
+- **A `window`, `not_before` or `not_after` that does not parse no longer
+  lifts the constraint** (review 2026-10-24, D-8 / F-5). The loader read all
+  three with `.ok()`, so `not_after "2026-12-31"` (no time, no offset) ran
+  forever and `window 8:00-18:00` ran around the clock, with a green
+  `croniq validate`. `croniq validate` now reports each, and the server loads
+  the job paused with a `config_error` on `GET /v1/jobs/states`, like an
+  unresolved calendar. An impossible `once at` date (`2026-04-31`) now does the
+  same instead of aborting the boot for every job. A stored API trigger whose
+  `window` does not parse is paused the same way.
+- **A bare `timezone` no longer resets a job to UTC** (review 2026-10-24,
+  F-4). `timezone` with its argument forgotten compiled to "no zone" and
+  overrode a `defaults { timezone … }`, so the job ran in UTC, and the
+  validator stayed silent. It is now an error in `croniq validate`, in a job,
+  a schedule option and `defaults { }` alike, and the compiler keeps the
+  inherited zone.
 
 ### Security
 

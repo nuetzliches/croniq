@@ -37,12 +37,22 @@ pub struct Options {
     /// Duplicate calendar *names* are checked regardless: nothing downstream
     /// reports them, and one definition silently wins.
     pub check_calendars: bool,
+    /// Check a job's time values: the job-level `window`, the `not_before` /
+    /// `not_after` schedule options and the `once at` datetime.
+    ///
+    /// The server's loader turns this off for the same reason as
+    /// `check_calendars`: it parses the same values with the same functions
+    /// ([`crate::job_bounds`]) and pauses just the affected job with a
+    /// `config_faults` entry, instead of letting one bad date abort the boot
+    /// for every other job (review 2026-10-24, D-8 / F-5).
+    pub check_job_times: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             check_calendars: true,
+            check_job_times: true,
         }
     }
 }
@@ -173,6 +183,17 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                     validate_schedule_kind(sched, &mut diags);
                 }
 
+                // `window`, `not_before`, `not_after`, `once at` (D-8 / F-5)
+                if opts.check_job_times {
+                    for (span, err) in job_time_errors(job) {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: err,
+                            span: span.into(),
+                        });
+                    }
+                }
+
                 // Timezone values + the UTC-default warning (issues #426, #427)
                 validate_timezone(job, default_timezone, &mut diags);
 
@@ -202,6 +223,59 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     }
 
     diags
+}
+
+/// Every time value of `job` that the server could not apply as written: the
+/// job-level `window`, the `not_before` / `not_after` schedule options and the
+/// `once at` datetime, each parsed with the function the loader uses
+/// ([`crate::job_bounds`]).
+///
+/// The loader used to read all four with `.ok()`: a `not_after "2026-12-31"`
+/// (no time, no offset) ran forever, a `window 8:00-18:00` ran around the
+/// clock, both with a green `validate` (review 2026-10-24, D-8 / F-5).
+/// Placeholder values resolve at compile time and are not checked here.
+///
+/// Public so the server's loader reports exactly what `croniq validate` does.
+pub fn job_time_errors(job: &JobBlock) -> Vec<(crate::lexer::Span, String)> {
+    let mut errors = Vec::new();
+    let mut check =
+        |dir: &Directive, parse: fn(&str) -> Result<(), String>| match dir.args.as_slice() {
+            [arg] if arg.is_placeholder => {}
+            [arg] => {
+                if let Err(e) = parse(&arg.value) {
+                    errors.push((arg.span, e));
+                }
+            }
+            _ => errors.push((
+                dir.span,
+                format!(
+                    "`{}` takes exactly one value, got {}",
+                    dir.key.value,
+                    dir.args.len()
+                ),
+            )),
+        };
+    for dob in &job.directives {
+        if let DirectiveOrBlock::Directive(dir) = dob
+            && dir.key.value == "window"
+        {
+            check(dir, |s| crate::job_bounds::parse_job_window(s).map(|_| ()));
+        }
+    }
+    if let Some(sched) = &job.schedule {
+        for opt in &sched.options {
+            if matches!(opt.key.value.as_str(), "not_before" | "not_after") {
+                check(opt, |s| crate::job_bounds::parse_bound(s).map(|_| ()));
+            }
+        }
+        if let ScheduleKind::Once { at } = &sched.kind
+            && !at.is_placeholder
+            && let Err(e) = crate::job_bounds::parse_once_at(&at.value)
+        {
+            errors.push((at.span, e));
+        }
+    }
+    errors
 }
 
 fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
@@ -334,7 +408,15 @@ fn is_compact_duration(value: &str) -> bool {
 }
 
 fn validate_timezone_value(dir: &Directive, diags: &mut Vec<Diagnostic>) -> bool {
+    // A bare `timezone` is a forgotten argument, not "no zone": it used to
+    // compile to `None` and override an inherited zone with UTC, silently
+    // (review 2026-10-24, F-4; ADR-0007 "never a silent fallback").
     let Some(arg) = dir.args.first() else {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: "`timezone` needs a zone name, e.g. `timezone Europe/Vienna`".into(),
+            span: dir.span.into(),
+        });
         return false;
     };
     if arg.is_placeholder {
@@ -2042,6 +2124,67 @@ job a:b { every 5 minutes }",
         // timezone, so suggesting a `timezone` here would be a false promise.
         let diags = validate_src(r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#);
         assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn bare_timezone_is_an_error_everywhere() {
+        // Review 2026-10-24, F-4: a bare `timezone` reset an inherited zone to
+        // UTC with a green `validate`.
+        for src in [
+            "defaults { timezone Europe/Vienna }\njob a:b { every day at 02:00; timezone }",
+            "defaults { timezone }\njob a:b { every 5 minutes }",
+            "job a:b { every day at 02:00 { timezone } }",
+        ] {
+            let diags = validate_src(src);
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{src}: {diags:?}");
+            assert!(errs[0].message.contains("needs a zone name"), "{src}");
+        }
+    }
+
+    #[test]
+    fn job_time_values_that_do_not_parse_are_errors() {
+        // Review 2026-10-24, D-8 / F-5: each of these used to compile to "no
+        // constraint" with a green `validate`.
+        for body in [
+            "every 5 minutes; window 8:00-18:00",
+            "every 5 minutes; window 08:00..25:00",
+            "every 5 minutes; window",
+            r#"every 5 minutes { not_after "2026-12-31" }"#,
+            r#"every 5 minutes { not_before "2026-12-31T00:00:00" }"#,
+            "once at 2026-04-31T03:00:00Z",
+        ] {
+            let diags = validate_src(&format!("job a:b {{ {body} }}"));
+            assert_eq!(errors(&diags).len(), 1, "{body}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn job_time_values_that_parse_are_accepted() {
+        for body in [
+            "every 5 minutes; timezone UTC; window 08:00..18:00",
+            "every 5 minutes; timezone UTC; window 22:00..06:00",
+            r#"every 5 minutes { not_before "2026-01-01T00:00:00Z"; not_after "2026-12-31T23:59:59+01:00" }"#,
+            "every 5 minutes { not_after {env.END} }",
+            "once at 2026-04-30T03:00:00Z",
+            "once at 2026-04-30T03:00:00",
+        ] {
+            let diags = validate_src(&format!("job a:b {{ {body} }}"));
+            assert!(errors(&diags).is_empty(), "{body}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn job_time_check_can_be_left_to_the_loader() {
+        let ast = Parser::parse("job a:b { once at 2026-04-31T03:00:00Z }").unwrap();
+        let diags = validate_with(
+            &ast,
+            Options {
+                check_job_times: false,
+                ..Options::default()
+            },
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
     }
 
     #[test]

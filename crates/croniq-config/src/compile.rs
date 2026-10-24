@@ -1208,8 +1208,13 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 for dob in &d.directives {
                     match dob {
                         DirectiveOrBlock::Directive(dir) => match dir.key.value.as_str() {
+                            // A bare `timezone` keeps what an earlier block
+                            // set; validate.rs reports it (review 2026-10-24,
+                            // F-4).
                             "timezone" => {
-                                default_timezone = first_arg(dir, &vars);
+                                if let Some(tz) = first_arg(dir, &vars) {
+                                    default_timezone = Some(tz);
+                                }
                             }
                             "timeout" => {
                                 default_timeout = duration_arg(dir, &vars);
@@ -1874,7 +1879,16 @@ fn compile_job(
                 // Job-level `timezone` (issue #426). Was silently dropped
                 // before, which moved every wall-clock fire of the job by the
                 // zone's offset with a green `validate`.
-                "timezone" => timezone = first_arg(d, vars),
+                //
+                // Only a value overrides: a bare `timezone` used to reset an
+                // inherited `defaults { timezone … }` to `None`, i.e. UTC,
+                // silently (review 2026-10-24, F-4; ADR-0007). validate.rs
+                // reports the bare keyword.
+                "timezone" => {
+                    if let Some(tz) = first_arg(d, vars) {
+                        timezone = Some(tz);
+                    }
+                }
                 "timeout" => timeout = duration_arg(d, vars),
                 "window" => window = first_arg(d, vars),
                 "execution_mode" => {
@@ -1996,7 +2010,11 @@ fn compile_job(
     if let Some(ref sched) = job.schedule {
         for opt in &sched.options {
             match opt.key.value.as_str() {
-                "timezone" => timezone = first_arg(opt, vars),
+                "timezone" => {
+                    if let Some(tz) = first_arg(opt, vars) {
+                        timezone = Some(tz);
+                    }
+                }
                 "calendar" => calendar = first_arg(opt, vars),
                 "not_before" => not_before = first_arg(opt, vars),
                 "not_after" => not_after = first_arg(opt, vars),
@@ -2577,6 +2595,31 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn bare_timezone_keeps_the_inherited_zone() {
+        // Review 2026-10-24, F-4: a bare `timezone` (argument forgotten) used
+        // to reset the inherited zone to `None`, i.e. UTC. validate.rs reports
+        // it; the compiled job must not silently move zones meanwhile.
+        let ast = Parser::parse(
+            r#"
+            defaults { timezone Europe/Vienna }
+            defaults { timezone }
+            job a:job { every day at 02:00; timezone }
+            job a:opt { every day at 02:00 { timezone } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        for job in &cfg.jobs {
+            assert_eq!(
+                job.timezone.as_deref(),
+                Some("Europe/Vienna"),
+                "{}",
+                job.key
+            );
+        }
     }
 
     #[test]
