@@ -1081,6 +1081,7 @@ environment and reload instead.
 | `CRONIQ_OIDC_PROVIDER_NAME` | Provider label shown on the sign-in page. | `oidc` |
 | `CRONIQ_OIDC_POST_LOGIN` | Where the dashboard lands after an SSO login. | `/` |
 | `CRONIQ_TRUSTED_PROXIES` | Comma-separated addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` the login throttle believes. Requests from other peers are keyed on the peer address. An invalid entry stops the server at boot. See [`docs/operations.md`](docs/operations.md#login-throttling-behind-a-reverse-proxy-croniq_trusted_proxies). | unset |
+| `CRONIQ_ALERT_ENV_PASSTHROUGH` | Comma-separated names of server environment variables a `shell` alert channel inherits on top of a minimal allowlist (`PATH`, `HOME`, locale, …). The server's own credentials are not inherited otherwise. See [`docs/operations.md`](docs/operations.md#shell-alert-channel-environment-croniq_alert_env_passthrough). | unset |
 | `CRONIQ_SMTP_URL` | Legacy composite transport URL (`smtp://user:pass@host:587/?tls=required`). When set, it wins over the decomposed `CRONIQ_SMTP_HOST/PORT/SECURITY` vars and the `smtp {}` block. Requires `--features smtp`. | — |
 | `CRONIQ_SMTP_HOST` | SMTP relay host. Used when `CRONIQ_SMTP_URL` is unset. Overridden by `smtp { host … }`. | — |
 | `CRONIQ_SMTP_PORT` | SMTP relay port. Overridden by `smtp { port … }`. | `587` |

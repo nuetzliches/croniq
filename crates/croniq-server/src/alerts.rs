@@ -729,6 +729,69 @@ async fn dispatch(
 /// default, because a script may do more than one request.
 const SHELL_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// What a shell alert channel inherits from the server process, besides the
+/// `CRONIQ_JOB_KEY`/`CRONIQ_EVENT`/… variables it is handed explicitly.
+///
+/// It used to inherit everything — `CRONIQ_JWT_SECRET`, the OIDC client
+/// secret, API-client keys and any seed credential the entrypoint exported —
+/// so every alert script could read the key that signs admin tokens. Same
+/// approach as the shell runner (issue #431): the variables a subprocess
+/// needs to start, plus names the operator lists in
+/// [`ALERT_ENV_PASSTHROUGH_VAR`].
+const ALERT_SHELL_ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TZ",
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+];
+
+/// Comma-separated extra variable names a shell alert channel inherits, for
+/// scripts that read e.g. a chat webhook URL from the server's environment.
+/// Only exact names; there is no wildcard.
+const ALERT_ENV_PASSTHROUGH_VAR: &str = "CRONIQ_ALERT_ENV_PASSTHROUGH";
+
+fn alert_shell_env(
+    vars: impl Iterator<Item = (String, String)>,
+    passthrough: Option<&str>,
+) -> Vec<(String, String)> {
+    let extra: Vec<&str> = passthrough
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    let matches = |list: &[&str], key: &str| {
+        list.iter().any(|n| {
+            if cfg!(windows) {
+                n.eq_ignore_ascii_case(key)
+            } else {
+                *n == key
+            }
+        })
+    };
+    vars.filter(|(k, _)| matches(ALERT_SHELL_ENV_ALLOWLIST, k) || matches(&extra, k))
+        .collect()
+}
+
 async fn deliver_shell(
     channel: &ChannelConfig,
     command: &str,
@@ -756,6 +819,14 @@ async fn deliver_shell_within(
     let result = Command::new("sh")
         .arg("-c")
         .arg(command)
+        // The server's environment holds its signing key and every other
+        // credential it was started with; an alert script gets an allowlist
+        // instead (review 2026-10-24, A-8). See `alert_shell_env`.
+        .env_clear()
+        .envs(alert_shell_env(
+            std::env::vars(),
+            std::env::var(ALERT_ENV_PASSTHROUGH_VAR).ok().as_deref(),
+        ))
         .env("CRONIQ_JOB_KEY", &ctx.job_key)
         .env("CRONIQ_EXECUTION_ID", &ctx.execution_id)
         .env("CRONIQ_ERROR", &ctx.error)
@@ -1315,6 +1386,29 @@ pub fn merge_legacy_env_hook(base: AlertsConfig) -> AlertsConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alert_shell_env_keeps_only_the_allowlist_and_named_extras() {
+        // Review 2026-10-24, A-8: the server's credentials must not reach
+        // an alert script.
+        let vars = [
+            ("PATH", "/usr/bin"),
+            ("LANG", "C.UTF-8"),
+            ("CRONIQ_JWT_SECRET", "signing-key"),
+            ("CRONIQ_OIDC_CLIENT_SECRET", "oidc"),
+            ("CRONIQ_ADMIN_PASSWORD", "seed"),
+            ("SLACK_URL", "https://hooks.example/x"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        let names =
+            |env: Vec<(String, String)>| env.into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+
+        let env = super::alert_shell_env(vars.clone().into_iter(), None);
+        assert_eq!(names(env), vec!["PATH", "LANG"]);
+
+        let env = super::alert_shell_env(vars.into_iter(), Some(" SLACK_URL ,"));
+        assert_eq!(names(env), vec!["PATH", "LANG", "SLACK_URL"]);
+    }
+
     use super::*;
     // Only the unix-gated delivery tests query the delivery log.
     #[cfg(unix)]
