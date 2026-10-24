@@ -449,6 +449,7 @@ job integration:credential-sync {
 
   singleton
   runner { require credentials }
+}
 
 # A budget shared by a *set* of jobs, for a limit that belongs to something
 # external — a third-party API's rate limit, a connection pool — rather than

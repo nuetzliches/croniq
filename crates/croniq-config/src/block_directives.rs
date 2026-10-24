@@ -26,10 +26,13 @@
 //! (the first has per-qualifier rules in [`crate::validate`], the second takes
 //! operator-chosen keys).
 //!
-//! Out of scope on purpose: `alerts { }`. Channel/rule bodies carry their own
-//! validation in [`crate::validate`], and alert channel *kind* directives
-//! (`shell`, `webhook`, `email`) are matched positionally rather than from a
-//! fixed key set.
+//! Out of scope on purpose: `alerts { }`. Its channel and rule bodies are
+//! checked by `validate_alerts` in [`crate::validate`] — key sets, the
+//! one-kind-per-channel rule, `when` against `RuleTrigger::VALUES`, the
+//! `expected_within` requirement and channel references — because those
+//! checks are rules across directives rather than a flat key table. Until the
+//! 2026-10-24 review (F-12) this comment promised that validation while none
+//! existed.
 
 use crate::ast::*;
 use crate::compile::{CatchUpPolicy, ExecutionMode, RETRY_STRATEGIES};

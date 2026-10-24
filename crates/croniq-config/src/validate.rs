@@ -101,6 +101,23 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
         }
     }
 
+    // Alert channel names, from every `alerts { }` block, so a rule's
+    // `channels` can be checked wherever the channel is declared. A file with
+    // `import`s is not checked for dangling references: `croniq validate`
+    // sees only this file, and the channel may live in an imported one.
+    let alert_channels: HashSet<String> = ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Alerts(a) => Some(a),
+            _ => None,
+        })
+        .flat_map(|a| &a.sub_blocks)
+        .filter(|sb| sb.name.value == "channel")
+        .filter_map(|sb| sb.qualifier.as_ref().map(|q| q.value.clone()))
+        .collect();
+    let check_channel_refs = !ast.items.iter().any(|i| matches!(i, Item::Import(_)));
+
     // Unknown / removed directive keys and sub-block names in the
     // operator-facing blocks (`server { }`, `pull_api { }`, …). Kept in its own
     // module because it is table-driven rather than rule-driven (issue #403).
@@ -217,6 +234,9 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
             }
             Item::ConcurrencyGroup(group) => {
                 validate_concurrency_group(group, &mut diags);
+            }
+            Item::Alerts(alerts) => {
+                validate_alerts(alerts, &alert_channels, check_channel_refs, &mut diags);
             }
             _ => {}
         }
@@ -344,14 +364,8 @@ fn validate_duration_directives(directives: &[DirectiveOrBlock], diags: &mut Vec
             continue;
         }
         let words: Vec<&str> = dir.args.iter().map(|a| a.value.as_str()).collect();
-        let readable = match words.as_slice() {
-            [value] => is_compact_duration(value) || (key == "queue_ttl" && *value == "none"),
-            [count, unit] => {
-                count.parse::<u64>().is_ok()
-                    && crate::compile::verbose_duration_unit(unit).is_some()
-            }
-            _ => false,
-        };
+        let readable =
+            reads_as_duration(&words) || (key == "queue_ttl" && words.as_slice() == ["none"]);
         if !readable {
             diags.push(Diagnostic {
                 severity: Severity::Error,
@@ -393,6 +407,18 @@ fn validate_priority_directives(directives: &[DirectiveOrBlock], diags: &mut Vec
                 span: dir.span.into(),
             });
         }
+    }
+}
+
+/// One duration, compact (`4h`, `90s`, bare seconds) or verbose (`4 hours`) —
+/// what `compile::duration_arg` turns into a compact value.
+fn reads_as_duration(words: &[&str]) -> bool {
+    match words {
+        [value] => is_compact_duration(value),
+        [count, unit] => {
+            count.parse::<u64>().is_ok() && crate::compile::verbose_duration_unit(unit).is_some()
+        }
+        _ => false,
     }
 }
 
@@ -1006,6 +1032,370 @@ fn validate_concurrency(
             ),
             span,
         });
+    }
+}
+
+/// Directives a `channel "…" { }` body takes. The kind directives come first.
+const ALERT_CHANNEL_KINDS: &[&str] = &["shell", "webhook", "email"];
+const ALERT_CHANNEL_KEYS: &[&str] = &["shell", "webhook", "email", "sign", "timeout"];
+/// Directives a `rule "…" { }` body takes — `compile::compile_rule`'s match.
+const ALERT_RULE_KEYS: &[&str] = &[
+    "when",
+    "job_key",
+    "min_attempts",
+    "min_consecutive",
+    "dead_letter",
+    "throttle",
+    "expected_within",
+    "channels",
+];
+
+/// Diagnostics for one `alerts { }` block (review 2026-10-24, F-12).
+///
+/// The compiler drops what it cannot use without a word: a rule whose `when`
+/// is unknown, an SLA/missed-fire/blocked/maintenance rule without
+/// `expected_within`, a channel without a kind; at run time a rule naming an
+/// undeclared channel delivers nowhere. So `when job_faild`, `channels
+/// "oncal"` or `webhok …` each produced an alert rule that never fires, with a
+/// green `validate`. `alert_channels` holds every channel declared in the
+/// file; `check_channel_refs` is false when the file imports others.
+fn validate_alerts(
+    alerts: &AlertsBlock,
+    alert_channels: &HashSet<String>,
+    check_channel_refs: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let err = |diags: &mut Vec<Diagnostic>, span: crate::lexer::Span, message: String| {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message,
+            span: span.into(),
+        });
+    };
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+
+    for sub in &alerts.sub_blocks {
+        let kind = sub.name.value.as_str();
+        if !matches!(kind, "channel" | "rule") {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "unknown block '{kind}' in `alerts {{ }}` — write `channel \"name\" {{ … }}` \
+                     or `rule \"name\" {{ … }}`"
+                ),
+            );
+            continue;
+        }
+        let name = match &sub.qualifier {
+            Some(q) if !q.value.is_empty() => q.value.as_str(),
+            _ => {
+                err(
+                    diags,
+                    sub.name.span,
+                    format!("alert {kind} needs a name: `{kind} \"name\" {{ … }}`"),
+                );
+                continue;
+            }
+        };
+        if !seen.insert((kind, name)) {
+            err(
+                diags,
+                sub.name.span,
+                format!("duplicate alert {kind} '{name}' — the later one replaces the earlier"),
+            );
+        }
+        let known = if kind == "channel" {
+            ALERT_CHANNEL_KEYS
+        } else {
+            ALERT_RULE_KEYS
+        };
+
+        let mut directives = Vec::new();
+        for dob in &sub.directives {
+            match dob {
+                DirectiveOrBlock::Directive(d) => {
+                    if known.contains(&d.key.value.as_str()) {
+                        directives.push(d);
+                    } else {
+                        let close = known
+                            .iter()
+                            .find(|k| crate::block_directives::edit_distance(&d.key.value, k) <= 2);
+                        err(
+                            diags,
+                            d.key.span,
+                            format!(
+                                "unknown directive '{}' in alert {kind} '{name}'{}",
+                                d.key.value,
+                                match close {
+                                    Some(k) => format!(" — did you mean '{k}'?"),
+                                    None => format!(" (known: {})", known.join(", ")),
+                                }
+                            ),
+                        );
+                    }
+                }
+                DirectiveOrBlock::Block(b) => err(
+                    diags,
+                    b.name.span,
+                    format!("alert {kind} '{name}' takes directives only, not blocks"),
+                ),
+                DirectiveOrBlock::Comment(_) => {}
+            }
+        }
+
+        fn has_placeholder(d: &Directive) -> bool {
+            d.args.iter().any(|a| a.is_placeholder)
+        }
+        fn words(d: &Directive) -> Vec<&str> {
+            d.args.iter().map(|a| a.value.as_str()).collect()
+        }
+
+        if kind == "channel" {
+            let kinds: Vec<&&Directive> = directives
+                .iter()
+                .filter(|d| ALERT_CHANNEL_KINDS.contains(&d.key.value.as_str()))
+                .collect();
+            match kinds.as_slice() {
+                [] => err(
+                    diags,
+                    sub.name.span,
+                    format!(
+                        "alert channel '{name}' has no kind — add one of `shell \"…\"`, \
+                         `webhook \"…\"` or `email \"…\"`"
+                    ),
+                ),
+                [_] => {}
+                [_, second, ..] => err(
+                    diags,
+                    second.key.span,
+                    format!(
+                        "alert channel '{name}' declares more than one kind; only one of \
+                         shell / webhook / email is used"
+                    ),
+                ),
+            }
+            let is_webhook = kinds.iter().any(|d| d.key.value == "webhook");
+            for d in &directives {
+                let w = words(d);
+                match d.key.value.as_str() {
+                    "shell" | "webhook" if w.len() != 1 || w[0].is_empty() => err(
+                        diags,
+                        d.span,
+                        format!(
+                            "`{}` in alert channel '{name}' takes one value",
+                            d.key.value
+                        ),
+                    ),
+                    "email" if w.is_empty() || w.iter().any(|v| v.trim().is_empty()) => err(
+                        diags,
+                        d.span,
+                        format!("`email` in alert channel '{name}' needs at least one address"),
+                    ),
+                    "sign" => {
+                        if !matches!(w.as_slice(), ["hmac", key] if !key.is_empty())
+                            && !has_placeholder(d)
+                        {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`sign` in alert channel '{name}' takes `sign hmac <secret>`"
+                                ),
+                            );
+                        } else if !is_webhook {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`sign` in alert channel '{name}' applies to `webhook` only"
+                                ),
+                            );
+                        }
+                    }
+                    "timeout" if !has_placeholder(d) => {
+                        let compact = match w.as_slice() {
+                            [v] => Some(v.to_string()),
+                            [n, unit] => crate::compile::verbose_duration_unit(unit)
+                                .map(|s| format!("{n}{s}")),
+                            _ => None,
+                        };
+                        if compact
+                            .as_deref()
+                            .and_then(crate::compile::parse_duration_secs)
+                            .is_none()
+                        {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`timeout {}` in alert channel '{name}' is not a duration — \
+                                     write e.g. `timeout 5s` (units: s, m, h)",
+                                    w.join(" ")
+                                ),
+                            );
+                        } else if !is_webhook {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`timeout` in alert channel '{name}' applies to `webhook` only"
+                                ),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+
+        // rule
+        let mut trigger = None;
+        let mut trigger_unknown = false;
+        let mut has_expected_within = false;
+        let mut has_channels = false;
+        for d in &directives {
+            let w = words(d);
+            let placeholder = has_placeholder(d);
+            match d.key.value.as_str() {
+                "when" => match w.as_slice() {
+                    _ if placeholder => trigger_unknown = true,
+                    [v] => match crate::compile::RuleTrigger::parse(v) {
+                        Some(t) => trigger = Some(t),
+                        None => {
+                            trigger_unknown = true;
+                            let close = crate::compile::RuleTrigger::VALUES
+                                .iter()
+                                .find(|k| crate::block_directives::edit_distance(v, k) <= 3);
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "unknown alert trigger `when {v}` in rule '{name}'{} — \
+                                     write one of: {}",
+                                    close
+                                        .map(|k| format!(" (did you mean '{k}'?)"))
+                                        .unwrap_or_default(),
+                                    crate::compile::RuleTrigger::VALUES.join(", ")
+                                ),
+                            );
+                        }
+                    },
+                    _ => {
+                        trigger_unknown = true;
+                        err(
+                            diags,
+                            d.span,
+                            format!("`when` in rule '{name}' takes one trigger"),
+                        );
+                    }
+                },
+                "job_key" if w.len() != 1 => err(
+                    diags,
+                    d.span,
+                    format!(
+                        "`job_key` in rule '{name}' takes one glob, e.g. `job_key \"billing:*\"`"
+                    ),
+                ),
+                "min_attempts" | "min_consecutive"
+                    if !placeholder && !matches!(w.as_slice(), [v] if v.parse::<u32>().is_ok()) =>
+                {
+                    err(
+                        diags,
+                        d.span,
+                        format!("`{}` in rule '{name}' takes a whole number", d.key.value),
+                    )
+                }
+                "dead_letter"
+                    if !placeholder
+                        && !matches!(
+                            w.as_slice(),
+                            ["true" | "false" | "yes" | "no" | "on" | "off" | "1" | "0"]
+                        ) =>
+                {
+                    err(
+                        diags,
+                        d.span,
+                        format!("`dead_letter` in rule '{name}' takes `true` or `false`"),
+                    )
+                }
+                "throttle" | "expected_within" => {
+                    if d.key.value == "expected_within" {
+                        has_expected_within = true;
+                    }
+                    if !placeholder && !reads_as_duration(&w) {
+                        err(
+                            diags,
+                            d.span,
+                            format!(
+                                "`{} {}` in rule '{name}' is not a duration — write e.g. `{} 10m`",
+                                d.key.value,
+                                w.join(" "),
+                                d.key.value
+                            ),
+                        );
+                    }
+                }
+                "channels" => {
+                    if w.is_empty() {
+                        err(
+                            diags,
+                            d.span,
+                            format!("`channels` in rule '{name}' needs at least one channel name"),
+                        );
+                    }
+                    for a in &d.args {
+                        has_channels = true;
+                        if check_channel_refs
+                            && !a.is_placeholder
+                            && !alert_channels.contains(&a.value)
+                        {
+                            err(
+                                diags,
+                                a.span,
+                                format!(
+                                    "rule '{name}' sends to channel '{}', which is not declared \
+                                     in any `alerts {{ channel … }}`",
+                                    a.value
+                                ),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if trigger.is_none() && !trigger_unknown {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "alert rule '{name}' has no `when` — write one of: {}",
+                    crate::compile::RuleTrigger::VALUES.join(", ")
+                ),
+            );
+        }
+        if let Some(t) = trigger
+            && t.needs_expected_within()
+            && !has_expected_within
+        {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "alert rule '{name}' needs `expected_within` for this trigger — without it \
+                     the rule is dropped"
+                ),
+            );
+        }
+        if !has_channels {
+            diags.push(Diagnostic {
+                severity: Severity::Warning,
+                message: format!("alert rule '{name}' has no `channels`, so it notifies no one"),
+                span: sub.name.span.into(),
+            });
+        }
     }
 }
 
@@ -2172,6 +2562,127 @@ job a:b { every 5 minutes }",
         // timezone, so suggesting a `timezone` here would be a false promise.
         let diags = validate_src(r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#);
         assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    // ── alerts { } (review 2026-10-24, F-12) ─────────────────────────────────
+
+    #[test]
+    fn alert_mistakes_that_used_to_compile_to_silence_are_errors() {
+        let ch = r#"channel "oncall" { shell "/bin/page" }"#;
+        for (body, needle) in [
+            (
+                r#"rule "r" { when job_faild; channels "oncall" }"#,
+                "did you mean 'job_failed'",
+            ),
+            (
+                r#"rule "r" { job_key "*"; channels "oncall" }"#,
+                "has no `when`",
+            ),
+            (
+                r#"rule "r" { when job_sla_missed; channels "oncall" }"#,
+                "needs `expected_within`",
+            ),
+            (
+                r#"rule "r" { when job_blocked; channels "oncall" }"#,
+                "needs `expected_within`",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncal" }"#,
+                "not declared",
+            ),
+            (
+                r#"channel "x" { shell "/x"; webhok "https://h" }"#,
+                "did you mean 'webhook'",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; throttle soon }"#,
+                "not a duration",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; min_consecutive x }"#,
+                "whole number",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; dead_letter maybe }"#,
+                "`true` or `false`",
+            ),
+            (
+                r#"channel "y" { sign hmac s3cret; shell "/x" }"#,
+                "`webhook` only",
+            ),
+            (
+                r#"channel "y" { webhook "https://h"; sign sha1 x }"#,
+                "sign hmac <secret>",
+            ),
+            (
+                r#"channel "y" { webhook "https://h"; timeout 5d }"#,
+                "not a duration",
+            ),
+            (
+                r#"channel "y" { shell "/a"; email "a@b" }"#,
+                "more than one kind",
+            ),
+            (r#"rul "r" { when job_failed }"#, "unknown block 'rul'"),
+            (
+                r#"rule "dup" { when job_failed; channels "oncall" }
+                rule "dup" { when job_failed; channels "oncall" }"#,
+                "duplicate alert rule",
+            ),
+        ] {
+            let src = format!("alerts {{ {ch}\n {body} }}");
+            let diags = validate_src(&src);
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{body}: {diags:?}");
+            assert!(
+                errs[0].message.contains(needle),
+                "{body}: {}",
+                errs[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn a_channel_without_a_kind_is_an_error() {
+        let diags = validate_src(r#"alerts { channel "x" { timeout 5s } }"#);
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message.contains("has no kind")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_rule_without_channels_warns() {
+        let diags = validate_src(r#"alerts { rule "r" { when job_failed } }"#);
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+        assert!(diags.iter().any(|d| d.message.contains("notifies no one")));
+    }
+
+    #[test]
+    fn channel_references_are_not_checked_across_imports() {
+        let diags = validate_src(
+            "import ./alerts.croniq\nalerts { rule \"r\" { when job_failed; channels \"elsewhere\" } }",
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn readme_croniqfile_example_validates() {
+        // The README's annotated Croniqfile — including its `alerts { }`
+        // block — must stay a file `croniq validate` accepts.
+        let readme = include_str!("../../../README.md").replace("\r\n", "\n");
+        let block = readme
+            .split("```")
+            .find(|b| b.contains("alerts {") && b.contains("rule \"billing-fail\""))
+            .expect("README has an annotated Croniqfile with alerts");
+        let src = block
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or(block);
+        let ast = Parser::parse(src).unwrap_or_else(|e| panic!("README Croniqfile: {e:?}"));
+        let diags = validate(&ast);
+        assert!(errors(&diags).is_empty(), "README Croniqfile: {diags:?}");
     }
 
     #[test]

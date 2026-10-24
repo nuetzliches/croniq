@@ -429,6 +429,42 @@ pub enum RuleTrigger {
     JobRecovered,
 }
 
+impl RuleTrigger {
+    /// Every `when` value, in declaration order. The one list `compile` and
+    /// `validate` read, so a new trigger cannot be accepted by one and
+    /// rejected by the other (review 2026-10-24, F-12).
+    pub const VALUES: &'static [&'static str] = &[
+        "job_failed",
+        "job_sla_missed",
+        "job_missed_fire",
+        "maintenance_active",
+        "job_blocked",
+        "job_recovered",
+    ];
+
+    /// Parse a `when` value. `None` for anything else.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "job_failed" => Some(Self::JobFailed),
+            "job_sla_missed" => Some(Self::JobSlaMissed),
+            "job_missed_fire" => Some(Self::JobMissedFire),
+            "maintenance_active" => Some(Self::MaintenanceActive),
+            "job_blocked" => Some(Self::JobBlocked),
+            "job_recovered" => Some(Self::JobRecovered),
+            _ => None,
+        }
+    }
+
+    /// Whether a rule with this trigger is meaningless without
+    /// `expected_within` — see `compile_rule`, which drops such a rule.
+    pub fn needs_expected_within(self) -> bool {
+        matches!(
+            self,
+            Self::JobSlaMissed | Self::JobMissedFire | Self::JobBlocked | Self::MaintenanceActive
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ObservabilityConfig {
     pub log: Option<LogConfig>,
@@ -1723,7 +1759,7 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
 /// `croniq-server::parse_duration_secs` (different crate, slightly
 /// different error model). Returns `None` on garbage; caller falls
 /// back to the directive default.
-fn parse_duration_secs(s: &str) -> Option<u64> {
+pub(crate) fn parse_duration_secs(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -1759,20 +1795,10 @@ fn compile_rule(
         match d.key.value.as_str() {
             "when" => {
                 if let Some(arg) = d.args.first() {
-                    let v = resolve_str(arg, vars);
-                    trigger = match v.as_str() {
-                        "job_failed" => Some(RuleTrigger::JobFailed),
-                        "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
-                        "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
-                        "maintenance_active" => Some(RuleTrigger::MaintenanceActive),
-                        "job_blocked" => Some(RuleTrigger::JobBlocked),
-                        "job_recovered" => Some(RuleTrigger::JobRecovered),
-                        // Unknown trigger values silently drop the rule
-                        // below. Operators get a runtime warning when
-                        // the evaluator notices the dropped rule on
-                        // the next reload (TBD).
-                        _ => None,
-                    };
+                    // An unknown value drops the rule below; validate.rs
+                    // reports it, so a deploy that passed `validate` never
+                    // gets here (review 2026-10-24, F-12).
+                    trigger = RuleTrigger::parse(&resolve_str(arg, vars));
                 }
             }
             "job_key" => {
@@ -1822,14 +1848,8 @@ fn compile_rule(
     // "fire on every claimed execution" (SLA), "fire the moment a job is one
     // tick late" (missed-fire), "fire on every queued execution" (blocked) or
     // "fire the moment maintenance starts" rule.
-    if matches!(
-        trigger,
-        RuleTrigger::JobSlaMissed
-            | RuleTrigger::JobMissedFire
-            | RuleTrigger::JobBlocked
-            | RuleTrigger::MaintenanceActive
-    ) && expected_within.is_none()
-    {
+    // validate.rs reports it.
+    if trigger.needs_expected_within() && expected_within.is_none() {
         return None;
     }
     Some(RuleConfig {

@@ -221,6 +221,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   overwritten — about twenty lines of `Croniqfile.example`. `--write` now
   refuses and lists the comments it would lose; without `--write` the output
   is printed with the same warning.
+- **`croniq validate` checks `alerts { }`** (review 2026-10-24, F-12). There
+  was no check at all: `when job_faild`, a `job_sla_missed` /
+  `job_missed_fire` / `job_blocked` / `maintenance_active` rule without
+  `expected_within`, `channels "oncal"` naming no declared channel, or a
+  channel written `webhok …` each compiled to a rule that never fires. These
+  are now errors, as are unknown directives, non-numeric `min_attempts` /
+  `min_consecutive`, unreadable `throttle` / `expected_within`, a channel with
+  no or several kinds, and `sign` / `timeout` outside a webhook channel. A
+  rule without `channels` is a warning. Since the server validates at boot,
+  a Croniqfile with one of these mistakes now fails to load instead of
+  running without the alert. The README's annotated Croniqfile, which was
+  missing a closing brace, is now tested to validate.
 - **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
   A Croniqfile schedule has no month field, and `croniq convert` / `croniq
   migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.
