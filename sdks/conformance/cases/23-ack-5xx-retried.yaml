@@ -1,0 +1,70 @@
+name: "An ack answered with 5xx is retried once the server recovers"
+description: |
+  Review 2026-10-24, K-1. The handler has already succeeded; losing its ack to
+  a transient server error used to cost a full second run of the job: the SDK
+  logged "failed to ack", dropped the execution from its in-flight set, the
+  next poll reported it missing, and the stale-claim reaper requeued it. The
+  ack is idempotent on the server (CAS-fenced), so retrying it is safe.
+
+  Every SDK makes up to three ack attempts, about 1 s and then 2 s apart, and
+  retries only on a transport error (including a request timeout) or a 5xx
+  response — never on a 4xx (see case 25).
+
+  The first ack is answered with 503, the second with 200. The runner must send
+  exactly two acks: one is the bug, three means it retried a 200. `max_count`
+  makes the binding wait the full `duration_max_ms`, so a late third ack is
+  observed.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  request_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  capacity_backoff_ms: 50
+  drain_timeout_ms: 3000
+
+handlers:
+  - job_key: "ack:retry"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-ack-503"
+            job_key: "ack:retry"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    match_count: 1
+    respond:
+      status: 503
+      body: { error: "service unavailable" }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 3500
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 2
+      max_count: 2
+      body_match:
+        execution_id: "exec-ack-503"
+        status: "success"
+        attempt: 1

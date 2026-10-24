@@ -43,6 +43,12 @@ public sealed class CroniqRunner : IAsyncDisposable
     // snapshot. Ends the at-capacity backoff as soon as a slot frees (#845).
     private TaskCompletionSource _slotFreed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>
+    /// Delays between ack attempts (review 2026-10-24, K-1; see
+    /// <see cref="AckSender"/>). Settable so tests need not wait seconds.
+    /// </summary>
+    internal IReadOnlyList<TimeSpan> AckRetryDelays { get; set; } = AckSender.DefaultRetryDelays;
+
     private string? _resolvedRunnerId;
     private ExecutionDispatcher? _dispatcher;
     private int _runOnce;
@@ -81,7 +87,8 @@ public sealed class CroniqRunner : IAsyncDisposable
     /// <summary>
     /// Run the poll/dispatch/ack loop until cancellation. Returns when the
     /// token is signalled <em>and</em> all in-flight executions have either
-    /// finished or the drain timeout elapses.
+    /// finished and been acked, or the drain timeout elapsed and the
+    /// hard-cancelled executions had a bounded window to send their failure ack.
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -101,7 +108,8 @@ public sealed class CroniqRunner : IAsyncDisposable
 
         _dispatcher = new ExecutionDispatcher(
             _client, _registry, _serviceProvider, _loggerFactory, _stateProbe,
-            _options, _resolvedRunnerId, _options.Tags.AsReadOnlyList(), _timeProvider);
+            _options, _resolvedRunnerId, _options.Tags.AsReadOnlyList(), _timeProvider,
+            AckRetryDelays);
 
         _logger.LogInformation(
             "Croniq runner starting: runner_id={RunnerId}, capabilities={Capabilities}, max_inflight={MaxInflight}",
@@ -278,6 +286,19 @@ public sealed class CroniqRunner : IAsyncDisposable
         _ => "poll failed",
     };
 
+    /// <summary>
+    /// Spreads a poll retry delay over 0.8–1.2 × <paramref name="delay"/>.
+    /// </summary>
+    /// <remarks>
+    /// Review 2026-10-24, K-9: with a fixed delay every runner that lost its
+    /// poll to a server restart retried in lockstep, so N runners hit the
+    /// fresh server in the same instant. ±20 % keeps the bound conformance
+    /// case 12 pins and breaks the lockstep. <paramref name="sample"/> is a
+    /// uniform value in [0, 1), passed in so the bounds are testable.
+    /// </remarks>
+    internal static TimeSpan Jitter(TimeSpan delay, double sample) =>
+        TimeSpan.FromTicks((long)(delay.Ticks * (0.8 + (0.4 * sample))));
+
     private async Task PollLoopAsync(CancellationToken ct)
     {
         // Tracks consecutive `409 Conflict` responses on poll. See
@@ -391,7 +412,7 @@ public sealed class CroniqRunner : IAsyncDisposable
 
                 try
                 {
-                    await Task.Delay(_options.PollRetryDelay, ct).ConfigureAwait(false);
+                    await Task.Delay(Jitter(_options.PollRetryDelay, Random.Shared.NextDouble()), ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -514,22 +535,17 @@ public sealed class CroniqRunner : IAsyncDisposable
         {
             return;
         }
-        try
-        {
-            await _client.AckAsync(
-                new AckRequest(
-                    _resolvedRunnerId!,
-                    assignment.ExecutionId,
-                    "failure",
-                    IdentifierGuard.RejectionAckError(field, offending),
-                    0,
-                    assignment.Attempt),
-                CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "failed to ack a rejected work assignment");
-        }
+        await AckSender.SendAsync(
+            _client,
+            new AckRequest(
+                _resolvedRunnerId!,
+                assignment.ExecutionId,
+                "failure",
+                IdentifierGuard.RejectionAckError(field, offending),
+                0,
+                assignment.Attempt),
+            _logger,
+            AckRetryDelays).ConfigureAwait(false);
     }
 
     private void HandleCancellations(IReadOnlyList<string> cancelIds)
@@ -583,7 +599,7 @@ public sealed class CroniqRunner : IAsyncDisposable
             // handler that respects ctx.CancellationToken aborts cleanly;
             // the dispatcher then acks with status=failure. Handlers that
             // ignore the token block until they finish naturally; the
-            // runner returns from RunAsync anyway.
+            // runner returns from RunAsync after the ack budget below anyway.
             _logger.LogWarning("drain timed out with {Count} execution(s) still in-flight — hard-cancelling", _inflight.Count);
             foreach (var cts in _inflight.Values)
             {
@@ -595,6 +611,29 @@ public sealed class CroniqRunner : IAsyncDisposable
                 {
                     // race with handler completion — harmless
                 }
+            }
+
+            // Review 2026-10-24, K-4: returning right after the cancel let the
+            // host tear the process down before the dispatcher had sent the
+            // failure ack, so the execution stayed `claimed` until the
+            // stale-claim reaper found it — and a singleton job stood still
+            // for that long. Wait for the acks too, bounded by what the ack
+            // itself may take: every attempt's request timeout plus the retry
+            // delays between them. A handler that ignores its token still
+            // cannot hold shutdown past this.
+            var ackBudget = (_options.RequestTimeout * (AckRetryDelays.Count + 1))
+                + AckSender.TotalRetryDelay(AckRetryDelays)
+                + TimeSpan.FromSeconds(1);
+            var ackDeadline = _timeProvider.GetUtcNow().Add(ackBudget);
+            while (!_inflight.IsEmpty && _timeProvider.GetUtcNow() < ackDeadline)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+            }
+            if (!_inflight.IsEmpty)
+            {
+                _logger.LogWarning(
+                    "{Count} execution(s) still in-flight after the hard cancel — returning without their ack",
+                    _inflight.Count);
             }
         }
     }

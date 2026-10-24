@@ -5,6 +5,40 @@ All notable changes to the Python runner SDK are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The poll retry delay carries ±20 % jitter (review 2026-10-24, K-9).** After
+  a failed poll the runner waited exactly `poll_retry_delay_ms`, so a fleet
+  that saw the same server restart came back in lockstep. The wait is now
+  0.8–1.2 × `poll_retry_delay_ms`; the at-capacity back-off is unchanged.
+
+### Fixed
+
+- **A failed ack is retried (review 2026-10-24, K-1).** A handler that had
+  already succeeded lost its ack to a single connection reset, request timeout
+  or 5xx: the runner logged "failed to ack", dropped the execution from its
+  in-flight set, and the stale-claim reaper requeued it, so the job ran a
+  second time. The ack is now sent up to three times, about 1 s and then 2 s
+  apart, on a transport error (including a request timeout) or a 5xx; a 4xx is
+  never retried. The execution stays in flight until the last attempt.
+  Conformance cases 23–25 pin the schedule.
+- **The failure ack after the drain timeout is no longer cancelled (review
+  2026-10-24, K-4).** When `drain_timeout_ms` elapsed, the runner cancelled
+  each handler and then, 200 ms later, the whole worker task — including an
+  ack still on the wire, whose `CancelledError` bypassed the error handling.
+  The execution then stayed `claimed` until the reaper found it, holding up a
+  `singleton` job. Only the handler is cancelled now; the drain waits for the
+  failure ack (with its retries), bounded by the ack's own timeout budget. The
+  ack's error reads `runner draining`. Conformance case 26 pins it.
+- **A runner_id that cannot be persisted is logged at WARNING (review
+  2026-10-24, K-6).** A state directory that could not be written (or read) was
+  swallowed silently, so a container without a writable
+  `CRONIQ_RUNNER_DATA_DIR` minted a new runner_id on every restart without any
+  signal. The warning names the path and the two ways out (`RUNNER_ID`, a
+  writable `CRONIQ_RUNNER_DATA_DIR`).
+
 ## [0.7.2] - 2026-10-08
 
 ### Fixed

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
@@ -460,7 +461,7 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 				select {
 				case <-ctx.Done():
 					return nil
-				case <-time.After(r.opts.PollRetryDelay):
+				case <-time.After(jitter(r.opts.PollRetryDelay)):
 					continue
 				}
 			}
@@ -511,7 +512,7 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(r.opts.PollRetryDelay):
+			case <-time.After(jitter(r.opts.PollRetryDelay)):
 				continue
 			}
 		}
@@ -546,8 +547,17 @@ func (r *Runner) pollLoop(ctx context.Context, wg *sync.WaitGroup) error {
 				r.rejectAssignment(ctx, assignment, field)
 				continue
 			}
-			wg.Add(1)
-			r.dispatch(ctx, assignment, wg)
+			// A re-delivered execution_id that is still running is ignored
+			// (review 2026-10-24, K-11). A correct server never hands out a
+			// claimed execution twice, but a server bug or a replayed
+			// response would otherwise run the handler twice, ack twice, and
+			// overwrite the first run's cancel handle so a later server
+			// cancel never reaches it. Conformance case 27 pins it.
+			if !r.dispatch(ctx, assignment, wg) {
+				slog.WarnContext(ctx, "ignoring re-delivered work assignment that is already in flight",
+					"execution_id", assignment.ExecutionID,
+				)
+			}
 		}
 
 		// At capacity: the server returned immediately (no long-poll); back
@@ -606,8 +616,10 @@ func (r *Runner) rejectAssignment(ctx context.Context, a WorkAssignment, field s
 }
 
 // dispatch spawns a goroutine that runs the handler for one assignment,
-// drives lease renewal, drains any LogWriter, and acks the result.
-func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGroup) {
+// drives lease renewal, drains any LogWriter, and acks the result. It
+// returns false, and starts nothing, when the execution_id is already in
+// flight.
+func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGroup) bool {
 	// Each execution gets its own context, independent of the runner's
 	// parent ctx — that way "stop polling on shutdown" does not also
 	// "instantly cancel every in-flight handler." The drain step
@@ -615,8 +627,14 @@ func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGrou
 	execCtx, execCancel := context.WithCancel(context.Background())
 
 	r.inflightMu.Lock()
+	if _, running := r.inflight[a.ExecutionID]; running {
+		r.inflightMu.Unlock()
+		execCancel()
+		return false
+	}
 	r.inflight[a.ExecutionID] = execCancel
 	r.inflightMu.Unlock()
+	wg.Add(1)
 
 	ec := &ExecutionContext{
 		ExecutionID:  a.ExecutionID,
@@ -676,6 +694,7 @@ func (r *Runner) dispatch(_ context.Context, a WorkAssignment, wg *sync.WaitGrou
 		r.ackResult(a, status, errStr, duration)
 		r.removeInflight(a.ExecutionID)
 	}()
+	return true
 }
 
 // renewLoop POSTs /v1/work/renew on the configured cadence until the
@@ -719,20 +738,48 @@ func (r *Runner) renewLoop(executionID string, done <-chan struct{}) {
 	}
 }
 
-// ackResult posts the final ack. Uses a short, decoupled context so the
-// ack still goes through even if the runner's ctx was cancelled mid-drain.
+// ackRetryDelays are the waits before the second and third ack attempt. An
+// unexported var rather than a const so tests can shrink them.
+var ackRetryDelays = []time.Duration{1 * time.Second, 2 * time.Second}
+
+// ackRetryable reports whether a failed ack attempt is worth repeating: a
+// transport error (connection refused or reset, the per-attempt request
+// timeout, …) or a 5xx. A 4xx is the server's verdict on this ack — 409
+// already terminal or no longer ours, 404 gone, 403 not our runner_id — and
+// sending it again cannot change the answer.
+func ackRetryable(err error) bool {
+	status := serverStatus(err)
+	return status == 0 || status >= 500
+}
+
+// ackResult posts the final ack. Every attempt uses its own short context,
+// decoupled from the runner's ctx, so the ack still goes through — retries
+// included — when the runner's ctx was cancelled mid-drain.
+//
+// Up to 1+len(ackRetryDelays) attempts (review 2026-10-24, K-1). The handler
+// has already run; an ack lost to a network blip used to drop the execution
+// from the in-flight set, the next poll reported it missing, and the
+// stale-claim reaper requeued a job that had succeeded. The ack is idempotent
+// on the server (CAS-fenced), so repeating it is safe. The caller removes the
+// execution from the in-flight set only after this returns, so the lease is
+// still renewed by the polls in between. Conformance cases 23-25 pin it.
 func (r *Runner) ackResult(a WorkAssignment, status, errStr string, durationMs int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.opts.RequestTimeout)
-	defer cancel()
-	err := r.client.Ack(ctx, &AckRequest{
+	req := &AckRequest{
 		RunnerID:    r.opts.RunnerID,
 		ExecutionID: a.ExecutionID,
 		Status:      status,
 		Error:       errStr,
 		DurationMs:  durationMs,
 		Attempt:     a.Attempt,
-	})
-	if err != nil {
+	}
+	attempts := len(ackRetryDelays) + 1
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), r.opts.RequestTimeout)
+		err := r.client.Ack(ctx, req)
+		cancel()
+		if err == nil {
+			return
+		}
 		if isOwnershipDenied(err) {
 			slog.Error("ack refused with 403 Forbidden — this runner's credential does not own runner_id, so the execution stays claimed until its lease expires; give the runner its own runner_id, or release the existing binding with DELETE /v1/runners/{id}",
 				"runner_id", r.opts.RunnerID,
@@ -741,11 +788,25 @@ func (r *Runner) ackResult(a WorkAssignment, status, errStr string, durationMs i
 			)
 			return
 		}
-		slog.Error("failed to ack execution",
+		if attempt >= attempts || !ackRetryable(err) {
+			slog.Error("failed to ack execution",
+				"execution_id", a.ExecutionID,
+				"status", status,
+				"attempt", attempt,
+				"error", err,
+			)
+			return
+		}
+		delay := ackRetryDelays[attempt-1]
+		slog.Warn("ack failed — retrying",
 			"execution_id", a.ExecutionID,
 			"status", status,
+			"attempt", attempt,
+			"max_attempts", attempts,
+			"retry_after", delay,
 			"error", err,
 		)
+		time.Sleep(delay)
 	}
 }
 
@@ -807,6 +868,17 @@ func (r *Runner) drain(wg *sync.WaitGroup) {
 		r.cancelAllInflight()
 		<-done
 	}
+}
+
+// jitter spreads d uniformly over [0.8·d, 1.2·d] (review 2026-10-24, K-9).
+// After a server restart every runner's poll fails at the same moment; a
+// fixed retry delay kept them in lock-step, so they all came back in the
+// same instant. ±20 % stays within what conformance case 12 allows.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) * (0.8 + 0.4*mathrand.Float64()))
 }
 
 func (r *Runner) inflightCount() int {

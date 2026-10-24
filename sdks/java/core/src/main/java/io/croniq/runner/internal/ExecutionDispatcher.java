@@ -8,12 +8,14 @@ import io.croniq.runner.handler.CroniqRunnerObserver;
 import io.croniq.runner.protocol.AckRequest;
 import io.croniq.runner.protocol.RenewRequest;
 import io.croniq.runner.protocol.WorkAssignment;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -38,6 +40,15 @@ public final class ExecutionDispatcher {
     // One permit per released in-flight slot; lets the poll loop end its
     // at-capacity backoff as soon as there is room (issue #845).
     private final Semaphore slotFreed = new Semaphore(0);
+    private final AtomicInteger acking = new AtomicInteger();
+
+    /**
+     * Delays before the second and third ack attempt. Package-private and
+     * mutable only so unit tests can shorten them; see {@link #sendAck}.
+     */
+    static final List<Duration> DEFAULT_ACK_RETRY_DELAYS = List.of(Duration.ofSeconds(1), Duration.ofSeconds(2));
+
+    volatile List<Duration> ackRetryDelays = DEFAULT_ACK_RETRY_DELAYS;
 
     public ExecutionDispatcher(
             CroniqClient client,
@@ -106,7 +117,14 @@ public final class ExecutionDispatcher {
             return;
         }
         CancellationHandle handle = new CancellationHandle();
-        inflight.put(work.executionId(), handle);
+        // A correct server never re-delivers a claimed execution, but a server
+        // bug or a replayed response can. Dispatching it again would run the
+        // handler twice and overwrite the first run's cancel handle, so a later
+        // server cancel would no longer reach it (review 2026-10-24, K-11).
+        if (inflight.putIfAbsent(work.executionId(), handle) != null) {
+            log.warn("Ignoring re-delivered execution that is still in flight");
+            return;
+        }
         executor.execute(() -> runOne(work, handle));
     }
 
@@ -223,14 +241,50 @@ public final class ExecutionDispatcher {
             // streaming-log guarantee — late events would otherwise arrive
             // on the server after the execution is already marked complete.
             logWriter.closeAndDrain();
-            inflight.remove(work.executionId());
-            slotFreed.release();
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
             notifyEnd(work, status, error, durationMs);
-            sendAck(work, status, error, durationMs);
-            MDC.remove("execution_id");
-            MDC.remove("job_key");
+            // Ack first, free the slot after (review 2026-10-24, K-5). Freeing
+            // it first let the poll loop report `inflight: []` and claim new
+            // work while the ack was still on the wire, briefly running over
+            // maxInflight(), and is the order no other SDK uses.
+            //
+            // The handler is done, so a cancel from here on has nothing left to
+            // stop: detach the worker so a server cancel or the drain's
+            // hard-cancel cannot interrupt the ack, and consume an interrupt that
+            // already landed between the handler returning and this point.
+            // HttpClient.send throws on a set interrupt flag, which lost the ack.
+            handle.detach();
+            Thread.interrupted();
+            acking.incrementAndGet();
+            try {
+                sendAck(work, status, error, durationMs);
+            } finally {
+                acking.decrementAndGet();
+                inflight.remove(work.executionId());
+                slotFreed.release();
+                MDC.remove("execution_id");
+                MDC.remove("job_key");
+            }
         }
+    }
+
+    /** Number of executions whose handler has returned and whose ack is still being sent. */
+    public int ackingCount() {
+        return acking.get();
+    }
+
+    /**
+     * Upper bound on how long one ack can take including its retries: every
+     * attempt may run into the request timeout, plus the delays between them.
+     * {@code CroniqRunner.close()} waits this long for acks still in progress
+     * after the drain timeout.
+     */
+    public Duration maxAckDuration() {
+        Duration total = options.requestTimeout().multipliedBy(ackRetryDelays.size() + 1L);
+        for (Duration d : ackRetryDelays) {
+            total = total.plus(d);
+        }
+        return total;
     }
 
     private void notifyStart(WorkAssignment work) {
@@ -318,27 +372,85 @@ public final class ExecutionDispatcher {
         });
     }
 
+    /**
+     * POST the ack, retrying a transient failure (review 2026-10-24, K-1).
+     *
+     * <p>Without a retry, one connection reset or request timeout on the ack of
+     * a handler that had already succeeded cost a full second run: the
+     * execution left the in-flight set, the next poll reported it missing, and
+     * the stale-claim reaper requeued it. The ack is idempotent on the server
+     * (CAS-fenced), so sending it again is safe.
+     *
+     * <p>Up to three attempts, about 1 s and then 2 s apart, the same policy in
+     * every SDK and pinned by conformance cases 23–25. Only a transport error
+     * (an {@link IOException} that is not an HTTP status, including
+     * {@link java.net.http.HttpTimeoutException}) or a 5xx is retried. A 4xx is
+     * the server's verdict on this ack (409: already terminal or no longer ours,
+     * 404: gone) and sending it again cannot change it. The caller keeps the
+     * execution in flight until this returns.
+     *
+     * <p>Both callers (runOne, rejectAssignment) put execution_id in the MDC
+     * before getting here, so every record is attributable.
+     */
     private void sendAck(WorkAssignment work, String status, String error, long durationMs) {
-        try {
-            client.ack(new AckRequest(runnerId, work.executionId(), status, error, durationMs, work.attempt()));
-        } catch (CroniqHttpException e) {
-            if (e.isOwnershipDenied()) {
-                // Permanent (#436/#437) — the execution stays claimed until its
-                // lease expires, so name the fix rather than just the failure.
-                log.error(
-                        "ack refused with 403 Forbidden — this runner's credential does not own runner_id {}, so"
-                                + " the execution stays claimed until its lease expires. Give the runner its own"
-                                + " runner_id, or release the existing binding with DELETE /v1/runners/{id}",
-                        runnerId);
-            } else {
-                log.warn("Failed to ack execution (status={}): HTTP {}", status, e.statusCode());
+        AckRequest request = new AckRequest(runnerId, work.executionId(), status, error, durationMs, work.attempt());
+        List<Duration> delays = ackRetryDelays;
+        int maxAttempts = delays.size() + 1;
+        for (int attempt = 1; ; attempt++) {
+            String failure;
+            try {
+                client.ack(request);
+                return;
+            } catch (CroniqHttpException e) {
+                if (e.isOwnershipDenied()) {
+                    // Permanent (#436/#437) — the execution stays claimed until its
+                    // lease expires, so name the fix rather than just the failure.
+                    log.error(
+                            "ack refused with 403 Forbidden — this runner's credential does not own runner_id {}, so"
+                                    + " the execution stays claimed until its lease expires. Give the runner its own"
+                                    + " runner_id, or release the existing binding with DELETE /v1/runners/{id}",
+                            runnerId);
+                    return;
+                }
+                if (e.statusCode() < 500) {
+                    log.warn("Failed to ack execution (status={}): HTTP {} — not retried", status, e.statusCode());
+                    return;
+                }
+                failure = "HTTP " + e.statusCode();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Ack of execution (status={}) interrupted — giving up", status);
+                return;
+            } catch (IOException e) {
+                failure = e.toString();
+            } catch (RuntimeException e) {
+                log.error("Failed to ack execution (status={}): {}", status, e.toString());
+                return;
             }
-        } catch (Exception e) {
-            // Ack failures are logged and dropped — the server will eventually
-            // re-issue the work and the next attempt will land.
-            // Both callers (runOne, rejectAssignment) put execution_id in the
-            // MDC before getting here, so the record is still attributable.
-            log.warn("Failed to ack execution (status={}): {}", status, e.toString());
+            if (attempt >= maxAttempts) {
+                log.error(
+                        "Failed to ack execution (status={}) after {} attempts: {} — the server will requeue it once"
+                                + " the claim goes stale",
+                        status,
+                        attempt,
+                        failure);
+                return;
+            }
+            Duration delay = delays.get(attempt - 1);
+            log.warn(
+                    "Ack attempt {}/{} failed (status={}): {} — retrying in {} ms",
+                    attempt,
+                    maxAttempts,
+                    status,
+                    failure,
+                    delay.toMillis());
+            try {
+                Thread.sleep(delay.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Ack retry of execution (status={}) interrupted — giving up", status);
+                return;
+            }
         }
     }
 

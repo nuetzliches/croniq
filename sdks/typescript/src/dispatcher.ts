@@ -1,4 +1,5 @@
 import { anySignal } from './abort.js';
+import { ackWithRetry } from './backoff.js';
 import { type CroniqClient, isOwnershipDenied } from './client.js';
 import { ExecutionContextImpl } from './context.js';
 import { sleep } from './deferred.js';
@@ -137,7 +138,8 @@ export class ExecutionDispatcher {
     }
 
     // Ack uses a fresh AbortController so a draining outer signal cannot
-    // cancel the final ack POST. Match the .NET SDK's `CancellationToken.None`.
+    // cancel the final ack POST, nor its retries (review 2026-10-24, K-1/K-4).
+    // Match the .NET SDK's `CancellationToken.None`.
     const ackAC = new AbortController();
     try {
       const payload: AckRequest = {
@@ -148,7 +150,7 @@ export class ExecutionDispatcher {
         duration_ms: durationMs,
       };
       if (error !== undefined) payload.error = error;
-      await client.ack(payload, ackAC.signal);
+      await ackWithRetry(client, payload, ackAC.signal, logger);
     } catch (err) {
       if (isOwnershipDenied(err)) {
         // Permanent (#436/#437) — the execution stays claimed until its
@@ -160,7 +162,7 @@ export class ExecutionDispatcher {
           { error: String(err), runner_id: runnerId, execution_id: executionId, job_key: jobKey },
         );
       } else {
-        logger.error('failed to ack execution', {
+        logger.error('failed to ack execution — giving up', {
           error: String(err),
           execution_id: executionId,
           job_key: jobKey,

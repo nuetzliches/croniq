@@ -54,7 +54,8 @@ await runner.run(controller.signal);
 - **Producer trigger client** — `createTriggerClient(...)` fires jobs on demand via `POST /v1/trigger` with its own `jobs:trigger` credentials, `idempotency_key` dedup, and `429` backpressure surfaced as `QueueOverflowError`. See [Trigger a job on demand](#trigger-a-job-on-demand-producer).
 - **Auth precedence** — `Authorization: ApiKey {key}` if set, else `Bearer {token}`.
 - **Persistent runner-id** — env var → state file → generated `{prefix}-{hex8}`, persisted under `$XDG_STATE_HOME/croniq-runner` (Linux/macOS) or `%LOCALAPPDATA%\croniq-runner` (Windows).
-- **OpenTelemetry-ready** — bring your own `@opentelemetry/sdk-node` setup; the SDK plays nicely with the standard `@opentelemetry/api` no-op fallback.
+- **Ack retry** — a final ack that fails on a transport error, a request timeout or a 5xx is sent again (three attempts, about 1 s and 2 s apart); a 4xx is not retried.
+- **No OpenTelemetry integration (yet)** — unlike the Go, Python, .NET and Java SDKs this one emits no span per execution and does not depend on `@opentelemetry/api`. Wrap your handler in your own span if you need one.
 
 ## Capabilities vs Tags
 

@@ -30,9 +30,6 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
-  "dependencies": {
-    "@opentelemetry/api": "^1.9.0"
-  },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@typescript-eslint/eslint-plugin": "^7.18.0",

@@ -11,11 +11,14 @@ Resolution order:
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from pathlib import Path
 
 from croniq_runner._options import RunnerOptions
+
+_log = logging.getLogger("croniq_runner.identity")
 
 
 def resolve_runner_id(options: RunnerOptions) -> str:
@@ -33,17 +36,29 @@ def resolve_runner_id(options: RunnerOptions) -> str:
             stored = state_file.read_text(encoding="utf-8").strip()
             if stored:
                 return stored
-        except OSError:
-            pass
+        except OSError as exc:
+            _log.warning(
+                "could not read the persisted runner_id from %s (%s) — generating a new one",
+                state_file,
+                exc,
+            )
 
     fresh = f"{options.runner_id_prefix}-{secrets.token_hex(4)}"
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         state_file.write_text(fresh, encoding="utf-8")
-    except OSError:
-        # Non-fatal — the runner can still operate with a non-persisted ID,
-        # it'll just regenerate on the next start.
-        pass
+    except OSError as exc:
+        # Non-fatal — the runner can still operate with a non-persisted ID, but
+        # it regenerates on the next start, and under ADR-0008 every restart
+        # then binds a fresh identity. That used to happen silently (review
+        # 2026-10-24, K-6): a container without a writable state directory
+        # looked healthy while minting a new runner_id on every restart.
+        _log.warning(
+            "could not persist runner_id to %s (%s) — the runner_id will not survive a "
+            "restart; set RUNNER_ID, or point CRONIQ_RUNNER_DATA_DIR at a writable directory",
+            state_file,
+            exc,
+        )
     return fresh
 
 

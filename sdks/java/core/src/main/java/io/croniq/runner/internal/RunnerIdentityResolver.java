@@ -69,7 +69,16 @@ public final class RunnerIdentityResolver {
                 Files.writeString(file, generated, StandardCharsets.UTF_8);
                 return generated;
             } catch (IOException e) {
-                log.debug("Could not persist runner-id under {} — falling back to hostname", dataDir, e);
+                // WARN, not DEBUG (review 2026-10-24, K-6): the hostname fallback
+                // changes with every container, so each restart presents a new
+                // runner_id and, under ADR-0008, binds a new identity — the #103
+                // problem, with nothing in the default log to say why.
+                log.warn(
+                        "Could not persist runner-id under {} ({}) — falling back to a hostname-based id that will"
+                                + " not survive a restart in a new container. Set runnerDataDir /"
+                                + " CRONIQ_RUNNER_DATA_DIR to a writable directory, or set an explicit runner_id",
+                        dataDir,
+                        e.toString());
             }
         }
 
