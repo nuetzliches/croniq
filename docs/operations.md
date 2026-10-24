@@ -1232,6 +1232,11 @@ Two things are deliberately *not* boot failures:
   `calendar` reference that resolves to nothing, fail per job: the job loads
   **paused** with a `config_error`, under `policy { strict_calendars }`
   (issue #361). One broken calendar must not take the whole scheduler down.
+- **Job time values** — a `window`, `not_before` or `not_after` that does not
+  parse, or an impossible `once at` date, also pauses just that job with a
+  `config_error` (regardless of `strict_calendars`). `croniq validate` reports
+  them as errors. Before, the first three were dropped and the job ran
+  unbounded, and a bad `once at` date stopped the boot.
 - **Warnings** — e.g. an interval shorter than the runner poll cycle. They are
   logged at `WARN` and the config loads.
 

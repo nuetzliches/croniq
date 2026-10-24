@@ -838,7 +838,9 @@ components:
             Present when the job is `paused` because its `calendar` reference
             did not resolve at load time (issue #361) — the calendar failed to
             compile or is not defined. Distinguishes a fail-closed pause from a
-            manual one. Omitted for healthy jobs. Set `policy { strict_calendars
+            manual one. Also set when the job's `window`, `not_before`,
+            `not_after` or `once at` value does not parse; that pause does not
+            depend on `strict_calendars`. Omitted for healthy jobs. Set `policy { strict_calendars
             false }` in the Croniqfile to restore the legacy behavior (the job
             fires without its gate) instead of being paused.
 

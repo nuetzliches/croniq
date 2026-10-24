@@ -37,12 +37,22 @@ pub struct Options {
     /// Duplicate calendar *names* are checked regardless: nothing downstream
     /// reports them, and one definition silently wins.
     pub check_calendars: bool,
+    /// Check a job's time values: the job-level `window`, the `not_before` /
+    /// `not_after` schedule options and the `once at` datetime.
+    ///
+    /// The server's loader turns this off for the same reason as
+    /// `check_calendars`: it parses the same values with the same functions
+    /// ([`crate::job_bounds`]) and pauses just the affected job with a
+    /// `config_faults` entry, instead of letting one bad date abort the boot
+    /// for every other job (review 2026-10-24, D-8 / F-5).
+    pub check_job_times: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             check_calendars: true,
+            check_job_times: true,
         }
     }
 }
@@ -91,6 +101,23 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
         }
     }
 
+    // Alert channel names, from every `alerts { }` block, so a rule's
+    // `channels` can be checked wherever the channel is declared. A file with
+    // `import`s is not checked for dangling references: `croniq validate`
+    // sees only this file, and the channel may live in an imported one.
+    let alert_channels: HashSet<String> = ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Alerts(a) => Some(a),
+            _ => None,
+        })
+        .flat_map(|a| &a.sub_blocks)
+        .filter(|sb| sb.name.value == "channel")
+        .filter_map(|sb| sb.qualifier.as_ref().map(|q| q.value.clone()))
+        .collect();
+    let check_channel_refs = !ast.items.iter().any(|i| matches!(i, Item::Import(_)));
+
     // Unknown / removed directive keys and sub-block names in the
     // operator-facing blocks (`server { }`, `pull_api { }`, …). Kept in its own
     // module because it is table-driven rather than rule-driven (issue #403).
@@ -104,11 +131,32 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     // before the block does not inherit it, so the UTC warning below must not
     // consider it covered (issue #427).
     let mut default_timezone = false;
+    // Jobs, calendars and imports seen so far — what a later `defaults { }`
+    // does not reach (review 2026-10-24, F-15).
+    let mut declared_before_defaults = 0usize;
 
     // Second pass: validate everything
     for item in &ast.items {
+        if matches!(item, Item::Job(_) | Item::Calendar(_) | Item::Import(_)) {
+            declared_before_defaults += 1;
+        }
         match item {
             Item::Defaults(def) => {
+                // `defaults { }` applies to what is declared *after* it, while
+                // `vars { }` and `concurrency_group` are file-wide. An
+                // `import ./calendars.croniq` above `defaults { timezone … }`
+                // left the imported calendars on UTC with nothing said.
+                if declared_before_defaults > 0 {
+                    diags.push(Diagnostic {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "`defaults {{ }}` applies only to jobs, calendars and imports declared \
+                             after it; {declared_before_defaults} above it do not inherit it — \
+                             move it to the top of the file"
+                        ),
+                        span: def.span.into(),
+                    });
+                }
                 validate_duration_directives(&def.directives, &mut diags);
                 validate_priority_directives(&def.directives, &mut diags);
                 for dob in &def.directives {
@@ -133,6 +181,24 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                     diags.push(Diagnostic {
                         severity: Severity::Error,
                         message: format!("duplicate job key '{}'", job.key.raw),
+                        span: job.key.span.into(),
+                    });
+                }
+
+                // Every key segment must be non-empty: the parser splits on
+                // `:` and accepted `job :x` / `job a::b` (review 2026-10-24,
+                // F-16).
+                if job.key.namespace.is_empty()
+                    || job.key.name.is_empty()
+                    || job.key.variant.as_deref() == Some("")
+                {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "job key '{}' has an empty segment — write `namespace:name` or \
+                             `namespace:name:variant`",
+                            job.key.raw
+                        ),
                         span: job.key.span.into(),
                     });
                 }
@@ -173,6 +239,17 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                     validate_schedule_kind(sched, &mut diags);
                 }
 
+                // `window`, `not_before`, `not_after`, `once at` (D-8 / F-5)
+                if opts.check_job_times {
+                    for (span, err) in job_time_errors(job) {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: err,
+                            span: span.into(),
+                        });
+                    }
+                }
+
                 // Timezone values + the UTC-default warning (issues #426, #427)
                 validate_timezone(job, default_timezone, &mut diags);
 
@@ -197,11 +274,67 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
             Item::ConcurrencyGroup(group) => {
                 validate_concurrency_group(group, &mut diags);
             }
+            Item::Alerts(alerts) => {
+                validate_alerts(alerts, &alert_channels, check_channel_refs, &mut diags);
+            }
             _ => {}
         }
     }
 
     diags
+}
+
+/// Every time value of `job` that the server could not apply as written: the
+/// job-level `window`, the `not_before` / `not_after` schedule options and the
+/// `once at` datetime, each parsed with the function the loader uses
+/// ([`crate::job_bounds`]).
+///
+/// The loader used to read all four with `.ok()`: a `not_after "2026-12-31"`
+/// (no time, no offset) ran forever, a `window 8:00-18:00` ran around the
+/// clock, both with a green `validate` (review 2026-10-24, D-8 / F-5).
+/// Placeholder values resolve at compile time and are not checked here.
+///
+/// Public so the server's loader reports exactly what `croniq validate` does.
+pub fn job_time_errors(job: &JobBlock) -> Vec<(crate::lexer::Span, String)> {
+    let mut errors = Vec::new();
+    let mut check =
+        |dir: &Directive, parse: fn(&str) -> Result<(), String>| match dir.args.as_slice() {
+            [arg] if arg.is_placeholder => {}
+            [arg] => {
+                if let Err(e) = parse(&arg.value) {
+                    errors.push((arg.span, e));
+                }
+            }
+            _ => errors.push((
+                dir.span,
+                format!(
+                    "`{}` takes exactly one value, got {}",
+                    dir.key.value,
+                    dir.args.len()
+                ),
+            )),
+        };
+    for dob in &job.directives {
+        if let DirectiveOrBlock::Directive(dir) = dob
+            && dir.key.value == "window"
+        {
+            check(dir, |s| crate::job_bounds::parse_job_window(s).map(|_| ()));
+        }
+    }
+    if let Some(sched) = &job.schedule {
+        for opt in &sched.options {
+            if matches!(opt.key.value.as_str(), "not_before" | "not_after") {
+                check(opt, |s| crate::job_bounds::parse_bound(s).map(|_| ()));
+            }
+        }
+        if let ScheduleKind::Once { at } = &sched.kind
+            && !at.is_placeholder
+            && let Err(e) = crate::job_bounds::parse_once_at(&at.value)
+        {
+            errors.push((at.span, e));
+        }
+    }
+    errors
 }
 
 fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
@@ -270,14 +403,8 @@ fn validate_duration_directives(directives: &[DirectiveOrBlock], diags: &mut Vec
             continue;
         }
         let words: Vec<&str> = dir.args.iter().map(|a| a.value.as_str()).collect();
-        let readable = match words.as_slice() {
-            [value] => is_compact_duration(value) || (key == "queue_ttl" && *value == "none"),
-            [count, unit] => {
-                count.parse::<u64>().is_ok()
-                    && crate::compile::verbose_duration_unit(unit).is_some()
-            }
-            _ => false,
-        };
+        let readable =
+            reads_as_duration(&words) || (key == "queue_ttl" && words.as_slice() == ["none"]);
         if !readable {
             diags.push(Diagnostic {
                 severity: Severity::Error,
@@ -322,6 +449,18 @@ fn validate_priority_directives(directives: &[DirectiveOrBlock], diags: &mut Vec
     }
 }
 
+/// One duration, compact (`4h`, `90s`, bare seconds) or verbose (`4 hours`) —
+/// what `compile::duration_arg` turns into a compact value.
+fn reads_as_duration(words: &[&str]) -> bool {
+    match words {
+        [value] => is_compact_duration(value),
+        [count, unit] => {
+            count.parse::<u64>().is_ok() && crate::compile::verbose_duration_unit(unit).is_some()
+        }
+        _ => false,
+    }
+}
+
 /// `<n>`, `<n>ms`, `<n>s`, `<n>m`, `<n>h` or `<n>d` — the grammar of
 /// `croniq_execution::retry::parse_duration_checked`, which this crate does
 /// not depend on.
@@ -334,7 +473,15 @@ fn is_compact_duration(value: &str) -> bool {
 }
 
 fn validate_timezone_value(dir: &Directive, diags: &mut Vec<Diagnostic>) -> bool {
+    // A bare `timezone` is a forgotten argument, not "no zone": it used to
+    // compile to `None` and override an inherited zone with UTC, silently
+    // (review 2026-10-24, F-4; ADR-0007 "never a silent fallback").
     let Some(arg) = dir.args.first() else {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: "`timezone` needs a zone name, e.g. `timezone Europe/Vienna`".into(),
+            span: dir.span.into(),
+        });
         return false;
     };
     if arg.is_placeholder {
@@ -601,6 +748,30 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner {
                             let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
+                            // A capability-less `require` used to stamp the
+                            // capability `""`, which no runner advertises, so
+                            // every execution stayed queued for good (review
+                            // 2026-10-24, F-10). One value, non-empty.
+                            if matches!(d.key.value.as_str(), "require" | "prefer" | "exclude")
+                                && (d.args.len() != 1 || cap.is_empty())
+                            {
+                                diags.push(Diagnostic {
+                                    severity: Severity::Error,
+                                    message: format!(
+                                        "`runner {{ {} }}` takes exactly one capability, got {} \
+                                         (job '{}') — write one line per capability",
+                                        d.key.value,
+                                        if cap.is_empty() && d.args.len() == 1 {
+                                            "an empty one".to_string()
+                                        } else {
+                                            d.args.len().to_string()
+                                        },
+                                        job.key.raw
+                                    ),
+                                    span: d.span.into(),
+                                });
+                                continue;
+                            }
                             match d.key.value.as_str() {
                                 "require" => {
                                     requires.insert(cap.to_string());
@@ -900,6 +1071,370 @@ fn validate_concurrency(
             ),
             span,
         });
+    }
+}
+
+/// Directives a `channel "…" { }` body takes. The kind directives come first.
+const ALERT_CHANNEL_KINDS: &[&str] = &["shell", "webhook", "email"];
+const ALERT_CHANNEL_KEYS: &[&str] = &["shell", "webhook", "email", "sign", "timeout"];
+/// Directives a `rule "…" { }` body takes — `compile::compile_rule`'s match.
+const ALERT_RULE_KEYS: &[&str] = &[
+    "when",
+    "job_key",
+    "min_attempts",
+    "min_consecutive",
+    "dead_letter",
+    "throttle",
+    "expected_within",
+    "channels",
+];
+
+/// Diagnostics for one `alerts { }` block (review 2026-10-24, F-12).
+///
+/// The compiler drops what it cannot use without a word: a rule whose `when`
+/// is unknown, an SLA/missed-fire/blocked/maintenance rule without
+/// `expected_within`, a channel without a kind; at run time a rule naming an
+/// undeclared channel delivers nowhere. So `when job_faild`, `channels
+/// "oncal"` or `webhok …` each produced an alert rule that never fires, with a
+/// green `validate`. `alert_channels` holds every channel declared in the
+/// file; `check_channel_refs` is false when the file imports others.
+fn validate_alerts(
+    alerts: &AlertsBlock,
+    alert_channels: &HashSet<String>,
+    check_channel_refs: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let err = |diags: &mut Vec<Diagnostic>, span: crate::lexer::Span, message: String| {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message,
+            span: span.into(),
+        });
+    };
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+
+    for sub in &alerts.sub_blocks {
+        let kind = sub.name.value.as_str();
+        if !matches!(kind, "channel" | "rule") {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "unknown block '{kind}' in `alerts {{ }}` — write `channel \"name\" {{ … }}` \
+                     or `rule \"name\" {{ … }}`"
+                ),
+            );
+            continue;
+        }
+        let name = match &sub.qualifier {
+            Some(q) if !q.value.is_empty() => q.value.as_str(),
+            _ => {
+                err(
+                    diags,
+                    sub.name.span,
+                    format!("alert {kind} needs a name: `{kind} \"name\" {{ … }}`"),
+                );
+                continue;
+            }
+        };
+        if !seen.insert((kind, name)) {
+            err(
+                diags,
+                sub.name.span,
+                format!("duplicate alert {kind} '{name}' — the later one replaces the earlier"),
+            );
+        }
+        let known = if kind == "channel" {
+            ALERT_CHANNEL_KEYS
+        } else {
+            ALERT_RULE_KEYS
+        };
+
+        let mut directives = Vec::new();
+        for dob in &sub.directives {
+            match dob {
+                DirectiveOrBlock::Directive(d) => {
+                    if known.contains(&d.key.value.as_str()) {
+                        directives.push(d);
+                    } else {
+                        let close = known
+                            .iter()
+                            .find(|k| crate::block_directives::edit_distance(&d.key.value, k) <= 2);
+                        err(
+                            diags,
+                            d.key.span,
+                            format!(
+                                "unknown directive '{}' in alert {kind} '{name}'{}",
+                                d.key.value,
+                                match close {
+                                    Some(k) => format!(" — did you mean '{k}'?"),
+                                    None => format!(" (known: {})", known.join(", ")),
+                                }
+                            ),
+                        );
+                    }
+                }
+                DirectiveOrBlock::Block(b) => err(
+                    diags,
+                    b.name.span,
+                    format!("alert {kind} '{name}' takes directives only, not blocks"),
+                ),
+                DirectiveOrBlock::Comment(_) => {}
+            }
+        }
+
+        fn has_placeholder(d: &Directive) -> bool {
+            d.args.iter().any(|a| a.is_placeholder)
+        }
+        fn words(d: &Directive) -> Vec<&str> {
+            d.args.iter().map(|a| a.value.as_str()).collect()
+        }
+
+        if kind == "channel" {
+            let kinds: Vec<&&Directive> = directives
+                .iter()
+                .filter(|d| ALERT_CHANNEL_KINDS.contains(&d.key.value.as_str()))
+                .collect();
+            match kinds.as_slice() {
+                [] => err(
+                    diags,
+                    sub.name.span,
+                    format!(
+                        "alert channel '{name}' has no kind — add one of `shell \"…\"`, \
+                         `webhook \"…\"` or `email \"…\"`"
+                    ),
+                ),
+                [_] => {}
+                [_, second, ..] => err(
+                    diags,
+                    second.key.span,
+                    format!(
+                        "alert channel '{name}' declares more than one kind; only one of \
+                         shell / webhook / email is used"
+                    ),
+                ),
+            }
+            let is_webhook = kinds.iter().any(|d| d.key.value == "webhook");
+            for d in &directives {
+                let w = words(d);
+                match d.key.value.as_str() {
+                    "shell" | "webhook" if w.len() != 1 || w[0].is_empty() => err(
+                        diags,
+                        d.span,
+                        format!(
+                            "`{}` in alert channel '{name}' takes one value",
+                            d.key.value
+                        ),
+                    ),
+                    "email" if w.is_empty() || w.iter().any(|v| v.trim().is_empty()) => err(
+                        diags,
+                        d.span,
+                        format!("`email` in alert channel '{name}' needs at least one address"),
+                    ),
+                    "sign" => {
+                        if !matches!(w.as_slice(), ["hmac", key] if !key.is_empty())
+                            && !has_placeholder(d)
+                        {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`sign` in alert channel '{name}' takes `sign hmac <secret>`"
+                                ),
+                            );
+                        } else if !is_webhook {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`sign` in alert channel '{name}' applies to `webhook` only"
+                                ),
+                            );
+                        }
+                    }
+                    "timeout" if !has_placeholder(d) => {
+                        let compact = match w.as_slice() {
+                            [v] => Some(v.to_string()),
+                            [n, unit] => crate::compile::verbose_duration_unit(unit)
+                                .map(|s| format!("{n}{s}")),
+                            _ => None,
+                        };
+                        if compact
+                            .as_deref()
+                            .and_then(crate::compile::parse_duration_secs)
+                            .is_none()
+                        {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`timeout {}` in alert channel '{name}' is not a duration — \
+                                     write e.g. `timeout 5s` (units: s, m, h)",
+                                    w.join(" ")
+                                ),
+                            );
+                        } else if !is_webhook {
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "`timeout` in alert channel '{name}' applies to `webhook` only"
+                                ),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+
+        // rule
+        let mut trigger = None;
+        let mut trigger_unknown = false;
+        let mut has_expected_within = false;
+        let mut has_channels = false;
+        for d in &directives {
+            let w = words(d);
+            let placeholder = has_placeholder(d);
+            match d.key.value.as_str() {
+                "when" => match w.as_slice() {
+                    _ if placeholder => trigger_unknown = true,
+                    [v] => match crate::compile::RuleTrigger::parse(v) {
+                        Some(t) => trigger = Some(t),
+                        None => {
+                            trigger_unknown = true;
+                            let close = crate::compile::RuleTrigger::VALUES
+                                .iter()
+                                .find(|k| crate::block_directives::edit_distance(v, k) <= 3);
+                            err(
+                                diags,
+                                d.span,
+                                format!(
+                                    "unknown alert trigger `when {v}` in rule '{name}'{} — \
+                                     write one of: {}",
+                                    close
+                                        .map(|k| format!(" (did you mean '{k}'?)"))
+                                        .unwrap_or_default(),
+                                    crate::compile::RuleTrigger::VALUES.join(", ")
+                                ),
+                            );
+                        }
+                    },
+                    _ => {
+                        trigger_unknown = true;
+                        err(
+                            diags,
+                            d.span,
+                            format!("`when` in rule '{name}' takes one trigger"),
+                        );
+                    }
+                },
+                "job_key" if w.len() != 1 => err(
+                    diags,
+                    d.span,
+                    format!(
+                        "`job_key` in rule '{name}' takes one glob, e.g. `job_key \"billing:*\"`"
+                    ),
+                ),
+                "min_attempts" | "min_consecutive"
+                    if !placeholder && !matches!(w.as_slice(), [v] if v.parse::<u32>().is_ok()) =>
+                {
+                    err(
+                        diags,
+                        d.span,
+                        format!("`{}` in rule '{name}' takes a whole number", d.key.value),
+                    )
+                }
+                "dead_letter"
+                    if !placeholder
+                        && !matches!(
+                            w.as_slice(),
+                            ["true" | "false" | "yes" | "no" | "on" | "off" | "1" | "0"]
+                        ) =>
+                {
+                    err(
+                        diags,
+                        d.span,
+                        format!("`dead_letter` in rule '{name}' takes `true` or `false`"),
+                    )
+                }
+                "throttle" | "expected_within" => {
+                    if d.key.value == "expected_within" {
+                        has_expected_within = true;
+                    }
+                    if !placeholder && !reads_as_duration(&w) {
+                        err(
+                            diags,
+                            d.span,
+                            format!(
+                                "`{} {}` in rule '{name}' is not a duration — write e.g. `{} 10m`",
+                                d.key.value,
+                                w.join(" "),
+                                d.key.value
+                            ),
+                        );
+                    }
+                }
+                "channels" => {
+                    if w.is_empty() {
+                        err(
+                            diags,
+                            d.span,
+                            format!("`channels` in rule '{name}' needs at least one channel name"),
+                        );
+                    }
+                    for a in &d.args {
+                        has_channels = true;
+                        if check_channel_refs
+                            && !a.is_placeholder
+                            && !alert_channels.contains(&a.value)
+                        {
+                            err(
+                                diags,
+                                a.span,
+                                format!(
+                                    "rule '{name}' sends to channel '{}', which is not declared \
+                                     in any `alerts {{ channel … }}`",
+                                    a.value
+                                ),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if trigger.is_none() && !trigger_unknown {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "alert rule '{name}' has no `when` — write one of: {}",
+                    crate::compile::RuleTrigger::VALUES.join(", ")
+                ),
+            );
+        }
+        if let Some(t) = trigger
+            && t.needs_expected_within()
+            && !has_expected_within
+        {
+            err(
+                diags,
+                sub.name.span,
+                format!(
+                    "alert rule '{name}' needs `expected_within` for this trigger — without it \
+                     the rule is dropped"
+                ),
+            );
+        }
+        if !has_channels {
+            diags.push(Diagnostic {
+                severity: Severity::Warning,
+                message: format!("alert rule '{name}' has no `channels`, so it notifies no one"),
+                span: sub.name.span.into(),
+            });
+        }
     }
 }
 
@@ -1324,6 +1859,30 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("required and excluded"))
         );
+    }
+
+    #[test]
+    fn runner_capability_directives_need_exactly_one_value() {
+        // Review 2026-10-24, F-10: a bare `require` stamped the capability
+        // `""` and parked every execution in `queued` for good.
+        for body in [
+            "require",
+            "prefer",
+            "exclude",
+            r#"require """#,
+            "require a b",
+        ] {
+            let diags = validate_src(&format!(
+                "job a:b {{ every 5 minutes; runner {{ {body} }} }}"
+            ));
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{body}: {diags:?}");
+            assert!(errs[0].message.contains("exactly one capability"), "{body}");
+        }
+        let diags = validate_src(
+            "job a:b { every 5 minutes; runner { require a; require {vars.cap}; prefer b; sticky } }",
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
     }
 
     // ── Sub-30s interval warnings ─────────────────────────────────────────────
@@ -2042,6 +2601,265 @@ job a:b { every 5 minutes }",
         // timezone, so suggesting a `timezone` here would be a false promise.
         let diags = validate_src(r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#);
         assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn job_key_with_an_empty_segment_is_an_error() {
+        for key in [":x", "a:", "a:b:", "\"a::b\""] {
+            let diags = validate_src(&format!("job {key} {{ every 5 minutes }}"));
+            assert!(
+                errors(&diags)
+                    .iter()
+                    .any(|d| d.message.contains("empty segment")),
+                "{key}: {diags:?}"
+            );
+        }
+        assert!(errors(&validate_src("job a:b:c { every 5 minutes }")).is_empty());
+    }
+
+    #[test]
+    fn defaults_after_jobs_or_imports_warns() {
+        // Review 2026-10-24, F-15.
+        for src in [
+            "import ./calendars.croniq\ndefaults { timezone Europe/Vienna }",
+            "job a:b { every 5 minutes }\ndefaults { timeout 5m }",
+        ] {
+            let diags = validate_src(src);
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.severity == Severity::Warning
+                        && d.message.contains("declared after it")),
+                "{src}: {diags:?}"
+            );
+        }
+        let diags =
+            validate_src("vars { x 1 }\ndefaults { timeout 5m }\njob a:b { every 5 minutes }");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("declared after it")),
+            "{diags:?}"
+        );
+    }
+
+    // ── alerts { } (review 2026-10-24, F-12) ─────────────────────────────────
+
+    #[test]
+    fn alert_mistakes_that_used_to_compile_to_silence_are_errors() {
+        let ch = r#"channel "oncall" { shell "/bin/page" }"#;
+        for (body, needle) in [
+            (
+                r#"rule "r" { when job_faild; channels "oncall" }"#,
+                "did you mean 'job_failed'",
+            ),
+            (
+                r#"rule "r" { job_key "*"; channels "oncall" }"#,
+                "has no `when`",
+            ),
+            (
+                r#"rule "r" { when job_sla_missed; channels "oncall" }"#,
+                "needs `expected_within`",
+            ),
+            (
+                r#"rule "r" { when job_blocked; channels "oncall" }"#,
+                "needs `expected_within`",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncal" }"#,
+                "not declared",
+            ),
+            (
+                r#"channel "x" { shell "/x"; webhok "https://h" }"#,
+                "did you mean 'webhook'",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; throttle soon }"#,
+                "not a duration",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; min_consecutive x }"#,
+                "whole number",
+            ),
+            (
+                r#"rule "r" { when job_failed; channels "oncall"; dead_letter maybe }"#,
+                "`true` or `false`",
+            ),
+            (
+                r#"channel "y" { sign hmac s3cret; shell "/x" }"#,
+                "`webhook` only",
+            ),
+            (
+                r#"channel "y" { webhook "https://h"; sign sha1 x }"#,
+                "sign hmac <secret>",
+            ),
+            (
+                r#"channel "y" { webhook "https://h"; timeout 5d }"#,
+                "not a duration",
+            ),
+            (
+                r#"channel "y" { shell "/a"; email "a@b" }"#,
+                "more than one kind",
+            ),
+            (r#"rul "r" { when job_failed }"#, "unknown block 'rul'"),
+            (
+                r#"rule "dup" { when job_failed; channels "oncall" }
+                rule "dup" { when job_failed; channels "oncall" }"#,
+                "duplicate alert rule",
+            ),
+        ] {
+            let src = format!("alerts {{ {ch}\n {body} }}");
+            let diags = validate_src(&src);
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{body}: {diags:?}");
+            assert!(
+                errs[0].message.contains(needle),
+                "{body}: {}",
+                errs[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn a_channel_without_a_kind_is_an_error() {
+        let diags = validate_src(r#"alerts { channel "x" { timeout 5s } }"#);
+        assert!(
+            errors(&diags)
+                .iter()
+                .any(|d| d.message.contains("has no kind")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_rule_without_channels_warns() {
+        let diags = validate_src(r#"alerts { rule "r" { when job_failed } }"#);
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+        assert!(diags.iter().any(|d| d.message.contains("notifies no one")));
+    }
+
+    #[test]
+    fn channel_references_are_not_checked_across_imports() {
+        let diags = validate_src(
+            "import ./alerts.croniq\nalerts { rule \"r\" { when job_failed; channels \"elsewhere\" } }",
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn readme_croniqfile_example_validates() {
+        // The README's annotated Croniqfile — including its `alerts { }`
+        // block — must stay a file `croniq validate` accepts.
+        let readme = include_str!("../../../README.md").replace("\r\n", "\n");
+        let block = readme
+            .split("```")
+            .find(|b| b.contains("alerts {") && b.contains("rule \"billing-fail\""))
+            .expect("README has an annotated Croniqfile with alerts");
+        let src = block
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or(block);
+        let ast = Parser::parse(src).unwrap_or_else(|e| panic!("README Croniqfile: {e:?}"));
+        let diags = validate(&ast);
+        assert!(errors(&diags).is_empty(), "README Croniqfile: {diags:?}");
+    }
+
+    /// The README's "Croniqfile reference" names these spellings; each must
+    /// parse and validate clean.
+    #[test]
+    fn readme_reference_spellings_validate() {
+        for schedule in [
+            "every 15 minutes",
+            "every 1 hour",
+            "every 15m",
+            "every 30s",
+            "every 2h",
+            "every day at 02:00",
+            "every monday wednesday at 09:00",
+            "every weekday at 09:00",
+            "every weekend at 10:00",
+            "every Mon..Fri at 08:30",
+            "every 1st 15th of month at 03:00",
+            "every last of month at 23:00",
+            "once at 2026-12-31T23:00:00Z",
+            "disabled",
+            "ephemeral every 5 seconds",
+            "every day at 02:00 { timezone Europe/Vienna; not_before 2026-01-01T00:00:00Z; not_after 2026-12-31T23:59:59Z }",
+        ] {
+            let src = format!("job a:b {{ {schedule}\n timezone UTC }}");
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{schedule}: {e:?}"));
+            let diags = validate(&ast);
+            assert!(errors(&diags).is_empty(), "{schedule}: {diags:?}");
+        }
+        let diags = validate_src(
+            r#"calendar c { timezone UTC
+                 include weekly monday friday; include weekly Mon; include weekly weekday
+                 include weekly "Mon".."Fri"; include monthly 1 15
+                 exclude annual 12-25; exclude annual 2026-04-06
+                 include window "08:00".."18:00" }"#,
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn bare_timezone_is_an_error_everywhere() {
+        // Review 2026-10-24, F-4: a bare `timezone` reset an inherited zone to
+        // UTC with a green `validate`.
+        for src in [
+            "defaults { timezone Europe/Vienna }\njob a:b { every day at 02:00; timezone }",
+            "defaults { timezone }\njob a:b { every 5 minutes }",
+            "job a:b { every day at 02:00 { timezone } }",
+        ] {
+            let diags = validate_src(src);
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{src}: {diags:?}");
+            assert!(errs[0].message.contains("needs a zone name"), "{src}");
+        }
+    }
+
+    #[test]
+    fn job_time_values_that_do_not_parse_are_errors() {
+        // Review 2026-10-24, D-8 / F-5: each of these used to compile to "no
+        // constraint" with a green `validate`.
+        for body in [
+            "every 5 minutes; window 8:00-18:00",
+            "every 5 minutes; window 08:00..25:00",
+            "every 5 minutes; window",
+            r#"every 5 minutes { not_after "2026-12-31" }"#,
+            r#"every 5 minutes { not_before "2026-12-31T00:00:00" }"#,
+            "once at 2026-04-31T03:00:00Z",
+        ] {
+            let diags = validate_src(&format!("job a:b {{ {body} }}"));
+            assert_eq!(errors(&diags).len(), 1, "{body}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn job_time_values_that_parse_are_accepted() {
+        for body in [
+            "every 5 minutes; timezone UTC; window 08:00..18:00",
+            "every 5 minutes; timezone UTC; window 22:00..06:00",
+            r#"every 5 minutes { not_before "2026-01-01T00:00:00Z"; not_after "2026-12-31T23:59:59+01:00" }"#,
+            "every 5 minutes { not_after {env.END} }",
+            "once at 2026-04-30T03:00:00Z",
+            "once at 2026-04-30T03:00:00",
+        ] {
+            let diags = validate_src(&format!("job a:b {{ {body} }}"));
+            assert!(errors(&diags).is_empty(), "{body}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn job_time_check_can_be_left_to_the_loader() {
+        let ast = Parser::parse("job a:b { once at 2026-04-31T03:00:00Z }").unwrap();
+        let diags = validate_with(
+            &ast,
+            Options {
+                check_job_times: false,
+                ..Options::default()
+            },
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
     }
 
     #[test]

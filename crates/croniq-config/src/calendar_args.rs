@@ -85,7 +85,7 @@ pub fn parse_annual_arg(s: &str) -> Result<AnnualArg, String> {
     }
 }
 
-fn parse_time(s: &str) -> Result<NaiveTime, String> {
+pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, String> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {
         return Err(format!("invalid time: {s}"));

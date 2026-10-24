@@ -98,9 +98,21 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
         ));
     }
 
-    let (minute, hour, dom, _month, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    let (minute, hour, dom, month, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
 
     let mut warnings = Vec::new();
+
+    // A Croniq schedule has no month field, so a restricted month used to be
+    // dropped without a word: `0 0 1 1 *` (yearly) became a monthly job that
+    // fires twelve times as often (review 2026-10-24, F-9). The schedule
+    // below still covers every month; the warning says how to narrow it.
+    if !is_star(month) {
+        warnings.push(format!(
+            "the month field `{month}` is not expressed: the converted schedule fires in \
+             every month; restrict it with a `calendar` (e.g. `include annual ...` dates) \
+             if that matters"
+        ));
+    }
 
     // ── Step-interval patterns (*/N) ──────────────────────────────────────────
 
@@ -522,6 +534,21 @@ mod tests {
         assert_eq!(sched, "every monday at 09:00");
         assert!(!warnings.is_empty());
         assert!(warnings[0].contains("dom OR dow"));
+    }
+
+    #[test]
+    fn restricted_month_emits_warning() {
+        // Review 2026-10-24, F-9: `0 0 1 1 *` is yearly, the schedule is
+        // monthly — that must not pass silently.
+        for expr in ["0 0 1 1 *", "*/5 * * 6-8 *", "0 9 * 1,7 1"] {
+            let (_, warnings) = conv_warn(expr);
+            assert!(
+                warnings.iter().any(|w| w.contains("month field")),
+                "{expr}: {warnings:?}"
+            );
+        }
+        let (_, warnings) = conv_warn("0 0 1 * *");
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     // ── Errors ────────────────────────────────────────────────────────────────

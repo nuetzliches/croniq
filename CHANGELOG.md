@@ -173,6 +173,98 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   which could never run past `not_after`. The job then showed as overdue for
   good (`croniq_job_overdue`, `job_missed_fire`) instead of finished. It is
   now marked exhausted at restart.
+- **`run_on_register` no longer re-fires on a restart of a job with a runner
+  `env { }`** (review 2026-10-24, F-1). The compiled `runner shell|exec`
+  block is stamped on the job as a JSON string, and its `env` map was written
+  in a per-process random order, so with two or more variables the job's
+  fingerprint changed on about every other restart and the job ran although
+  nothing had changed. The map is now written in key order, and the
+  fingerprint re-renders the embedded document instead of hashing it
+  verbatim. Jobs with at most one env variable keep their stored fingerprint.
+- **A `window`, `not_before` or `not_after` that does not parse no longer
+  lifts the constraint** (review 2026-10-24, D-8 / F-5). The loader read all
+  three with `.ok()`, so `not_after "2026-12-31"` (no time, no offset) ran
+  forever and `window 8:00-18:00` ran around the clock, with a green
+  `croniq validate`. `croniq validate` now reports each, and the server loads
+  the job paused with a `config_error` on `GET /v1/jobs/states`, like an
+  unresolved calendar. An impossible `once at` date (`2026-04-31`) now does the
+  same instead of aborting the boot for every job. A stored API trigger whose
+  `window` does not parse is paused the same way.
+- **A bare `timezone` no longer resets a job to UTC** (review 2026-10-24,
+  F-4). `timezone` with its argument forgotten compiled to "no zone" and
+  overrode a `defaults { timezone … }`, so the job ran in UTC, and the
+  validator stayed silent. It is now an error in `croniq validate`, in a job,
+  a schedule option and `defaults { }` alike, and the compiler keeps the
+  inherited zone.
+- **`croniq validate` checks the values of `catch_up`, `execution_mode`,
+  `max_queue_depth`, `keep_last` and `retry`** (review 2026-10-24, F-3). A
+  typo compiled to some value nobody wrote: `catch_up non` became an explicit
+  `all` and replayed every fire missed during a downtime, `execution_mode
+  ephemral` ran queued, an unknown `retry` strategy became exponential, and a
+  non-numeric queue depth or `max_attempts` vanished. Each is now an error
+  with a did-you-mean, and the compiler keeps the inherited setting instead.
+- **A bare `runner { require }` no longer parks a job's executions forever**
+  (review 2026-10-24, F-10). It stamped the capability `""`, which no runner
+  advertises. `require`, `prefer` and `exclude` now take exactly one
+  capability in `croniq validate`, and an empty one is never stamped.
+- **`croniq fmt` no longer panics on a bare `description` or breaks strings
+  with escapes** (review 2026-10-24, F-6 / F-8). A `description` without a
+  value crashed the formatter (and the generator's wasm), and a quoted
+  `"line 1\nline 2"` was written back with a real newline, so the output of
+  `croniq fmt --write` no longer parsed. The formatter now escapes `\n`, `\r`
+  and `\t`, keeps a second `description`, and `validate` reports the bare one.
+  The generator on the website escapes a multi-line description the same way.
+- **`croniq fmt --write` no longer deletes comments** (review 2026-10-24,
+  F-7). The formatter keeps comments only at the top level, in job bodies and
+  in `defaults { }`; everything inside `server { }`, `calendar { }`,
+  `alerts { }` and the other blocks was dropped when the file was
+  overwritten — about twenty lines of `Croniqfile.example`. `--write` now
+  refuses and lists the comments it would lose; without `--write` the output
+  is printed with the same warning.
+- **`croniq validate` checks `alerts { }`** (review 2026-10-24, F-12). There
+  was no check at all: `when job_faild`, a `job_sla_missed` /
+  `job_missed_fire` / `job_blocked` / `maintenance_active` rule without
+  `expected_within`, `channels "oncal"` naming no declared channel, or a
+  channel written `webhok …` each compiled to a rule that never fires. These
+  are now errors, as are unknown directives, non-numeric `min_attempts` /
+  `min_consecutive`, unreadable `throttle` / `expected_within`, a channel with
+  no or several kinds, and `sign` / `timeout` outside a webhook channel. A
+  rule without `channels` is a warning. Since the server validates at boot,
+  a Croniqfile with one of these mistakes now fails to load instead of
+  running without the alert. The README's annotated Croniqfile, which was
+  missing a closing brace, is now tested to validate.
+- **`metadata { }` rejects the reserved `__` keys** (review 2026-10-24, F-13).
+  Keys such as `__runner_exec`, `__max_concurrent` or `__timeout` are what
+  croniq stamps itself; written by hand they passed through, and a
+  `metadata { __runner_exec … }` after a `runner shell { }` block replaced its
+  payload. `croniq validate` now reports them and the compiler drops them.
+- **A placeholder that does not resolve is reported** (review 2026-10-24,
+  F-14). An unset `{env.PGPASSWORD}` or an unreadable `{file.…}` compiled to
+  its own text, so a child process got the password `env.PGPASSWORD` and a
+  webhook was signed with the string `env.X`, without a word. The server now
+  logs each such placeholder at error level on every load, and `croniq
+  validate` lists them as warnings (they resolve against the shell running
+  it, which need not be the server's). The literal fallback itself is
+  unchanged.
+- **`defaults { }` after a job, calendar or `import` warns** (review
+  2026-10-24, F-15). `defaults` applies only to what is declared after it,
+  while `vars` and `concurrency_group` are file-wide, so an `import` of
+  calendars above `defaults { timezone … }` left them on UTC silently.
+- **Smaller DSL fixes** (review 2026-10-24, F-16). `croniq fmt` quotes a job
+  key that is not one bare token (`"a b:c"`) instead of writing it back
+  unparseable; a key with an empty segment (`job :x`) is a `validate` error;
+  the generator's `parseCalendarRules` returns the validator's diagnostics,
+  not only parse errors; and `Croniqfile.example` no longer claims that an
+  unquoted `//` starts a comment (only `#` does).
+- **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
+  A Croniqfile schedule has no month field, and `croniq convert` / `croniq
+  migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.
+  Both now warn; `croniq migrate` writes every conversion warning into the
+  file as a comment above the job's schedule instead of discarding it.
+- **`croniq migrate` quotes the crontab command correctly** (review
+  2026-10-24, R-11). The command was pasted into `original_command "…"`
+  verbatim, so a `"` or a backslash in it produced a Croniqfile that did not
+  parse.
 
 ### Security
 

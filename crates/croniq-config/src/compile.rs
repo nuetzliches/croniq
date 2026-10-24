@@ -21,6 +21,54 @@ fn resolve_str(val: &StringValue, vars: &HashMap<String, String>) -> String {
     }
 }
 
+/// Every placeholder in `ast` that does not resolve right now, as the
+/// resolver's message (`unresolved placeholder 'env.PGPASSWORD'`, `cannot
+/// read file …`), in source order.
+///
+/// [`resolve_str`] keeps the raw text for such a placeholder so the file still
+/// compiles, which made it a silent literal: `env { PGPASSWORD
+/// {env.PGPASSWORD} }` with the variable unset handed the child process the
+/// string `env.PGPASSWORD`, and `sign hmac {env.X}` signed with `env.X`
+/// (review 2026-10-24, F-14). The server's loader reports this list at load
+/// time. Messages name the placeholder, never a resolved value.
+///
+/// Walks the AST through its serde form so that every `StringValue`, in
+/// every block, is covered without a per-block visitor to keep in sync.
+pub fn unresolved_placeholders(ast: &Croniqfile) -> Vec<String> {
+    fn walk(v: &serde_json::Value, vars: &HashMap<String, String>, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(map) => {
+                if map.get("is_placeholder") == Some(&serde_json::Value::Bool(true))
+                    && let Some(serde_json::Value::String(raw)) = map.get("value")
+                {
+                    if let Err(e) = placeholders::resolve(raw, vars) {
+                        let msg = e.to_string();
+                        if !out.contains(&msg) {
+                            out.push(msg);
+                        }
+                    }
+                    return;
+                }
+                for child in map.values() {
+                    walk(child, vars, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    walk(child, vars, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let vars = collect_vars(ast);
+    let mut out = Vec::new();
+    if let Ok(tree) = serde_json::to_value(ast) {
+        walk(&tree, &vars, &mut out);
+    }
+    out
+}
+
 /// Resolve the first arg of a directive into an owned `String`, applying
 /// placeholder substitution if present.
 fn first_arg(d: &Directive, vars: &HashMap<String, String>) -> Option<String> {
@@ -429,6 +477,42 @@ pub enum RuleTrigger {
     JobRecovered,
 }
 
+impl RuleTrigger {
+    /// Every `when` value, in declaration order. The one list `compile` and
+    /// `validate` read, so a new trigger cannot be accepted by one and
+    /// rejected by the other (review 2026-10-24, F-12).
+    pub const VALUES: &'static [&'static str] = &[
+        "job_failed",
+        "job_sla_missed",
+        "job_missed_fire",
+        "maintenance_active",
+        "job_blocked",
+        "job_recovered",
+    ];
+
+    /// Parse a `when` value. `None` for anything else.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "job_failed" => Some(Self::JobFailed),
+            "job_sla_missed" => Some(Self::JobSlaMissed),
+            "job_missed_fire" => Some(Self::JobMissedFire),
+            "maintenance_active" => Some(Self::MaintenanceActive),
+            "job_blocked" => Some(Self::JobBlocked),
+            "job_recovered" => Some(Self::JobRecovered),
+            _ => None,
+        }
+    }
+
+    /// Whether a rule with this trigger is meaningless without
+    /// `expected_within` — see `compile_rule`, which drops such a rule.
+    pub fn needs_expected_within(self) -> bool {
+        matches!(
+            self,
+            Self::JobSlaMissed | Self::JobMissedFire | Self::JobBlocked | Self::MaintenanceActive
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ObservabilityConfig {
     pub log: Option<LogConfig>,
@@ -499,6 +583,22 @@ pub enum ExecutionMode {
     Ephemeral,
 }
 
+impl ExecutionMode {
+    /// Every spelling `execution_mode` accepts — `validate.rs` checks against
+    /// this list (review 2026-10-24, F-3).
+    pub const VALUES: &'static [&'static str] = &["queued", "ephemeral"];
+
+    /// Parse a directive value. `None` for anything else: `ephemral` used to
+    /// compile to `queued`, silently.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "ephemeral" => Some(Self::Ephemeral),
+            _ => None,
+        }
+    }
+}
+
 /// What happens to missed fires after a server restart or prolonged downtime.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -510,6 +610,24 @@ pub enum CatchUpPolicy {
     Latest,
     /// Discard missed fires; compute the next future fire time.
     None,
+}
+
+impl CatchUpPolicy {
+    /// Every spelling `catch_up` accepts — `validate.rs` checks against this
+    /// list (review 2026-10-24, F-3).
+    pub const VALUES: &'static [&'static str] = &["all", "latest", "none"];
+
+    /// Parse a directive value. `None` for anything else: a typo such as
+    /// `catch_up non` used to compile to `all` *and* count as written out,
+    /// replaying every missed fire — the opposite of what was meant.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::All),
+            "latest" => Some(Self::Latest),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
 }
 
 /// Dispatch rank of a job's queued executions (`priority low|normal|high`,
@@ -696,7 +814,11 @@ pub enum RunnerExec {
         workdir: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user: Option<String>,
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "HashMap::is_empty",
+            serialize_with = "serialize_env_sorted"
+        )]
         env: HashMap<String, String>,
     },
     /// `argv[0] argv[1] ...` — direct exec, no shell. Avoids quoting hazards.
@@ -706,9 +828,31 @@ pub enum RunnerExec {
         workdir: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user: Option<String>,
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "HashMap::is_empty",
+            serialize_with = "serialize_env_sorted"
+        )]
         env: HashMap<String, String>,
     },
+}
+
+/// Serialise a `runner { env { … } }` map with its keys in sorted order.
+///
+/// The compiled `RunnerExec` is stamped into `metadata["__runner_exec"]` as a
+/// JSON *string*, and `JobConfig::config_hash` sees that string as an opaque
+/// scalar. A `HashMap` iterates in a per-process random order, so with two or
+/// more env entries the string — and with it the `run_on_register`
+/// fingerprint — changed on roughly every other restart, re-firing the job
+/// although nothing changed (review 2026-10-24, F-1). The field stays a
+/// `HashMap` so the runner crates that build `RunnerExec` values keep
+/// compiling; only the wire form is ordered.
+fn serialize_env_sorted<S: serde::Serializer>(
+    env: &HashMap<String, String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let sorted: std::collections::BTreeMap<&String, &String> = env.iter().collect();
+    serde::Serialize::serialize(&sorted, serializer)
 }
 
 /// Metadata key under which a compiled `RunnerExec` is stamped on the job's
@@ -1182,27 +1326,32 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 for dob in &d.directives {
                     match dob {
                         DirectiveOrBlock::Directive(dir) => match dir.key.value.as_str() {
+                            // A bare `timezone` keeps what an earlier block
+                            // set; validate.rs reports it (review 2026-10-24,
+                            // F-4).
                             "timezone" => {
-                                default_timezone = first_arg(dir, &vars);
+                                if let Some(tz) = first_arg(dir, &vars) {
+                                    default_timezone = Some(tz);
+                                }
                             }
                             "timeout" => {
                                 default_timeout = duration_arg(dir, &vars);
                             }
+                            // Unknown values keep the running default and do
+                            // not count as written out; validate.rs reports
+                            // them (review 2026-10-24, F-3).
                             "execution_mode" => {
-                                if let Some(v) = first_arg(dir, &vars) {
-                                    default_execution_mode = match v.as_str() {
-                                        "ephemeral" => ExecutionMode::Ephemeral,
-                                        _ => ExecutionMode::Queued,
-                                    };
+                                if let Some(m) =
+                                    first_arg(dir, &vars).and_then(|v| ExecutionMode::parse(&v))
+                                {
+                                    default_execution_mode = m;
                                 }
                             }
                             "catch_up" => {
-                                if let Some(v) = first_arg(dir, &vars) {
-                                    default_catch_up = match v.as_str() {
-                                        "latest" => CatchUpPolicy::Latest,
-                                        "none" => CatchUpPolicy::None,
-                                        _ => CatchUpPolicy::All,
-                                    };
+                                if let Some(c) =
+                                    first_arg(dir, &vars).and_then(|v| CatchUpPolicy::parse(&v))
+                                {
+                                    default_catch_up = c;
                                     default_catch_up_explicit = true;
                                 }
                             }
@@ -1211,12 +1360,16 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                     duration_arg(dir, &vars).filter(|v| v != "none");
                             }
                             "max_queue_depth" => {
-                                default_max_queue_depth =
-                                    first_arg(dir, &vars).and_then(|v| v.parse().ok());
+                                if let Some(n) = first_arg(dir, &vars).and_then(|v| v.parse().ok())
+                                {
+                                    default_max_queue_depth = Some(n);
+                                }
                             }
                             "keep_last" => {
-                                default_keep_last =
-                                    first_arg(dir, &vars).and_then(|v| v.parse().ok());
+                                if let Some(n) = first_arg(dir, &vars).and_then(|v| v.parse().ok())
+                                {
+                                    default_keep_last = Some(n);
+                                }
                             }
                             // Unknown values keep the running default;
                             // validate.rs reports them.
@@ -1654,7 +1807,7 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
 /// `croniq-server::parse_duration_secs` (different crate, slightly
 /// different error model). Returns `None` on garbage; caller falls
 /// back to the directive default.
-fn parse_duration_secs(s: &str) -> Option<u64> {
+pub(crate) fn parse_duration_secs(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -1690,20 +1843,10 @@ fn compile_rule(
         match d.key.value.as_str() {
             "when" => {
                 if let Some(arg) = d.args.first() {
-                    let v = resolve_str(arg, vars);
-                    trigger = match v.as_str() {
-                        "job_failed" => Some(RuleTrigger::JobFailed),
-                        "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
-                        "job_missed_fire" => Some(RuleTrigger::JobMissedFire),
-                        "maintenance_active" => Some(RuleTrigger::MaintenanceActive),
-                        "job_blocked" => Some(RuleTrigger::JobBlocked),
-                        "job_recovered" => Some(RuleTrigger::JobRecovered),
-                        // Unknown trigger values silently drop the rule
-                        // below. Operators get a runtime warning when
-                        // the evaluator notices the dropped rule on
-                        // the next reload (TBD).
-                        _ => None,
-                    };
+                    // An unknown value drops the rule below; validate.rs
+                    // reports it, so a deploy that passed `validate` never
+                    // gets here (review 2026-10-24, F-12).
+                    trigger = RuleTrigger::parse(&resolve_str(arg, vars));
                 }
             }
             "job_key" => {
@@ -1753,14 +1896,8 @@ fn compile_rule(
     // "fire on every claimed execution" (SLA), "fire the moment a job is one
     // tick late" (missed-fire), "fire on every queued execution" (blocked) or
     // "fire the moment maintenance starts" rule.
-    if matches!(
-        trigger,
-        RuleTrigger::JobSlaMissed
-            | RuleTrigger::JobMissedFire
-            | RuleTrigger::JobBlocked
-            | RuleTrigger::MaintenanceActive
-    ) && expected_within.is_none()
-    {
+    // validate.rs reports it.
+    if trigger.needs_expected_within() && expected_within.is_none() {
         return None;
     }
     Some(RuleConfig {
@@ -1848,24 +1985,29 @@ fn compile_job(
                 // Job-level `timezone` (issue #426). Was silently dropped
                 // before, which moved every wall-clock fire of the job by the
                 // zone's offset with a green `validate`.
-                "timezone" => timezone = first_arg(d, vars),
+                //
+                // Only a value overrides: a bare `timezone` used to reset an
+                // inherited `defaults { timezone … }` to `None`, i.e. UTC,
+                // silently (review 2026-10-24, F-4; ADR-0007). validate.rs
+                // reports the bare keyword.
+                "timezone" => {
+                    if let Some(tz) = first_arg(d, vars) {
+                        timezone = Some(tz);
+                    }
+                }
                 "timeout" => timeout = duration_arg(d, vars),
                 "window" => window = first_arg(d, vars),
+                // An unknown value keeps the inherited one and a `catch_up`
+                // typo does not count as written out; validate.rs reports
+                // both (review 2026-10-24, F-3).
                 "execution_mode" => {
-                    if let Some(v) = first_arg(d, vars) {
-                        execution_mode = match v.as_str() {
-                            "ephemeral" => ExecutionMode::Ephemeral,
-                            _ => ExecutionMode::Queued,
-                        };
+                    if let Some(m) = first_arg(d, vars).and_then(|v| ExecutionMode::parse(&v)) {
+                        execution_mode = m;
                     }
                 }
                 "catch_up" => {
-                    if let Some(v) = first_arg(d, vars) {
-                        catch_up = match v.as_str() {
-                            "latest" => CatchUpPolicy::Latest,
-                            "none" => CatchUpPolicy::None,
-                            _ => CatchUpPolicy::All,
-                        };
+                    if let Some(c) = first_arg(d, vars).and_then(|v| CatchUpPolicy::parse(&v)) {
+                        catch_up = c;
                         catch_up_explicit = true;
                     }
                 }
@@ -1873,10 +2015,14 @@ fn compile_job(
                     queue_ttl = duration_arg(d, vars).filter(|v| v != "none");
                 }
                 "max_queue_depth" => {
-                    max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
+                    if let Some(n) = first_arg(d, vars).and_then(|v| v.parse().ok()) {
+                        max_queue_depth = Some(n);
+                    }
                 }
                 "keep_last" => {
-                    keep_last = first_arg(d, vars).and_then(|v| v.parse().ok());
+                    if let Some(n) = first_arg(d, vars).and_then(|v| v.parse().ok()) {
+                        keep_last = Some(n);
+                    }
                 }
                 // Per-job concurrency guard (issue #278). `singleton` is a
                 // bare directive equivalent to `max_concurrent 1`. Invalid
@@ -1949,9 +2095,15 @@ fn compile_job(
                 },
                 "retry" => retry = compile_retry_block(block, vars, retry),
                 "dead_letter" => dead_letter = compile_dead_letter_block(block, vars, dead_letter),
+                // Reserved `__` keys are the compiler's own stamps
+                // (`__runner_exec`, `__max_concurrent`, `__timeout`, …): a
+                // hand-written one used to pass straight through and, after
+                // a `runner shell { }` block, replace its payload. Dropped
+                // here; validate.rs rejects them (review 2026-10-24, F-13).
                 "metadata" => {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner
+                            && !is_reserved_metadata_key(&d.key.value)
                             && let Some(v) = first_arg(d, vars)
                         {
                             metadata.insert(d.key.value.clone(), v);
@@ -1970,7 +2122,11 @@ fn compile_job(
     if let Some(ref sched) = job.schedule {
         for opt in &sched.options {
             match opt.key.value.as_str() {
-                "timezone" => timezone = first_arg(opt, vars),
+                "timezone" => {
+                    if let Some(tz) = first_arg(opt, vars) {
+                        timezone = Some(tz);
+                    }
+                }
                 "calendar" => calendar = first_arg(opt, vars),
                 "not_before" => not_before = first_arg(opt, vars),
                 "not_after" => not_after = first_arg(opt, vars),
@@ -2100,13 +2256,23 @@ fn compile_runner_block(block: &NamedBlock, vars: &HashMap<String, String>) -> R
     let mut cfg = RunnerConfig::default();
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
+            // An empty capability is never pushed: no runner advertises `""`,
+            // so a `require` of it parked every execution in `queued` for
+            // good. validate.rs reports the bare directive (review
+            // 2026-10-24, F-10).
             let val = first_arg(d, vars).unwrap_or_default();
-            match d.key.value.as_str() {
-                "require" => cfg.require.push(val),
-                "prefer" => cfg.prefer.push(val),
-                "exclude" => cfg.exclude.push(val),
-                "sticky" => cfg.sticky = true,
-                _ => {}
+            let caps = match d.key.value.as_str() {
+                "require" => &mut cfg.require,
+                "prefer" => &mut cfg.prefer,
+                "exclude" => &mut cfg.exclude,
+                "sticky" => {
+                    cfg.sticky = true;
+                    continue;
+                }
+                _ => continue,
+            };
+            if !val.is_empty() {
+                caps.push(val);
             }
         }
     }
@@ -2182,13 +2348,22 @@ fn compile_runner_exec_block(
 /// with no qualifier keeps the inherited strategy. Fields the block does
 /// not mention keep their inherited value — the same field-merge
 /// inheritance as `dead_letter` and the scalar directives (issue #348).
+/// Every `retry <strategy> { }` qualifier `croniq-bridge` maps to a runtime
+/// policy. `validate.rs` checks against this list.
+pub const RETRY_STRATEGIES: &[&str] = &["exponential", "linear", "fixed", "none"];
+
 fn compile_retry_block(
     block: &NamedBlock,
     vars: &HashMap<String, String>,
     base: RetryConfig,
 ) -> RetryConfig {
     let mut cfg = base;
-    if let Some(q) = block.qualifier.as_ref() {
+    // An unknown strategy keeps the inherited one; validate.rs reports it.
+    // It used to be stored verbatim and turned into the exponential default
+    // by `croniq-bridge` (review 2026-10-24, F-3).
+    if let Some(q) = block.qualifier.as_ref()
+        && RETRY_STRATEGIES.contains(&q.value.as_str())
+    {
         cfg.strategy = q.value.clone();
     }
 
@@ -2404,14 +2579,20 @@ mod tests {
 
     #[test]
     fn compile_server_app_url() {
-        // URLs must be quoted — an unquoted `//` would start a line comment.
-        let ast = Parser::parse(r#"server { listen :4000; app_url "https://cron.example.com" }"#)
-            .unwrap();
-        let cfg = compile(&ast);
-        assert_eq!(
-            cfg.server.app_url.as_deref(),
-            Some("https://cron.example.com")
-        );
+        // Only `#` starts a comment, so a URL reads the same quoted or bare
+        // (review 2026-10-24, F-16: this comment and the shipped example
+        // claimed an unquoted `//` started one).
+        for src in [
+            r#"server { listen :4000; app_url "https://cron.example.com" }"#,
+            r#"server { listen :4000; app_url https://cron.example.com }"#,
+        ] {
+            let cfg = compile(&Parser::parse(src).unwrap());
+            assert_eq!(
+                cfg.server.app_url.as_deref(),
+                Some("https://cron.example.com"),
+                "{src}"
+            );
+        }
     }
 
     #[test]
@@ -2540,6 +2721,81 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_placeholders_are_listed_once_each() {
+        // Review 2026-10-24, F-14.
+        let ast = Parser::parse(
+            r#"vars { region eu; broken {env.CRONIQ_TEST_F14_UNSET_A} }
+               job a:b { every 5 minutes
+                 runner shell { command "x"; env { PGPASSWORD {env.CRONIQ_TEST_F14_UNSET_B} } }
+                 runner { require {vars.region}; prefer {vars.nope} } }
+               alerts { channel "w" { webhook "https://h"; sign hmac {env.CRONIQ_TEST_F14_UNSET_B} } }
+               job a:c { every 5 minutes; description "{env.NOT_A_PLACEHOLDER_IN_QUOTES}" }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unresolved_placeholders(&ast),
+            vec![
+                "unresolved placeholder 'env.CRONIQ_TEST_F14_UNSET_A'".to_string(),
+                "unresolved placeholder 'env.CRONIQ_TEST_F14_UNSET_B'".to_string(),
+                "unresolved placeholder 'vars.nope'".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn reserved_metadata_keys_do_not_reach_the_compiled_job() {
+        // Review 2026-10-24, F-13: a hand-written `__runner_exec` after the
+        // runner block replaced the compiled payload.
+        let ast = Parser::parse(
+            r#"job a:b { every 5 minutes
+                 runner shell { command "real.sh" }
+                 metadata { __runner_exec "{}"; __timeout 1s; team ops } }"#,
+        )
+        .unwrap();
+        let job = &compile(&ast).jobs[0];
+        assert!(job.metadata[RUNNER_EXEC_METADATA_KEY].contains("real.sh"));
+        assert!(!job.metadata.contains_key("__timeout"));
+        assert_eq!(job.metadata["team"], "ops");
+    }
+
+    #[test]
+    fn unknown_values_keep_the_inherited_setting() {
+        // Review 2026-10-24, F-3 / F-10: a typo used to compile to *some*
+        // value — `catch_up non` to an explicit `all`, `ephemral` to queued,
+        // `retry exponentail` to a strategy croniq-bridge turned into the
+        // exponential default — and a bare `require` to the capability `""`.
+        let ast = Parser::parse(
+            r#"
+            defaults { catch_up none; execution_mode ephemeral; max_queue_depth 5
+                       retry fixed { delay 1s } }
+            job a:b { every 5 minutes
+                      catch_up non; execution_mode ephemral; max_queue_depth ten
+                      retry exponentail { max_attempts 2 }
+                      runner { require; prefer gpu } }
+            job a:c { every 5 minutes; catch_up latst }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let job = &cfg.jobs[0];
+        assert_eq!(job.execution_mode, ExecutionMode::Ephemeral);
+        assert_eq!(job.retry.strategy, "fixed");
+        assert_eq!(job.retry.max_attempts, 2);
+        assert!(job.runner.require.is_empty(), "{:?}", job.runner.require);
+        assert_eq!(job.runner.prefer, vec!["gpu".to_string()]);
+
+        let ast = Parser::parse("job a:c { every 5 minutes; catch_up latst; max_queue_depth x }")
+            .unwrap();
+        let job = &compile(&ast).jobs[0];
+        assert_eq!(job.catch_up, CatchUpPolicy::All);
+        assert!(
+            !job.catch_up_explicit,
+            "a typo is not a written-out catch_up"
+        );
+        assert_eq!(job.max_queue_depth, None);
+    }
+
+    #[test]
     fn job_level_timezone_beats_defaults() {
         let ast = Parser::parse(
             r#"
@@ -2551,6 +2807,31 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn bare_timezone_keeps_the_inherited_zone() {
+        // Review 2026-10-24, F-4: a bare `timezone` (argument forgotten) used
+        // to reset the inherited zone to `None`, i.e. UTC. validate.rs reports
+        // it; the compiled job must not silently move zones meanwhile.
+        let ast = Parser::parse(
+            r#"
+            defaults { timezone Europe/Vienna }
+            defaults { timezone }
+            job a:job { every day at 02:00; timezone }
+            job a:opt { every day at 02:00 { timezone } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        for job in &cfg.jobs {
+            assert_eq!(
+                job.timezone.as_deref(),
+                Some("Europe/Vienna"),
+                "{}",
+                job.key
+            );
+        }
     }
 
     #[test]

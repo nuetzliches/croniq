@@ -11,8 +11,8 @@
 //! - `format_calendar_rules(structured)` — emit the canonical rule *lines*
 //! - `format_calendar_block(structured, name)` — emit a full, paste-ready
 //!   `calendar <name> { … }` block
-//! - `next_fires(dsl, now_iso, count)` — preview upcoming firing times
-//! - `evaluate_calendar_day(dsl, day_iso)` — is this day active?
+//! - `next_fires(dsl, now_iso, count)` — preview upcoming firing times, in
+//!   UTC only (no `timezone`, no calendar gate; see `next_fire_utc`)
 //!
 //! The `format_*` emitters build a loose, unambiguous fragment from the
 //! form shape, parse it, and re-emit through `croniq_config::format` so
@@ -605,8 +605,13 @@ fn opt_str(s: &Option<String>) -> Option<&str> {
     s.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// The body of a quoted string, escaped like the formatter does
+/// ([`croniq_config::format::quote_string`]). Escaping only `\` and `"` let a
+/// newline from a textarea through raw, and the lexer rejects that as an
+/// unterminated string (review 2026-10-24, F-8).
 fn escape_dquote(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let quoted = croniq_config::format::quote_string(s);
+    quoted[1..quoted.len() - 1].to_string()
 }
 
 /// Emit a token bare when the lexer accepts it as an ident, else quote
@@ -1025,10 +1030,26 @@ fn parse_calendar_rules_inner(dsl: &str) -> ParseCalendarResult {
             let rules = cal
                 .map(|c| c.rules.iter().map(rule_to_payload).collect())
                 .unwrap_or_default();
+            // Run the semantic checks too: a syntactically fine rule such as
+            // `include weekly funday` or `include monthly 32` used to come
+            // back `ok` with no diagnostics (review 2026-10-24, F-16).
+            let mut ok = true;
+            let mut diagnostics = Vec::new();
+            for d in croniq_config::validate::validate(&ast) {
+                match d.severity {
+                    croniq_config::validate::Severity::Error => {
+                        ok = false;
+                        diagnostics.push(d.message);
+                    }
+                    croniq_config::validate::Severity::Warning => {
+                        diagnostics.push(format!("warning: {}", d.message));
+                    }
+                }
+            }
             ParseCalendarResult {
-                ok: true,
+                ok,
                 rules,
-                diagnostics: vec![],
+                diagnostics,
             }
         }
         Err(e) => ParseCalendarResult {
@@ -1331,6 +1352,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_calendar_rules_reports_semantic_errors() {
+        // Review 2026-10-24, F-16: the parser accepts `funday`; validate does not.
+        let r = parse_calendar_rules_inner("timezone UTC\ninclude weekly funday");
+        assert!(!r.ok, "{r:?}");
+        assert!(
+            r.diagnostics.iter().any(|d| d.contains("funday")),
+            "{:?}",
+            r.diagnostics
+        );
+        let r = parse_calendar_rules_inner("timezone UTC\ninclude weekly monday");
+        assert!(r.ok && r.diagnostics.is_empty(), "{r:?}");
+    }
+
+    #[test]
     fn next_fires_interval_steps_correctly() {
         let r = next_fires_inner("every 5 minutes", "2026-04-25T18:00:00Z", 3);
         assert!(r.ok, "{:?}", r.error);
@@ -1523,6 +1558,22 @@ mod tests {
         assert_eq!(
             out,
             "job etl:sync {\n  description \"Nightly ETL\"\n\n  every 5 minutes\n  timeout 15m\n}\n"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_multiline_description_stays_parseable() {
+        // Review 2026-10-24, F-8: a newline from the textarea went into the
+        // source raw, which the lexer rejects.
+        let o = JobOptions {
+            description: Some("line 1\nline 2\t\"x\"".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "etl:sync", &o).unwrap();
+        assert!(
+            out.contains(r#"description "line 1\nline 2\t\"x\"""#),
+            "{out}"
         );
         Parser::parse(&out).unwrap();
     }
