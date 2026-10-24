@@ -41,3 +41,26 @@ def test_generated_id_uses_prefix_and_persists(
     assert (tmp_path / "runner-id").read_text(encoding="utf-8").strip() == first
     # Second call must return the same persisted value.
     assert resolve_runner_id(RunnerOptions()) == first
+
+
+def test_persist_failure_is_logged_at_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Review 2026-10-24, K-6: a state directory that cannot be written used to
+    # be swallowed silently, so the runner minted a new runner_id on every
+    # restart without any signal. A regular file in place of the directory
+    # makes ``mkdir`` fail on every platform.
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("CRONIQ_RUNNER_DATA_DIR", str(blocker / "state"))
+    monkeypatch.delenv("RUNNER_ID", raising=False)
+
+    with caplog.at_level("WARNING", logger="croniq_runner.identity"):
+        fresh = resolve_runner_id(RunnerOptions(runner_id_prefix="pytest-runner"))
+
+    assert fresh.startswith("pytest-runner-")
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "will not survive a restart" in message
+    assert str(blocker / "state" / "runner-id") in message
