@@ -54,6 +54,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   module `github.com/nuetzliches/croniq/sdks/go` keeps its Go 1.25 floor. CI
   and the release workflow now build with Go 1.26, and staticcheck moves to
   2026.2.2, the first release that understands it.
+- **The OTLP exporter retries failed exports** (#913, #914). The `otlp` build
+  moves to OpenTelemetry Rust 0.33 (`opentelemetry`, `opentelemetry_sdk`,
+  `opentelemetry-otlp`, `opentelemetry-appender-tracing`) and
+  `tracing-opentelemetry` 0.34. Since 0.33, a span or log batch the collector
+  rejects with a retryable error, or that hits a transport error, is retried up
+  to three times with exponential backoff and jitter instead of being dropped
+  on the first failure. Configuration through `OTEL_EXPORTER_OTLP_*` is
+  unchanged.
 - **The Python SDK release runs the unit and conformance tests on the tag**
   (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
   did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI
