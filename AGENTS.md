@@ -52,7 +52,12 @@ operator-visible behaviour. `docs/adr/README.md` states the admission test.
 - Triggers return to Armed immediately after firing (async execution model)
 - Queue overflow protection: max 10 queued executions per job key
 - Internal metadata keys are prefixed with `__` (`__require`, `__prefer`, `__runner_exec`) — set by the scheduler / DSL compiler and consumed by runners; do not let user-supplied metadata clash with this namespace
-- JWT secret resolved from: Croniqfile > CRONIQ_JWT_SECRET env > random fallback
+- JWT secret resolved from: `CRONIQ_JWT_SECRET` env > `$DATA_DIR/jwt.secret`,
+  which is auto-created on first boot (0600 / owner-only ACL) and persisted
+  (`croniq-auth/src/jwt_secret.rs`). It signs tokens *and* derives the at-rest
+  key for stored TOTP seeds, so operators must back it up. There is no
+  Croniqfile source: `pull_api { auth … }` was removed in 0.29 and is now a
+  hard config error
 
 ## Security scanning conventions
 
