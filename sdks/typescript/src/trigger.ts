@@ -172,7 +172,6 @@ export class CroniqTriggerClient {
       throw new TypeError('CroniqTriggerClientOptions.serverUrl is required');
     }
     try {
-      // eslint-disable-next-line no-new
       new URL(opts.serverUrl);
     } catch {
       throw new TypeError(`CroniqTriggerClientOptions.serverUrl is not a valid URL: ${opts.serverUrl}`);

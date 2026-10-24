@@ -182,7 +182,6 @@ export function resolveOptions(input: CroniqRunnerOptions, defaultLogger: Logger
     throw new TypeError('CroniqRunnerOptions.serverUrl is required');
   }
   try {
-    // eslint-disable-next-line no-new
     new URL(input.serverUrl);
   } catch {
     throw new TypeError(`CroniqRunnerOptions.serverUrl is not a valid URL: ${input.serverUrl}`);

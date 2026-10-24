@@ -45,7 +45,6 @@ export function consoleLogger(minLevel: LogLevel = 'warn', prefix?: string): Log
       : `${tag}${level}: ${safe}`;
     // Map to console method, but funnel everything to stderr for warn/error
     // so application stdout stays clean for actual job output.
-    // eslint-disable-next-line no-console
     if (level === 'error' || level === 'warn') console.error(line);
     // eslint-disable-next-line no-console
     else console.log(line);
