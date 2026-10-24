@@ -19,7 +19,7 @@
     "@iconify-json/lucide": "^1.2.130",
     "@nuxt/ui": "^4.11.1",
     "@tanstack/vue-query": "^5.102.8",
-    "@vueuse/core": "^14.4.0",
+    "@vueuse/core": "^15.0.0",
     "ofetch": "^1.5.1",
     "pinia": "^4.0.3",
     "qrcode": "^1.5.4",
