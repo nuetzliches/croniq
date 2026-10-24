@@ -605,8 +605,13 @@ fn opt_str(s: &Option<String>) -> Option<&str> {
     s.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// The body of a quoted string, escaped like the formatter does
+/// ([`croniq_config::format::quote_string`]). Escaping only `\` and `"` let a
+/// newline from a textarea through raw, and the lexer rejects that as an
+/// unterminated string (review 2026-10-24, F-8).
 fn escape_dquote(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let quoted = croniq_config::format::quote_string(s);
+    quoted[1..quoted.len() - 1].to_string()
 }
 
 /// Emit a token bare when the lexer accepts it as an ident, else quote
@@ -1523,6 +1528,22 @@ mod tests {
         assert_eq!(
             out,
             "job etl:sync {\n  description \"Nightly ETL\"\n\n  every 5 minutes\n  timeout 15m\n}\n"
+        );
+        Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_multiline_description_stays_parseable() {
+        // Review 2026-10-24, F-8: a newline from the textarea went into the
+        // source raw, which the lexer rejects.
+        let o = JobOptions {
+            description: Some("line 1\nline 2\t\"x\"".into()),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "etl:sync", &o).unwrap();
+        assert!(
+            out.contains(r#"description "line 1\nline 2\t\"x\"""#),
+            "{out}"
         );
         Parser::parse(&out).unwrap();
     }

@@ -1,7 +1,49 @@
-//! Round-trip safe formatter for Croniqfile AST.
-//! Preserves comments, blank lines, and quoting style.
+//! Formatter for the Croniqfile AST.
+//!
+//! Preserves quoting style, and comments where the AST keeps them: at the top
+//! level, in job bodies and in `defaults { }`. Comments inside other blocks
+//! (`server { }`, `calendar { }`, `alerts { }`, schedule options, …) are not
+//! in the AST and are lost, and blank lines are normalised everywhere — so
+//! callers that write the result back must check [`lost_comments`] first
+//! (review 2026-10-24, F-7).
 
 use crate::ast::*;
+
+/// The comments of `source` that `formatted` no longer contains, in source
+/// order (compared as a multiset of comment texts).
+///
+/// `croniq fmt --write` refuses to overwrite a file when this is non-empty:
+/// the formatter used to describe itself as comment-preserving while it
+/// dropped every comment outside job bodies and `defaults { }` — about twenty
+/// lines of the shipped `Croniqfile.example` (review 2026-10-24, F-7). Source
+/// that does not lex has no comments to lose and yields an empty list.
+pub fn lost_comments(source: &str, formatted: &str) -> Vec<String> {
+    use crate::lexer::{Lexer, TokenKind};
+    let comments = |src: &str| -> Vec<String> {
+        Lexer::tokenize(src)
+            .map(|tokens| {
+                tokens
+                    .into_iter()
+                    .filter_map(|t| match t.kind {
+                        TokenKind::Comment(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut kept = comments(formatted);
+    let mut lost = Vec::new();
+    for c in comments(source) {
+        match kept.iter().position(|k| *k == c) {
+            Some(i) => {
+                kept.swap_remove(i);
+            }
+            None => lost.push(c),
+        }
+    }
+    lost
+}
 
 /// Format a Croniqfile AST back to source text.
 pub fn format(ast: &Croniqfile) -> String {
@@ -597,6 +639,7 @@ fn write_indent(out: &mut String, level: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexer::{Lexer, TokenKind};
     use crate::parser::Parser;
 
     #[test]
@@ -931,6 +974,62 @@ job etl:sync {
         // Idempotent: formatting the formatted output changes nothing.
         let again = format(&crate::parser::Parser::parse(&out).unwrap());
         assert_eq!(out, again);
+    }
+
+    /// Review 2026-10-24, F-7: formatting the shipped examples must parse,
+    /// be idempotent, compile to the same jobs, and report exactly the
+    /// comments it drops — the contract `croniq fmt --write` relies on.
+    #[test]
+    fn example_croniqfiles_round_trip() {
+        for (name, src) in [
+            (
+                "Croniqfile.example",
+                include_str!("../../../Croniqfile.example"),
+            ),
+            ("Croniqfile.demo", include_str!("../../../Croniqfile.demo")),
+            ("Croniqfile.busy", include_str!("../../../Croniqfile.busy")),
+        ] {
+            let src = src.replace("\r\n", "\n");
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let once = format(&ast);
+            let reparsed =
+                Parser::parse(&once).unwrap_or_else(|e| panic!("{name} formatted: {e:?}"));
+            let twice = format(&reparsed);
+            assert_eq!(once, twice, "{name}: fmt is not idempotent");
+
+            let hashes = |ast: &Croniqfile| -> Vec<(String, String)> {
+                crate::compile::compile(ast)
+                    .jobs
+                    .iter()
+                    .map(|j| (j.key.clone(), j.config_hash()))
+                    .collect()
+            };
+            assert_eq!(hashes(&ast), hashes(&reparsed), "{name}: jobs changed");
+
+            // Whatever the formatter drops, `lost_comments` names: nothing
+            // is lost between the first and second pass, and every comment
+            // of the source is either in the output or in the lost list.
+            assert!(lost_comments(&once, &twice).is_empty(), "{name}");
+            let lost = lost_comments(&src, &once);
+            let in_source = Lexer::tokenize(&src)
+                .unwrap()
+                .iter()
+                .filter(|t| matches!(t.kind, TokenKind::Comment(_)))
+                .count();
+            let in_output = Lexer::tokenize(&once)
+                .unwrap()
+                .iter()
+                .filter(|t| matches!(t.kind, TokenKind::Comment(_)))
+                .count();
+            assert_eq!(in_source, in_output + lost.len(), "{name}");
+        }
+    }
+
+    #[test]
+    fn lost_comments_names_what_the_formatter_drops() {
+        let src = "server {\n  # in server\n  listen :4000\n}\n# top\njob a:b {\n  # in job\n  every 5 minutes\n}\n";
+        let out = format(&Parser::parse(src).unwrap());
+        assert_eq!(lost_comments(src, &out), vec!["in server".to_string()]);
     }
 
     #[test]

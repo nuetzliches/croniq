@@ -213,6 +213,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `"line 1\nline 2"` was written back with a real newline, so the output of
   `croniq fmt --write` no longer parsed. The formatter now escapes `\n`, `\r`
   and `\t`, keeps a second `description`, and `validate` reports the bare one.
+  The generator on the website escapes a multi-line description the same way.
+- **`croniq fmt --write` no longer deletes comments** (review 2026-10-24,
+  F-7). The formatter keeps comments only at the top level, in job bodies and
+  in `defaults { }`; everything inside `server { }`, `calendar { }`,
+  `alerts { }` and the other blocks was dropped when the file was
+  overwritten — about twenty lines of `Croniqfile.example`. `--write` now
+  refuses and lists the comments it would lose; without `--write` the output
+  is printed with the same warning.
 - **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
   A Croniqfile schedule has no month field, and `croniq convert` / `croniq
   migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.

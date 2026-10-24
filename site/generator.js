@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-10-22a'
+const WASM_VERSION = '2026-10-24a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-22a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-24a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
