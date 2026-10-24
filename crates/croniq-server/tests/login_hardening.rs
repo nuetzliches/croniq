@@ -375,8 +375,17 @@ async fn login_is_throttled_per_peer_address() {
     let (status, _) = post_from(app.clone(), "/v1/auth/login", body.clone(), Some(bystander)).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
-    // The second-step endpoint shares the same per-IP budget, which the
-    // attacker has already spent.
+    // The budget is per (address, username): another user behind the same
+    // address — one reverse proxy — can still sign in (review 2026-10-24,
+    // A-3), and so can the TOTP step, which names no username.
+    let (status, _) = post_from(
+        app.clone(),
+        "/v1/auth/login",
+        serde_json::json!({ "username": "alice", "password": PASSWORD }),
+        Some(attacker),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let (status, _) = post_from(
         app,
         "/v1/auth/login/totp",
@@ -384,7 +393,20 @@ async fn login_is_throttled_per_peer_address() {
         Some(attacker),
     )
     .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// Review 2026-10-24, A-3: successful sign-ins hand their attempt back, so
+/// ordinary traffic through one proxy address never trips the throttle.
+#[tokio::test]
+async fn successful_logins_do_not_use_the_budget() {
+    let app = app_with(false, None);
+    let proxy: SocketAddr = "10.0.0.1:443".parse().unwrap();
+    let body = serde_json::json!({ "username": "admin", "password": PASSWORD });
+    for attempt in 1..=(IP_MAX_ATTEMPTS + 2) {
+        let (status, _) = post_from(app.clone(), "/v1/auth/login", body.clone(), Some(proxy)).await;
+        assert_eq!(status, StatusCode::OK, "login {attempt}");
+    }
 }
 
 #[tokio::test]

@@ -374,6 +374,44 @@ The label is non-sensitive (no hostnames, no internal IPs) and is exposed
 publicly via `/version`. Don't put credentials, infrastructure tags, or
 anything you wouldn't print on a sticker into this variable.
 
+### Login throttling behind a reverse proxy (`CRONIQ_TRUSTED_PROXIES`)
+
+`POST /v1/auth/login` and `POST /v1/auth/login/totp` are rate-limited in
+memory, per client address, over a sliding five-minute window:
+
+- at most **30 failed attempts** for one (client address, username) pair;
+- at most **300 failed attempts** from one client address, all usernames
+  together.
+
+Only failures count: an attempt that ends in a sign-in (or in the TOTP or
+enrolment step that follows a correct password) is given back. A refused
+attempt gets `429` with `"error": "rate_limited"`. The per-account lockout
+(five wrong passwords lock the account for 15 minutes) applies independently.
+
+The client address is the TCP peer. Behind a reverse proxy that peer is the
+proxy, so every user shares its budget unless Croniq is told to believe the
+proxy's `X-Forwarded-For` header:
+
+```sh
+CRONIQ_TRUSTED_PROXIES="10.0.0.0/8, 127.0.0.1"
+```
+
+The value is a comma-separated list of addresses and CIDR ranges (IPv4 and
+IPv6). For a request whose peer is in the list, Croniq walks
+`X-Forwarded-For` from right to left, skips entries that are themselves
+trusted, and uses the first one that is not. A request from any other peer is
+keyed on that peer, whatever headers it carries — on a directly exposed
+server the header is whatever the client wants it to be. List only proxies
+you run, and make sure each one appends to `X-Forwarded-For` rather than
+passing a client-supplied value through unchanged (nginx:
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). An entry
+that does not parse stops the server at boot.
+
+Without `CRONIQ_TRUSTED_PROXIES`, the per-username key still keeps one
+attacked account from using up the budget of every other user behind the
+same proxy, but the 300-attempt total is shared. Throttling at the proxy as
+well remains a good idea.
+
 ### PostgreSQL TLS (`CRONIQ_PG_SSLMODE`, `CRONIQ_PG_ROOT_CERT`)
 
 Applies to the Postgres backend only (built with the off-by-default

@@ -693,6 +693,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   credential, not an interactive session, and together with the account
   password it was enough to switch the second factor off.
 
+- **The login throttle works behind a reverse proxy** (review 2026-10-24,
+  A-3). The per-address window on `POST /v1/auth/login` and
+  `/v1/auth/login/totp` was keyed on the TCP peer and counted every attempt,
+  successful or not, so behind a proxy all users shared one budget of 30
+  attempts per five minutes and anyone could exhaust it for everyone. The
+  window is now keyed per (client address, username), with a separate
+  per-address total of 300; only failed attempts count; and the new
+  `CRONIQ_TRUSTED_PROXIES` (addresses or CIDR ranges) names the proxies whose
+  `X-Forwarded-For` is believed — the header of any other peer is ignored.
+  See [Login throttling behind a reverse proxy](docs/operations.md#login-throttling-behind-a-reverse-proxy-croniq_trusted_proxies).
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

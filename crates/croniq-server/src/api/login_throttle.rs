@@ -3,16 +3,20 @@
 //! Three independent guards, all deliberately self-contained (a `Mutex`
 //! around a `HashMap`, no external dependencies, no persistence):
 //!
-//! * **Per-IP sliding window** on `POST /v1/auth/login` and
+//! * **Per-client sliding window** on `POST /v1/auth/login` and
 //!   `POST /v1/auth/login/totp`: at most [`IP_MAX_ATTEMPTS`] attempts per
-//!   [`IP_WINDOW`], keyed by the **socket peer address**. `X-Forwarded-For`
-//!   is intentionally not parsed — it is attacker-controlled on a directly
-//!   exposed server. Deployments behind a reverse proxy see the proxy's
-//!   address here and should throttle at the proxy instead. This layer
-//!   complements (does not replace) the per-account lockout: the lockout
-//!   stops online brute force against one account, the IP window stops one
-//!   address from hammering many accounts or from using the lockout itself
-//!   as a denial-of-service lever.
+//!   [`IP_WINDOW`] for one (client address, username) pair, and at most
+//!   [`IP_TOTAL_MAX_ATTEMPTS`] per client address across all usernames. The
+//!   client address is the socket peer, or — only when that peer is listed
+//!   in `CRONIQ_TRUSTED_PROXIES` — the first untrusted hop of
+//!   `X-Forwarded-For` (see [`TrustedProxies`]). An attempt that ends in a
+//!   successful sign-in is refunded, so only failures use the budget.
+//!   Behind a reverse proxy that is not declared trusted every request
+//!   shares the proxy's address; the per-username key keeps one attacked
+//!   account from locking every other user out (review 2026-10-24, A-3).
+//!   This layer complements (does not replace) the per-account lockout: the
+//!   lockout stops online brute force against one account, the window stops
+//!   one address from hammering many accounts.
 //! * **Per-`mfa_token` failure counter** for the TOTP step: after
 //!   [`MFA_MAX_FAILURES`] wrong codes the token is invalidated — the entry
 //!   outlives the token's own 5-minute TTL, so the caller must redo the
@@ -39,6 +43,12 @@ use axum::http::request::Parts;
 /// Generous on purpose — it only needs to be far below the ~1M guesses a
 /// 6-digit space needs, not tight enough to bother a shared NAT.
 pub const IP_MAX_ATTEMPTS: usize = 30;
+/// Attempts per client address across all usernames within [`IP_WINDOW`].
+/// Bounds username rotation from one address now that the tighter budget
+/// above is keyed per (address, username).
+pub const IP_TOTAL_MAX_ATTEMPTS: usize = IP_MAX_ATTEMPTS * 10;
+/// Usernames are cut to this many characters before they become a map key.
+const USERNAME_KEY_MAX: usize = 128;
 /// Length of the per-IP sliding window.
 pub const IP_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// Failed second-factor attempts after which an `mfa_token` is invalidated.
@@ -70,36 +80,76 @@ struct StepEntry {
 /// Shared throttling state, one instance per server (`ServerState`).
 #[derive(Default)]
 pub struct LoginThrottle {
-    ip_attempts: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    /// Attempts per (client address, lower-cased username). The TOTP step,
+    /// which carries no username, uses the empty string.
+    ip_attempts: Mutex<HashMap<(IpAddr, String), Vec<Instant>>>,
+    /// Attempts per client address, all usernames together.
+    ip_totals: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    /// Peers whose `X-Forwarded-For` is believed (`CRONIQ_TRUSTED_PROXIES`).
+    pub trusted_proxies: TrustedProxies,
     mfa_failures: Mutex<HashMap<String, MfaEntry>>,
     consumed_steps: Mutex<HashMap<String, StepEntry>>,
 }
 
 impl LoginThrottle {
-    /// Record one login attempt from `ip` and report whether it is allowed.
-    /// `None` (no `ConnectInfo`, e.g. handler-level tests) always passes —
-    /// there is nothing meaningful to key on.
+    /// Record one attempt from `ip` that names no username (the TOTP step)
+    /// and report whether it is allowed. See [`LoginThrottle::allow_login`].
     pub fn allow_ip(&self, ip: Option<IpAddr>) -> bool {
-        self.allow_ip_at(ip, Instant::now())
+        self.allow_login(ip, "")
     }
 
+    #[cfg(test)]
     fn allow_ip_at(&self, ip: Option<IpAddr>, now: Instant) -> bool {
+        self.allow_login_at(ip, "", now)
+    }
+
+    /// Record one login attempt from `ip` for `username` and report whether
+    /// it is allowed. `None` (no `ConnectInfo`, e.g. handler-level tests)
+    /// always passes — there is nothing meaningful to key on.
+    ///
+    /// The attempt is recorded up front, not after the outcome is known, so
+    /// a burst of parallel requests cannot all slip in before the first one
+    /// fails. A successful sign-in hands it back via
+    /// [`LoginThrottle::refund_login`].
+    pub fn allow_login(&self, ip: Option<IpAddr>, username: &str) -> bool {
+        self.allow_login_at(ip, username, Instant::now())
+    }
+
+    fn allow_login_at(&self, ip: Option<IpAddr>, username: &str, now: Instant) -> bool {
         let Some(ip) = ip else { return true };
-        let mut map = self.ip_attempts.lock().unwrap();
-        if map.len() > PRUNE_THRESHOLD {
-            map.retain(|_, attempts| {
-                attempts
-                    .last()
-                    .is_some_and(|last| now.duration_since(*last) < IP_WINDOW)
-            });
-        }
-        let attempts = map.entry(ip).or_default();
-        attempts.retain(|t| now.duration_since(*t) < IP_WINDOW);
-        if attempts.len() >= IP_MAX_ATTEMPTS {
+        let key = (ip, username_key(username));
+        let mut pairs = self.ip_attempts.lock().unwrap();
+        let mut totals = self.ip_totals.lock().unwrap();
+        prune(&mut pairs, now);
+        prune(&mut totals, now);
+        let pair = pairs.entry(key).or_default();
+        pair.retain(|t| now.duration_since(*t) < IP_WINDOW);
+        let total = totals.entry(ip).or_default();
+        total.retain(|t| now.duration_since(*t) < IP_WINDOW);
+        if pair.len() >= IP_MAX_ATTEMPTS || total.len() >= IP_TOTAL_MAX_ATTEMPTS {
             return false;
         }
-        attempts.push(now);
+        pair.push(now);
+        total.push(now);
         true
+    }
+
+    /// Give back the attempt recorded by [`LoginThrottle::allow_login`] once
+    /// it turned into a successful sign-in. Without this, 30 ordinary logins
+    /// through one proxy address in five minutes locked everybody out.
+    pub fn refund_login(&self, ip: Option<IpAddr>, username: &str) {
+        let Some(ip) = ip else { return };
+        if let Some(v) = self
+            .ip_attempts
+            .lock()
+            .unwrap()
+            .get_mut(&(ip, username_key(username)))
+        {
+            v.pop();
+        }
+        if let Some(v) = self.ip_totals.lock().unwrap().get_mut(&ip) {
+            v.pop();
+        }
     }
 
     /// Whether this `mfa_token` (keyed by its hash) has burned through its
@@ -177,26 +227,161 @@ impl LoginThrottle {
     }
 }
 
-/// The socket peer address of the request, when the router was served via
-/// `into_make_service_with_connect_info::<SocketAddr>()` (as `main.rs`
-/// does). `None` when no `ConnectInfo` extension is present — router-level
-/// tests and direct handler calls — in which case IP throttling is
-/// skipped. Deliberately ignores `X-Forwarded-For` (see module docs).
+fn username_key(username: &str) -> String {
+    username
+        .trim()
+        .chars()
+        .take(USERNAME_KEY_MAX)
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn prune<K: std::hash::Hash + Eq>(map: &mut HashMap<K, Vec<Instant>>, now: Instant) {
+    if map.len() > PRUNE_THRESHOLD {
+        map.retain(|_, attempts| {
+            attempts
+                .last()
+                .is_some_and(|last| now.duration_since(*last) < IP_WINDOW)
+        });
+    }
+}
+
+/// Reverse proxies whose `X-Forwarded-For` header the login throttle
+/// believes, from `CRONIQ_TRUSTED_PROXIES` (comma-separated addresses or
+/// CIDR ranges, e.g. `10.0.0.0/8, 127.0.0.1`). Empty by default: on a
+/// directly exposed server the header is attacker-controlled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrustedProxies(Vec<(IpAddr, u8)>);
+
+impl TrustedProxies {
+    pub const ENV: &'static str = "CRONIQ_TRUSTED_PROXIES";
+
+    /// Parse the env value. Errors name the offending entry.
+    pub fn parse(spec: &str) -> Result<Self, String> {
+        let mut nets = Vec::new();
+        for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let (addr, len) = match entry.split_once('/') {
+                Some((a, l)) => (a, Some(l)),
+                None => (entry, None),
+            };
+            let addr: IpAddr = addr.parse().map_err(|_| {
+                format!(
+                    "{}: '{entry}' is not an IP address or CIDR range",
+                    Self::ENV
+                )
+            })?;
+            let addr = addr.to_canonical();
+            let max = if addr.is_ipv4() { 32 } else { 128 };
+            let len = match len {
+                None => max,
+                Some(l) => l.parse::<u8>().ok().filter(|l| *l <= max).ok_or_else(|| {
+                    format!("{}: '{entry}' has an invalid prefix length", Self::ENV)
+                })?,
+            };
+            nets.push((addr, len));
+        }
+        Ok(Self(nets))
+    }
+
+    /// Read [`TrustedProxies::ENV`]; unset or empty means no trusted proxy.
+    pub fn from_env() -> Result<Self, String> {
+        match std::env::var(Self::ENV) {
+            Ok(v) => Self::parse(&v),
+            Err(std::env::VarError::NotPresent) => Ok(Self::default()),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(format!("{} is not valid Unicode", Self::ENV))
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        let ip = ip.to_canonical();
+        self.0.iter().any(|(net, len)| match (net, ip) {
+            (IpAddr::V4(n), IpAddr::V4(i)) => {
+                let mask = u32::MAX.checked_shl(32 - u32::from(*len)).unwrap_or(0);
+                u32::from(*n) & mask == u32::from(i) & mask
+            }
+            (IpAddr::V6(n), IpAddr::V6(i)) => {
+                let mask = u128::MAX.checked_shl(128 - u32::from(*len)).unwrap_or(0);
+                u128::from(*n) & mask == u128::from(i) & mask
+            }
+            _ => false,
+        })
+    }
+
+    /// The client address for a request from `peer` carrying these
+    /// `X-Forwarded-For` values. Only a trusted peer's header is read, and
+    /// it is walked right to left past further trusted hops, so the result
+    /// is the nearest address no trusted proxy accounts for. An entry that
+    /// does not parse stops the walk at the hop that wrote it.
+    pub fn client_ip<'a>(
+        &self,
+        peer: IpAddr,
+        forwarded_for: impl Iterator<Item = &'a str>,
+    ) -> IpAddr {
+        if !self.contains(peer) {
+            return peer;
+        }
+        let hops: Vec<&str> = forwarded_for
+            .flat_map(|v| v.split(','))
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .collect();
+        let mut client = peer;
+        for hop in hops.iter().rev() {
+            let Some(ip) = parse_hop(hop) else {
+                return client;
+            };
+            client = ip;
+            if !self.contains(ip) {
+                return ip;
+            }
+        }
+        client
+    }
+}
+
+fn parse_hop(hop: &str) -> Option<IpAddr> {
+    hop.parse::<IpAddr>()
+        .or_else(|_| hop.parse::<SocketAddr>().map(|s| s.ip()))
+        .ok()
+        .map(|ip| ip.to_canonical())
+}
+
+/// The client address of the request: the socket peer, when the router was
+/// served via `into_make_service_with_connect_info::<SocketAddr>()` (as
+/// `main.rs` does), or the forwarded client when that peer is a trusted
+/// proxy (see [`TrustedProxies`]). `None` when no `ConnectInfo` extension
+/// is present — router-level tests and direct handler calls — in which
+/// case IP throttling is skipped.
 pub struct ClientIp(pub Option<IpAddr>);
 
-impl<S> FromRequestParts<S> for ClientIp
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<std::sync::Arc<super::ServerState>> for ClientIp {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(ClientIp(
-            parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|ci| ci.0.ip()),
-        ))
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &std::sync::Arc<super::ServerState>,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(peer) = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip())
+        else {
+            return Ok(ClientIp(None));
+        };
+        let xff = parts
+            .headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|v| v.to_str().ok());
+        Ok(ClientIp(Some(
+            state.login_throttle.trusted_proxies.client_ip(peer, xff),
+        )))
     }
 }
 
@@ -232,6 +417,99 @@ mod tests {
         // may try again.
         let later = now + IP_WINDOW + Duration::from_secs(1);
         assert!(t.allow_ip_at(ip(1), later));
+    }
+
+    /// Review 2026-10-24, A-3: behind one proxy address, an attacked
+    /// account must not lock the other users out, and successful sign-ins
+    /// must not use up the budget.
+    #[test]
+    fn per_username_budget_and_refund_on_success() {
+        let t = LoginThrottle::default();
+        let now = Instant::now();
+        for _ in 0..IP_MAX_ATTEMPTS {
+            assert!(t.allow_login_at(ip(1), "victim", now));
+        }
+        assert!(!t.allow_login_at(ip(1), "victim", now));
+        assert!(
+            !t.allow_login_at(ip(1), "VICTIM ", now),
+            "key is normalised"
+        );
+        assert!(
+            t.allow_login_at(ip(1), "alice", now),
+            "other users unaffected"
+        );
+
+        // A hundred successful logins through the same address cost nothing.
+        for _ in 0..100 {
+            assert!(t.allow_login_at(ip(1), "bob", now));
+            t.refund_login(ip(1), "bob");
+        }
+        assert!(t.allow_login_at(ip(1), "bob", now));
+
+        // Rotating usernames is bounded by the per-address total.
+        let t = LoginThrottle::default();
+        let mut allowed = 0;
+        for i in 0..(IP_TOTAL_MAX_ATTEMPTS + 10) {
+            if t.allow_login_at(ip(2), &format!("user{i}"), now) {
+                allowed += 1;
+            }
+        }
+        assert_eq!(allowed, IP_TOTAL_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn trusted_proxies_parse_and_match() {
+        let tp = TrustedProxies::parse(" 10.0.0.0/8, 127.0.0.1 ,fd00::/8").unwrap();
+        assert!(tp.contains("10.1.2.3".parse().unwrap()));
+        assert!(tp.contains("127.0.0.1".parse().unwrap()));
+        assert!(
+            tp.contains("::ffff:10.9.9.9".parse().unwrap()),
+            "v4-mapped peer"
+        );
+        assert!(tp.contains("fd12::1".parse().unwrap()));
+        assert!(!tp.contains("11.0.0.1".parse().unwrap()));
+        assert!(!tp.contains("127.0.0.2".parse().unwrap()));
+        assert!(TrustedProxies::parse("").unwrap().is_empty());
+        assert!(TrustedProxies::parse("10.0.0.0/33").is_err());
+        assert!(TrustedProxies::parse("proxy.local").is_err());
+        assert!(
+            TrustedProxies::parse("0.0.0.0/0")
+                .unwrap()
+                .contains("8.8.8.8".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn forwarded_for_is_read_only_from_trusted_peers() {
+        let tp = TrustedProxies::parse("10.0.0.0/8").unwrap();
+        let peer_proxy: IpAddr = "10.0.0.5".parse().unwrap();
+        let peer_direct: IpAddr = "198.51.100.7".parse().unwrap();
+        let client: IpAddr = "203.0.113.9".parse().unwrap();
+
+        // Direct, untrusted peer: the header is ignored.
+        assert_eq!(
+            tp.client_ip(peer_direct, ["203.0.113.9"].into_iter()),
+            peer_direct
+        );
+        // Trusted proxy: the rightmost untrusted hop wins, so a spoofed
+        // left-hand entry the client sent itself is not believed.
+        assert_eq!(
+            tp.client_ip(peer_proxy, ["1.2.3.4, 203.0.113.9, 10.0.0.9"].into_iter()),
+            client
+        );
+        // Several header lines are one list.
+        assert_eq!(
+            tp.client_ip(peer_proxy, ["1.2.3.4", "203.0.113.9:4711"].into_iter()),
+            client
+        );
+        // No header, or garbage: fall back to the proxy itself.
+        assert_eq!(tp.client_ip(peer_proxy, std::iter::empty()), peer_proxy);
+        assert_eq!(tp.client_ip(peer_proxy, ["junk"].into_iter()), peer_proxy);
+        // Nothing trusted: never read.
+        assert_eq!(
+            TrustedProxies::default().client_ip(peer_proxy, ["203.0.113.9"].into_iter()),
+            peer_proxy
+        );
     }
 
     #[test]
