@@ -77,7 +77,6 @@ const EXECUTION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
  * already escapes these.
  */
 export function escapeControlChars(value: string): string {
-  // eslint-disable-next-line no-control-regex
   return value.replace(/[\u0000-\u001F\u007F-\u009F]/g, (ch) => {
     switch (ch) {
       case '\n':
