@@ -1,5 +1,8 @@
 //! Contract tests: verify store implementations satisfy the trait contracts.
-//! These tests run against both SQLite and in-memory backends.
+//! These tests run against the SQLite backend only: `create_memory_store` is
+//! SQLite in `:memory:` mode, not a separate backend. Postgres gets its own,
+//! narrower coverage in `tests/pg_integration.rs`, which needs a live server
+//! and runs in CI.
 
 use crate::memory::create_memory_store;
 use crate::models::*;
@@ -417,55 +420,10 @@ fn find_queued_executions() {
         store.create_execution(&exec).unwrap();
     }
 
-    let queued = store.find_queued_executions(&[], 10).unwrap();
+    let queued = store.find_queued_executions(10).unwrap();
     assert_eq!(queued.len(), 3);
     // Should be ordered by fire_at
     assert!(queued[0].fire_at <= queued[1].fire_at);
-}
-
-#[test]
-fn find_queued_executions_filters_by_capabilities() {
-    let store = create_memory_store().unwrap();
-
-    // Execution requiring "billing" capability
-    let mut exec1 = make_execution("billing:invoice", utc(2026, 3, 29, 12, 0));
-    exec1.metadata.insert(
-        "__require".into(),
-        serde_json::to_string(&vec!["billing"]).unwrap(),
-    );
-    store.create_execution(&exec1).unwrap();
-
-    // Execution requiring "etl" capability
-    let mut exec2 = make_execution("etl:sync", utc(2026, 3, 29, 12, 1));
-    exec2.id = Uuid::new_v4();
-    exec2.metadata.insert(
-        "__require".into(),
-        serde_json::to_string(&vec!["etl"]).unwrap(),
-    );
-    store.create_execution(&exec2).unwrap();
-
-    // Execution with no requirements
-    let mut exec3 = make_execution("reports:daily", utc(2026, 3, 29, 12, 2));
-    exec3.id = Uuid::new_v4();
-    store.create_execution(&exec3).unwrap();
-
-    // Runner with "billing" capability should see exec1 + exec3
-    let billing = store
-        .find_queued_executions(&["billing".into()], 10)
-        .unwrap();
-    assert_eq!(billing.len(), 2);
-    assert!(billing.iter().any(|e| e.job_key == "billing:invoice"));
-    assert!(billing.iter().any(|e| e.job_key == "reports:daily"));
-
-    // Runner with "etl" capability should see exec2 + exec3
-    let etl = store.find_queued_executions(&["etl".into()], 10).unwrap();
-    assert_eq!(etl.len(), 2);
-    assert!(etl.iter().any(|e| e.job_key == "etl:sync"));
-    assert!(etl.iter().any(|e| e.job_key == "reports:daily"));
-
-    // Empty capabilities = all executions (no filtering)
-    let all = store.find_queued_executions(&[], 10).unwrap();
-    assert_eq!(all.len(), 3);
 }
 
 #[test]
@@ -4631,4 +4589,356 @@ fn list_executions_by_job_keys() {
     assert!(keys_for(Some(Vec::new())).is_empty());
     // No set is no filter.
     assert_eq!(keys_for(None).len(), 3);
+}
+
+// ─── Page limits (review 2026-10-24, S-4) ───
+
+/// A caller-supplied `limit` beyond [`MAX_PAGE_LIMIT`] is clamped by the
+/// store itself, whatever the handler in front of it checked.
+#[test]
+fn paged_listings_clamp_the_limit() {
+    let store = create_memory_store().unwrap();
+    let rows = MAX_PAGE_LIMIT as i64 + 1;
+    for n in 0..rows {
+        let at = now() - chrono::Duration::seconds(n);
+        store
+            .record_alert_delivery(&make_delivery(
+                "billing:invoice",
+                at,
+                AlertDeliveryState::Delivered,
+                AlertDeliveryKind::Alert,
+            ))
+            .unwrap();
+        store
+            .create_note(&make_note("billing:invoice", None, NoteKind::Note, at))
+            .unwrap();
+    }
+
+    let deliveries = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            limit: Some(u32::MAX),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(deliveries.len(), MAX_PAGE_LIMIT as usize);
+
+    let notes = store
+        .list_notes(&NoteFilter {
+            job_key: Some("billing:invoice".into()),
+            execution_ids: Vec::new(),
+            limit: Some(u32::MAX),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), MAX_PAGE_LIMIT as usize);
+
+    // Below the cap the caller's limit still holds.
+    let page = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            limit: Some(7),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.len(), 7);
+}
+
+#[test]
+fn list_executions_accepts_an_absurd_limit() {
+    let store = create_memory_store().unwrap();
+    store
+        .create_execution(&make_execution("billing:invoice", now()))
+        .unwrap();
+    // `?limit=4000000000` used to reach the database unclamped; it is now
+    // clamped to MAX_EXECUTIONS_LIMIT and still returns what there is.
+    let rows = store
+        .list_executions(&ExecutionFilter {
+            limit: Some(u32::MAX),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+/// A log line names an existing execution (review 2026-10-24, S-6). Pinned
+/// for both backends: Postgres accepted orphans until migration 038, and
+/// retention, which deletes only the logs of the runs it prunes, never
+/// reached them.
+#[test]
+fn append_log_rejects_an_unknown_execution() {
+    let store = create_memory_store().unwrap();
+    let unknown = Uuid::new_v4();
+    assert!(
+        store
+            .append_log(&log_entry(unknown, "info", "late line"))
+            .is_err()
+    );
+    let known = seed_execution(&store, "orphan");
+    // One bad line fails the batch as a whole; the good line is not kept.
+    assert!(
+        store
+            .append_logs_batch(&[
+                log_entry(known, "info", "fine"),
+                log_entry(unknown, "info", "late line"),
+            ])
+            .is_err()
+    );
+    assert!(store.read_logs(unknown, 10).unwrap().is_empty());
+    assert!(store.read_logs(known, 10).unwrap().is_empty());
+}
+
+/// Calendar names are unique (review 2026-10-24, P-12): triggers name their
+/// calendar, so two rows with one name made the gate depend on read order.
+#[test]
+fn create_calendar_rejects_a_taken_name_but_keeps_upserting_by_id() {
+    let store = create_memory_store().unwrap();
+    let cal = |id: &str, name: &str| CalendarDefinition {
+        calendar_id: id.into(),
+        name: name.into(),
+        timezone: None,
+        rules: "include weekly monday".into(),
+        managed_by: "api".into(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    store.create_calendar(&cal("c-1", "holidays")).unwrap();
+    store.create_calendar(&cal("c-2", "team-days")).unwrap();
+
+    // A second row with the name, and a rename onto it, are both conflicts.
+    assert!(matches!(
+        store.create_calendar(&cal("c-3", "holidays")),
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store.create_calendar(&cal("c-2", "holidays")),
+        Err(StoreError::Conflict(_))
+    ));
+    assert_eq!(
+        store.get_calendar("c-2").unwrap().unwrap().name,
+        "team-days"
+    );
+
+    // Saving a row under its own name is the ordinary update path.
+    let mut edited = cal("c-1", "holidays");
+    edited.rules = "include weekly friday".into();
+    store.create_calendar(&edited).unwrap();
+    assert_eq!(
+        store.get_calendar("c-1").unwrap().unwrap().rules,
+        "include weekly friday"
+    );
+    assert_eq!(store.list_calendars().unwrap().len(), 2);
+}
+
+/// Deleting a user who once sent an invitation used to fail on the
+/// `invitations.invited_by` foreign key, and left `password_credentials` and
+/// `refresh_tokens` behind in every case (review 2026-10-24, S-2).
+#[test]
+fn users_delete_removes_an_inviter_with_their_credentials_and_tokens() {
+    let store = create_memory_store().unwrap();
+    let user = |id: &str, name: &str| User {
+        user_id: id.into(),
+        username: name.into(),
+        email: None,
+        display_name: None,
+        role: Role::Admin,
+        is_active: true,
+        created_at: now(),
+        updated_at: now(),
+        last_login_at: None,
+    };
+    store.users_create(&user("u-anna", "anna")).unwrap();
+    store.users_create(&user("u-ben", "ben")).unwrap();
+    store
+        .upsert_credentials(&PasswordCredential {
+            user_id: "u-anna".into(),
+            username: "anna".into(),
+            password_hash: "hash".into(),
+            failed_attempts: 0,
+            locked_until: None,
+            created_at: now(),
+        })
+        .unwrap();
+    store
+        .create_refresh_token(&RefreshToken {
+            token_hash: "rt-anna".into(),
+            client_id: "dashboard".into(),
+            user_id: Some("u-anna".into()),
+            expires_at: utc(2026, 4, 29, 12, 0),
+            revoked_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+    for (id, by) in [("inv-1", "u-anna"), ("inv-2", "u-ben")] {
+        store
+            .invitations_create(&Invitation {
+                invitation_id: id.into(),
+                email: format!("{id}@example.com"),
+                role: Role::Viewer,
+                token_hash: format!("hash-{id}"),
+                invited_by: by.into(),
+                expires_at: utc(2026, 4, 5, 12, 0),
+                accepted_at: None,
+                revoked_at: None,
+                created_at: now(),
+            })
+            .unwrap();
+    }
+
+    store.users_delete("u-anna").unwrap();
+
+    assert!(store.users_get_by_id("u-anna").unwrap().is_none());
+    assert!(store.get_credentials("anna").unwrap().is_none());
+    assert!(!store.refresh_token_is_known("rt-anna").unwrap());
+    // Anna's pending invitation goes with her; Ben's is untouched.
+    assert!(store.invitations_get("inv-1").unwrap().is_none());
+    assert!(store.invitations_get("inv-2").unwrap().is_some());
+    assert!(store.users_get_by_id("u-ben").unwrap().is_some());
+}
+
+// ─── Keyset cursors (review 2026-10-24, S-8) ───
+
+/// Page through a listing with `(until, until_id)` taken from the last row of
+/// each page and return every id seen, in order.
+fn walk_pages<T>(
+    mut page: impl FnMut(Option<(chrono::DateTime<Utc>, String)>) -> Vec<T>,
+    key: impl Fn(&T) -> (chrono::DateTime<Utc>, String),
+) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    for _ in 0..10 {
+        let rows = page(cursor.clone());
+        let Some(last) = rows.last() else {
+            return seen;
+        };
+        cursor = Some(key(last));
+        seen.extend(rows.iter().map(|r| key(r).1));
+    }
+    panic!("the cursor never ran out: {seen:?}");
+}
+
+#[test]
+fn audit_list_pages_past_a_tie_group_larger_than_the_limit() {
+    let store = create_memory_store().unwrap();
+    // One request, five audit rows, one timestamp.
+    for n in 0..5 {
+        store
+            .audit_log(&AuditEvent {
+                event_id: format!("ev-{n}"),
+                actor_type: "user".into(),
+                actor_id: Some("u-1".into()),
+                action: "job.updated".into(),
+                target_type: "job".into(),
+                target_id: Some("billing:invoice".into()),
+                diff_json: None,
+                ip_address: None,
+                user_agent: None,
+                created_at: now(),
+            })
+            .unwrap();
+    }
+    let seen = walk_pages(
+        |cursor| {
+            store
+                .audit_list(&AuditFilter {
+                    until: cursor.as_ref().map(|c| c.0),
+                    until_id: cursor.map(|c| c.1),
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .unwrap()
+        },
+        |e| (e.created_at, e.event_id.clone()),
+    );
+    assert_eq!(seen, vec!["ev-4", "ev-3", "ev-2", "ev-1", "ev-0"]);
+
+    // Without `until_id` the bound stays inclusive, as before.
+    let inclusive = store
+        .audit_list(&AuditFilter {
+            until: Some(now()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(inclusive.len(), 5);
+}
+
+#[test]
+fn alert_deliveries_page_past_a_tie_group_larger_than_the_limit() {
+    let store = create_memory_store().unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let d = make_delivery(
+            "billing:invoice",
+            now(),
+            AlertDeliveryState::Delivered,
+            AlertDeliveryKind::Alert,
+        );
+        ids.push(d.delivery_id.clone());
+        store.record_alert_delivery(&d).unwrap();
+    }
+    // An older one, which the inclusive `until` must not cut off either.
+    let older = make_delivery(
+        "billing:invoice",
+        now() - chrono::Duration::minutes(1),
+        AlertDeliveryState::Failed,
+        AlertDeliveryKind::Alert,
+    );
+    store.record_alert_delivery(&older).unwrap();
+
+    let seen = walk_pages(
+        |cursor| {
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter {
+                    until: cursor.as_ref().map(|c| c.0),
+                    until_id: cursor.map(|c| c.1),
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .unwrap()
+        },
+        |d| (d.fired_at, d.delivery_id.clone()),
+    );
+    ids.sort();
+    ids.reverse();
+    ids.push(older.delivery_id.clone());
+    assert_eq!(seen, ids);
+
+    let window = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            until: Some(now() - chrono::Duration::seconds(30)),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(window.len(), 1);
+    assert_eq!(window[0].delivery_id, older.delivery_id);
+}
+
+/// `record_alert_delivery` is first-write-wins on `delivery_id`, payload or
+/// not (review 2026-10-24, S-10).
+#[test]
+fn record_alert_delivery_keeps_the_first_write_for_an_id() {
+    let store = create_memory_store().unwrap();
+    let first = make_delivery(
+        "billing:invoice",
+        now(),
+        AlertDeliveryState::Failed,
+        AlertDeliveryKind::Alert,
+    );
+    store.record_alert_delivery(&first).unwrap();
+
+    let mut second = first.clone();
+    second.state = AlertDeliveryState::Delivered;
+    second.error = Some("changed".into());
+    store.record_alert_delivery(&second).unwrap();
+
+    let stored = store
+        .get_alert_delivery(&first.delivery_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.state, AlertDeliveryState::Failed);
+    assert_eq!(stored.error, None);
+    assert_eq!(
+        store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap()
+            .len(),
+        1
+    );
 }

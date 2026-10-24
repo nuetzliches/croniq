@@ -1138,10 +1138,7 @@ impl WatchdogLoop {
     /// waiting out its backoff is not "stuck".
     async fn sweep_blocked(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
         // Oldest due first, so the bounded window holds the longest waiters.
-        let queued = match self
-            .store
-            .find_queued_executions(&[], self.claim_sweep_limit)
-        {
+        let queued = match self.store.find_queued_executions(self.claim_sweep_limit) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(
@@ -1731,7 +1728,7 @@ impl WatchdogLoop {
     /// `WorkQueue::enqueue` dedupes by execution_id, and the store-side
     /// claim CAS is the final arbiter.
     async fn reconcile_stranded_queued(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
-        let queued = match self.store.find_queued_executions(&[], RECONCILE_BATCH) {
+        let queued = match self.store.find_queued_executions(RECONCILE_BATCH) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(

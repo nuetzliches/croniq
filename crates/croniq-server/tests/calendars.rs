@@ -566,3 +566,106 @@ async fn empty_timezone_still_clears_the_field() {
     assert_eq!(status, 200);
     assert!(body["timezone"].is_null(), "got: {body}");
 }
+
+// ─── Unique names (review 2026-10-24, P-12) ───────────────────────────────────
+
+#[tokio::test]
+async fn create_with_a_taken_name_returns_409() {
+    let state = build_state("");
+    let body = serde_json::json!({
+        "name": "team-holidays",
+        "timezone": "UTC",
+        "rules": "exclude annual 01-01"
+    });
+    let (status, _) = send_json(
+        server_router(Arc::clone(&state)),
+        "POST",
+        "/v1/calendars",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(status, 201);
+
+    let (status, err) = send_json(
+        server_router(Arc::clone(&state)),
+        "POST",
+        "/v1/calendars",
+        body,
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(err["error"], "name_taken");
+    let store = state.store.as_ref().unwrap();
+    assert_eq!(store.list_calendars().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn rename_onto_a_taken_name_returns_409() {
+    let state = build_state("");
+    let mut ids = Vec::new();
+    for name in ["team-holidays", "plant-shutdown"] {
+        let (status, created) = send_json(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/calendars",
+            serde_json::json!({ "name": name, "rules": "exclude annual 01-01" }),
+        )
+        .await;
+        assert_eq!(status, 201);
+        ids.push(created["calendar_id"].as_str().unwrap().to_string());
+    }
+
+    let (status, err) = send_json(
+        server_router(Arc::clone(&state)),
+        "PUT",
+        &format!("/v1/calendars/{}", ids[1]),
+        serde_json::json!({ "name": "team-holidays" }),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(err["error"], "name_taken");
+    let store = state.store.as_ref().unwrap();
+    assert_eq!(
+        store.get_calendar(&ids[1]).unwrap().unwrap().name,
+        "plant-shutdown"
+    );
+
+    // Saving a calendar under its own name is not a collision.
+    let (status, _) = send_json(
+        server_router(Arc::clone(&state)),
+        "PUT",
+        &format!("/v1/calendars/{}", ids[0]),
+        serde_json::json!({ "name": "team-holidays", "rules": "exclude annual 12-24" }),
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn adopt_onto_a_stray_api_calendar_of_the_same_name_returns_409() {
+    let state = build_state_with_policy(DSL_WITH_CALENDAR, true);
+    state
+        .store
+        .as_ref()
+        .unwrap()
+        .create_calendar(&croniq_store::models::CalendarDefinition {
+            calendar_id: "stray".into(),
+            name: "business-days".into(),
+            timezone: None,
+            rules: "include weekly tuesday".into(),
+            managed_by: "api".into(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        })
+        .unwrap();
+
+    let (status, err) = send_json(
+        server_router(Arc::clone(&state)),
+        "POST",
+        "/v1/calendars/dsl:business-days/adopt",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(err["error"], "name_taken");
+}

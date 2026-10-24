@@ -1332,7 +1332,7 @@ mod tests {
         }
         assert_eq!(runner.queue.read().await.count_for_job("poll:inbox"), 1);
         assert_eq!(
-            store.find_queued_executions(&[], 10).unwrap().len(),
+            store.find_queued_executions(10).unwrap().len(),
             1,
             "a folded fire leaves no execution row behind"
         );

@@ -2,14 +2,17 @@
 //!
 //! Numbers are monotonic; pick the next free slot when opening a PR. If
 //! two migration PRs are in flight at once, the second to merge rebases
-//! to bump its number above the first. Migrations are idempotent and
-//! additive (or use `IF NOT EXISTS` guards) so order shifts don't break
-//! existing data, but the embedded list must stay monotonic for
-//! deterministic apply order. See AGENTS.md for the full convention.
+//! to bump its number above the first. Migrations are additive, so order
+//! shifts don't break existing data, but the embedded list must stay
+//! monotonic for deterministic apply order. Each migration runs in its own
+//! transaction together with its `_migrations` record, so a migration is
+//! either applied and recorded or not applied at all — the `ALTER TABLE …
+//! ADD COLUMN` ones are not idempotent and rely on that. See AGENTS.md for
+//! the full convention.
 
 use rusqlite::Connection;
 
-const MIGRATIONS: &[(&str, &str)] = &[
+pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
     ("001_initial", include_str!("001_initial.sql")),
     ("002_auth", include_str!("002_auth.sql")),
     ("003_definitions", include_str!("003_definitions.sql")),
@@ -108,10 +111,26 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "035_job_failure_streaks",
         include_str!("035_job_failure_streaks.sql"),
     ),
+    (
+        "036_execution_inflight_index",
+        include_str!("036_execution_inflight_index.sql"),
+    ),
+    (
+        "037_calendar_unique_name",
+        include_str!("037_calendar_unique_name.sql"),
+    ),
+    (
+        "038_execution_logs_fk",
+        include_str!("038_execution_logs_fk.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
 pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+    migrate_with(conn, MIGRATIONS)
+}
+
+fn migrate_with(conn: &Connection, migrations: &[(&str, &str)]) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS _migrations (
             name TEXT PRIMARY KEY,
@@ -119,15 +138,25 @@ pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         );",
     )?;
 
-    for (name, sql) in MIGRATIONS {
+    for (name, sql) in migrations {
         let applied: bool = conn
             .prepare("SELECT COUNT(*) FROM _migrations WHERE name = ?1")?
             .query_row([name], |row| row.get::<_, i64>(0))
             .map(|c| c > 0)?;
 
         if !applied {
-            conn.execute_batch(sql)?;
-            conn.execute("INSERT INTO _migrations (name) VALUES (?1)", [name])?;
+            // One transaction per migration, holding both its statements and
+            // its `_migrations` record (review 2026-10-24, S-1). In autocommit
+            // each statement landed on its own, and SQLite has no
+            // `ADD COLUMN IF NOT EXISTS`: a process killed between two
+            // `ALTER`s left the first column in place and the record missing,
+            // so the next boot replayed the migration into `duplicate column
+            // name` and `SqliteStore::open` failed for good. SQLite DDL is
+            // transactional, so a crash now rolls the whole migration back.
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(sql)?;
+            tx.execute("INSERT INTO _migrations (name) VALUES (?1)", [name])?;
+            tx.commit()?;
         }
     }
 
@@ -137,6 +166,7 @@ pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
 
     /// Apply every migration up to and including `target`, then return the
     /// connection so the caller can seed data and run the remaining
@@ -1198,5 +1228,235 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn migration_036_indexes_the_in_flight_count_per_job() {
+        use crate::models::ExecutionState;
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "035_job_failure_streaks").unwrap();
+
+        // A singleton job with a long terminal history and one run in flight.
+        for n in 1..=40u8 {
+            let state = if n == 40 { "claimed" } else { "completed" };
+            conn.execute(
+                "INSERT INTO executions
+                 (id, job_key, fire_at, attempt, state, metadata, created_at)
+                 VALUES (?1, 'ops:singleton', '2026-10-01T00:00:00Z', 1, ?2, '{}',
+                         '2026-10-01T00:00:00Z')",
+                params![uuid_str(n), state],
+            )
+            .unwrap();
+        }
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "036_execution_inflight_index")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // The statement the store builds for the guard's `[Claimed]` count.
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN (?2){}",
+            crate::sqlite::inflight_index_term(&[ExecutionState::Claimed])
+        );
+        let counted: i64 = conn
+            .query_row(&count_sql, params!["ops:singleton", "claimed"], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(counted, 1);
+
+        // Post-condition on the plan: the count must read the partial index,
+        // not walk the job's history through idx_executions_job_key.
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {count_sql}"))
+            .unwrap()
+            .query_map(params!["ops:singleton", "claimed"], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|row| row.contains("idx_executions_job_key_inflight")),
+            "the in-flight count must use the partial index, got plan: {plan:?}"
+        );
+
+        // A count over terminal states gets no such term; it would be wrong.
+        assert_eq!(
+            crate::sqlite::inflight_index_term(&[
+                ExecutionState::Claimed,
+                ExecutionState::Completed
+            ]),
+            ""
+        );
+    }
+
+    #[test]
+    fn migration_037_renames_duplicate_calendars_and_makes_names_unique() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "036_execution_inflight_index").unwrap();
+
+        // Three API calendars share a name: the oldest, and two created in
+        // the same instant later (the tie is broken by calendar_id).
+        let seed = |id: &str, name: &str, created_at: &str| {
+            conn.execute(
+                "INSERT INTO calendar_definitions
+                 (calendar_id, name, rules, managed_by, created_at, updated_at)
+                 VALUES (?1, ?2, '', 'api', ?3, ?3)",
+                params![id, name, created_at],
+            )
+            .unwrap();
+        };
+        seed("c-3", "holidays", "2026-01-01T00:00:00+00:00");
+        seed("c-2", "holidays", "2026-02-01T00:00:00+00:00");
+        seed("c-1", "holidays", "2026-02-01T00:00:00+00:00");
+        seed("c-9", "team-days", "2026-03-01T00:00:00+00:00");
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "037_calendar_unique_name")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        let name_of = |id: &str| -> String {
+            conn.query_row(
+                "SELECT name FROM calendar_definitions WHERE calendar_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        // The oldest keeps the name, and with it every trigger naming it.
+        assert_eq!(name_of("c-3"), "holidays");
+        assert_eq!(name_of("c-1"), "holidays (duplicate c-1)");
+        assert_eq!(name_of("c-2"), "holidays (duplicate c-2)");
+        assert_eq!(name_of("c-9"), "team-days");
+
+        // From here on the schema refuses a second row with a taken name.
+        let dup = conn.execute(
+            "INSERT INTO calendar_definitions
+             (calendar_id, name, rules, managed_by, created_at, updated_at)
+             VALUES ('c-10', 'team-days', '', 'api', '2026-04-01T00:00:00+00:00',
+                     '2026-04-01T00:00:00+00:00')",
+            [],
+        );
+        assert!(dup.is_err(), "a duplicate name must be rejected");
+    }
+
+    /// 038 changes nothing on SQLite, where `execution_logs.execution_id`
+    /// has been a foreign key since 003; the entry exists so the Postgres
+    /// counterpart has a slot. Pin the semantics both backends now share.
+    #[test]
+    fn migration_038_keeps_logs_tied_to_an_existing_execution() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        apply_through(&conn, "038_execution_logs_fk").unwrap();
+        conn.execute(
+            "INSERT INTO executions
+             (id, job_key, fire_at, attempt, state, metadata, created_at)
+             VALUES (?1, 'ops:logged', '2026-10-01T00:00:00Z', 1, 'claimed', '{}',
+                     '2026-10-01T00:00:00Z')",
+            [&uuid_str(1)],
+        )
+        .unwrap();
+        let append = |execution_id: &str, n: u8| {
+            conn.execute(
+                "INSERT INTO execution_logs (id, execution_id, timestamp, message)
+                 VALUES (?1, ?2, '2026-10-01T00:00:01Z', 'line')",
+                params![uuid_str(n), execution_id],
+            )
+        };
+        append(&uuid_str(1), 10).unwrap();
+        assert!(
+            append(&uuid_str(2), 11).is_err(),
+            "a log line for an unknown execution must be rejected"
+        );
+    }
+
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+        conn.prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+        ))
+        .unwrap()
+        .exists([column])
+        .unwrap()
+    }
+
+    fn recorded(conn: &Connection, name: &str) -> bool {
+        conn.prepare("SELECT 1 FROM _migrations WHERE name = ?1")
+            .unwrap()
+            .exists([name])
+            .unwrap()
+    }
+
+    /// A migration that stops half-way must not brick the next boot
+    /// (review 2026-10-24, S-1). The second `ALTER` fails here the way a
+    /// process kill between the two would end it: without the per-migration
+    /// transaction the first column stayed, the record did not, and every
+    /// later `migrate` replayed the first `ALTER` into `duplicate column name`.
+    #[test]
+    fn a_half_applied_migration_is_rolled_back_and_retried_cleanly() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE widgets (id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        let broken: &[(&str, &str)] = &[(
+            "900_two_columns",
+            "ALTER TABLE widgets ADD COLUMN colour TEXT;
+             ALTER TABLE no_such_table ADD COLUMN size INTEGER;",
+        )];
+        assert!(migrate_with(&conn, broken).is_err());
+        assert!(
+            !column_exists(&conn, "widgets", "colour"),
+            "the first ALTER of a failed migration must be rolled back"
+        );
+        assert!(!recorded(&conn, "900_two_columns"));
+
+        // The next boot re-runs the whole migration and gets through.
+        let fixed: &[(&str, &str)] = &[(
+            "900_two_columns",
+            "ALTER TABLE widgets ADD COLUMN colour TEXT;
+             ALTER TABLE widgets ADD COLUMN size INTEGER;",
+        )];
+        migrate_with(&conn, fixed).unwrap();
+        assert!(column_exists(&conn, "widgets", "colour"));
+        assert!(column_exists(&conn, "widgets", "size"));
+        assert!(recorded(&conn, "900_two_columns"));
+
+        // And a boot after that is a no-op rather than a replay.
+        migrate_with(&conn, fixed).unwrap();
+    }
+
+    /// The real list, end to end: a fresh database takes every migration,
+    /// and a second boot against it applies nothing.
+    #[test]
+    fn migrate_twice_is_a_noop() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        migrate(&conn).unwrap();
+        let count = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(&conn), MIGRATIONS.len() as i64);
+        migrate(&conn).unwrap();
+        assert_eq!(count(&conn), MIGRATIONS.len() as i64);
+    }
+
+    /// Migration names are unique and sorted, so the apply order is the
+    /// numeric order AGENTS.md promises.
+    #[test]
+    fn migration_names_are_strictly_increasing() {
+        for pair in MIGRATIONS.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "{} must sort before {}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
     }
 }

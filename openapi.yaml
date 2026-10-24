@@ -257,7 +257,7 @@ components:
     DslManagedError:
       type: object
       properties:
-        error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted] }
+        error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted, name_taken] }
         message: { type: string }
 
     ApiClient:
@@ -1932,6 +1932,18 @@ paths:
             type: string
             enum: [delivered, failed, throttled]
         - { name: since, in: query, schema: { type: string, format: date-time } }
+        - name: until
+          in: query
+          description: Upper bound on `fired_at`; inclusive unless `until_id` is given.
+          schema: { type: string, format: date-time }
+        - name: until_id
+          in: query
+          description: >
+            Second half of the paging cursor: the `delivery_id` of the same row
+            whose `fired_at` went into `until`. With it the page starts strictly
+            after that row, so a client can page past a group of deliveries
+            fired in the same instant.
+          schema: { type: string }
         - name: limit
           in: query
           description: Max rows. Capped server-side at 500.
@@ -2159,6 +2171,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "409":
+          description: |
+            The name is taken: by a Croniqfile calendar (`error: dsl_managed`)
+            or by another API calendar (`error: name_taken`). Calendar names
+            are unique.
 
   /v1/calendars/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
@@ -2186,7 +2203,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
         "409":
-          description: DSL-managed; mutation refused.
+          description: |
+            DSL-managed, mutation refused (`error: dsl_managed`), or the new
+            name is held by another calendar (`error: name_taken`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslManagedError" }
@@ -2231,7 +2250,10 @@ paths:
               schema: { $ref: "#/components/schemas/DslManagedError" }
         "404": { description: DSL calendar with that name not found }
         "409":
-          description: Policy disabled or other adoption refusal.
+          description: |
+            Policy disabled (`error: adoption_disabled`), other adoption
+            refusal, or an API calendar already holds the name
+            (`error: name_taken`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslManagedError" }
@@ -3605,6 +3627,15 @@ paths:
         - { name: target_id, in: query, schema: { type: string } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
+        - name: until_id
+          in: query
+          description: >
+            Second half of the paging cursor: the `event_id` of the same row
+            whose `created_at` went into `until`. With it the page starts
+            strictly after that row; without it `until` is inclusive and a
+            group of events with one timestamp larger than `limit` cannot be
+            paged past.
+          schema: { type: string }
         - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
       responses:
         "200":

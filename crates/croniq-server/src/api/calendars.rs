@@ -97,6 +97,36 @@ pub struct ValidationError {
     pub message: String,
 }
 
+/// Map a failed `create_calendar` to a response: a taken name is `409
+/// name_taken`, anything else a bare 500 carrying `failure`.
+///
+/// Names are unique (migration 037, review 2026-10-24, P-12). Triggers name
+/// their calendar, and with two rows of one name the gate a trigger got
+/// depended on which row the resolver read last. The store's unique index is
+/// what makes this race-free; a pre-check here would not be.
+fn calendar_persist_error(
+    e: croniq_store::traits::StoreError,
+    name: &str,
+    failure: &str,
+) -> (StatusCode, Json<ValidationError>) {
+    match e {
+        croniq_store::traits::StoreError::Conflict(_) => (
+            StatusCode::CONFLICT,
+            Json(ValidationError {
+                error: "name_taken",
+                message: format!("a calendar named '{name}' already exists"),
+            }),
+        ),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ValidationError {
+                error: "store_error",
+                message: failure.into(),
+            }),
+        ),
+    }
+}
+
 /// Reject a `timezone` that is not an IANA zone name, with the did-you-mean
 /// from `croniq_config::timezone` (issue #426's helper, applied to the one
 /// timezone-bearing column that never went through it).
@@ -325,15 +355,9 @@ pub async fn handle_create(
         created_at: now,
         updated_at: now,
     };
-    store.create_calendar(&cal).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ValidationError {
-                error: "store_error",
-                message: "failed to persist calendar".into(),
-            }),
-        )
-    })?;
+    store
+        .create_calendar(&cal)
+        .map_err(|e| calendar_persist_error(e, &cal.name, "failed to persist calendar"))?;
     Ok((StatusCode::CREATED, Json(cal)))
 }
 
@@ -453,15 +477,9 @@ pub async fn handle_update(
     }
     existing.updated_at = Utc::now();
 
-    store.create_calendar(&existing).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ValidationError {
-                error: "store_error",
-                message: "failed to persist calendar".into(),
-            }),
-        )
-    })?;
+    store
+        .create_calendar(&existing)
+        .map_err(|e| calendar_persist_error(e, &existing.name, "failed to persist calendar"))?;
 
     // Propagate the edit to running triggers (issue #393). Both names matter
     // on a rename; when unchanged they collapse to a single entry.
@@ -659,14 +677,10 @@ pub async fn handle_adopt(
     adopted.created_at = now;
     adopted.updated_at = now;
 
-    store.create_calendar(&adopted).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ValidationError {
-                error: "store_error",
-                message: "failed to persist adopted calendar".into(),
-            }),
-        )
+    // A stray API calendar created under this name before the Croniqfile
+    // declared it makes adoption a `409 name_taken`: rename or delete it first.
+    store.create_calendar(&adopted).map_err(|e| {
+        calendar_persist_error(e, &adopted.name, "failed to persist adopted calendar")
     })?;
     store
         .insert_adoption(&DslAdoption {

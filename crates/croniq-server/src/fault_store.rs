@@ -160,7 +160,7 @@ impl ExecutionStore for FaultStore {
     delegate! {
         get_execution(id: Uuid) -> Option<Execution>;
         complete_execution(id: Uuid, runner_id: Option<&str>, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> bool;
-        find_queued_executions(capabilities: &[String], limit: u32) -> Vec<Execution>;
+        find_queued_executions(limit: u32) -> Vec<Execution>;
         list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
         list_claimed_older_than(cutoff: DateTime<Utc>, limit: u32) -> Vec<Execution>;
         find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
