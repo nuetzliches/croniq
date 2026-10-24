@@ -12,10 +12,15 @@
 
 [graph]
 # Croniq ships on Linux/macOS/Windows (release.yml targets); scan the union
-# of their dependency trees rather than only the host platform's.
+# of their dependency trees rather than only the host platform's. The musl
+# triples are release.yml artefacts since #577 and what the Docker image is
+# built for (#599); `cfg(target_env = "musl")` branches were unscanned until
+# they were listed here (review 2026-10-24, C-10).
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
