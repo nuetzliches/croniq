@@ -1,5 +1,5 @@
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { refreshAccessToken } from '~/api/session'
+import { refreshSession } from '~/api/session'
 import { createSseStream } from '~/lib/sse'
 import { useAuthStore } from '~/stores/auth'
 
@@ -142,7 +142,7 @@ export function useConsoleStream() {
     // a reconnect passing `snapshot=0` does not replay what is already held.
     url: (hasOpened) => `/v1/events/stream${hasOpened ? '?snapshot=0' : ''}`,
     getToken: () => auth.token,
-    refresh: async () => (await refreshAccessToken()) !== null,
+    refresh: async () => (await refreshSession()).kind,
     // Both are settled answers. Retrying every two seconds would only make
     // noise in a log that is itself the thing being watched.
     fatalStatuses: [403, 503],

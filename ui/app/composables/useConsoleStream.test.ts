@@ -27,7 +27,7 @@ vi.mock('~/lib/sse', () => ({
     return () => undefined
   },
 }))
-vi.mock('~/api/session', () => ({ refreshAccessToken: vi.fn() }))
+vi.mock('~/api/session', () => ({ refreshSession: vi.fn() }))
 
 /** One frame, as the server would send it. */
 function emit(message: string, level = 'info', startup = false) {

@@ -265,6 +265,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   2026-10-24, R-11). The command was pasted into `original_command "…"`
   verbatim, so a `"` or a backslash in it produced a Croniqfile that did not
   parse.
+- **Dashboard live views survive a server restart behind an expired token**
+  (review 2026-10-24, U-1). When the access token ran out while the server
+  was restarting, the stream's refresh met a network error or a 502 from the
+  proxy, and the runners view, the live timeline and the console ended for
+  good while the page stayed signed in. A refresh now tells "renewed",
+  "session ended" and "server unreachable" apart; only the server rejecting
+  the session ends a stream, everything else backs off and tries again.
+- **A refresh answered with HTML no longer leaves a blank page** (review
+  2026-10-24, U-2). A proxy that serves `index.html` for `/v1/auth/refresh`, or
+  a captive portal, answered 200 with something that was not JSON; the
+  dashboard threw during start-up and waited forever behind a white page. JSON
+  without an `access_token` marked the session signed in with no token. Both
+  now count as "could not ask", start-up always settles, and while it waits
+  the page says it is connecting, with a hint about the proxy after ten
+  seconds.
+- **"Session expired" only when it has** (review 2026-10-24, U-3). A request
+  whose token refresh failed for a network error or a 5xx reported "Session
+  expired" while the user stayed signed in; it now reports that the server
+  could not be reached. A 401 for a token that was already renewed by another
+  request repeats with the new token instead of rotating the refresh token a
+  second time.
 
 ### Security
 

@@ -66,6 +66,16 @@ export class SseFrameParser {
   }
 }
 
+/**
+ * What a refresh established, as far as a stream cares.
+ *
+ * Three answers because two were one too few (review 2026-10-24, U-1): with a
+ * boolean, a refresh that hit the proxy during a server restart read as "the
+ * session is gone", and the stream ended for good while the page stayed signed
+ * in — runners, timeline and console frozen until a reload.
+ */
+export type RefreshVerdict = 'renewed' | 'ended' | 'unreachable'
+
 export interface SseStreamOptions {
   /**
    * The URL to open. Called per attempt with whether a previous attempt ever
@@ -77,10 +87,12 @@ export interface SseStreamOptions {
   /** Current access token, read fresh per attempt — it may have been renewed. */
   getToken: () => string | null | undefined
   /**
-   * Called on a 401. Resolve `true` to retry with a new token, `false` when
-   * the session is genuinely gone (in which case the stream ends).
+   * Called on a 401. `renewed` reconnects with the new token; `unreachable`
+   * (network error, 5xx, an unreadable answer) backs off and asks again on the
+   * next attempt; only `ended` — the server rejected the session — ends the
+   * stream.
    */
-  refresh: () => Promise<boolean>
+  refresh: () => Promise<RefreshVerdict>
   /** One event's `data` payload, already assembled across chunk boundaries. */
   onData: (payload: string) => void
   onOpen?: () => void
@@ -150,8 +162,10 @@ export function createSseStream(options: SseStreamOptions): () => void {
         //
         // Not a `return`: that would leave this function before the reconnect
         // below, and the stream would stay dead behind a stale last frame
-        // until the page was reloaded.
-        if (!(await refresh())) reconnect = false
+        // until the page was reloaded. For the same reason only `ended` stops
+        // it: `unreachable` is a server that is restarting, and the backoff
+        // below is exactly what it needs.
+        if ((await refresh()) === 'ended') reconnect = false
       } else if (fatalStatuses.includes(response.status)) {
         reconnect = false
         onFatal?.(response.status)

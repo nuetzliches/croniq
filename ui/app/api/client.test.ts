@@ -12,14 +12,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * so a future refactor of the retry has to decide about it on purpose.
  */
 
-const refreshAccessToken = vi.fn()
+const refreshSession = vi.fn()
 const fetchImpl = vi.fn()
 
+const store: { token: string | null } = { token: 'access-token' }
 vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => ({ token: 'access-token' }),
+  useAuthStore: () => store,
 }))
-vi.mock('~/api/session', () => ({ refreshAccessToken }))
-vi.mock('./session', () => ({ refreshAccessToken }))
+vi.mock('~/api/session', () => ({ refreshSession }))
+vi.mock('./session', () => ({ refreshSession }))
 
 /**
  * Stand in for the network. ofetch calls `globalThis.fetch`, so the count of
@@ -42,19 +43,20 @@ function respondWith(...outcomes: Array<{ status: number; body?: unknown }>) {
 describe('api() 401 handling', () => {
   beforeEach(async () => {
     vi.resetModules()
-    refreshAccessToken.mockReset()
+    refreshSession.mockReset()
+    store.token = 'access-token'
     fetchImpl.mockReset()
     vi.stubGlobal('fetch', fetchImpl)
   })
 
   it('refreshes and repeats once for an ordinary 401', async () => {
     respondWith({ status: 401 }, { status: 200, body: { ok: true } })
-    refreshAccessToken.mockResolvedValue('fresh-token')
+    refreshSession.mockResolvedValue({ kind: 'renewed', token: 'fresh-token' })
     const { api } = await import('./client')
 
     await expect(api('/v1/jobs')).resolves.toEqual({ ok: true })
 
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(refreshSession).toHaveBeenCalledTimes(1)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
@@ -64,12 +66,12 @@ describe('api() 401 handling', () => {
     // would land — two failed attempts recorded for one mistyped password, and
     // lockout after three tries instead of five.
     respondWith({ status: 401, body: { error: 'invalid_credentials' } })
-    refreshAccessToken.mockResolvedValue('fresh-token')
+    refreshSession.mockResolvedValue({ kind: 'renewed', token: 'fresh-token' })
     const { api, ApiError } = await import('./client')
 
     await expect(api('/v1/auth/login')).rejects.toBeInstanceOf(ApiError)
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refreshSession).not.toHaveBeenCalled()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -98,7 +100,7 @@ describe('api() 401 handling', () => {
 
     await expect(api('/v1/auth/refresh', { method: 'POST' })).rejects.toThrow()
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refreshSession).not.toHaveBeenCalled()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -112,12 +114,12 @@ describe('api() 401 handling', () => {
     // refresh cannot succeed and the replay sends the attempt twice
     // (issue #725).
     respondWith({ status: 401, body: { error: 'invalid_token' } })
-    refreshAccessToken.mockResolvedValue('fresh-token')
+    refreshSession.mockResolvedValue({ kind: 'renewed', token: 'fresh-token' })
     const { api } = await import('./client')
 
     await expect(api(path, { method: 'POST' })).rejects.toThrow()
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refreshSession).not.toHaveBeenCalled()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -125,12 +127,12 @@ describe('api() 401 handling', () => {
     // The exemption is a list of prefixes, so it is worth pinning that it does
     // not swallow the endpoints that *do* carry an access token.
     respondWith({ status: 401 }, { status: 200, body: { ok: true } })
-    refreshAccessToken.mockResolvedValue('fresh-token')
+    refreshSession.mockResolvedValue({ kind: 'renewed', token: 'fresh-token' })
     const { api } = await import('./client')
 
     await expect(api('/v1/invitations')).resolves.toEqual({ ok: true })
 
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(refreshSession).toHaveBeenCalledTimes(1)
   })
 
   it('leaves a non-401 alone', async () => {
@@ -139,7 +141,62 @@ describe('api() 401 handling', () => {
 
     await expect(api('/v1/jobs')).rejects.toThrow('Forbidden')
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refreshSession).not.toHaveBeenCalled()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('says "Session expired" only when the server ended the session', async () => {
+    respondWith({ status: 401 })
+    refreshSession.mockResolvedValue({ kind: 'ended' })
+    const { api } = await import('./client')
+
+    const caught = (await api('/v1/jobs').catch((error: unknown) => error)) as {
+      status: number
+      message: string
+    }
+
+    expect(caught.status).toBe(401)
+    expect(caught.message).toBe('Session expired')
+  })
+
+  it('does not call an unreachable server an expired session', async () => {
+    // Review 2026-10-24, U-3: a refresh that met a 502 during a restart left
+    // the store signed in, and every list on the page said "Session expired".
+    respondWith({ status: 401 })
+    refreshSession.mockResolvedValue({ kind: 'unreachable' })
+    const { api } = await import('./client')
+
+    const caught = (await api('/v1/jobs').catch((error: unknown) => error)) as {
+      status: number
+      message: string
+    }
+
+    expect(caught.status).toBe(0)
+    expect(caught.message).not.toMatch(/expired/i)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('repeats with the newer token instead of refreshing again', async () => {
+    // A 401 for the old token that lands after the single-flight refresh has
+    // finished: refreshing again would rotate the refresh token a second time
+    // for nothing (review 2026-10-24, U-3).
+    let call = 0
+    const sent: (string | null)[] = []
+    fetchImpl.mockImplementation(async (request: Request | string, init?: RequestInit) => {
+      const headers = new Headers(request instanceof Request ? request.headers : init?.headers)
+      sent.push(headers.get('Authorization'))
+      call += 1
+      if (call === 1) {
+        store.token = 'renewed-meanwhile'
+        return new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    const { api } = await import('./client')
+
+    await expect(api('/v1/jobs')).resolves.toEqual({ ok: true })
+
+    expect(refreshSession).not.toHaveBeenCalled()
+    expect(sent).toEqual(['Bearer access-token', 'Bearer renewed-meanwhile'])
   })
 })
