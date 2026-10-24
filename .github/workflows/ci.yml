@@ -675,7 +675,7 @@ jobs:
         # The tempting shortcut is to copy it out of `rust-builder`, which
         # already has one. That silently swaps the trust store: measured on
         # 2026-09-14 it exchanged 150 roots for 142, losing 21 and gaining 13,
-        # because `rust:1.88-bookworm` carries whatever was current when *that*
+        # because `rust:<version>-bookworm` carries whatever was current when *that*
         # image was built. The failure mode is a TLS handshake that works
         # everywhere except one customer's Postgres — so it is asserted rather
         # than left to a comment.

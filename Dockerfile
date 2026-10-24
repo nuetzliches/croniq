@@ -1,5 +1,5 @@
 # ── Stage 1: Build Rust binaries ──────────────────────────────────────────────
-FROM rust:1.88-bookworm AS rust-builder
+FROM rust:1.98-bookworm AS rust-builder
 
 # Statically linked against musl, because the runtime below is Alpine (#599).
 # Same target release.yml has published since #577, and the same reasoning:
@@ -64,7 +64,7 @@ RUN set -eux; \
 # WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
 # and reuse the artefacts across every TARGETPLATFORM. wasm-pack itself is
 # fetched as a pre-built binary (cargo install wasm-pack would add ~2 min).
-FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS wasm-builder
+FROM --platform=$BUILDPLATFORM rust:1.98-bookworm AS wasm-builder
 
 # Version and SHA-256 pins of the release tarballs live in the script, which
 # CI and the Pages deploy call too — one set of pins for every place that
@@ -128,7 +128,7 @@ RUN npm run build
 
 # ── Stage 2b: the CA bundle, and nothing else ────────────────────────────────
 # Its own stage rather than a copy out of `rust-builder`, and the difference is
-# not cosmetic. `rust:1.88-bookworm` carries whatever `ca-certificates` was
+# not cosmetic. `rust:<version>-bookworm` carries whatever `ca-certificates` was
 # current when *that image* was built: copying from there swapped 150 roots for
 # 142 -- losing 21 and gaining 13. A trust store is not a file you substitute
 # casually, and the failure mode is a TLS handshake that works everywhere
@@ -278,7 +278,7 @@ CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000"]
 # nginx-unprivileged rather than the official nginx image: this container hands
 # static files to a browser and does not need to start as root to do it. It
 # runs as UID 101 and listens on 8080, so no capability is needed to bind.
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS ui-runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS ui-runtime
 COPY docker/ui/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=ui-builder /build/ui/dist /usr/share/nginx/html
 EXPOSE 8080
