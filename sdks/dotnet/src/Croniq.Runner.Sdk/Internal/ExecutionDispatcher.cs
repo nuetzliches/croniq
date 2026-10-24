@@ -26,7 +26,8 @@ internal sealed class ExecutionDispatcher(
     CroniqRunnerOptions options,
     string runnerId,
     IReadOnlyList<string> runnerTags,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IReadOnlyList<TimeSpan>? ackRetryDelays = null)
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<ExecutionDispatcher>();
 
@@ -193,29 +194,15 @@ internal sealed class ExecutionDispatcher(
             }
         }
 
-        try
-        {
-            await client.AckAsync(
-                new AckRequest(runnerId, executionId, status, error, stopwatch.ElapsedMilliseconds, attempt),
-                CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
-        {
-            // Ownership refusal (#436/#437) — permanent, and it means the
-            // execution stays claimed until its lease expires. Distinct
-            // message so the operator sees the fix, not just "ack failed".
-            _logger.LogError(
-                ex,
-                "ack refused with 403 Forbidden — this runner's credential does not own " +
-                "runner_id={RunnerId}, so the execution stays claimed until its lease expires. " +
-                "Give the runner its own runner_id, or release the existing binding with " +
-                "DELETE /v1/runners/{{id}}.",
-                runnerId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "failed to ack execution");
-        }
+        // Retried on transport errors and 5xx (review 2026-10-24, K-1; see
+        // AckSender). The execution stays in the runner's in-flight set until
+        // this returns, because the set is only trimmed by the dispatch
+        // continuation in CroniqRunner.
+        await AckSender.SendAsync(
+            client,
+            new AckRequest(runnerId, executionId, status, error, stopwatch.ElapsedMilliseconds, attempt),
+            _logger,
+            ackRetryDelays).ConfigureAwait(false);
 
         stateProbe.DecrementInflight();
     }

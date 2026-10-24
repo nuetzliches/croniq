@@ -86,6 +86,7 @@ The same `AllowInsecureHttp` switch exists on `Croniq:Client` for the trigger cl
   - DI-friendly interface: `AddCroniqJob<MyHandler>("key")` with `ICroniqJobHandler`
 - **Server-side cancellation** — `PollResponse.cancel` is wired into per-execution `CancellationToken`.
 - **Streaming log writer** — `ctx.LogWriter` backs onto `System.Threading.Channels` with backpressure, batching (32 events / 200 ms / max 100 per POST), drain-before-ack.
+- **Ack retry** — an ack that fails with a transport error, a request timeout or a 5xx is retried twice (about 1 s, then 2 s later); a 4xx is not. The failure ack of a handler hard-cancelled at the end of the drain timeout is still sent before `RunAsync` returns.
 - **Self-registration** — `AddCroniqJob<T>("key", schedule: "5m")` calls `POST /v1/jobs/register` on startup.
 - **Health checks** — `services.AddHealthChecks().AddCroniqRunnerHealthCheck()`.
 - **OpenTelemetry** — opt-in via `tracerBuilder.AddCroniqRunnerInstrumentation()` (separate package).
@@ -203,7 +204,7 @@ Span name: `croniq.execute {job_key}`. Standard attributes: `croniq.job.key`, `c
 
 ## Wire-protocol conformance
 
-The SDK is validated against the shared, language-neutral conformance suite at [`sdks/conformance/`](../conformance/) — 12 YAML cases pinning poll/ack/renew, server-initiated cancel, drain, lease renewal, streaming logs, auth, self-register, and error handling. Future Python / Go / TypeScript / Java SDKs are expected to pass the same cases. Run them locally with:
+The SDK is validated against the shared, language-neutral conformance suite at [`sdks/conformance/`](../conformance/) — YAML cases pinning poll/ack/renew, ack retry, server-initiated cancel, drain, lease renewal, streaming logs, auth, self-register, and error handling. Future Python / Go / TypeScript / Java SDKs are expected to pass the same cases. Run them locally with:
 
 ```sh
 dotnet test sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests
