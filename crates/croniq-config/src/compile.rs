@@ -2458,10 +2458,26 @@ fn compile_calendar(
             CalendarRuleKind::Include => "include",
             CalendarRuleKind::Exclude => "exclude",
         };
+        let mut args: Vec<String> = rule.args.iter().map(|a| resolve_str(a, vars)).collect();
+        // The runtime's rule errors quote the offending argument
+        // (`unknown weekday: …`), and they surface as `config_error` to every
+        // `jobs:read` caller. When a placeholder resolved to something that is
+        // not a valid argument, hand the runtime the placeholder text instead
+        // of its value, so the error names `{env.X}` rather than printing the
+        // variable's content (review 2026-10-24, F-2).
+        if rule.args.iter().any(|a| a.is_placeholder)
+            && !crate::calendar_args::rule_args_valid(&rule.rule_type.value, &args)
+        {
+            for (out, src) in args.iter_mut().zip(&rule.args) {
+                if src.is_placeholder {
+                    *out = format!("{{{}}}", src.value);
+                }
+            }
+        }
         rules.push(CalendarRuleConfig {
             kind: kind.to_string(),
             rule_type: rule.rule_type.value.clone(),
-            args: rule.args.iter().map(|a| resolve_str(a, vars)).collect(),
+            args,
         });
     }
 
@@ -3593,6 +3609,26 @@ job a:b { every 5 minutes; priority urgent }",
             cfg.calendars[0].timezone.as_deref(),
             Some("Europe/Vienna"),
             "calendar timezone must resolve {{vars.default_tz}} to its value"
+        );
+    }
+
+    #[test]
+    fn calendar_rule_placeholder_value_is_masked_when_invalid() {
+        // Review 2026-10-24, F-2: the runtime's rule errors quote the
+        // argument, so an invalid resolved value must not reach them.
+        let ast = Parser::parse(
+            r#"
+            vars { day monday; secret s3cr3t-value }
+            calendar ok { include weekly {vars.day} }
+            calendar leaky { include weekly {vars.secret} }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.calendars[0].rules[0].args, vec!["monday".to_string()]);
+        assert_eq!(
+            cfg.calendars[1].rules[0].args,
+            vec!["{vars.secret}".to_string()]
         );
     }
 

@@ -137,8 +137,8 @@ pub fn check_timezone(timezone: Option<&str>) -> Result<(), InputError> {
         .map_err(|e| InputError::new("unknown_timezone", e.to_string()))
 }
 
-/// Validate free-form calendar rules by wrapping them in a dummy calendar
-/// block and running the Croniqfile parser plus semantic validation (#356).
+/// Validate free-form calendar rules with the calendar-body parser plus
+/// semantic validation (#356).
 ///
 /// The MCP tools used to run the parser only, so a rule the loader rejects
 /// (`include weekly funday`) was refused over HTTP and stored over `/mcp`
@@ -147,8 +147,11 @@ pub fn check_calendar_rules(rules: &str) -> Result<(), InputError> {
     if rules.trim().is_empty() {
         return Ok(());
     }
-    let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
-    let ast = croniq_config::parser::Parser::parse(&source)
+    // A dedicated entry point rather than splicing the text into a synthetic
+    // `calendar { … }` block: it refuses braces and placeholders, which a
+    // stored calendar would otherwise resolve against the server's own
+    // environment and files (review 2026-10-24, F-2/F-11).
+    let ast = croniq_config::parser::Parser::parse_calendar_rules("__validate__", rules)
         .map_err(|e| InputError::new("invalid_rules", e.to_string()))?;
     let errors: Vec<String> = croniq_config::validate::validate(&ast)
         .into_iter()
