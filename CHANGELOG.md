@@ -90,6 +90,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   plus grace. The handler now falls back to the stored job, as the
   dead-letter replay and the watchdog's requeue already did.
 
+- **`GET /v1/executions` caps `limit` at 1000** (review 2026-10-24, P-5).
+  The value went into the query as given, so `?limit=4000000000` read the
+  whole execution history, metadata included, into one response while every
+  other request waited on the store. A larger `limit` is now clamped to 1000;
+  page on with `until`/`until_id`.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`

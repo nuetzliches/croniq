@@ -94,6 +94,16 @@ const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
 /// `retryAfterMs`.
 const TRIGGER_OVERFLOW_RETRY_AFTER_SECS: u64 = 1;
 
+/// Most rows one `GET /v1/executions` returns (review 2026-10-24, P-5).
+///
+/// `limit` went into the SQL as given, so `?limit=4000000000` read the whole
+/// history, metadata included, into one response while holding the store
+/// mutex every other request waits on. Dead letters and alert deliveries were
+/// capped; executions were not. A larger `limit` is clamped, not refused, so a
+/// client asking for "everything" gets a full page and pages on with
+/// `until`/`until_id`.
+pub const MAX_EXECUTIONS_LIMIT: u32 = 1000;
+
 // ─── Server state ─────────────────────────────────────────────────────────────
 
 /// Full server state: runner sub-state + completion channel.
@@ -2171,7 +2181,10 @@ async fn handle_list_executions(
             .filter(|v| !v.is_empty()),
         runner_id: params.get("runner_id").cloned(),
         states: exec_states,
-        limit: params.get("limit").and_then(|l| l.parse().ok()),
+        limit: params
+            .get("limit")
+            .and_then(|l| l.parse::<u32>().ok())
+            .map(|l| l.min(MAX_EXECUTIONS_LIMIT)),
         // `since` / `until` were in `ExecutionFilter` and in the SQL from the
         // start; this handler simply never read them, so the one HTTP entry
         // point to the execution history could not express a time window at
@@ -3758,6 +3771,33 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), 5, "no row may be returned twice: {seen:?}");
+    }
+
+    /// `limit` went into the SQL as given, so one request could read the whole
+    /// history under the store mutex (review 2026-10-24, P-5). It is clamped.
+    #[tokio::test]
+    async fn executions_limit_is_capped() {
+        let (state, store) = make_store_state();
+        let base = Utc::now() - chrono::Duration::hours(5);
+        for i in 0..(MAX_EXECUTIONS_LIMIT as i64 + 5) {
+            seed_keyed_execution(
+                &store,
+                "etl:sync",
+                &format!("k{i}"),
+                ExecutionState::Completed,
+                base + chrono::Duration::milliseconds(i),
+            );
+        }
+
+        let page = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?limit=4000000000",
+        )
+        .await;
+        assert_eq!(
+            page.as_array().unwrap().len(),
+            MAX_EXECUTIONS_LIMIT as usize
+        );
     }
 
     /// `until` without `until_id` keeps the inclusive window semantics #636
