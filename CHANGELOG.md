@@ -725,6 +725,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a failure to store the new account's password is reported instead of
   answering 201.
 
+- **Shell alert channels no longer inherit the server's environment**
+  (review 2026-10-24, A-8). The command of a `shell` channel ran with the
+  server's full environment, including `CRONIQ_JWT_SECRET` and every other
+  credential the server was started with. It now starts from an allowlist
+  (`PATH`, `HOME`, locale, the Windows essentials) plus the `CRONIQ_JOB_KEY`,
+  `CRONIQ_EVENT`, … variables it is handed. A script that reads another
+  variable from the server's environment must have it named in the new
+  `CRONIQ_ALERT_ENV_PASSTHROUGH`. See
+  [Shell alert channel environment](docs/operations.md#shell-alert-channel-environment-croniq_alert_env_passthrough).
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

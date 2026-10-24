@@ -531,6 +531,20 @@ under the default `croniq` user a job with a `user` directive fails to spawn
 with `Operation not permitted`. Run such a pool with `user: "0"` and keep jobs
 without a `user` directive out of it, because those run as root.
 
+### Shell alert channel environment (`CRONIQ_ALERT_ENV_PASSTHROUGH`)
+
+A `shell` alert channel runs its command on the server, through `sh -c`. It
+does not inherit the server's environment — that holds `CRONIQ_JWT_SECRET`,
+the OIDC client secret and every other credential the server was started
+with. It gets the same kind of allowlist as a shell-runner job (`PATH`,
+`HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TZ`, the locale variables and
+the Windows essentials) plus the `CRONIQ_JOB_KEY`, `CRONIQ_EVENT`, … variables
+described under the alert rules.
+
+A script that reads something else from the server's environment — a chat
+webhook URL, say — needs it named in `CRONIQ_ALERT_ENV_PASSTHROUGH`, a
+comma-separated list of exact variable names (no wildcard).
+
 ### Shell-runner cancel and timeout behaviour
 
 Since issue #576 a shell/exec job's subprocess is bound to the execution that
