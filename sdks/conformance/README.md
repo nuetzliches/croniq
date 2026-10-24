@@ -60,8 +60,15 @@ bindings:
 
 - .NET: [`sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests`](../dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests)
 - Python: [`sdks/python/tests/conformance`](../python/tests/conformance)
-- Go: [`sdks/go/conformance`](../go/conformance)
-- Java: [`sdks/java/conformance-tests`](../java/conformance-tests) (skeleton — full harness lands in PR-2 of [#133](https://github.com/nuetzliches/croniq/issues/133))
+- Go: [`sdks/go/conformance`](../go/conformance) (its own Go module)
+- Java: [`sdks/java/conformance-tests`](../java/conformance-tests)
+- TypeScript: [`sdks/conformance/bindings/typescript`](bindings/typescript)
+  (the one binding that lives here rather than with its SDK; it consumes
+  the SDK through a `file:` dependency)
+
+All five run every case in `cases/` and `cases-trigger/` in their SDK's CI
+workflow and again in its release workflow. The Rust reference SDK
+(`crates/croniq-runner-sdk`) has no binding yet.
 
 ## Case anatomy
 

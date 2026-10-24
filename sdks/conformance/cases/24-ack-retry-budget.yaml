@@ -1,0 +1,70 @@
+name: "Ack retries stop after three attempts and cover request timeouts"
+description: |
+  Review 2026-10-24, K-1. Companion to case 23: the ack retry is bounded, and a
+  request timeout counts as a transport error just like a 5xx.
+
+  The first ack is answered with 503. The second is held for 1.5 s while the
+  runner's request timeout is 300 ms, so the runner gives it up. The third is
+  answered with 503 again. The runner must stop there: exactly three acks, no
+  fourth. An SDK that never retries sends one, one that does not treat a
+  timeout as retryable sends two, an unbounded one keeps going.
+
+  Attempts are about 1 s and then 2 s apart, so the third ack lands at roughly
+  3.3 s; `max_count` makes the binding wait the full `duration_max_ms` to see
+  that no fourth one follows.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  request_timeout_ms: 300
+  poll_retry_delay_ms: 200
+  capacity_backoff_ms: 50
+  drain_timeout_ms: 3000
+
+handlers:
+  - job_key: "ack:budget"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-ack-budget"
+            job_key: "ack:budget"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    match_count: 2
+    respond:
+      status: 200
+      body: {}
+      delay_ms: 1500
+  - on: "POST /v1/work/ack"
+    respond:
+      status: 503
+      body: { error: "service unavailable" }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 5500
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 3
+      max_count: 3
+      body_match:
+        execution_id: "exec-ack-budget"
+        status: "success"

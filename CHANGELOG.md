@@ -19,7 +19,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   main tree's out. See
   [Where the dashboard keeps its tokens](docs/operations.md#where-the-dashboard-keeps-its-tokens).
 
+- **Runner conformance cases 23–27 pin ack retry, the ack after a drain
+  timeout, and duplicate delivery** (review 2026-10-24, K-1, K-4, K-11). Where
+  the suite had no case, the six SDKs had six answers. The new cases fix one
+  for all five bindings: an ack answered with a transport error or 5xx is
+  retried, three attempts at most (23, 24); a 4xx ack is not (25); a handler
+  hard-cancelled by the drain timeout still gets its failure ack, retry
+  included (26); a re-delivered `execution_id` still in flight runs once (27).
+  The Go, Python, TypeScript, .NET and Java SDKs implement all of it; their
+  own CHANGELOGs have the details. The suite's README now lists all five
+  bindings, and case 04 no longer claims that a single-slot runner cannot
+  receive a cancel (case 04a shows it can).
+
+- **`docs/operations.md` documents where each SDK keeps its `runner_id`**
+  (review 2026-10-24, K-6). The default state directories differ between
+  SDKs and stay that way, since moving one would give every deployed runner a
+  new identity; the new section says so and recommends
+  `CRONIQ_RUNNER_DATA_DIR` on a volume. See
+  [Where runners keep their `runner_id`](docs/operations.md#where-runners-keep-their-runner_id).
+
 ### Changed
+
+- **The Python SDK release runs the unit and conformance tests on the tag**
+  (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
+  did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI
+  untested.
 
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
@@ -405,6 +429,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `dead_reason`, `metadata` and `idempotency_key` on executions, `seq` and
   `?level=` on execution logs, `tags` on `POST /v1/work/poll`, and the
   `cancelled` ack status.
+- **Go SDK: a failed ack is retried instead of costing a second run**
+  (review 2026-10-24, K-1). A handler that had succeeded lost its ack to a
+  connection reset or a request timeout; the runner logged "failed to ack",
+  dropped the execution from its in-flight set, the next poll reported it
+  missing, and the stale-claim reaper requeued a job that had already run. The
+  ack is idempotent on the server, so the runner now makes up to three
+  attempts, about 1 s and then 2 s apart, on a transport error (timeouts
+  included) or a 5xx, never on a 4xx. The execution stays in flight until the
+  ack is settled, and the retries also run after a drain timeout, so the final
+  failure ack of a hard-cancelled handler still arrives (K-4, now covered by a
+  test). Conformance cases 23–26 pin it for every SDK binding.
+
+- **Go SDK: a re-delivered `execution_id` is not dispatched twice**
+  (review 2026-10-24, K-11). An assignment whose `execution_id` was still in
+  flight ran its handler a second time, acked twice, and overwrote the first
+  run's cancel handle, so a later server cancel could not reach it. The runner
+  now ignores it with a warning, as the Python, TypeScript and .NET SDKs
+  already did. Conformance case 27.
+
+- **Go SDK: the poll retry delay carries ±20 % jitter** (review 2026-10-24,
+  K-9). After a server restart every runner's poll failed at the same moment,
+  and a fixed `PollRetryDelay` brought them all back in the same instant. Each
+  wait is now drawn from 0.8–1.2 × the configured delay.
+
+- **Go SDK: the OpenTelemetry module requires the current core**
+  (review 2026-10-24, K-10). `sdks/go/otel/go.mod` still pinned core
+  `v0.5.0`; it now requires `v0.6.2`, the latest release.
 
 ### Security
 
@@ -441,6 +492,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   invitations they sent (a pending invitation from a removed account is no
   longer redeemable); other per-user data already followed. A delete that
   fails is now a `500`.
+- **The image runs as the unprivileged `croniq` user (uid 100, gid 101)**
+  (review 2026-10-24, R-1). The privilege drop lived only in the entrypoint,
+  and both documented shell-runner deployments replace the entrypoint, so the
+  shell runner and every `runner shell { … }` command ran as root with the
+  host's bind mounts. `USER` now holds for every binary in the image. The
+  entrypoint still accepts a root start (`--user 0`, compose `user: "0"`),
+  fixes the data dir's ownership and drops to `croniq` as before. **Upgrade
+  note:** a bind mount for `/var/lib/croniq` that uid 100 cannot write, or a
+  volume from the root-based images of v0.4.0 and earlier, needs a `chown
+  100:101` or one root start; the entrypoint stops with that advice instead of
+  failing on the database file. `/var/lib/croniq-runner` now exists in the
+  image and belongs to `croniq`, so a runner's persisted `runner_id` keeps
+  working. The README's Alpine example for the shell runner adds a user, and
+  the shell runner warns at startup when it runs as root.
+- **A shell-runner `user` directive switches the group too** (review
+  2026-10-24, R-2). Only the uid changed, so a root runner started the job with
+  gid 0: its files were group-root and everything group-0-readable stayed
+  readable. The job now gets the primary group from `/etc/passwd`, gid = uid
+  when the uid has no entry, or the group named in `user "1000:2000"`.
+- **`install.sh` refuses an archive SHA256SUMS does not list** (review
+  2026-10-24, R-10). The checksum line was picked with an unanchored `grep`,
+  and a missing entry handed the check empty input, which busybox's
+  `sha256sum -c` accepts. The line is now matched by exact filename and must
+  exist exactly once. The script also runs inside a `main` function, so a
+  download cut off mid-script under `curl | sh` runs nothing.
 
 ## [0.49.0] - 2026-10-22
 

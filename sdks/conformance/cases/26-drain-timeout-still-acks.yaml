@@ -1,0 +1,73 @@
+name: "After the drain timeout the failure ack is still delivered"
+description: |
+  Review 2026-10-24, K-4. Case 06 pins the graceful half of shutdown: a handler
+  that finishes within drain_timeout_ms is acked as success. This case pins the
+  other half. A handler still running when the drain timeout elapses is
+  hard-cancelled, and the runner must still deliver its failure ack before it
+  returns. Without that ack the execution stays `claimed` until the stale-claim
+  reaper finds it, and a `singleton` job stands still for that long.
+
+  The SDKs used to answer this six different ways: one cancelled the whole
+  worker task 200 ms after the hard cancel (killing an ack mid-flight), one
+  returned from drain without waiting at all, one interrupted the ack thread
+  after 2 s.
+
+  Shutdown is requested at 200 ms, the drain timeout is 300 ms, the handler
+  would sleep 10 s but honours its cancellation. The first ack is answered with
+  503, so the runner must keep the ack alive through one retry (about 1 s later,
+  see case 23) during shutdown: two failure acks in total.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  request_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  capacity_backoff_ms: 50
+  drain_timeout_ms: 300
+
+handlers:
+  - job_key: "drain:stuck"
+    behavior: sleep
+    duration_ms: 10000
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-drain-timeout"
+            job_key: "drain:stuck"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    match_count: 1
+    respond:
+      status: 503
+      body: { error: "service unavailable" }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+shutdown_after_ms: 200
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 2
+      body_match:
+        execution_id: "exec-drain-timeout"
+        status: "failure"

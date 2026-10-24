@@ -142,6 +142,8 @@ docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
 
 On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
 
+The image runs as the unprivileged `croniq` user (uid 100, gid 101). Named volumes inherit the right owner; a bind mount for `/var/lib/croniq` has to be writable by that uid. To keep a bind mount owned by someone else, start the container as root (`--user 0`, compose `user: "0"`): the entrypoint then fixes the ownership and drops to `croniq` before the server starts.
+
 ### curl | sh
 
 ```sh
@@ -668,6 +670,11 @@ shell-runner:
   # reports unhealthy and an orchestrator keeps rescheduling them.
   healthcheck:
     disable: true
+  # The image runs as the unprivileged `croniq` user (uid 100, gid 101), and
+  # so does every command the runner executes. Bind mounts the jobs write to
+  # (`/backups` below) have to be writable by that uid. Do not set
+  # `user: "0"` here: the runner would then run every `runner shell { … }`
+  # command as root.
   environment:
     CRONIQ_SERVER_URL: http://server:4000
     CRONIQ_API_KEY: croniq_…
@@ -696,6 +703,12 @@ RUN apk add --no-cache postgresql17-client
 # x86_64-unknown-linux-musl / aarch64-unknown-linux-musl are both published.
 ADD https://github.com/nuetzliches/croniq/releases/download/v0.49.0/croniq-x86_64-unknown-linux-musl.tar.gz /tmp/croniq.tar.gz
 RUN tar xzf /tmp/croniq.tar.gz -C /usr/local/bin croniq-shell-runner  && rm /tmp/croniq.tar.gz
+
+# Every command the runner executes runs as the runner's own user, so do not
+# leave it as root. The state directory keeps the runner_id across restarts.
+RUN addgroup -S croniq && adduser -S -D -H -G croniq -s /sbin/nologin croniq && \
+    mkdir -p /var/lib/croniq-runner && chown croniq:croniq /var/lib/croniq-runner
+USER croniq
 
 ENTRYPOINT ["croniq-shell-runner"]
 ```

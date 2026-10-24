@@ -1,0 +1,60 @@
+name: "An ack answered with 4xx is not retried"
+description: |
+  Review 2026-10-24, K-1. The ack retry from cases 23 and 24 covers transport
+  errors and 5xx only. A 4xx is the server's verdict on this ack: 409 means the
+  execution is already terminal or no longer claimed by this runner, 404 that it
+  is gone. Sending the same ack again cannot change that answer.
+
+  The ack is answered with 409. The runner must send exactly one; `max_count`
+  makes the binding wait past the first retry delay (about 1 s), so a retry
+  would be observed.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  request_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  capacity_backoff_ms: 50
+  drain_timeout_ms: 3000
+
+handlers:
+  - job_key: "ack:conflict"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-ack-409"
+            job_key: "ack:conflict"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond:
+      status: 409
+      body: { error: "execution is not claimed by this runner" }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      max_count: 1
+      body_match:
+        execution_id: "exec-ack-409"
+        status: "success"

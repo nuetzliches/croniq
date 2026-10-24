@@ -178,8 +178,13 @@ FROM alpine:3.22 AS server-runtime
 # Postgres). The trust store is still needed, but only the file, and only by
 # `rustls-native-certs` behind tokio-postgres-rustls: a Postgres server
 # presenting a private CA is the one case that reads it.
+#
+# uid 100 / gid 101 are pinned to the values `adduser -S` has always picked on
+# this base, so existing volumes keep their owner. Numeric, because `USER`
+# below has to be: Kubernetes' `runAsNonRoot` cannot verify a user name.
 RUN apk add --no-cache su-exec && \
-    addgroup -S croniq && adduser -S -D -H -G croniq -s /sbin/nologin croniq
+    addgroup -S -g 101 croniq && \
+    adduser -S -D -H -u 100 -G croniq -s /sbin/nologin croniq
 
 # Debian's bundle, deliberately, over the one Alpine already ships.
 #
@@ -207,8 +212,12 @@ COPY --from=rust-builder /out/croniq-shell-runner /usr/local/bin/croniq-shell-ru
 COPY assets/ /usr/share/croniq/assets/
 COPY Croniqfile.example /etc/croniq/Croniqfile
 
-# Data directory — created and owned before VOLUME so named volumes inherit ownership
-RUN mkdir -p /var/lib/croniq && chown croniq:croniq /var/lib/croniq
+# Data directory — created and owned before VOLUME so named volumes inherit ownership.
+# `/var/lib/croniq-runner` is the runners' default `CRONIQ_RUNNER_DATA_DIR`:
+# they run as `croniq` too (see `USER` below), and a volume mounted there
+# inherits this ownership, so the persisted runner_id keeps working (#103).
+RUN mkdir -p /var/lib/croniq /var/lib/croniq-runner && \
+    chown croniq:croniq /var/lib/croniq /var/lib/croniq-runner
 VOLUME /var/lib/croniq
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -244,10 +253,20 @@ EXPOSE 4000 9900
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
     CMD wget -q -O - http://127.0.0.1:4000/health || exit 1
 
-# Entrypoint runs as root, fixes data-dir ownership if needed, then drops
-# privileges to the croniq user via su-exec. That covers upgrades from the
-# root-based images of v0.4.0 and earlier, and — more durably — any bind mount
-# owned by someone the image has never heard of.
+# Unprivileged by default (review 2026-10-24, R-1). The privilege drop used to
+# live only in the entrypoint, and every documented runner deployment replaces
+# the entrypoint (`entrypoint: ["croniq-shell-runner"]`) — so the shell runner,
+# and every `runner shell { … }` command it executes, ran as root with the
+# host's bind mounts. `USER` holds for every binary in the image, whichever
+# one a container starts.
+#
+# The entrypoint still handles a root start: with `--user 0` (compose:
+# `user: "0"`) it fixes data-dir ownership and drops to croniq via su-exec, as
+# every image before this one did. That opt-in is what a bind mount owned by
+# someone the image has never heard of, or a volume from the root-based images
+# of v0.4.0 and earlier, needs; the entrypoint names it when the data dir is
+# not writable.
+USER 100:101
 ENTRYPOINT ["docker-entrypoint.sh"]
 # `--data-dir` deliberately omitted — the server reads `$CRONIQ_DATA_DIR`
 # (set above) via clap's `env =` fallback, so a `docker run -e

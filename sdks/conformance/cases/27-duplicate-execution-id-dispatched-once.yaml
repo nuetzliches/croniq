@@ -1,0 +1,79 @@
+name: "A re-delivered execution_id that is still in flight is not dispatched again"
+description: |
+  Review 2026-10-24, K-11. A correct server never hands out an execution that is
+  already claimed, but a server bug, a replayed response or a test mock can. A
+  runner that dispatches the same execution_id twice runs the handler twice and
+  acks twice, and the second dispatch overwrites the first one's cancel handle,
+  so a later server cancel no longer reaches the first run.
+
+  The first poll assigns exec-dup, the second assigns it again while the first
+  run (600 ms) is still going. The runner must ignore the second assignment:
+  exactly one ack. `max_count` makes the binding wait the full
+  `duration_max_ms`, so a second run's ack is observed.
+
+runner_config:
+  # max_inflight: 2 so the runner is not at capacity with one run in flight
+  # and the second assignment is not merely a capacity question.
+  capabilities: ["work"]
+  max_inflight: 2
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 500
+  request_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  capacity_backoff_ms: 50
+  drain_timeout_ms: 3000
+
+handlers:
+  - job_key: "dup:job"
+    behavior: sleep
+    duration_ms: 600
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-dup"
+            job_key: "dup:job"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-dup"
+            job_key: "dup:job"
+            fire_at: "2026-10-24T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      max_count: 1
+      body_match:
+        execution_id: "exec-dup"
+        status: "success"

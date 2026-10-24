@@ -155,7 +155,7 @@ public final class CroniqRunner implements AutoCloseable {
                         // before reaching the reset below, so it has to do it here
                         // (issue #508).
                         consecutiveConflicts = 0;
-                        sleep(options.pollRetryDelay());
+                        sleep(jittered(options.pollRetryDelay()));
                         continue;
                     }
                     // Anything that is not a 401 clears the auth budget: a 5xx or a
@@ -184,20 +184,20 @@ public final class CroniqRunner implements AutoCloseable {
                                 consecutiveConflicts,
                                 options.maxConsecutivePollConflicts(),
                                 options.pollRetryDelay());
-                        sleep(options.pollRetryDelay());
+                        sleep(jittered(options.pollRetryDelay()));
                         continue;
                     }
                     // Non-409 transient — unrelated to instance ownership, so a
                     // recovered outage must not accumulate with later conflicts.
                     consecutiveConflicts = 0;
                     log.warn("Poll failed with HTTP {} — backing off {}", e.statusCode(), options.pollRetryDelay());
-                    sleep(options.pollRetryDelay());
+                    sleep(jittered(options.pollRetryDelay()));
                     continue;
                 } catch (Exception e) {
                     consecutiveConflicts = 0;
                     consecutiveAuthFailures = 0;
                     log.warn("Poll failed: {} — backing off {}", e.toString(), options.pollRetryDelay());
-                    sleep(options.pollRetryDelay());
+                    sleep(jittered(options.pollRetryDelay()));
                     continue;
                 }
                 // Poll succeeded — the other instance must have died or released
@@ -238,6 +238,22 @@ public final class CroniqRunner implements AutoCloseable {
         }
     }
 
+    /**
+     * Spread a poll retry delay uniformly over 0.8–1.2× its value (review
+     * 2026-10-24, K-9). With a fixed delay every runner that saw the same
+     * server outage retries in lockstep, so a restarted server is hit by all of
+     * them at once on every retry round. Applies to the failure back-off only;
+     * the at-capacity back-off is paced by the server and needs no spreading.
+     */
+    static Duration jittered(Duration d) {
+        if (d == null || d.isZero() || d.isNegative()) {
+            return d;
+        }
+        double factor =
+                0.8 + 0.4 * java.util.concurrent.ThreadLocalRandom.current().nextDouble();
+        return Duration.ofNanos((long) (d.toNanos() * factor));
+    }
+
     private static void sleep(Duration d) throws InterruptedException {
         long ms = d == null ? 0 : Math.max(0, d.toMillis());
         if (ms > 0) {
@@ -275,7 +291,9 @@ public final class CroniqRunner implements AutoCloseable {
      *       drain. Server-initiated cancels via {@code PollResponse.cancel}
      *       are still honoured because the poll loop already stopped.
      *   <li>If drain times out with handlers still running, force-cancel them
-     *       (sets the cancellation flag and interrupts the worker threads).
+     *       (sets the cancellation flag and interrupts the worker threads),
+     *       then wait for their failure acks — bounded by the ack retry
+     *       budget — before interrupting whatever is still left.
      * </ol>
      *
      * <p>Idempotent — subsequent calls return immediately.
@@ -313,15 +331,40 @@ public final class CroniqRunner implements AutoCloseable {
         }
         // Force-cancel anything that didn't drain naturally — sets the
         // cancellation flag AND interrupts each worker so blocking I/O
-        // unwinds promptly. After this, shutdownNow gives the executor a
-        // chance to release any held threads.
+        // unwinds promptly. An execution whose handler already returned is
+        // past this: its worker is detached, so the cancel cannot interrupt
+        // its ack.
         for (String id : dispatcher.inflightIds()) {
             dispatcher.cancel(id);
         }
         handlerExecutor.shutdown();
+        awaitFinalAcks();
+    }
+
+    /**
+     * Wait for the cancelled handlers to unwind and for their failure acks to
+     * go out before interrupting what is left (review 2026-10-24, K-4).
+     *
+     * <p>This used to be a flat 2 s followed by {@code shutdownNow()}, which
+     * interrupted an ack mid-{@code HttpClient.send} and left the execution
+     * {@code claimed} until the stale-claim reaper found it — for a
+     * {@code singleton} job, every later run waited that long. Handlers get the
+     * same 2 s to react to the cancel; an ack in progress (retries included) is
+     * waited for up to {@link ExecutionDispatcher#maxAckDuration()}, so the
+     * wait stays bounded even with a handler that ignores cancellation.
+     */
+    private void awaitFinalAcks() {
+        long start = System.nanoTime();
+        long unwindDeadline = start + TimeUnit.SECONDS.toNanos(2);
+        long ackDeadline = unwindDeadline + dispatcher.maxAckDuration().toNanos();
         try {
-            if (!handlerExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                handlerExecutor.shutdownNow();
+            while (!handlerExecutor.awaitTermination(50, TimeUnit.MILLISECONDS)) {
+                long now = System.nanoTime();
+                boolean acking = dispatcher.ackingCount() > 0;
+                if (now - ackDeadline >= 0 || (!acking && now - unwindDeadline >= 0)) {
+                    handlerExecutor.shutdownNow();
+                    return;
+                }
             }
         } catch (InterruptedException e) {
             handlerExecutor.shutdownNow();

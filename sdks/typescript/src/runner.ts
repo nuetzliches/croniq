@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { setMaxListeners } from 'node:events';
 
 import { anySignal } from './abort.js';
+import { ackBudgetMs, ackWithRetry, jittered } from './backoff.js';
 import {
   CroniqClient,
   HttpError,
@@ -249,10 +250,11 @@ export class CroniqRunner {
             );
             throw new AuthFailedError(consecutiveAuthFailures);
           }
+          const authRetryMs = jittered(this.#options.pollRetryDelayMs);
           this.#logger.warn(
             `poll returned 401 Unauthorized (${consecutiveAuthFailures}/` +
               `${this.#options.maxConsecutiveAuthFailures}) — the API key was rejected; ` +
-              `retrying after ${this.#options.pollRetryDelayMs}ms`,
+              `retrying after ${authRetryMs}ms`,
             { runner_id: this.#runnerId! },
           );
           // A 401 is not a 409, so it clears the conflict budget just like
@@ -260,7 +262,7 @@ export class CroniqRunner {
           // the reset below, so it has to do it here (issue #508).
           consecutiveConflicts = 0;
           try {
-            await sleep(this.#options.pollRetryDelayMs, signal);
+            await sleep(authRetryMs, signal);
           } catch {
             return;
           }
@@ -269,6 +271,9 @@ export class CroniqRunner {
         // Anything that is not a 401 clears the auth budget: a 5xx or a
         // timeout says nothing about whether the credential is valid.
         consecutiveAuthFailures = 0;
+        // Jittered so runners that saw the same outage do not retry in
+        // lockstep (review 2026-10-24, K-9).
+        const retryMs = jittered(this.#options.pollRetryDelayMs);
         // A 409 means a newer instance has taken this runner_id over
         // (fencing, issue #374). One is transient — the deposed instance may
         // win it back — so we back off and retry. A streak of them is a
@@ -288,7 +293,7 @@ export class CroniqRunner {
           this.#logger.warn(
             `poll returned 409 Conflict (${consecutiveConflicts}/` +
               `${this.#options.maxConsecutivePollConflicts}) — another runner instance may be ` +
-              `active; retrying after ${this.#options.pollRetryDelayMs}ms`,
+              `active; retrying after ${retryMs}ms`,
             { runner_id: this.#runnerId! },
           );
         } else {
@@ -299,10 +304,10 @@ export class CroniqRunner {
           const detail = err instanceof HttpError
             ? { status: err.status, status_text: err.statusText }
             : { error: String(err) };
-          this.#logger.warn(`poll failed — backing off ${this.#options.pollRetryDelayMs}ms`, detail);
+          this.#logger.warn(`poll failed — backing off ${retryMs}ms`, detail);
         }
         try {
-          await sleep(this.#options.pollRetryDelayMs, signal);
+          await sleep(retryMs, signal);
         } catch {
           return;
         }
@@ -337,12 +342,25 @@ export class CroniqRunner {
         const ac = new AbortController();
         this.#inflight.set(assignment.execution_id, ac);
 
-        // Fire-and-forget; the inflight map cleans up in the .finally().
+        // Fire-and-forget; the inflight map cleans up in the .finally(). The
+        // trailing .catch keeps a dispatch that rejects anyway (a throwing
+        // logger, say) from becoming an unhandled rejection, which kills the
+        // process under Node's default `--unhandled-rejections=throw`.
         void this.#dispatcher!
           .dispatch(assignment, ac, signal)
           .finally(() => {
             this.#inflight.delete(assignment.execution_id);
             this.#slotFreed.resolve();
+          })
+          .catch((err: unknown) => {
+            try {
+              this.#logger.error('execution dispatch failed unexpectedly', {
+                execution_id: assignment.execution_id,
+                error: String(err),
+              });
+            } catch {
+              // The logger is what failed; there is nowhere left to report.
+            }
           });
       }
 
@@ -401,7 +419,8 @@ export class CroniqRunner {
     });
     if (!ackable) return;
     try {
-      await this.#client.ack(
+      await ackWithRetry(
+        this.#client,
         {
           runner_id: this.#runnerId!,
           execution_id: assignment.execution_id,
@@ -411,6 +430,7 @@ export class CroniqRunner {
           error: rejectionAckError(field, assignment[field]),
         },
         signal,
+        this.#logger,
       );
     } catch (err) {
       this.#logger.warn('failed to ack a rejected work assignment', {
@@ -453,10 +473,22 @@ export class CroniqRunner {
       for (const ac of this.#inflight.values()) {
         if (!ac.signal.aborted) ac.abort();
       }
-      // Give the dispatcher one tick to process the abort and ack.
-      const hardDeadline = Date.now() + 1_000;
+      // Wait for the handlers to unwind and their failure acks to land.
+      // Review 2026-10-24, K-4: this used to be a fixed 1 s, so a slow ack — or
+      // one that needed its retry — was abandoned and the execution stayed
+      // claimed until the stale-claim reaper found it. The bound covers the
+      // log-writer flush (one request) plus every ack attempt and pause; it
+      // only runs out if the server stops answering altogether.
+      const hardDeadline =
+        Date.now() + this.#options.requestTimeoutMs + ackBudgetMs(this.#options.requestTimeoutMs);
       while (this.#inflight.size > 0 && Date.now() < hardDeadline) {
         await sleep(25);
+      }
+      if (this.#inflight.size > 0) {
+        this.#logger.warn(
+          `${this.#inflight.size} execution(s) still unacked after the hard-cancel grace — returning`,
+          { count: this.#inflight.size },
+        );
       }
     }
   }

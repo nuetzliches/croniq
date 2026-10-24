@@ -455,6 +455,15 @@ the job ran with *more* privilege than it asked for, possibly root. Set a
 numeric uid, or drop the directive and run the runner process itself as the
 desired user.
 
+`user` switches the group as well. `user 1000` runs the job with the primary
+group `/etc/passwd` records for uid 1000, or gid 1000 when the uid has no entry
+there; `user "1000:2000"` names the group explicitly. Before that, only the uid
+changed, and a root runner started the job with gid 0. Switching accounts needs
+a runner running as root, and the published image no longer starts as root:
+under the default `croniq` user a job with a `user` directive fails to spawn
+with `Operation not permitted`. Run such a pool with `user: "0"` and keep jobs
+without a `user` directive out of it, because those run as root.
+
 ### Shell-runner cancel and timeout behaviour
 
 Since issue #576 a shell/exec job's subprocess is bound to the execution that
@@ -1921,6 +1930,36 @@ Before this, a window longer than a rule's `expected_within` raised a false
 "missed fire" for every active job — which also made it the only sign that
 maintenance had been left on. The `maintenance_active` rule replaces that
 signal; add one before relying on the quieter behaviour.
+
+## Where runners keep their `runner_id`
+
+A runner that is not given an id generates one on first start and writes it to
+a state file named `runner-id`, so a restart keeps the identity. Every SDK
+resolves the id in the same order: explicit configuration, then the
+`RUNNER_ID` environment variable, then that state file. The file's directory
+is `CRONIQ_RUNNER_DATA_DIR` when set; otherwise each SDK uses its platform's
+convention:
+
+| SDK | Default directory when `CRONIQ_RUNNER_DATA_DIR` is unset |
+|---|---|
+| Rust (`croniq-runner-sdk`, `croniq-shell-runner`), Go | `/var/lib/croniq-runner` |
+| Python | `$XDG_STATE_HOME/croniq`, else `~/.local/state/croniq` |
+| TypeScript | `$XDG_STATE_HOME/croniq-runner`, else `~/.local/state/croniq-runner`; `%LOCALAPPDATA%\croniq-runner` on Windows |
+| .NET | `<LocalApplicationData>/croniq-runner` (`~/.local/share/croniq-runner` on Linux) |
+| Java | `$XDG_DATA_HOME/croniq-runner`, else `~/.local/share/croniq-runner` |
+
+The defaults differ and stay that way on purpose: moving one would orphan the
+state file of every runner already deployed with it, and each of those would
+come up under a new `runner_id` — which, under the identity binding below,
+is a new identity bound on its first poll. **In a container, set
+`CRONIQ_RUNNER_DATA_DIR` to a mounted volume** (or set `RUNNER_ID`) rather than
+relying on any default, since none of them survives a container recreate.
+
+If the state file cannot be written, the runner still starts, with an id that
+will not survive the next restart, and logs a warning naming the path (Python
+and Java logged nothing visible before review 2026-10-24, K-6). That is the
+usual cause of a runner whose id changes on every restart; every SDK's
+warning starts with `could not persist` (case varies).
 
 ## Runner identity ownership
 

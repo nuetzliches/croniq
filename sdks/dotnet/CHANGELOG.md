@@ -4,6 +4,34 @@ All notable changes to the .NET Runner SDK packages are documented in this file.
 
 The .NET SDK uses its own version track separate from the Croniq server. SDK versions are tagged as `dotnet-sdk-v*` (e.g. `dotnet-sdk-v0.1.0`).
 
+## [Unreleased]
+
+### Changed
+
+- **The poll retry delay is jittered by ±20 % (review 2026-10-24, K-9).**
+  After a failed poll every runner waited exactly `PollRetryDelay`, so a fleet
+  that lost its polls to a server restart came back in the same instant. The
+  wait is now drawn from 0.8–1.2 × `PollRetryDelay`; `CapacityBackoff` is
+  unchanged.
+
+### Fixed
+
+- **A failed ack is retried instead of costing a second run of the job
+  (review 2026-10-24, K-1).** A connection reset or request timeout on
+  `POST /v1/work/ack` was logged and dropped: the execution left the in-flight
+  set, the next poll reported it missing, and the server requeued a job that
+  had already succeeded. The ack is now sent up to three times, about 1 s and
+  then 2 s apart, on a transport error, a request timeout or a 5xx. A 4xx is
+  the server's answer to this ack and is not retried. The execution stays in
+  flight until the ack is settled. Pinned by conformance cases 23–25.
+- **The failure ack of a hard-cancelled execution is still sent at shutdown
+  (review 2026-10-24, K-4).** When `DrainTimeout` elapsed, `DrainAsync`
+  cancelled the remaining handlers and returned at once, so the host could
+  stop before their failure ack went out. The execution stayed `claimed`
+  until the stale-claim reaper found it, and a `singleton` job stood still
+  that long. The drain now waits for those acks, bounded by the ack's own
+  retry budget. Pinned by conformance case 26.
+
 ## [0.9.2] - 2026-10-08
 
 ### Fixed

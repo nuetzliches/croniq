@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 import secrets
 import time
 from collections.abc import Callable, Coroutine
@@ -51,6 +52,34 @@ _log = logging.getLogger("croniq_runner.runner")
 
 Handler = Callable[[ExecutionContext], Coroutine[Any, Any, None]]
 
+# Delays before the second and third ack attempt (review 2026-10-24, K-1).
+# Module-level so tests can shorten them. Three attempts in total, about 1 s and
+# then 2 s apart — the same schedule in every SDK, pinned by conformance cases
+# 23-26.
+_ACK_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 2.0)
+
+# Spread of the poll retry delay (review 2026-10-24, K-9): 0.8-1.2x, so a fleet
+# of runners that all saw the same outage does not come back in lockstep.
+_POLL_RETRY_JITTER = 0.2
+
+
+def _jittered(seconds: float) -> float:
+    """``seconds`` scaled by a uniform factor in ``[0.8, 1.2]``."""
+    # Spreading load, not a security decision, so the module-level PRNG is fine.
+    return seconds * random.uniform(1.0 - _POLL_RETRY_JITTER, 1.0 + _POLL_RETRY_JITTER)
+
+
+def _is_retryable_ack_error(exc: BaseException) -> bool:
+    """Transport errors (including request timeouts) and 5xx are worth a retry.
+
+    A 4xx is the server's answer to this ack — 409 already terminal or no longer
+    claimed by us, 404 gone, 403 not our runner_id — and resending the same body
+    cannot change it.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.TransportError | TimeoutError)
+
 
 @dataclass(slots=True)
 class _HandlerEntry:
@@ -92,6 +121,9 @@ class Runner:
         # at-capacity backoff early (issue #845).
         self._slot_freed = asyncio.Event()
         self._stopped_polling = asyncio.Event()
+        # Set once the drain timeout elapsed and the remaining handlers are
+        # being cancelled; their failure ack then says "runner draining".
+        self._drain_hard_cancel = False
         self._ran = False
 
     # ----- registration API ---------------------------------------------
@@ -273,7 +305,7 @@ class Runner:
                     # continues before reaching the reset below, so it has to
                     # do it here (issue #508).
                     consecutive_conflicts = 0
-                    await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
+                    await self._sleep_or_drain(_jittered(opts.poll_retry_delay_ms / 1000.0))
                     continue
                 # Anything that is not a 401 clears the auth budget: a 5xx or
                 # a timeout says nothing about whether the credential is valid.
@@ -312,7 +344,7 @@ class Runner:
                     _log.warning(
                         "poll failed (%s) — backing off %dms", exc, opts.poll_retry_delay_ms
                     )
-                await self._sleep_or_drain(opts.poll_retry_delay_ms / 1000.0)
+                await self._sleep_or_drain(_jittered(opts.poll_retry_delay_ms / 1000.0))
                 continue
 
             # Poll succeeded — the other instance must have died or released
@@ -490,7 +522,9 @@ class Runner:
             status = "success"
         except asyncio.CancelledError:
             status = "failure"
-            if self._drain_event.is_set() and not cancellation.is_set():
+            if self._drain_hard_cancel or (
+                self._drain_event.is_set() and not cancellation.is_set()
+            ):
                 # Caller (run()) was cancelled and triggered the drain. The
                 # current execution may still finish naturally — but if we got
                 # here, the handler ran out of time / raised CancelledError.
@@ -543,37 +577,80 @@ class Runner:
                     extra={"job_key": job_key, "execution_id": execution_id},
                 )
 
-        try:
-            await self._client.ack(
-                AckRequest(
-                    runner_id=self._runner_id or "",
-                    execution_id=execution_id,
-                    status=status,
-                    error=error,
-                    duration_ms=duration_ms,
-                    attempt=attempt,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001 — ack failure must not kill the task
-            if is_ownership_denied(exc):
-                _log.error(
-                    "ack refused with 403 Forbidden — this runner's credential does not own "
-                    "runner_id, so the execution stays claimed until its lease expires. Give "
-                    "the runner its own runner_id, or release the existing binding with "
-                    "DELETE /v1/runners/{id}",
-                    exc_info=True,
-                    extra={
-                        "runner_id": self._runner_id or "",
-                        "job_key": job_key,
-                        "execution_id": execution_id,
-                    },
-                )
-            else:
-                _log.error(
-                    "failed to ack execution",
-                    exc_info=True,
+        await self._ack_with_retry(
+            AckRequest(
+                runner_id=self._runner_id or "",
+                execution_id=execution_id,
+                status=status,
+                error=error,
+                duration_ms=duration_ms,
+                attempt=attempt,
+            ),
+            job_key=job_key,
+        )
+
+    async def _ack_with_retry(self, request: AckRequest, *, job_key: str) -> None:
+        """POST the ack, retrying a transport error or 5xx (review 2026-10-24, K-1).
+
+        A handler that ran for twenty minutes used to lose its ack to a
+        connection reset or a request timeout: the failure was logged, the
+        execution left the in-flight set, the next poll reported it missing and
+        the stale-claim reaper requeued a job that had already succeeded. The
+        server fences the ack with a CAS, so sending it again is safe.
+
+        Three attempts, about 1 s and then 2 s apart, each under its own request
+        timeout. The execution stays in the in-flight set until this returns
+        (the slot is released by the task's done callback), so polls keep
+        reporting it meanwhile. A 4xx is never retried — see
+        :func:`_is_retryable_ack_error`.
+        """
+        execution_id = request.execution_id
+        attempts = len(_ACK_RETRY_DELAYS_S) + 1
+        for attempt_no in range(1, attempts + 1):
+            try:
+                await self._client.ack(request)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — ack failure must not kill the task
+                if is_ownership_denied(exc):
+                    _log.error(
+                        "ack refused with 403 Forbidden — this runner's credential does not own "
+                        "runner_id, so the execution stays claimed until its lease expires. Give "
+                        "the runner its own runner_id, or release the existing binding with "
+                        "DELETE /v1/runners/{id}",
+                        exc_info=True,
+                        extra={
+                            "runner_id": self._runner_id or "",
+                            "job_key": job_key,
+                            "execution_id": execution_id,
+                        },
+                    )
+                    return
+                if not _is_retryable_ack_error(exc) or attempt_no == attempts:
+                    _log.error(
+                        "failed to ack execution (attempt %d/%d)",
+                        attempt_no,
+                        attempts,
+                        exc_info=True,
+                        extra={"job_key": job_key, "execution_id": execution_id},
+                    )
+                    return
+                delay = _ACK_RETRY_DELAYS_S[attempt_no - 1]
+                _log.warning(
+                    "ack failed (attempt %d/%d: %s) — retrying in %.1fs",
+                    attempt_no,
+                    attempts,
+                    exc.__class__.__name__,
+                    delay,
                     extra={"job_key": job_key, "execution_id": execution_id},
                 )
+                await asyncio.sleep(delay)
+
+    def _ack_budget_s(self) -> float:
+        """Upper bound on how long :meth:`_ack_with_retry` can take."""
+        attempts = len(_ACK_RETRY_DELAYS_S) + 1
+        return attempts * self._options.request_timeout_ms / 1000.0 + sum(_ACK_RETRY_DELAYS_S)
 
     async def _renew_loop(self, execution_id: str, stop: asyncio.Event) -> None:
         interval = self._options.renew_interval_ms / 1000.0
@@ -631,16 +708,25 @@ class Runner:
             # Cancel via the per-execution cancellation event so handlers
             # that respect ``ctx.cancellation`` abort cleanly; the dispatcher
             # then acks with status=failure.
+            self._drain_hard_cancel = True
             for inflight in list(self._inflight.values()):
                 inflight.cancellation.set()
-            # Wait briefly for the tasks to finish their ack POSTs.
-            await asyncio.sleep(0.2)
-            # Hard-cancel anything still hanging on.
-            for inflight in list(self._inflight.values()):
-                inflight.task.cancel()
-            for inflight in list(self._inflight.values()):
+            # Then wait for those acks (review 2026-10-24, K-4). This used to
+            # sleep 200 ms and cancel the whole task, ack included; a
+            # CancelledError inside ``await ack()`` slips past ``except
+            # Exception``, so a slow ack — or any ack retry — was lost and the
+            # execution stayed ``claimed`` until the reaper found it. Only the
+            # handler is cancelled (via the event above); the task gets the
+            # full ack budget plus a second for the handler to unwind.
+            tasks = [inflight.task for inflight in self._inflight.values()]
+            _done, pending = await asyncio.wait(tasks, timeout=self._ack_budget_s() + 1.0)
+            # Last resort: a handler that swallows its cancellation and keeps
+            # running would otherwise hold shutdown open forever.
+            for task in pending:
+                task.cancel()
+            for task in pending:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await inflight.task
+                    await task
 
     async def _sleep_or_drain(self, seconds: float) -> None:
         """Sleep, but return early if drain was requested."""

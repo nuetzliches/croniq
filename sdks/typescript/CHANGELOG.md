@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The poll retry delay is jittered by ±20 % (review 2026-10-24, K-9).** With
+  a fixed `pollRetryDelayMs` every runner that saw the same outage retried in
+  lockstep and hit a restarting server at the same moment. Each wait is now
+  drawn uniformly from 0.8–1.2 × the configured delay.
+
+### Fixed
+
+- **A failed ack is retried instead of costing a second run of the job
+  (review 2026-10-24, K-1).** The ack was sent once. A handler that had already
+  succeeded and then lost its ack to a connection reset or a request timeout
+  was dropped from the in-flight set, the server's stale-claim reaper requeued
+  it, and the job ran again. The ack (also the failure ack for a refused
+  assignment) now gets up to three attempts, about 1 s and then 2 s apart, on a
+  transport error, a request timeout or a 5xx; a 4xx is the server's final
+  answer and is not retried. The execution stays in flight until the ack is
+  done. Pinned by conformance cases 23–25.
+- **After the drain timeout the failure ack is still delivered (review
+  2026-10-24, K-4).** Once `drainTimeoutMs` elapsed and the remaining handlers
+  were hard-cancelled, `run()` waited a fixed 1 s for their acks and then
+  returned, abandoning a slow ack and leaving the execution `claimed` until the
+  reaper found it. It now waits until the acks (with their retries) are done,
+  bounded by the request timeout times the number of attempts plus the retry
+  pauses. Pinned by conformance case 26.
+- **A dispatch that rejects no longer becomes an unhandled rejection.** The
+  fire-and-forget dispatch chain had no `.catch`, so an exception escaping it —
+  a throwing custom logger, for example — would terminate the process under
+  Node's default unhandled-rejection mode. It is now logged.
+
+### Removed
+
+- **The unused `@opentelemetry/api` dependency (review 2026-10-24, K-7).** No
+  module imported it, yet it was installed into every consumer's tree, and the
+  README called the SDK "OpenTelemetry-ready". The SDK emits no spans; the
+  README now says so.
+
 ## 0.7.2 - 2026-10-08
 
 ### Fixed

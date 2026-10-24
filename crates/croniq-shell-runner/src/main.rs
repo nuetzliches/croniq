@@ -96,6 +96,21 @@ async fn main() {
         "croniq shell runner starting"
     );
 
+    // Every `runner shell { … }` command inherits this process's privileges, so
+    // a root runner is a root shell for whoever can edit the Croniqfile. The
+    // image no longer starts as root (review 2026-10-24, R-1); say so loudly
+    // when a deployment does it anyway. Not a refusal: the `user` directive
+    // needs a root parent to switch to, and that is a legitimate setup.
+    #[cfg(unix)]
+    // SAFETY: `geteuid` cannot fail and touches no memory.
+    if unsafe { libc::geteuid() } == 0 {
+        tracing::warn!(
+            "the shell runner is running as root — every job without a `user` directive runs \
+             as root too. Run it as an unprivileged user unless jobs need `user` to switch \
+             accounts."
+        );
+    }
+
     let mut builder = CroniqRunner::builder(&server_url, &runner_id)
         .capabilities(capabilities)
         .tags(tags)

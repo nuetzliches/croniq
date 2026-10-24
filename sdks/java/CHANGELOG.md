@@ -4,6 +4,49 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The poll retry delay is jittered by ±20 % (review 2026-10-24, K-9).**
+  After a failed poll the loop waited exactly `pollRetryDelay()`, so every
+  runner that saw the same server outage retried in lockstep and hit the
+  restarted server all at once. The delay is now drawn uniformly from 0.8–1.2×
+  the configured value. The at-capacity back-off is unchanged.
+- **A runner-id that cannot be persisted is logged at WARN (review 2026-10-24,
+  K-6).** It was logged at DEBUG, so a container without a writable data
+  directory silently fell back to a hostname-based id and presented a new
+  `runner_id` after every restart. The warning names the directory and how to
+  fix it (`runnerDataDir` / `CRONIQ_RUNNER_DATA_DIR`, or an explicit id).
+
+### Fixed
+
+- **A failed ack is retried (review 2026-10-24, K-1).** One connection reset
+  or request timeout on the ack of a handler that had already succeeded cost a
+  full second run: the execution left the in-flight set, the stale-claim reaper
+  requeued it, and the job ran again. The ack is idempotent on the server, so
+  the dispatcher now makes up to three attempts, about 1 s and then 2 s apart,
+  on a transport error or a 5xx. A 4xx is never retried. Pinned for every SDK
+  by conformance cases 23–25.
+- **The ack is sent before the slot is freed (review 2026-10-24, K-5).** The
+  dispatcher removed the execution from the in-flight set and released its slot
+  before acking, so the poll loop reported `inflight: []` and claimed new work
+  while the ack was still on the wire. A server cancel arriving between the
+  handler returning and the ack also left the interrupt flag set, and
+  `HttpClient.send` then threw and the ack was lost. The execution now stays in
+  flight until its ack is done, and the worker is detached from cancellation
+  (its interrupt flag cleared) before acking.
+- **Shutdown waits for the failure ack after the drain timeout (review
+  2026-10-24, K-4).** `close()` gave hard-cancelled handlers a flat 2 s and then
+  called `shutdownNow()`, which interrupted an ack mid-request and left the
+  execution `claimed` until the stale-claim reaper found it. Handlers still get
+  2 s to react to the cancel; an ack in progress, retries included, is now
+  waited for up to its full retry budget. Pinned by conformance case 26.
+- **A re-delivered `execution_id` that is still in flight is ignored (review
+  2026-10-24, K-11).** It was dispatched a second time, running the handler
+  twice and overwriting the first run's cancel handle. Pinned by conformance
+  case 27.
+
 ## [0.7.2] - 2026-10-08
 
 ### Fixed
