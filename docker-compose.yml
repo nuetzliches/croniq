@@ -88,6 +88,9 @@ services:
       replicas: ${RUNNER_REPLICAS:-2}
     environment:
       CRONIQ_SERVER_URL: http://server:4000
+      # Cleartext to a non-loopback host is refused unless opted in: fine on
+      # the Compose network of a local demo, not across a real network.
+      CRONIQ_ALLOW_INSECURE_HTTP: "1"
       CRONIQ_API_KEY: croniq_demo_local_stack_key_not_for_production_use
       RUNNER_FAIL_RATE: ${RUNNER_FAIL_RATE:-0.05}
       RUNNER_MAX_INFLIGHT: "4"

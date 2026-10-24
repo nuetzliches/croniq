@@ -24,6 +24,20 @@
 //!   `RUNNER_TAGS`             — comma-separated free-form tags for filtering
 //!                               in the UI. Not routing-relevant. Convention:
 //!                               `key=value` strings (`env=prod`, `team=ops`).
+//!   `RUNNER_DRAIN_TIMEOUT_SECS` — on SIGTERM / Ctrl-C, how long running jobs
+//!                               may finish before they are terminated and
+//!                               acked as failed (default: 8, inside Docker's
+//!                               10 s stop grace; raise both together).
+//!   `CRONIQ_ALLOW_INSECURE_HTTP` — `1` accepts a cleartext `http://` server
+//!                               URL on a non-loopback host, such as
+//!                               `http://server:4000` on a Compose network.
+//!                               Without it the runner refuses to start: the
+//!                               API key would travel in the clear.
+//!   `RUST_LOG`                — log filter. Every line a job prints is also
+//!                               logged under the target `shell_runner::pipe`;
+//!                               `RUST_LOG=info,shell_runner::pipe=off` keeps
+//!                               job output out of the runner's own log (it
+//!                               still reaches the execution's log panel).
 //!
 //! Deployment (issue #577): this binary usually has to run *inside* the image
 //! that carries the tooling it invokes, not inside Croniq's own image. The
@@ -43,8 +57,12 @@
 //! Windows only the spawned process itself is terminated — a process it
 //! spawned in turn survives.
 
+use std::time::Duration;
+
 use croniq_execution::retry::parse_duration;
-use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id};
+use croniq_runner_sdk::{
+    CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id, shutdown_signal,
+};
 use croniq_shell_runner::exec;
 use tracing::info;
 
@@ -114,20 +132,47 @@ async fn main() {
     let mut builder = CroniqRunner::builder(&server_url, &runner_id)
         .capabilities(capabilities)
         .tags(tags)
-        .max_inflight(max_inflight);
+        .max_inflight(max_inflight)
+        .drain_timeout(drain_timeout_from_env());
 
     if let Ok(key) = std::env::var("CRONIQ_API_KEY") {
         builder = builder.api_key(&key);
+    }
+    if env_flag("CRONIQ_ALLOW_INSECURE_HTTP") {
+        builder = builder.allow_insecure_http();
     }
 
     let runner = builder.build();
 
     runner.set_default_handler(handle_job).await;
 
-    if let Err(e) = runner.start().await {
+    // SIGTERM / Ctrl-C drain the runner instead of killing it mid-job (review
+    // 2026-10-24, R-4). Before, `docker stop` ended the process at once: no
+    // ack, claims stuck until the reaper requeued them, and outside a
+    // container the jobs — in their own process groups — kept running and
+    // then ran a second time.
+    if let Err(e) = runner.run_until(shutdown_signal()).await {
         tracing::error!(error = %e, "runner exited with error");
         std::process::exit(1);
     }
+}
+
+/// Default for `RUNNER_DRAIN_TIMEOUT_SECS`: inside Docker's 10 s stop grace,
+/// with room for the final acks.
+const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 8;
+
+fn drain_timeout_from_env() -> Duration {
+    let secs = std::env::var("RUNNER_DRAIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
 }
 
 async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
