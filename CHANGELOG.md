@@ -101,6 +101,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including one that was closed or owned elsewhere (RUSTSEC-2026-0386, an
   unsoundness advisory); Croniq does not construct an `AsyncFd` itself.
   Lockfile only; no manifest change.
+- **Deleting a user who had sent an invitation now deletes them** (review
+  2026-10-24, S-2). The delete failed on the invitation's reference to its
+  sender, and `DELETE /v1/users/{id}` ignored the failure: it answered `204`
+  and wrote `user.deleted` to the audit log while the account stayed active
+  and could still sign in. The store now removes the user in one transaction
+  together with their password credentials, refresh tokens and the
+  invitations they sent (a pending invitation from a removed account is no
+  longer redeemable); other per-user data already followed. A delete that
+  fails is now a `500`.
 
 ## [0.49.0] - 2026-10-22
 

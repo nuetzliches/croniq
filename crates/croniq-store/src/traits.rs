@@ -26,6 +26,25 @@ pub fn calendar_name_taken(name: &str) -> StoreError {
     StoreError::Conflict(format!("calendar name '{name}' is already taken"))
 }
 
+/// What [`AuthStore::users_delete`] removes, in order, `$1` being the user id
+/// (review 2026-10-24, S-2).
+///
+/// Tables with `ON DELETE CASCADE` (TOTP, recovery codes, PATs, OIDC links,
+/// password resets, favorites, the notes marker) follow the user by
+/// themselves. These do not: `invitations.invited_by` is a plain foreign key,
+/// so deleting anyone who had ever invited someone failed with a constraint
+/// violation — which the handler dropped, answering 204 while the user stayed
+/// active and able to sign in. `password_credentials` and `refresh_tokens`
+/// carry no key at all and were left behind. The invitations the user sent go
+/// with them: a pending one from a removed account should not stay redeemable,
+/// and `invited_by` cannot be NULL. The audit log keeps the history.
+pub const USER_DELETE_STATEMENTS: &[&str] = &[
+    "DELETE FROM invitations WHERE invited_by = $1",
+    "DELETE FROM refresh_tokens WHERE user_id = $1",
+    "DELETE FROM password_credentials WHERE user_id = $1",
+    "DELETE FROM users WHERE user_id = $1",
+];
+
 /// Errors from store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -485,6 +504,8 @@ pub trait AuthStore {
     fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError>;
     fn users_list(&self) -> Result<Vec<User>, StoreError>;
     fn users_update(&self, user: &User) -> Result<(), StoreError>;
+    /// Delete a user together with everything that only exists for them,
+    /// in one transaction: see [`USER_DELETE_STATEMENTS`].
     fn users_delete(&self, user_id: &str) -> Result<(), StoreError>;
     fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
     /// Count active users with role=admin. Used by user_update / user_delete to

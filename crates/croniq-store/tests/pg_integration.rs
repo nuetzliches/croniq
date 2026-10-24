@@ -71,6 +71,11 @@ fn pg_backend_exercises_all_traits() {
     job_failure_streaks(&store, &s);
     notes_inbox(&store, &s);
     dead_letter_page_limit(&store, &s);
+
+    // The user sent an invitation in `auth_invitations`; deleting them used
+    // to fail on the `invited_by` foreign key (review 2026-10-24, S-2).
+    store.users_delete(&user_id).unwrap();
+    assert!(store.users_get_by_id(&user_id).unwrap().is_none());
 }
 
 /// `list_dead_letters` clamps `limit` on Postgres as it always did on SQLite

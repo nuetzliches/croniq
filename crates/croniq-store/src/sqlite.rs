@@ -1403,10 +1403,13 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_delete(&self, user_id: &str) -> Result<(), StoreError> {
-        let conn = self.lock();
-        conn.execute("DELETE FROM users WHERE user_id = ?1", params![user_id])
-            .map_err(map_err)?;
-        Ok(())
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(map_err)?;
+        for sql in USER_DELETE_STATEMENTS {
+            tx.execute(&sql.replace("$1", "?1"), params![user_id])
+                .map_err(map_err)?;
+        }
+        tx.commit().map_err(map_err)
     }
 
     fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {

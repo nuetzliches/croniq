@@ -4771,3 +4771,69 @@ fn create_calendar_rejects_a_taken_name_but_keeps_upserting_by_id() {
     );
     assert_eq!(store.list_calendars().unwrap().len(), 2);
 }
+
+/// Deleting a user who once sent an invitation used to fail on the
+/// `invitations.invited_by` foreign key, and left `password_credentials` and
+/// `refresh_tokens` behind in every case (review 2026-10-24, S-2).
+#[test]
+fn users_delete_removes_an_inviter_with_their_credentials_and_tokens() {
+    let store = create_memory_store().unwrap();
+    let user = |id: &str, name: &str| User {
+        user_id: id.into(),
+        username: name.into(),
+        email: None,
+        display_name: None,
+        role: Role::Admin,
+        is_active: true,
+        created_at: now(),
+        updated_at: now(),
+        last_login_at: None,
+    };
+    store.users_create(&user("u-anna", "anna")).unwrap();
+    store.users_create(&user("u-ben", "ben")).unwrap();
+    store
+        .upsert_credentials(&PasswordCredential {
+            user_id: "u-anna".into(),
+            username: "anna".into(),
+            password_hash: "hash".into(),
+            failed_attempts: 0,
+            locked_until: None,
+            created_at: now(),
+        })
+        .unwrap();
+    store
+        .create_refresh_token(&RefreshToken {
+            token_hash: "rt-anna".into(),
+            client_id: "dashboard".into(),
+            user_id: Some("u-anna".into()),
+            expires_at: utc(2026, 4, 29, 12, 0),
+            revoked_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+    for (id, by) in [("inv-1", "u-anna"), ("inv-2", "u-ben")] {
+        store
+            .invitations_create(&Invitation {
+                invitation_id: id.into(),
+                email: format!("{id}@example.com"),
+                role: Role::Viewer,
+                token_hash: format!("hash-{id}"),
+                invited_by: by.into(),
+                expires_at: utc(2026, 4, 5, 12, 0),
+                accepted_at: None,
+                revoked_at: None,
+                created_at: now(),
+            })
+            .unwrap();
+    }
+
+    store.users_delete("u-anna").unwrap();
+
+    assert!(store.users_get_by_id("u-anna").unwrap().is_none());
+    assert!(store.get_credentials("anna").unwrap().is_none());
+    assert!(!store.refresh_token_is_known("rt-anna").unwrap());
+    // Anna's pending invitation goes with her; Ben's is untouched.
+    assert!(store.invitations_get("inv-1").unwrap().is_none());
+    assert!(store.invitations_get("inv-2").unwrap().is_some());
+    assert!(store.users_get_by_id("u-ben").unwrap().is_some());
+}
