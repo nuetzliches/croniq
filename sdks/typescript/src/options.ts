@@ -92,7 +92,8 @@ export interface CroniqRunnerOptions {
    * ack stuck on a half-open connection never settled and the execution never
    * left the in-flight set every poll reports. The server kept renewing its
    * lease, and a `singleton` job stalled behind it (issue #792). A timed-out
-   * ack is logged and dropped like any other failed ack; the server's
+   * ack is retried like any other transport failure (three attempts in all);
+   * if every attempt fails it is logged and dropped, and the server's
    * stale-claim reaper recovers the claim.
    */
   requestTimeoutMs?: number;
