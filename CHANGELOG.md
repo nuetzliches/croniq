@@ -704,6 +704,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `X-Forwarded-For` is believed — the header of any other peer is ignored.
   See [Login throttling behind a reverse proxy](docs/operations.md#login-throttling-behind-a-reverse-proxy-croniq_trusted_proxies).
 
+- **Wrong second-factor codes count toward the account lockout** (review
+  2026-10-24, A-4). A wrong TOTP or recovery code sent together with the
+  correct password cost nothing, because the correct password reset the
+  failure counter on every request; the two-step path had a per-token budget
+  that a fresh password login renewed. Second-factor failures on either path
+  now count like wrong passwords (five lock the account for 15 minutes), the
+  counter is reset only once the whole sign-in succeeds, a locked account
+  cannot finish a two-step sign-in it started earlier, and each failure is
+  audited as `auth.totp_failed`.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
