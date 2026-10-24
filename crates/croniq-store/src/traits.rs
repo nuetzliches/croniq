@@ -480,6 +480,15 @@ pub trait AuthStore {
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError>;
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+    /// The row stored under `token_hash` in any state — revoked and expired
+    /// included. Reuse detection needs its owner and when it was revoked.
+    fn refresh_token_get(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
+    /// Revoke every still-active refresh token belonging to `user_id`.
+    fn revoke_refresh_tokens_for_user(
+        &self,
+        user_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
     /// Whether a row exists for this hash *at all* — revoked and expired
     /// included, where [`Self::validate_refresh_token`] returns `None`.
     ///

@@ -5006,3 +5006,32 @@ fn record_alert_delivery_keeps_the_first_write_for_an_id() {
         1
     );
 }
+
+/// Review 2026-10-24, A-9: reuse detection reads a revoked row and revokes
+/// the owner's remaining tokens, and nobody else's.
+#[test]
+fn refresh_token_get_sees_revoked_rows_and_user_revocation_is_scoped() {
+    let store = create_memory_store().unwrap();
+    let token = |hash: &str, user: &str| RefreshToken {
+        token_hash: hash.into(),
+        client_id: "dashboard".into(),
+        user_id: Some(user.into()),
+        expires_at: utc(2099, 1, 1, 0, 0),
+        revoked_at: None,
+        created_at: now(),
+    };
+    store.create_refresh_token(&token("a1", "alex")).unwrap();
+    store.create_refresh_token(&token("a2", "alex")).unwrap();
+    store.create_refresh_token(&token("s1", "sam")).unwrap();
+
+    let when = utc(2026, 5, 23, 16, 0);
+    store.revoke_refresh_token("a1", when).unwrap();
+    let row = store.refresh_token_get("a1").unwrap().unwrap();
+    assert_eq!(row.revoked_at, Some(when));
+    assert_eq!(row.user_id.as_deref(), Some("alex"));
+    assert!(store.refresh_token_get("missing").unwrap().is_none());
+
+    store.revoke_refresh_tokens_for_user("alex", when).unwrap();
+    assert!(store.validate_refresh_token("a2").unwrap().is_none());
+    assert!(store.validate_refresh_token("s1").unwrap().is_some());
+}

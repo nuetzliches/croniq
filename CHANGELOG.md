@@ -735,6 +735,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CRONIQ_ALERT_ENV_PASSTHROUGH`. See
   [Shell alert channel environment](docs/operations.md#shell-alert-channel-environment-croniq_alert_env_passthrough).
 
+- **A replayed refresh token ends the account's sessions** (review
+  2026-10-24, A-9). The server recognised a refresh token that had already
+  been rotated or logged out, but only answered 401. When such a token comes
+  back more than 60 seconds after its revocation — beyond any race between
+  two tabs — every refresh token of the account is now revoked, its live
+  access tokens are invalidated through the token generation, and the event
+  is audited as `auth.refresh_reuse_detected`. Two new store methods back
+  this (`refresh_token_get`, `revoke_refresh_tokens_for_user`); no migration.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

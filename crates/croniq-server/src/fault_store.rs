@@ -287,6 +287,8 @@ impl AuthStore for FaultStore {
         validate_refresh_token(token_hash: &str) -> Option<RefreshToken>;
         refresh_token_is_known(token_hash: &str) -> bool;
         revoke_refresh_token(token_hash: &str, now: DateTime<Utc>) -> ();
+        refresh_token_get(token_hash: &str) -> Option<RefreshToken>;
+        revoke_refresh_tokens_for_user(user_id: &str, now: DateTime<Utc>) -> ();
         users_create(user: &User) -> ();
         users_get_by_id(user_id: &str) -> Option<User>;
         users_get_by_username(username: &str) -> Option<User>;

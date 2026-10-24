@@ -1310,6 +1310,38 @@ impl AuthStore for SqliteStore {
         Ok(())
     }
 
+    fn refresh_token_get(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError> {
+        let conn = self.lock();
+        conn.prepare("SELECT token_hash, client_id, user_id, expires_at, revoked_at, created_at FROM refresh_tokens WHERE token_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![token_hash], |row| {
+                Ok(RefreshToken {
+                    token_hash: row.get(0)?,
+                    client_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    expires_at: dt_col(row, 3)?,
+                    revoked_at: opt_dt_col(row, 4)?,
+                    created_at: dt_col(row, 5)?,
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn revoke_refresh_tokens_for_user(
+        &self,
+        user_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE refresh_tokens SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL",
+            params![dt_to_sql(&now), user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn users_create(&self, user: &User) -> Result<(), StoreError> {
         let conn = self.lock();
         conn.execute(
@@ -1498,7 +1530,7 @@ impl AuthStore for SqliteStore {
         invitation_id: &str,
         at: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n = conn
             .execute(
                 "UPDATE invitations SET accepted_at = ?1 \
@@ -1576,7 +1608,7 @@ impl AuthStore for SqliteStore {
         user_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE password_resets SET used_at = ?1 WHERE user_id = ?2 AND used_at IS NULL",
             params![dt_to_sql(&at), user_id],
