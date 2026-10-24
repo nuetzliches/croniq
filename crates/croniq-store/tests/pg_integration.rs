@@ -71,11 +71,72 @@ fn pg_backend_exercises_all_traits() {
     job_failure_streaks(&store, &s);
     notes_inbox(&store, &s);
     dead_letter_page_limit(&store, &s);
+    keyset_cursors(&store, &s);
 
     // The user sent an invitation in `auth_invitations`; deleting them used
     // to fail on the `invited_by` foreign key (review 2026-10-24, S-2).
     store.users_delete(&user_id).unwrap();
     assert!(store.users_get_by_id(&user_id).unwrap().is_none());
+}
+
+/// The `(until, until_id)` cursors of the audit log and the alert-delivery
+/// log, whose SQL reuses one `$n` twice (review 2026-10-24, S-8).
+fn keyset_cursors(store: &PgStore, s: &str) {
+    let action = format!("cursor.probe.{s}");
+    for n in 0..3 {
+        store
+            .audit_log(&AuditEvent {
+                event_id: format!("ev-{s}-{n}"),
+                actor_type: "user".into(),
+                actor_id: None,
+                action: action.clone(),
+                target_type: "job".into(),
+                target_id: None,
+                diff_json: None,
+                ip_address: None,
+                user_agent: None,
+                created_at: ts(),
+            })
+            .unwrap();
+    }
+    let page = store
+        .audit_list(&AuditFilter {
+            action: Some(action.clone()),
+            until: Some(ts()),
+            until_id: Some(format!("ev-{s}-2")),
+            ..Default::default()
+        })
+        .unwrap();
+    let ids: Vec<String> = page.into_iter().map(|e| e.event_id).collect();
+    assert_eq!(ids, vec![format!("ev-{s}-1"), format!("ev-{s}-0")]);
+
+    let job_key = format!("cursor-{s}:probe");
+    for n in 0..3 {
+        store
+            .record_alert_delivery(&AlertDelivery {
+                delivery_id: format!("dl-{s}-{n}"),
+                rule_name: "failures".into(),
+                channel_name: "ops".into(),
+                job_key: job_key.clone(),
+                execution_id: None,
+                state: AlertDeliveryState::Delivered,
+                error: None,
+                fired_at: ts(),
+                delivered_at: None,
+                kind: AlertDeliveryKind::Alert,
+            })
+            .unwrap();
+    }
+    let page = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            job_key: Some(job_key),
+            until: Some(ts()),
+            until_id: Some(format!("dl-{s}-1")),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].delivery_id, format!("dl-{s}-0"));
 }
 
 /// `list_dead_letters` clamps `limit` on Postgres as it always did on SQLite
