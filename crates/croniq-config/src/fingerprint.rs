@@ -31,7 +31,7 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::compile::JobConfig;
+use crate::compile::{JobConfig, RUNNER_EXEC_METADATA_KEY, RunnerExec};
 
 /// Compiled-job fields the fingerprint ignores.
 ///
@@ -75,6 +75,23 @@ impl JobConfig {
         if let Some(map) = value.as_object_mut() {
             for field in IGNORED_FIELDS {
                 map.remove(*field);
+            }
+            // `__runner_exec` is a JSON document embedded as a string, which
+            // `write_canonical` would treat as an opaque scalar. Re-render it
+            // through `RunnerExec` so the digest depends on the payload, not
+            // on how its producer happened to order the `env` map (review
+            // 2026-10-24, F-1). Re-serialising rather than key-sorting keeps
+            // the hash of every job with at most one env entry identical to
+            // what earlier releases stored, so the upgrade itself does not
+            // fire `run_on_register`. A value that does not decode is left as
+            // it is — it still hashes, just without this normalisation.
+            if let Some(Value::String(raw)) = map
+                .get_mut("metadata")
+                .and_then(|m| m.get_mut(RUNNER_EXEC_METADATA_KEY))
+                && let Ok(exec) = serde_json::from_str::<RunnerExec>(raw)
+                && let Ok(rendered) = serde_json::to_string(&exec)
+            {
+                *raw = rendered;
             }
         }
 
@@ -165,6 +182,66 @@ mod tests {
             b.metadata.insert(k.into(), v.into());
         }
         assert_eq!(a.config_hash(), b.config_hash());
+    }
+
+    #[test]
+    fn hash_is_stable_across_runner_env_iteration_order() {
+        // Review 2026-10-24, F-1: `runner shell { env { … } }` compiles into a
+        // `HashMap` that is serialised into the `__runner_exec` *string*. Each
+        // `HashMap::new()` draws fresh hash keys, so compiling the same source
+        // repeatedly exercises many iteration orders within one process — the
+        // same thing a restart does. Every compile must stamp the same string
+        // and produce the same hash.
+        let src = r#"job etl:sync {
+            every 15 minutes
+            run_on_register
+            runner shell {
+              command "sync.sh"
+              env { ALPHA 1; BRAVO 2; CHARLIE 3; DELTA 4; ECHO 5; FOXTROT 6 }
+            }
+        }"#;
+        let first = job(src);
+        let stamped = first.metadata[crate::compile::RUNNER_EXEC_METADATA_KEY].clone();
+        assert_eq!(
+            stamped,
+            r#"{"kind":"shell","command":"sync.sh","env":{"ALPHA":"1","BRAVO":"2","CHARLIE":"3","DELTA":"4","ECHO":"5","FOXTROT":"6"}}"#
+        );
+        for _ in 0..32 {
+            let again = job(src);
+            assert_eq!(
+                again.metadata[crate::compile::RUNNER_EXEC_METADATA_KEY],
+                stamped
+            );
+            assert_eq!(again.config_hash(), first.config_hash());
+        }
+    }
+
+    #[test]
+    fn hash_ignores_env_order_inside_a_foreign_runner_exec_string() {
+        // A `__runner_exec` produced elsewhere (an older build, a hand-written
+        // value) with the env keys in another order hashes the same: the
+        // fingerprint re-renders the embedded document instead of hashing
+        // the string verbatim.
+        let base = job(r#"job etl:sync { every 15 minutes }"#);
+        let mut a = base.clone();
+        let mut b = base;
+        a.metadata.insert(
+            crate::compile::RUNNER_EXEC_METADATA_KEY.into(),
+            r#"{"kind":"shell","command":"x","env":{"A":"1","B":"2"}}"#.into(),
+        );
+        b.metadata.insert(
+            crate::compile::RUNNER_EXEC_METADATA_KEY.into(),
+            r#"{"env":{"B":"2","A":"1"},"command":"x","kind":"shell"}"#.into(),
+        );
+        assert_eq!(a.config_hash(), b.config_hash());
+    }
+
+    #[test]
+    fn runner_env_value_change_changes_the_hash() {
+        assert_ne!(
+            hash(r#"job a:b { every 1 hour; runner shell { command "x"; env { A 1; B 2 } } }"#),
+            hash(r#"job a:b { every 1 hour; runner shell { command "x"; env { A 1; B 3 } } }"#)
+        );
     }
 
     #[test]

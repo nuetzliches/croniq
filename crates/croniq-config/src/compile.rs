@@ -696,7 +696,11 @@ pub enum RunnerExec {
         workdir: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user: Option<String>,
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "HashMap::is_empty",
+            serialize_with = "serialize_env_sorted"
+        )]
         env: HashMap<String, String>,
     },
     /// `argv[0] argv[1] ...` — direct exec, no shell. Avoids quoting hazards.
@@ -706,9 +710,31 @@ pub enum RunnerExec {
         workdir: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         user: Option<String>,
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "HashMap::is_empty",
+            serialize_with = "serialize_env_sorted"
+        )]
         env: HashMap<String, String>,
     },
+}
+
+/// Serialise a `runner { env { … } }` map with its keys in sorted order.
+///
+/// The compiled `RunnerExec` is stamped into `metadata["__runner_exec"]` as a
+/// JSON *string*, and `JobConfig::config_hash` sees that string as an opaque
+/// scalar. A `HashMap` iterates in a per-process random order, so with two or
+/// more env entries the string — and with it the `run_on_register`
+/// fingerprint — changed on roughly every other restart, re-firing the job
+/// although nothing changed (review 2026-10-24, F-1). The field stays a
+/// `HashMap` so the runner crates that build `RunnerExec` values keep
+/// compiling; only the wire form is ordered.
+fn serialize_env_sorted<S: serde::Serializer>(
+    env: &HashMap<String, String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let sorted: std::collections::BTreeMap<&String, &String> = env.iter().collect();
+    serde::Serialize::serialize(&sorted, serializer)
 }
 
 /// Metadata key under which a compiled `RunnerExec` is stamped on the job's

@@ -173,6 +173,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   which could never run past `not_after`. The job then showed as overdue for
   good (`croniq_job_overdue`, `job_missed_fire`) instead of finished. It is
   now marked exhausted at restart.
+- **`run_on_register` no longer re-fires on a restart of a job with a runner
+  `env { }`** (review 2026-10-24, F-1). The compiled `runner shell|exec`
+  block is stamped on the job as a JSON string, and its `env` map was written
+  in a per-process random order, so with two or more variables the job's
+  fingerprint changed on about every other restart and the job ran although
+  nothing had changed. The map is now written in key order, and the
+  fingerprint re-renders the embedded document instead of hashing it
+  verbatim. Jobs with at most one env variable keep their stored fingerprint.
 
 ### Security
 
