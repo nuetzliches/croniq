@@ -63,6 +63,13 @@ pub fn quickstart(
 
     let mut sink = CredentialSink::new(print_secrets);
     sink.add("Admin login", format!("admin / {password}"));
+    // Generated here, so this is the one place it can be handed out; `init`
+    // only reports the prefix of a key it was given.
+    sink.add_with_usage(
+        "API Key",
+        api_key.clone(),
+        format!("Authorization: ApiKey {api_key}"),
+    );
 
     // 2. Init database
     super::init::init(
@@ -72,7 +79,6 @@ pub fn quickstart(
         Some(&api_key),
         None,
         false,
-        &mut sink,
     )?;
 
     // 3. Print next steps

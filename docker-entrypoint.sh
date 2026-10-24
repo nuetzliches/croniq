@@ -43,6 +43,13 @@ fi
 # Secret volumes, external secret managers). The value never enters the
 # environment via the image config, so `docker inspect` shows only a path.
 # `$(cat …)` strips the trailing newline secret tooling commonly appends.
+#
+# The value is exported for `croniq init` below and nothing else: every name
+# loaded here is unset again before the server is exec'd, so the plaintext
+# does not end up in the server's /proc/<pid>/environ, `docker exec … env`,
+# or the environment of anything the server spawns (review 2026-10-24, C-3).
+# The server reads `CRONIQ_INIT_API_KEY_FILE` itself where it needs the key.
+LOADED_FROM_FILE=""
 load_secret_file() {
   _var="$1"
   eval "_cur=\${$_var:-}"
@@ -53,6 +60,7 @@ load_secret_file() {
       exit 1
     fi
     export "$_var=$(cat "$_file")"
+    LOADED_FROM_FILE="$LOADED_FROM_FILE $_var"
   fi
 }
 
@@ -111,18 +119,20 @@ if [ ! -f "$DB_FILE" ]; then
     echo "         Unset CRONIQ_DEMO_MFA before deploying anywhere reachable from the internet." >&2
   fi
 
-  # Build init args as positional params to preserve values with spaces/special chars.
-  # Run in a subshell so set -- does not clobber the entrypoint's own "$@".
+  # The password and the API key reach `croniq init` through its environment
+  # (`CRONIQ_ADMIN_PASSWORD`, `CRONIQ_INIT_API_KEY`), never its command line:
+  # argv is world-readable in /proc/<pid>/cmdline for as long as init runs
+  # (review 2026-10-24, R-9). Run in a subshell so the exports stay local.
   # Capture the exit status explicitly so a failure (e.g. malformed
   # CRONIQ_INIT_API_KEY) crash-loops the container instead of leaving
   # the server up with a half-initialized DB and no working API key.
   set +e
   (
-    set -- --data-dir "$DATA_DIR" --username "$ADMIN_USER" --password "$ADMIN_PASS"
-    if [ -n "$CRONIQ_INIT_API_KEY" ]; then
-      set -- "$@" --api-key "$CRONIQ_INIT_API_KEY"
+    export CRONIQ_ADMIN_PASSWORD="$ADMIN_PASS"
+    if [ -z "${CRONIQ_INIT_API_KEY:-}" ]; then
+      unset CRONIQ_INIT_API_KEY
     fi
-    croniq init "$@"
+    croniq init --data-dir "$DATA_DIR" --username "$ADMIN_USER"
   )
   init_status=$?
   set -e
@@ -171,5 +181,16 @@ fi
 if [ "${CRONIQ_DEMO_MODE:-0}" = "1" ]; then
   export CRONIQ_DEMO_CONTAINER_BIND=1
 fi
+
+# Seed credentials stop here. `CRONIQ_ADMIN_PASSWORD` is read by nothing but
+# `croniq init`; a value this script loaded from a `_FILE` is dropped too (the
+# server resolves `_FILE` siblings itself). A `CRONIQ_INIT_API_KEY` set
+# directly stays, because the server still honours it as a deprecated alias
+# of `CRONIQ_API_KEY` — use the `_FILE` form to keep it out of the server's
+# environment (review 2026-10-24, C-3).
+unset CRONIQ_ADMIN_PASSWORD ADMIN_PASS
+for _var in $LOADED_FROM_FILE; do
+  unset "$_var"
+done
 
 exec "$@"
