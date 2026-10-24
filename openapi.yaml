@@ -136,11 +136,15 @@ components:
       type: object
       properties:
         runner_id: { type: string }
-        status: { type: string, enum: [Online, Stale, Dead] }
+        status: { type: string, enum: [online, stale, dead] }
         capabilities: { type: array, items: { type: string } }
         max_inflight: { type: integer }
         inflight: { type: integer }
         last_poll_at: { type: string, format: date-time }
+        tags:
+          type: array
+          items: { type: string }
+          description: Free-form tags the runner declared in its polls. Filter-only, not used for routing.
 
     Execution:
       type: object
@@ -153,9 +157,18 @@ components:
         state: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
         runner_id: { type: string, nullable: true }
         claimed_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
         completed_at: { type: string, format: date-time, nullable: true }
         duration_ms: { type: integer, nullable: true }
         error: { type: string, nullable: true }
+        dead_reason: { type: string, nullable: true, description: "Why the execution was dead-lettered or dropped; null otherwise." }
+        idempotency_key:
+          type: string
+          description: The caller's dedup key from `POST /v1/trigger`. Absent when none was sent.
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+          description: Execution metadata. Keys in the reserved `__` namespace are not returned.
         created_at: { type: string, format: date-time }
 
     DeadLetter:
@@ -254,10 +267,50 @@ components:
         expected: { type: string, description: "The accepted JSON type, e.g. `a string`." }
         message: { type: string }
 
+    RegisterJobResponse:
+      type: object
+      properties:
+        job_key: { type: string }
+        trigger_id: { type: string }
+        status:
+          type: string
+          enum:
+            - registered
+            - registered_calendar_fault
+            - registered_no_schedule
+            - registered_no_scheduler
+            - registered_inactive
+            - skipped_dsl_precedence
+          description: |
+            - `registered`: stored and scheduled.
+            - `registered_calendar_fault`: stored; the trigger is paused because
+              its calendar does not resolve (see `GET /v1/jobs/states`).
+            - `registered_no_schedule`: stored; `schedule` does not parse, so
+              nothing was scheduled.
+            - `registered_no_scheduler`: stored; this server runs no scheduler.
+            - `registered_inactive`: stored; the job is deactivated or its
+              trigger disabled, so it stays out of the scheduler.
+            - `skipped_dsl_precedence`: the Croniqfile declares this key;
+              nothing was stored.
+
     DslManagedError:
       type: object
       properties:
         error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted] }
+        message: { type: string }
+
+    ValidationError:
+      type: object
+      description: >
+        A value was refused. `error` is a stable code; `message` says what
+        was wrong with which value.
+      properties:
+        error:
+          type: string
+          description: >
+            One of `invalid_schedule`, `invalid_window`, `unknown_timezone`,
+            `unknown_calendar`, `invalid_rules`, `dsl_managed`, `not_found`,
+            `job_exists`, `store_error`.
         message: { type: string }
 
     ApiClient:
@@ -1062,7 +1115,12 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/JobDefinition" }
     post:
-      summary: Create or update a job definition
+      summary: Create a job definition
+      description: |
+        Creates a store-managed job, active from the start. A key that already
+        has a job is refused with 409 `job_exists` rather than overwritten;
+        change an existing job with `PUT /v1/jobs/{job_key}`. A key the
+        Croniqfile declares is refused with 409 `dsl_managed`.
       requestBody:
         content:
           application/json:
@@ -1087,7 +1145,7 @@ paths:
                 tags: { type: array, items: { type: string } }
       responses:
         "201":
-          description: The created or updated job definition
+          description: The created job definition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
@@ -1096,6 +1154,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InvalidDurationError" }
+        "409":
+          description: >
+            `job_exists`: the key already has a job. `dsl_managed`: the
+            Croniqfile declares the key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
 
   /v1/jobs/{job_key}:
     get:
@@ -1111,6 +1176,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
+        "404": { description: Neither the store nor the Croniqfile has a job with this key }
     put:
       summary: Update a job's mutable metadata
       description: |
@@ -1171,7 +1237,12 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "204": { description: Deleted }
+        "204": { description: Deleted (also when there was nothing to delete) }
+        "409":
+          description: DSL-managed job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
 
   /v1/jobs/{job_key}/activate:
     post:
@@ -1189,6 +1260,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
         "404": { description: Unknown job }
+        "409":
+          description: DSL-managed job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
 
   /v1/jobs/{job_key}/deactivate:
     post:
@@ -1206,6 +1282,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
         "404": { description: Unknown job }
+        "409":
+          description: DSL-managed job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
 
   /v1/jobs/{job_key}/adopt:
     post:
@@ -1273,6 +1354,13 @@ paths:
                 items: { $ref: "#/components/schemas/TriggerDefinition" }
     post:
       summary: Create a trigger
+      description: |
+        `cron_expression` must be one the scheduler can run: interval
+        shorthand (`30s`, `5m`, `1h`, `300`, `*/5 * * * *`) or a Croniqfile
+        schedule line (`every day at 02:00`). `window` must be
+        `HH:MM..HH:MM`, `timezone` an IANA name and `calendar` a calendar the
+        Croniqfile or the store declares. Anything else is refused with 400
+        rather than stored.
       requestBody:
         content:
           application/json:
@@ -1284,7 +1372,7 @@ paths:
                 cron_expression: { type: string }
                 timezone: { type: string }
                 calendar: { type: string }
-                window: { type: string }
+                window: { type: string, example: "02:00..06:00" }
                 enabled: { type: boolean, default: true }
       responses:
         "201":
@@ -1292,6 +1380,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
+        "400":
+          description: >
+            `invalid_schedule`, `invalid_window`, `unknown_timezone` or
+            `unknown_calendar`. Nothing is stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+        "409":
+          description: The Croniqfile schedules this job (`dsl_managed`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
 
   /v1/schedules/{trigger_id}:
     get:
@@ -1311,8 +1411,11 @@ paths:
       summary: Update an API-managed trigger
       description: |
         Patch the editable fields of an API-managed schedule. Returns 409 for
-        DSL-managed triggers (Croniqfile owns those), 404 if the trigger_id is
-        unknown.
+        DSL-managed triggers, and for an API trigger whose job the Croniqfile
+        has since taken over (the Croniqfile owns those), 404 if the
+        trigger_id is unknown. The values sent are checked as on `POST`
+        (400); fields not sent are not, so an older row can still be
+        disabled.
 
         Three states, and the difference matters:
 
@@ -1358,8 +1461,19 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
+        "400":
+          description: >
+            `invalid_schedule`, `invalid_window`, `unknown_timezone` or
+            `unknown_calendar`. The stored row is unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
         "404": { description: Trigger not found }
-        "409": { description: Trigger is DSL-managed and cannot be edited via API }
+        "409":
+          description: The trigger, or its job, is owned by the Croniqfile (`dsl_managed`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
     delete:
       summary: Delete a trigger
       parameters:
@@ -1369,6 +1483,10 @@ paths:
           schema: { type: string }
       responses:
         "204": { description: Deleted }
+        "409":
+          description: >
+            The trigger is DSL-managed (`dsl:` id), or its job is owned by the
+            Croniqfile. No body.
 
   /v1/runners:
     get:
@@ -1395,6 +1513,12 @@ paths:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     delete:
       summary: Deregister a runner
+      description: |
+        Removes the runner from the registry, releases its runner-identity
+        binding so another credential can use the id on its next poll, and
+        returns the executions it still held to the queue. Meant for a runner
+        that has stopped: one that is still working loses its claims, and its
+        acks for them are refused.
       responses:
         "204": { description: Removed }
 
@@ -1593,6 +1717,12 @@ paths:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     get:
       summary: Get execution logs
+      description: At most 10 000 entries, ordered by `(timestamp, seq)`.
+      parameters:
+        - name: level
+          in: query
+          description: Return only entries of this level (`info`, `warn`, `error`).
+          schema: { type: string }
       responses:
         "200":
           description: Log events recorded for the execution
@@ -1608,7 +1738,12 @@ paths:
                     timestamp: { type: string, format: date-time }
                     level: { type: string }
                     message: { type: string }
-                    fields: { type: object }
+                    fields: { type: object, additionalProperties: { type: string } }
+                    seq:
+                      type: integer
+                      format: int64
+                      description: Per-execution insert sequence; orders entries that share a timestamp. 0 on rows written before it existed.
+        "400": { description: The id is not a UUID }
 
   /v1/executions/{id}/cancel:
     post:
@@ -1853,10 +1988,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeadLetter" }
+        "400": { description: The id is not a UUID }
+        "404": { description: No such dead letter }
     delete:
       summary: Delete a dead letter
       responses:
-        "204": { description: Deleted }
+        "204": { description: Deleted (also when there was nothing to delete) }
+        "400": { description: The id is not a UUID }
 
   /v1/dead-letters/{id}/replay:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
@@ -1892,6 +2030,8 @@ paths:
                   execution_id: { type: string }
                   attempt: { type: integer }
                   scheduled_for: { type: string, format: date-time }
+        "400": { description: The id is not a UUID }
+        "404": { description: No such dead letter (or it was replayed concurrently) }
         "409":
           description: "Replay refused by the stale-replay guard (retry with `force: true`)."
           content:
@@ -2156,12 +2296,41 @@ paths:
                 items: { $ref: "#/components/schemas/CalendarDefinition" }
     post:
       summary: Create a calendar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, rules]
+              properties:
+                name: { type: string }
+                timezone:
+                  type: string
+                  description: IANA zone the rules are evaluated in. Omit for UTC.
+                rules:
+                  type: string
+                  description: >
+                    Calendar rules in Croniqfile syntax, one directive per line
+                    (`include weekly weekday`, `exclude annual 12-25`). Checked
+                    with the same parser and semantic checks as the Croniqfile.
+                  example: "include weekly weekday"
       responses:
         "201":
           description: The created calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "400":
+          description: "`invalid_rules` or `unknown_timezone`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+        "409":
+          description: The Croniqfile declares a calendar with this name (`dsl_managed`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
 
   /v1/calendars/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
@@ -2180,14 +2349,33 @@ paths:
     put:
       summary: Update a calendar
       description: |
-        Refuses DSL-managed calendars (409 with `error: dsl_managed`). To take
-        ownership, call `POST /v1/calendars/dsl:{name}/adopt` first.
+        Patch: omitted fields stay. An empty `timezone` clears it. Refuses
+        DSL-managed calendars, and a rename onto a name the Croniqfile
+        declares (409 with `error: dsl_managed`). To take ownership, call
+        `POST /v1/calendars/dsl:{name}/adopt` first. Running triggers that
+        reference the old or the new name are rebuilt with the new gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                timezone: { type: string, description: IANA zone. Empty string clears it. }
+                rules: { type: string, description: Replaces the whole rule text. }
       responses:
         "200":
           description: The updated calendar
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "400":
+          description: "`invalid_rules` or `unknown_timezone`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+        "404": { description: Unknown calendar }
         "409":
           description: DSL-managed; mutation refused.
           content:
@@ -2345,13 +2533,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [runner_id]
+              required: [runner_id, capabilities]
               properties:
                 runner_id: { type: string }
                 capabilities: { type: array, items: { type: string } }
                 max_inflight: { type: integer, default: 1 }
                 inflight: { type: array, items: { type: string } }
                 instance_id: { type: string }
+                tags:
+                  type: array
+                  items: { type: string }
+                  description: Free-form tags shown with the runner in `GET /v1/runners`. Filter-only, not used for routing.
       responses:
         "200":
           description: "Work items to execute, plus execution IDs the runner should cancel"
@@ -2403,7 +2595,10 @@ paths:
               properties:
                 runner_id: { type: string }
                 execution_id: { type: string }
-                status: { type: string, enum: [success, failure] }
+                status:
+                  type: string
+                  enum: [success, failure, cancelled]
+                  description: "`cancelled` reports a run the runner aborted after a server-side cancel."
                 error: { type: string }
                 duration_ms: { type: integer }
                 attempt: { type: integer }
@@ -2519,12 +2714,13 @@ paths:
             claimed it — only that runner's credential may append to the
             execution's log. Absent under
             `pull_api { runner_identity_binding "off" }`.
+        "400": { description: The execution id is not a UUID }
         "404":
           description: No such execution.
         "503":
           description: |
-            The runner-identity binding could not be resolved. The check
-            fails closed rather than accepting the events; retry.
+            The runner-identity binding could not be resolved, or the store
+            could not take the batch. Nothing was stored; retry.
 
   /v1/api-clients:
     get:
@@ -2658,7 +2854,11 @@ paths:
       description: |
         Creates or updates a job + trigger. Collision policy:
         - If a Croniqfile (DSL) job with the same key exists: skip (DSL precedence)
-        - If a runner/API job exists: update
+        - If a runner/API job exists: patch it. The fields the request carries
+          replace the stored ones (`schedule` always); what an operator set
+          stays: the job's `is_active`, `tags`, `metadata` and `created_at`,
+          the trigger's `enabled`, `window` and `created_at`. A deactivated
+          job is updated but not scheduled (`registered_inactive`).
         - Otherwise: create new
       requestBody:
         content:
@@ -2682,17 +2882,22 @@ paths:
                 calendar: { type: string, description: "Calendar name gating execution." }
       responses:
         "201":
-          description: Job created
+          description: Job created (it had no trigger before)
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  job_key: { type: string }
-                  trigger_id: { type: string }
-                  status: { type: string, enum: [registered, skipped_dsl_precedence] }
+              schema: { $ref: "#/components/schemas/RegisterJobResponse" }
         "200":
-          description: Job updated (already existed)
+          description: Job updated (it already had a trigger), or skipped for DSL precedence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterJobResponse" }
+        "400":
+          description: >
+            `timezone` is not an IANA zone (no body), or `timeout` does not
+            parse (`invalid_duration`). Nothing is stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvalidDurationError" }
 
   /v1/jobs/states:
     get:

@@ -134,6 +134,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   agent's context. They now say which step failed and log the detail, as the
   other endpoints do.
 
+- **`openapi.yaml` matches the handlers again** (review 2026-10-24). The
+  spec now documents the `409` and `404` answers of the job, schedule and
+  calendar endpoints, the `400` the schedule, calendar, register, log and
+  dead-letter endpoints give, the full status set of `POST /v1/jobs/register`,
+  the request bodies of `POST` and `PUT /v1/calendars` (missing until now),
+  the lowercase runner `status` and the runner `tags`, `started_at`,
+  `dead_reason`, `metadata` and `idempotency_key` on executions, `seq` and
+  `?level=` on execution logs, `tags` on `POST /v1/work/poll`, and the
+  `cancelled` ack status.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
