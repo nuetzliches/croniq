@@ -132,7 +132,7 @@ impl PgStoreHandle {
         let (resp_tx, resp_rx) = mpsc::sync_channel::<Result<T, StoreError>>(1);
         let job: Job = Box::new(move |store: &PgStore| {
             // Ignore the error: it only fails if the caller stopped waiting.
-            let _ = resp_tx.send(f(store));
+            let _ = resp_tx.send(run_caught(|| f(store)));
         });
         // Enqueue (lock released at the end of this statement, before we block
         // on the response).
@@ -145,6 +145,23 @@ impl PgStoreHandle {
             .recv()
             .map_err(|_| StoreError::Database("pg store actor dropped the response".into()))?
     }
+}
+
+/// Run one store call, turning a panic into an error (review 2026-10-24,
+/// S-5). The `postgres` crate panics in `Row::get` on a type mismatch or an
+/// unexpected NULL; uncaught, that unwound the actor thread, and every later
+/// call on every handle failed with "actor thread is gone" until a restart.
+fn run_caught<T>(f: impl FnOnce() -> Result<T, StoreError>) -> Result<T, StoreError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let detail = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".into());
+        Err(StoreError::Database(format!(
+            "pg store call panicked: {detail}"
+        )))
+    })
 }
 
 // ─── JobStore ───
@@ -1136,3 +1153,20 @@ impl FavoriteStore for PgStoreHandle {
 }
 
 impl Store for PgStoreHandle {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_call_comes_back_as_an_error() {
+        let err = run_caught::<()>(|| panic!("unexpected NULL in column 3")).unwrap_err();
+        assert!(
+            err.to_string().contains("unexpected NULL in column 3"),
+            "{err}"
+        );
+        let err = run_caught::<()>(|| panic!("{}", String::from("owned payload"))).unwrap_err();
+        assert!(err.to_string().contains("owned payload"), "{err}");
+        assert_eq!(run_caught(|| Ok(7)).unwrap(), 7);
+    }
+}

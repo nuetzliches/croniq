@@ -10,7 +10,7 @@ use crate::traits::*;
 use chrono::{DateTime, Utc};
 use postgres::{Client, NoTls};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
 /// PostgreSQL-backed store.
@@ -67,8 +67,15 @@ impl PgStore {
         })
     }
 
+    /// The client, also after a panic while it was held (review 2026-10-24,
+    /// S-5): poisoning guards no in-memory invariant here, and propagating it
+    /// turned one bad call into a dead store for the rest of the process.
+    fn lock(&self) -> MutexGuard<'_, Client> {
+        self.client.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     fn migrate(&self) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.batch_execute(
             "CREATE TABLE IF NOT EXISTS _migrations (
                     name TEXT PRIMARY KEY,
@@ -701,7 +708,7 @@ fn json_to_metadata(val: serde_json::Value) -> HashMap<String, String> {
 
 impl JobStore for PgStore {
     fn get_job_state(&self, job_key: &str) -> Result<Option<JobState>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT job_key, next_fire_at, last_fired_at, fire_count, status, updated_at FROM job_states WHERE job_key = $1",
@@ -720,7 +727,7 @@ impl JobStore for PgStore {
     }
 
     fn upsert_job_state(&self, state: &JobState) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let status = job_status_to_str(state.status);
         client
             .execute(
@@ -746,7 +753,7 @@ impl JobStore for PgStore {
     }
 
     fn list_job_states(&self) -> Result<Vec<JobState>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT job_key, next_fire_at, last_fired_at, fire_count, status, updated_at FROM job_states ORDER BY job_key",
@@ -768,7 +775,7 @@ impl JobStore for PgStore {
     }
 
     fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT job_key, config_hash, fired_at FROM job_register_fires ORDER BY job_key",
@@ -787,7 +794,7 @@ impl JobStore for PgStore {
     }
 
     fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute(
                 "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
@@ -802,7 +809,7 @@ impl JobStore for PgStore {
     }
 
     fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute(
                 "DELETE FROM job_register_fires WHERE job_key = $1",
@@ -813,7 +820,7 @@ impl JobStore for PgStore {
     }
 
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute("DELETE FROM job_states WHERE job_key = $1", &[&job_key])
             .map_err(map_err)?;
@@ -825,7 +832,7 @@ impl JobStore for PgStore {
 
 impl ExecutionStore for PgStore {
     fn create_execution(&self, exec: &Execution) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         pg_insert_execution(&mut client, exec)
     }
 
@@ -834,7 +841,7 @@ impl ExecutionStore for PgStore {
         exec: &Execution,
         job_state: &JobState,
     ) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut tx = client.transaction().map_err(map_err)?;
         pg_insert_execution_tx(&mut tx, exec)?;
         pg_upsert_job_state_tx(&mut tx, job_state)?;
@@ -843,7 +850,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn get_execution(&self, id: Uuid) -> Result<Option<Execution>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE id = $1",
@@ -860,7 +867,7 @@ impl ExecutionStore for PgStore {
         runner_id: &str,
         now: DateTime<Utc>,
     ) -> Result<Execution, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = client
             .execute(
                 "UPDATE executions SET state = 'claimed', runner_id = $1, claimed_at = $2, started_at = $2 WHERE id = $3 AND state = 'queued'",
@@ -897,7 +904,7 @@ impl ExecutionStore for PgStore {
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = client
             .execute(
                 "UPDATE executions SET state = $1, completed_at = $2, duration_ms = $3, error = $4, dead_reason = $5 WHERE id = $6 AND state = 'claimed' AND ($7::TEXT IS NULL OR runner_id = $7)",
@@ -912,7 +919,7 @@ impl ExecutionStore for PgStore {
         capabilities: &[String],
         limit: u32,
     ) -> Result<Vec<Execution>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let fetch_limit = if capabilities.is_empty() {
             limit
         } else {
@@ -946,7 +953,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut sql = String::from(
             "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE true",
         );
@@ -1033,7 +1040,7 @@ impl ExecutionStore for PgStore {
         cutoff: DateTime<Utc>,
         limit: u32,
     ) -> Result<Vec<Execution>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
@@ -1054,7 +1061,7 @@ impl ExecutionStore for PgStore {
         idempotency_key: &str,
         window_start: DateTime<Utc>,
     ) -> Result<Option<Execution>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for
@@ -1075,7 +1082,7 @@ impl ExecutionStore for PgStore {
         runner_id: &str,
         _now: DateTime<Utc>,
     ) -> Result<Vec<Uuid>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT id FROM executions WHERE runner_id = $1 AND state = 'claimed'",
@@ -1098,7 +1105,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn requeue_if_claimed(&self, id: Uuid, _now: DateTime<Utc>) -> Result<bool, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = client
             .execute(
                 "UPDATE executions SET state = 'queued', runner_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1 AND state = 'claimed'",
@@ -1109,7 +1116,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute(
                 "UPDATE executions SET state = 'cancelled', completed_at = $1 WHERE id = $2 AND state IN ('queued', 'claimed')",
@@ -1120,7 +1127,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn count_by_state(&self) -> Result<HashMap<ExecutionState, u64>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query("SELECT state, COUNT(*) FROM executions GROUP BY state", &[])
             .map_err(map_err)?;
@@ -1142,7 +1149,7 @@ impl ExecutionStore for PgStore {
         if states.is_empty() {
             return Ok(0);
         }
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let state_strs: Vec<String> = states
             .iter()
             .map(|s| state_to_str(*s).to_string())
@@ -1165,7 +1172,7 @@ impl ExecutionStore for PgStore {
         if states.is_empty() {
             return Ok(0);
         }
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let state_strs: Vec<String> = states
             .iter()
             .map(|s| state_to_str(*s).to_string())
@@ -1181,7 +1188,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
 
         // Cumulative duration-bucket columns are generated from the shared
         // boundary list so the SQL and the Prometheus renderer can't drift.
@@ -1235,7 +1242,7 @@ impl ExecutionStore for PgStore {
     }
 
     fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         // `::bigint` keeps COUNT/SUM out of `numeric`, as above.
         let rows = client
             .query(
@@ -1276,7 +1283,7 @@ impl ExecutionStore for PgStore {
         cutoff: DateTime<Utc>,
         limit: u32,
     ) -> Result<u64, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut tx = client.transaction().map_err(map_err)?;
         let limit_i = limit as i64;
         // Child logs first, then parents (mirrors the SQLite path). Both
@@ -1310,7 +1317,7 @@ impl ExecutionStore for PgStore {
         keep_last: u32,
         limit: u32,
     ) -> Result<u64, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut tx = client.transaction().map_err(map_err)?;
         let limit_i = limit as i64;
         let keep_i = keep_last as i64;
@@ -1341,7 +1348,7 @@ impl ExecutionStore for PgStore {
 
 impl RunnerStore for PgStore {
     fn upsert_runner(&self, runner: &Runner) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let caps = serde_json::to_value(&runner.capabilities).unwrap();
         let inflight = serde_json::to_value(&runner.inflight).unwrap();
         client
@@ -1369,7 +1376,7 @@ impl RunnerStore for PgStore {
     }
 
     fn get_runner(&self, runner_id: &str) -> Result<Option<Runner>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners WHERE runner_id = $1",
@@ -1381,7 +1388,7 @@ impl RunnerStore for PgStore {
     }
 
     fn list_runners(&self) -> Result<Vec<Runner>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners ORDER BY runner_id",
@@ -1393,7 +1400,7 @@ impl RunnerStore for PgStore {
     }
 
     fn remove_runner(&self, runner_id: &str) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute("DELETE FROM runners WHERE runner_id = $1", &[&runner_id])
             .map_err(map_err)?;
@@ -1406,7 +1413,7 @@ impl RunnerStore for PgStore {
         inflight: &[Uuid],
         now: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let inflight_json = serde_json::to_value(inflight).unwrap();
         client
             .execute(
@@ -1426,7 +1433,7 @@ impl RunnerStore for PgStore {
         // One statement, so the insert-or-read is atomic even across
         // connections. The no-op `DO UPDATE SET` (rather than `DO NOTHING`)
         // is what makes `RETURNING` yield the existing row on conflict.
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let row = client
             .query_one(
                 "INSERT INTO runner_identities (runner_id, owner_id, bound_at)
@@ -1441,7 +1448,7 @@ impl RunnerStore for PgStore {
     }
 
     fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT owner_id FROM runner_identities WHERE runner_id = $1",
@@ -1452,7 +1459,7 @@ impl RunnerStore for PgStore {
     }
 
     fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute(
                 "DELETE FROM runner_identities WHERE runner_id = $1",
@@ -1467,7 +1474,7 @@ impl RunnerStore for PgStore {
 
 impl DeadLetterStore for PgStore {
     fn add_dead_letter(&self, dl: &DeadLetter) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let metadata = metadata_to_json(&dl.metadata);
         let attempt = dl.attempt as i32;
         client
@@ -1500,7 +1507,7 @@ impl DeadLetterStore for PgStore {
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut tx = client.transaction().map_err(map_err)?;
         let dead_reason = dead_letter.dead_reason.as_str();
         let updated = tx.execute(
@@ -1541,7 +1548,7 @@ impl DeadLetterStore for PgStore {
         dead_letter_id: Uuid,
         execution: &Execution,
     ) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut tx = client.transaction().map_err(map_err)?;
         let affected = tx
             .execute("DELETE FROM dead_letters WHERE id = $1", &[&dead_letter_id])
@@ -1558,7 +1565,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let rows = client
             .query(
                 "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE id = $1",
@@ -1570,7 +1577,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let mut sql = String::from(
             "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE true",
         );
@@ -1599,7 +1606,7 @@ impl DeadLetterStore for PgStore {
         if ids.is_empty() {
             return Ok(0);
         }
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = client
             .execute("DELETE FROM dead_letters WHERE id = ANY($1)", &[&ids])
             .map_err(map_err)?;
@@ -1607,7 +1614,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = match job_key {
             Some(jk) => client
                 .execute("DELETE FROM dead_letters WHERE job_key = $1", &[&jk])
@@ -1620,7 +1627,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let row = match job_key {
             Some(key) => db.query_one(
                 "SELECT COUNT(1) FROM dead_letters WHERE job_key = $1",
@@ -1634,7 +1641,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         client
             .execute("DELETE FROM dead_letters WHERE id = $1", &[&id])
             .map_err(map_err)?;
@@ -1642,7 +1649,7 @@ impl DeadLetterStore for PgStore {
     }
 
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = self.lock();
         let affected = client
             .execute(
                 "DELETE FROM dead_letters WHERE expires_at IS NOT NULL AND expires_at <= $1",
@@ -1657,7 +1664,7 @@ impl DeadLetterStore for PgStore {
 
 impl AuthStore for PgStore {
     fn create_client(&self, client: &ApiClient) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let scopes = serde_json::to_string(&client.scopes).unwrap_or_default();
         db.execute(
             "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at, managed_by)
@@ -1679,7 +1686,7 @@ impl AuthStore for PgStore {
     }
 
     fn get_client(&self, client_id: &str) -> Result<Option<ApiClient>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients WHERE client_id = $1",
@@ -1690,7 +1697,7 @@ impl AuthStore for PgStore {
     }
 
     fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients ORDER BY name",
@@ -1701,7 +1708,7 @@ impl AuthStore for PgStore {
     }
 
     fn delete_client(&self, client_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute("DELETE FROM api_keys WHERE client_id = $1", &[&client_id])
             .map_err(map_err)?;
         db.execute(
@@ -1713,7 +1720,7 @@ impl AuthStore for PgStore {
     }
 
     fn create_api_key(&self, key: &ApiKey) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO api_keys (key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -1732,7 +1739,7 @@ impl AuthStore for PgStore {
     }
 
     fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at
@@ -1747,7 +1754,7 @@ impl AuthStore for PgStore {
     }
 
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE api_keys SET revoked_at = $1 WHERE key_id = $2",
             &[&now, &key_id],
@@ -1757,7 +1764,7 @@ impl AuthStore for PgStore {
     }
 
     fn restore_api_key(&self, key_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE api_keys SET revoked_at = NULL, expires_at = NULL WHERE key_id = $1",
             &[&key_id],
@@ -1771,7 +1778,7 @@ impl AuthStore for PgStore {
         key_id: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE api_keys SET expires_at = $1 WHERE key_id = $2",
             &[&expires_at, &key_id],
@@ -1781,7 +1788,7 @@ impl AuthStore for PgStore {
     }
 
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE client_id = $1 ORDER BY created_at DESC",
@@ -1792,7 +1799,7 @@ impl AuthStore for PgStore {
     }
 
     fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT user_id, username, password_hash, failed_attempts, locked_until, created_at FROM password_credentials WHERE username = $1",
@@ -1810,7 +1817,7 @@ impl AuthStore for PgStore {
     }
 
     fn upsert_credentials(&self, cred: &PasswordCredential) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, locked_until, created_at)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -1833,7 +1840,7 @@ impl AuthStore for PgStore {
     }
 
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO refresh_tokens (token_hash, client_id, user_id, expires_at, revoked_at, created_at)
              VALUES ($1, $2, $3, $4, $5, $6)",
@@ -1851,7 +1858,7 @@ impl AuthStore for PgStore {
     }
 
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT token_hash, client_id, user_id, expires_at, revoked_at, created_at FROM refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL",
@@ -1869,7 +1876,7 @@ impl AuthStore for PgStore {
     }
 
     fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let row = db
             .query_one(
                 "SELECT COUNT(1) FROM refresh_tokens WHERE token_hash = $1",
@@ -1881,7 +1888,7 @@ impl AuthStore for PgStore {
     }
 
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE refresh_tokens SET revoked_at = $1 WHERE token_hash = $2",
             &[&now, &token_hash],
@@ -1891,7 +1898,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_create(&self, user: &User) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let role = user.role.as_str();
         db.execute(
             "INSERT INTO users (user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at)
@@ -1920,7 +1927,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE user_id = $1",
@@ -1931,7 +1938,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE username = $1",
@@ -1942,7 +1949,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_list(&self) -> Result<Vec<User>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY username",
@@ -1960,14 +1967,14 @@ impl AuthStore for PgStore {
     }
 
     fn users_delete(&self, user_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute("DELETE FROM users WHERE user_id = $1", &[&user_id])
             .map_err(map_err)?;
         Ok(())
     }
 
     fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE users SET last_login_at = $1, updated_at = $1 WHERE user_id = $2",
             &[&at, &user_id],
@@ -1977,7 +1984,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_count_active_admins(&self) -> Result<u64, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let row = db
             .query_one(
                 "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE",
@@ -1988,7 +1995,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT token_generation FROM users WHERE user_id = $1",
@@ -1999,7 +2006,7 @@ impl AuthStore for PgStore {
     }
 
     fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // Single-statement read-modify-write so concurrent bumps serialise.
         db.execute(
             "UPDATE users SET token_generation = token_generation + 1 WHERE user_id = $1",
@@ -2010,7 +2017,7 @@ impl AuthStore for PgStore {
     }
 
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let role = invite.role.as_str();
         db.execute(
             "INSERT INTO invitations (invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at)
@@ -2032,7 +2039,7 @@ impl AuthStore for PgStore {
     }
 
     fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE invitation_id = $1",
@@ -2046,7 +2053,7 @@ impl AuthStore for PgStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<Invitation>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE token_hash = $1",
@@ -2057,7 +2064,7 @@ impl AuthStore for PgStore {
     }
 
     fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations ORDER BY created_at DESC",
@@ -2072,7 +2079,7 @@ impl AuthStore for PgStore {
         invitation_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE invitations SET accepted_at = $1 WHERE invitation_id = $2",
             &[&at, &invitation_id],
@@ -2082,7 +2089,7 @@ impl AuthStore for PgStore {
     }
 
     fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE invitations SET revoked_at = $1 WHERE invitation_id = $2",
             &[&at, &invitation_id],
@@ -2092,7 +2099,7 @@ impl AuthStore for PgStore {
     }
 
     fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO password_resets (reset_id, user_id, token_hash, expires_at, used_at, created_at)
              VALUES ($1, $2, $3, $4, $5, $6)",
@@ -2113,7 +2120,7 @@ impl AuthStore for PgStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<PasswordReset>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT reset_id, user_id, token_hash, expires_at, used_at, created_at FROM password_resets WHERE token_hash = $1",
@@ -2135,7 +2142,7 @@ impl AuthStore for PgStore {
         reset_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE password_resets SET used_at = $1 WHERE reset_id = $2",
             &[&at, &reset_id],
@@ -2145,7 +2152,7 @@ impl AuthStore for PgStore {
     }
 
     fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO totp_secrets (user_id, secret_enc, enabled, confirmed_at, created_at)
              VALUES ($1, $2, $3, $4, $5)
@@ -2166,7 +2173,7 @@ impl AuthStore for PgStore {
     }
 
     fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT user_id, secret_enc, enabled, confirmed_at, created_at FROM totp_secrets WHERE user_id = $1",
@@ -2188,7 +2195,7 @@ impl AuthStore for PgStore {
         enabled: bool,
         confirmed_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE totp_secrets SET enabled = $1, confirmed_at = $2 WHERE user_id = $3",
             &[&enabled, &confirmed_at, &user_id],
@@ -2198,7 +2205,7 @@ impl AuthStore for PgStore {
     }
 
     fn totp_delete(&self, user_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // recovery_codes cascade via FK ON DELETE CASCADE, but delete both
         // explicitly to keep the contract identical across backends.
         db.execute("DELETE FROM totp_secrets WHERE user_id = $1", &[&user_id])
@@ -2213,7 +2220,7 @@ impl AuthStore for PgStore {
         user_id: &str,
         codes: &[RecoveryCode],
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let mut tx = db.transaction().map_err(map_err)?;
         tx.execute("DELETE FROM recovery_codes WHERE user_id = $1", &[&user_id])
             .map_err(map_err)?;
@@ -2240,7 +2247,7 @@ impl AuthStore for PgStore {
         user_id: &str,
         code_hash: &str,
     ) -> Result<Option<RecoveryCode>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT code_id, user_id, code_hash, used_at, created_at FROM recovery_codes
@@ -2258,7 +2265,7 @@ impl AuthStore for PgStore {
     }
 
     fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE recovery_codes SET used_at = $1 WHERE code_id = $2",
             &[&at, &code_id],
@@ -2268,7 +2275,7 @@ impl AuthStore for PgStore {
     }
 
     fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let row = db
             .query_one(
                 "SELECT COUNT(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL",
@@ -2279,7 +2286,7 @@ impl AuthStore for PgStore {
     }
 
     fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let scopes =
             serde_json::to_string(&pat.scopes).map_err(|e| StoreError::Database(e.to_string()))?;
         db.execute(
@@ -2306,7 +2313,7 @@ impl AuthStore for PgStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<PersonalAccessToken>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at FROM personal_access_tokens WHERE token_hash = $1",
@@ -2317,7 +2324,7 @@ impl AuthStore for PgStore {
     }
 
     fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at FROM personal_access_tokens WHERE user_id = $1 ORDER BY created_at DESC",
@@ -2328,7 +2335,7 @@ impl AuthStore for PgStore {
     }
 
     fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE personal_access_tokens SET revoked_at = $1 WHERE token_id = $2",
             &[&at, &token_id],
@@ -2338,7 +2345,7 @@ impl AuthStore for PgStore {
     }
 
     fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE personal_access_tokens SET last_used_at = $1 WHERE token_id = $2",
             &[&at, &token_id],
@@ -2348,7 +2355,7 @@ impl AuthStore for PgStore {
     }
 
     fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO oidc_identities (provider, subject, user_id, email, linked_at, last_login_at)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -2374,7 +2381,7 @@ impl AuthStore for PgStore {
         provider: &str,
         subject: &str,
     ) -> Result<Option<OidcIdentity>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT provider, subject, user_id, email, linked_at, last_login_at FROM oidc_identities WHERE provider = $1 AND subject = $2",
@@ -2390,7 +2397,7 @@ impl AuthStore for PgStore {
         subject: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE oidc_identities SET last_login_at = $1 WHERE provider = $2 AND subject = $3",
             &[&at, &provider, &subject],
@@ -2400,7 +2407,7 @@ impl AuthStore for PgStore {
     }
 
     fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO oidc_pending_logins (state, nonce, redirect_to, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5)",
@@ -2417,7 +2424,7 @@ impl AuthStore for PgStore {
     }
 
     fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // Single-statement atomic read+delete via RETURNING so a state param
         // can be consumed exactly once even across server instances.
         let rows = db
@@ -2437,7 +2444,7 @@ impl AuthStore for PgStore {
     }
 
     fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let affected = db
             .execute(
                 "DELETE FROM oidc_pending_logins WHERE expires_at < $1",
@@ -2448,7 +2455,7 @@ impl AuthStore for PgStore {
     }
 
     fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO audit_log (event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -2470,7 +2477,7 @@ impl AuthStore for PgStore {
     }
 
     fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let mut sql = String::from(
             "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at FROM audit_log WHERE true",
         );
@@ -2540,7 +2547,7 @@ impl AuthStore for PgStore {
 
 impl JobDefinitionStore for PgStore {
     fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let metadata = serde_json::to_string(&job.metadata).unwrap_or_default();
         let tags = serde_json::to_string(&job.tags).unwrap_or_else(|_| "[]".into());
         let max_retries = job.max_retries.map(|n| n as i32);
@@ -2585,7 +2592,7 @@ impl JobDefinitionStore for PgStore {
     }
 
     fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
@@ -2599,7 +2606,7 @@ impl JobDefinitionStore for PgStore {
     }
 
     fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
@@ -2613,7 +2620,7 @@ impl JobDefinitionStore for PgStore {
     }
 
     fn delete_job_definition(&self, job_key: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "DELETE FROM trigger_definitions WHERE job_key = $1",
             &[&job_key],
@@ -2632,7 +2639,7 @@ impl JobDefinitionStore for PgStore {
 
 impl TriggerDefinitionStore for PgStore {
     fn create_trigger(&self, t: &TriggerDefinition) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO trigger_definitions (trigger_id, job_key, cron_expression, timezone, calendar, \"window\", not_before, not_after, enabled, managed_by, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -2661,7 +2668,7 @@ impl TriggerDefinitionStore for PgStore {
     }
 
     fn get_trigger(&self, trigger_id: &str) -> Result<Option<TriggerDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT trigger_id, job_key, cron_expression, timezone, calendar, \"window\", not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE trigger_id = $1",
@@ -2672,7 +2679,7 @@ impl TriggerDefinitionStore for PgStore {
     }
 
     fn list_triggers(&self, job_key: Option<&str>) -> Result<Vec<TriggerDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = if let Some(jk) = job_key {
             db.query(
                 "SELECT trigger_id, job_key, cron_expression, timezone, calendar, \"window\", not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE job_key = $1 ORDER BY created_at",
@@ -2690,7 +2697,7 @@ impl TriggerDefinitionStore for PgStore {
     }
 
     fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "DELETE FROM trigger_definitions WHERE trigger_id = $1",
             &[&trigger_id],
@@ -2703,7 +2710,7 @@ impl TriggerDefinitionStore for PgStore {
         // Scoped to `managed_by != 'dsl'` so Croniqfile-owned rows can never
         // be edited through this path; rows_affected is the found-flag the
         // handler maps to 404. Mirrors the SQLite impl.
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let n = db
             .execute(
                 "UPDATE trigger_definitions
@@ -2728,7 +2735,7 @@ impl TriggerDefinitionStore for PgStore {
 
 impl CalendarDefinitionStore for PgStore {
     fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO calendar_definitions (calendar_id, name, timezone, rules, managed_by, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -2750,7 +2757,7 @@ impl CalendarDefinitionStore for PgStore {
     }
 
     fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions WHERE calendar_id = $1",
@@ -2761,7 +2768,7 @@ impl CalendarDefinitionStore for PgStore {
     }
 
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions ORDER BY name",
@@ -2772,7 +2779,7 @@ impl CalendarDefinitionStore for PgStore {
     }
 
     fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "DELETE FROM calendar_definitions WHERE calendar_id = $1 AND managed_by != 'dsl'",
             &[&calendar_id],
@@ -2786,7 +2793,7 @@ impl CalendarDefinitionStore for PgStore {
 
 impl ExecutionLogStore for PgStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let next: Option<i64> = db
             .query_one(
                 "SELECT MAX(seq) FROM execution_logs WHERE execution_id = $1",
@@ -2817,7 +2824,7 @@ impl ExecutionLogStore for PgStore {
         if entries.is_empty() {
             return Ok(());
         }
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let mut tx = db.transaction().map_err(map_err)?;
         // Group by execution_id so each group gets a contiguous seq range.
         let mut next_seq_by_exec: HashMap<Uuid, i64> = HashMap::new();
@@ -2861,7 +2868,7 @@ impl ExecutionLogStore for PgStore {
         execution_id: Uuid,
         limit: u32,
     ) -> Result<Vec<ExecutionLogEntry>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT id, execution_id, timestamp, level, message, fields, seq
@@ -2878,7 +2885,7 @@ impl ExecutionLogStore for PgStore {
 
 impl DslAdoptionStore for PgStore {
     fn insert_adoption(&self, adoption: &DslAdoption) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO dsl_adoptions (resource_type, resource_key, adopted_at, adopted_by)
              VALUES ($1, $2, $3, $4)
@@ -2897,7 +2904,7 @@ impl DslAdoptionStore for PgStore {
     }
 
     fn delete_adoption(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let n = db
             .execute(
                 "DELETE FROM dsl_adoptions WHERE resource_type = $1 AND resource_key = $2",
@@ -2908,7 +2915,7 @@ impl DslAdoptionStore for PgStore {
     }
 
     fn is_adopted(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let row = db
             .query_one(
                 "SELECT COUNT(*) FROM dsl_adoptions WHERE resource_type = $1 AND resource_key = $2",
@@ -2919,7 +2926,7 @@ impl DslAdoptionStore for PgStore {
     }
 
     fn list_adoptions(&self, resource_type: &str) -> Result<Vec<DslAdoption>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT resource_type, resource_key, adopted_at, adopted_by
@@ -2943,7 +2950,7 @@ impl DslAdoptionStore for PgStore {
 
 impl AlertStore for PgStore {
     fn record_alert_delivery(&self, d: &AlertDelivery) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO alert_deliveries
                 (delivery_id, rule_name, channel_name, job_key, execution_id,
@@ -2971,7 +2978,7 @@ impl AlertStore for PgStore {
         &self,
         filter: &AlertDeliveryFilter,
     ) -> Result<Vec<AlertDelivery>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let mut sql = String::from(
             "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
                     state, error, fired_at, delivered_at, kind
@@ -3009,7 +3016,7 @@ impl AlertStore for PgStore {
         rule_name: &str,
         job_key: &str,
     ) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT fired_at FROM alert_deliveries
@@ -3026,7 +3033,7 @@ impl AlertStore for PgStore {
     }
 
     fn get_alert_delivery(&self, delivery_id: &str) -> Result<Option<AlertDelivery>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
@@ -3039,7 +3046,7 @@ impl AlertStore for PgStore {
     }
 
     fn upsert_alert_rule_override(&self, ov: &AlertRuleOverride) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let throttle_secs = ov.throttle_secs.map(|s| s as i64);
         db.execute(
             "INSERT INTO alert_rule_overrides
@@ -3073,7 +3080,7 @@ impl AlertStore for PgStore {
         &self,
         rule_name: &str,
     ) -> Result<Option<AlertRuleOverride>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT rule_name, enabled, snooze_until, throttle_secs,
@@ -3086,7 +3093,7 @@ impl AlertStore for PgStore {
     }
 
     fn list_alert_rule_overrides(&self) -> Result<Vec<AlertRuleOverride>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT rule_name, enabled, snooze_until, throttle_secs,
@@ -3099,7 +3106,7 @@ impl AlertStore for PgStore {
     }
 
     fn delete_alert_rule_override(&self, rule_name: &str) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let n = db
             .execute(
                 "DELETE FROM alert_rule_overrides WHERE rule_name = $1",
@@ -3113,7 +3120,7 @@ impl AlertStore for PgStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Vec<String>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "DELETE FROM alert_rule_overrides
@@ -3129,7 +3136,7 @@ impl AlertStore for PgStore {
         &self,
         valid_rule_names: &[String],
     ) -> Result<Vec<String>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // `<> ALL($1)` deletes every override whose rule_name is absent from
         // the valid set; an empty set removes all rows (every rule is an
         // orphan), matching the SQLite impl.
@@ -3144,7 +3151,7 @@ impl AlertStore for PgStore {
     }
 
     fn upsert_job_alert_ack(&self, ack: &JobAlertAck) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let suppressed = ack.suppressed_count as i64;
         db.execute(
             &format!(
@@ -3179,7 +3186,7 @@ impl AlertStore for PgStore {
     }
 
     fn get_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!("SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE job_key = $1"),
@@ -3190,7 +3197,7 @@ impl AlertStore for PgStore {
     }
 
     fn list_job_alert_acks(&self) -> Result<Vec<JobAlertAck>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!(
@@ -3203,7 +3210,7 @@ impl AlertStore for PgStore {
     }
 
     fn take_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!(
@@ -3222,7 +3229,7 @@ impl AlertStore for PgStore {
         error: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE job_alert_acks SET
                 suppressed_count = suppressed_count
@@ -3241,7 +3248,7 @@ impl AlertStore for PgStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Vec<JobAlertAck>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!(
@@ -3261,7 +3268,7 @@ impl AlertStore for PgStore {
         error: &str,
         at: DateTime<Utc>,
     ) -> Result<JobFailureStreak, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!(
@@ -3287,7 +3294,7 @@ impl AlertStore for PgStore {
         &self,
         job_key: &str,
     ) -> Result<Option<JobFailureStreak>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 &format!(
@@ -3303,7 +3310,7 @@ impl AlertStore for PgStore {
 
 impl MaintenanceStore for PgStore {
     fn get_maintenance(&self) -> Result<MaintenanceState, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT manual_active, window_start, window_end, note, updated_by, updated_at,
@@ -3316,7 +3323,7 @@ impl MaintenanceStore for PgStore {
     }
 
     fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO maintenance
                 (id, manual_active, window_start, window_end, note, updated_by, updated_at,
@@ -3347,7 +3354,7 @@ impl MaintenanceStore for PgStore {
 
 impl NoteStore for PgStore {
     fn create_note(&self, note: &JobNote) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO job_notes
                 (id, job_key, execution_id, kind, body, author_id, author_name, created_at)
@@ -3368,7 +3375,7 @@ impl NoteStore for PgStore {
     }
 
     fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
@@ -3380,7 +3387,7 @@ impl NoteStore for PgStore {
     }
 
     fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let mut sql = String::from(
             "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
              FROM job_notes WHERE true",
@@ -3408,7 +3415,7 @@ impl NoteStore for PgStore {
     }
 
     fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let removed = db
             .execute("DELETE FROM job_notes WHERE id = $1", &[&id])
             .map_err(map_err)?;
@@ -3418,7 +3425,7 @@ impl NoteStore for PgStore {
     fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError> {
         // One lock for all four reads: `latest_note_at` must not name a note
         // written after the page was read.
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
 
         // Grouping on (job_key, execution_id) puts every note that names no
         // run into one group per job — the job's own thread. `NULLS FIRST` is
@@ -3518,7 +3525,7 @@ impl NoteStore for PgStore {
         reader_id: &str,
         seen_at: Option<DateTime<Utc>>,
     ) -> Result<u64, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // Two fixed statements rather than one with `$2 IS NULL OR …`, so the
         // planner can use the created_at index (migration 033) for the range.
         let row = match seen_at {
@@ -3544,7 +3551,7 @@ impl NoteStore for PgStore {
     }
 
     fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT seen_at FROM user_notes_seen WHERE user_id = $1",
@@ -3559,7 +3566,7 @@ impl NoteStore for PgStore {
         user_id: &str,
         at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         // One statement, so two tabs marking at once cannot move it backwards.
         // The column is qualified: unqualified, `seen_at` is ambiguous between
         // the row and EXCLUDED.
@@ -3578,7 +3585,7 @@ impl NoteStore for PgStore {
 
 impl FavoriteStore for PgStore {
     fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let rows = db
             .query(
                 "SELECT job_key FROM user_favorite_jobs WHERE user_id = $1 ORDER BY job_key",
@@ -3594,7 +3601,7 @@ impl FavoriteStore for PgStore {
         job_key: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "INSERT INTO user_favorite_jobs (user_id, job_key, created_at)
              VALUES ($1, $2, $3)
@@ -3606,7 +3613,7 @@ impl FavoriteStore for PgStore {
     }
 
     fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let removed = db
             .execute(
                 "DELETE FROM user_favorite_jobs WHERE user_id = $1 AND job_key = $2",

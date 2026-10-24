@@ -41,6 +41,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the next start replayed the migration into `duplicate column name` and
   failed for good. Each migration now commits together with its record, on
   SQLite and on Postgres, so it is applied whole or not at all.
+- **One malformed database row no longer takes the whole server down**
+  (review 2026-10-24, S-5). The SQLite store panicked on a timestamp that is
+  not RFC 3339 (such as `datetime('now')`'s `2026-01-01 00:00:00`) or on an id
+  that is not a UUID, with the connection mutex held. The mutex was then
+  poisoned and every later store call panicked too — scheduler, watchdog and
+  every API route — until a restart, after which the same row did it again.
+  Such a row now fails only the call that reads it, with an error naming the
+  value, and a panic under the lock no longer poisons the store on either
+  backend. On Postgres a panicking call no longer ends the store thread.
 
 ### Security
 
