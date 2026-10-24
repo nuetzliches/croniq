@@ -50,6 +50,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Such a row now fails only the call that reads it, with an error naming the
   value, and a panic under the lock no longer poisons the store on either
   backend. On Postgres a panicking call no longer ends the store thread.
+- **The per-job concurrency guard no longer scans the job's whole history**
+  (review 2026-10-24, S-3). Every poll that offers a `singleton` or
+  `max_concurrent` job counts the job's claimed runs, under the queue lock.
+  That count walked every execution the job ever had, so a job with a long
+  history and no retention slowed every poll. Migration 036 adds a partial
+  index over queued and claimed runs, on SQLite and Postgres, and the count
+  now reads only that.
 
 ### Security
 

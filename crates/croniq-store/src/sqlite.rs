@@ -585,8 +585,9 @@ impl ExecutionStore for SqliteStore {
         let conn = self.lock();
         let placeholders: Vec<String> = (0..states.len()).map(|i| format!("?{}", i + 2)).collect();
         let sql = format!(
-            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN ({})",
-            placeholders.join(", ")
+            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN ({}){}",
+            placeholders.join(", "),
+            inflight_index_term(states)
         );
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
 
@@ -3582,6 +3583,25 @@ fn upsert_job_state_with(conn: &rusqlite::Connection, state: &JobState) -> Resul
 }
 
 // ─── String conversions ───
+
+/// The literal WHERE term of the partial index `idx_executions_job_key_inflight`
+/// (migration 036) when every requested state lies inside it, else nothing.
+///
+/// Both planners use a partial index only when they can prove that the query
+/// implies its predicate, and a bound `state IN (?2)` proves nothing. The
+/// concurrency guard asks for `[Claimed]` on every poll under the queue lock;
+/// without this term it walked the job's whole history through
+/// `idx_executions_job_key` (review 2026-10-24, S-3).
+pub(crate) fn inflight_index_term(states: &[ExecutionState]) -> &'static str {
+    if states
+        .iter()
+        .all(|s| matches!(s, ExecutionState::Queued | ExecutionState::Claimed))
+    {
+        " AND state IN ('queued', 'claimed')"
+    } else {
+        ""
+    }
+}
 
 fn state_to_str(state: ExecutionState) -> &'static str {
     match state {

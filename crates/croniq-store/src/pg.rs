@@ -150,6 +150,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("033_user_notes_seen", PG_MIGRATION_033),
     ("034_job_alert_acks", PG_MIGRATION_034),
     ("035_job_failure_streaks", PG_MIGRATION_035),
+    ("036_execution_inflight_index", PG_MIGRATION_036),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -392,6 +393,15 @@ CREATE TABLE IF NOT EXISTS job_failure_streaks (
     last_error         TEXT NOT NULL,
     last_failed_at     TIMESTAMPTZ NOT NULL
 );
+"#;
+
+// In-flight executions per job, for the concurrency guard. Mirrors
+// migrations/036_execution_inflight_index.sql — see there for why it is
+// partial and why the count repeats its predicate.
+const PG_MIGRATION_036: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_executions_job_key_inflight
+    ON executions(job_key, state)
+    WHERE state IN ('queued', 'claimed');
 "#;
 
 const PG_MIGRATION_002: &str = r#"
@@ -1154,11 +1164,20 @@ impl ExecutionStore for PgStore {
             .iter()
             .map(|s| state_to_str(*s).to_string())
             .collect();
+        // The literal term lets the planner prove that the partial index of
+        // migration 036 applies, which a bound `ANY($2)` cannot; the guard
+        // asks for `[Claimed]` on every poll (review 2026-10-24, S-3).
+        let inflight_only = states
+            .iter()
+            .all(|s| matches!(s, ExecutionState::Queued | ExecutionState::Claimed));
+        let sql = if inflight_only {
+            "SELECT COUNT(*) FROM executions WHERE job_key = $1 AND state = ANY($2) \
+             AND state IN ('queued', 'claimed')"
+        } else {
+            "SELECT COUNT(*) FROM executions WHERE job_key = $1 AND state = ANY($2)"
+        };
         let row = client
-            .query_one(
-                "SELECT COUNT(*) FROM executions WHERE job_key = $1 AND state = ANY($2)",
-                &[&job_key, &state_strs],
-            )
+            .query_one(sql, &[&job_key, &state_strs])
             .map_err(map_err)?;
         let count: i64 = row.get(0);
         Ok(count as u64)

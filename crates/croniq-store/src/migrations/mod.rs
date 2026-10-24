@@ -111,6 +111,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "035_job_failure_streaks",
         include_str!("035_job_failure_streaks.sql"),
     ),
+    (
+        "036_execution_inflight_index",
+        include_str!("036_execution_inflight_index.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -154,6 +158,7 @@ fn migrate_with(conn: &Connection, migrations: &[(&str, &str)]) -> Result<(), ru
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
 
     /// Apply every migration up to and including `target`, then return the
     /// connection so the caller can seed data and run the remaining
@@ -1214,6 +1219,70 @@ mod tests {
                 [],
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn migration_036_indexes_the_in_flight_count_per_job() {
+        use crate::models::ExecutionState;
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "035_job_failure_streaks").unwrap();
+
+        // A singleton job with a long terminal history and one run in flight.
+        for n in 1..=40u8 {
+            let state = if n == 40 { "claimed" } else { "completed" };
+            conn.execute(
+                "INSERT INTO executions
+                 (id, job_key, fire_at, attempt, state, metadata, created_at)
+                 VALUES (?1, 'ops:singleton', '2026-10-01T00:00:00Z', 1, ?2, '{}',
+                         '2026-10-01T00:00:00Z')",
+                params![uuid_str(n), state],
+            )
+            .unwrap();
+        }
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "036_execution_inflight_index")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // The statement the store builds for the guard's `[Claimed]` count.
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN (?2){}",
+            crate::sqlite::inflight_index_term(&[ExecutionState::Claimed])
+        );
+        let counted: i64 = conn
+            .query_row(&count_sql, params!["ops:singleton", "claimed"], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(counted, 1);
+
+        // Post-condition on the plan: the count must read the partial index,
+        // not walk the job's history through idx_executions_job_key.
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {count_sql}"))
+            .unwrap()
+            .query_map(params!["ops:singleton", "claimed"], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|row| row.contains("idx_executions_job_key_inflight")),
+            "the in-flight count must use the partial index, got plan: {plan:?}"
+        );
+
+        // A count over terminal states gets no such term; it would be wrong.
+        assert_eq!(
+            crate::sqlite::inflight_index_term(&[
+                ExecutionState::Claimed,
+                ExecutionState::Completed
+            ]),
+            ""
         );
     }
 
