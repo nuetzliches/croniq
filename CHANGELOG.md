@@ -290,6 +290,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `playwright.config.ts`, `vitest.config.ts` and `ui/e2e/*.ts` belonged to no
   TypeScript project, so `vue-tsc --build` never checked them; a new
   `tsconfig.e2e.json` brings them in.
+- **Long dashboard sessions stay responsive** (review 2026-10-24, U-4). "Load
+  older" on the Runs page added pages without limit to a list that is not
+  virtualised and is re-merged on every poll; it now stops at ten older pages
+  (2 200 runs) and points to the filters and the time window instead. The
+  console formatted every buffered event again for each new line; each row is
+  now computed once, when its event arrives.
 
 ### Security
 
