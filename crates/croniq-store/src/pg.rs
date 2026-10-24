@@ -4085,3 +4085,25 @@ const PG_UPSERT_JOB_STATE_SQL: &str =
        fire_count = EXCLUDED.fire_count,
        status = EXCLUDED.status,
        updated_at = EXCLUDED.updated_at";
+
+#[cfg(all(test, feature = "sqlite"))]
+mod tests {
+    use super::PG_MIGRATIONS;
+    use crate::migrations::MIGRATIONS;
+
+    /// `PG_MIGRATIONS` is hand-kept beside the SQLite list. It may skip
+    /// SQLite-only entries (the `ALTER`s Postgres folds into its `CREATE`s),
+    /// but every entry it has must exist there under the same name, in the
+    /// same order — otherwise the shared numbering stops meaning the same
+    /// schema step on both backends (review 2026-10-24, 3.4).
+    #[test]
+    fn pg_migrations_are_an_ordered_subsequence_of_the_sqlite_list() {
+        let mut sqlite = MIGRATIONS.iter().map(|(name, _)| *name);
+        for (name, _) in PG_MIGRATIONS {
+            assert!(
+                sqlite.any(|s| s == *name),
+                "Postgres migration {name} is missing from the SQLite list or out of order"
+            );
+        }
+    }
+}

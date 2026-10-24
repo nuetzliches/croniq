@@ -1,5 +1,8 @@
 //! Contract tests: verify store implementations satisfy the trait contracts.
-//! These tests run against both SQLite and in-memory backends.
+//! These tests run against the SQLite backend only: `create_memory_store` is
+//! SQLite in `:memory:` mode, not a separate backend. Postgres gets its own,
+//! narrower coverage in `tests/pg_integration.rs`, which needs a live server
+//! and runs in CI.
 
 use crate::memory::create_memory_store;
 use crate::models::*;

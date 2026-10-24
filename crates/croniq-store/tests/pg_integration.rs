@@ -4,8 +4,9 @@
 //! but the SQL strings are opaque `&str` to the compiler — a reserved-word
 //! collision (`window`), a JSONB/TEXT type mismatch, or a wrong `$n` binding
 //! only surfaces when the statements actually run against a server. This test
-//! drives every method of the seven traits the SQLite backend also implements
-//! so those runtime bugs are caught in CI.
+//! drives a selection of methods from each trait so those runtime bugs are
+//! caught in CI. It is not exhaustive: a method missing here has only been
+//! exercised against SQLite (`src/contract_tests.rs`).
 //!
 //! It is a no-op unless `CRONIQ_TEST_PG_URL` points at a reachable Postgres
 //! (e.g. `postgres://croniq:croniq@localhost:5432/croniq`). CI sets it against
