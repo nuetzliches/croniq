@@ -880,6 +880,10 @@ Operational notes:
   line. That is the price of making a stateless token revocable.
 * **API keys and PATs are unaffected.** Neither carries the claim — both are
   already re-checked against their own revocation columns on every request.
+  A PAT's scopes are also cut to what its owner's *current* role grants on
+  every request, so demoting a user takes effect for their PATs at once: a
+  PAT minted with `admin` loses it, and keeps only those of its scopes the
+  new role grants.
 * **Rolling restarts are safe.** Tokens minted by an older binary carry no
   claim and are read as generation `0`, which is what every existing row was
   backfilled to. Nobody is signed out by the upgrade itself; the first bump on

@@ -206,11 +206,36 @@ async fn resolve_pat(state: &ServerState, raw_token: &str) -> Result<CallerConte
         user_id: Some(user.user_id),
         role: Some(user.role),
         auth_method: AuthMethod::Pat,
-        scopes: pat.scopes,
+        scopes: pat_effective_scopes(pat.scopes, user.role),
         // PATs carry their own revocation column, re-read above on every
         // request, so they need no generation claim.
         token_generation: None,
     })
+}
+
+/// The scopes a PAT carries on this request: the ones stamped at mint time,
+/// cut down to what the owner's *current* role grants.
+///
+/// The mint-time check alone froze a PAT's rights at the owner's role on
+/// that day, so an admin demoted to viewer kept every `admin` PAT they had
+/// minted, with no expiry and no way for another admin to revoke it
+/// (review 2026-10-24, A-2). Session JWTs pick a role change up on refresh;
+/// this is the PAT equivalent, applied on every request.
+pub(crate) fn pat_effective_scopes(
+    pat_scopes: Vec<String>,
+    role: croniq_store::models::Role,
+) -> Vec<String> {
+    let allowed = croniq_auth::context::default_scopes_for_role(role);
+    if allowed
+        .iter()
+        .any(|s| s == croniq_auth::context::Scope::ADMIN)
+    {
+        return pat_scopes;
+    }
+    pat_scopes
+        .into_iter()
+        .filter(|s| allowed.contains(s))
+        .collect()
 }
 
 /// Reject a JWT that was minted before the user's credentials last changed
@@ -255,4 +280,62 @@ fn enforce_token_generation(state: &ServerState, ctx: &CallerContext) -> Result<
         return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use croniq_store::models::{PersonalAccessToken, Role, User};
+
+    /// Review 2026-10-24, A-2: a PAT minted while its owner was admin must
+    /// lose those rights once the owner is demoted.
+    #[tokio::test]
+    async fn pat_scopes_follow_the_owners_current_role() {
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        let now = chrono::Utc::now();
+        let mut user = User {
+            user_id: "u1".into(),
+            username: "alice".into(),
+            email: None,
+            display_name: None,
+            role: Role::Admin,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        };
+        store.users_create(&user).unwrap();
+        let raw = "croniq_pat_test_token_value";
+        store
+            .pat_create(&PersonalAccessToken {
+                token_id: "t1".into(),
+                user_id: "u1".into(),
+                name: "laptop".into(),
+                token_hash: hash_token(raw),
+                token_prefix: "croniq_pat_t".into(),
+                scopes: vec!["admin".into(), "jobs:read".into()],
+                expires_at: None,
+                revoked_at: None,
+                last_used_at: None,
+                created_at: now,
+            })
+            .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = ServerState::with_auth(
+            croniq_runner::AppState::new(),
+            tx,
+            None,
+            Some(Arc::clone(&store)),
+        );
+
+        let ctx = resolve_pat(&state, raw).await.unwrap();
+        assert!(ctx.is_admin());
+
+        user.role = Role::Viewer;
+        store.users_update(&user).unwrap();
+        let ctx = resolve_pat(&state, raw).await.unwrap();
+        assert!(!ctx.is_admin());
+        assert_eq!(ctx.scopes, vec!["jobs:read".to_string()]);
+    }
 }

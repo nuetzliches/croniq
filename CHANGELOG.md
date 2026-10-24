@@ -679,6 +679,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   editing, deactivating or deleting a user whose role is `admin`. Callers
   with `admin` are unaffected.
 
+- **A personal access token follows its owner's current role** (review
+  2026-10-24, A-2). PAT scopes were checked against the owner's role only
+  when the token was minted, so a user demoted from `admin` kept every PAT
+  minted before, with its `admin` scope, for as long as the PAT lived. A PAT
+  now carries only those of its scopes that the owner's current role grants,
+  re-evaluated on every request.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
