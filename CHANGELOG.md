@@ -213,6 +213,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `"line 1\nline 2"` was written back with a real newline, so the output of
   `croniq fmt --write` no longer parsed. The formatter now escapes `\n`, `\r`
   and `\t`, keeps a second `description`, and `validate` reports the bare one.
+- **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
+  A Croniqfile schedule has no month field, and `croniq convert` / `croniq
+  migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.
+  Both now warn; `croniq migrate` writes every conversion warning into the
+  file as a comment above the job's schedule instead of discarding it.
+- **`croniq migrate` quotes the crontab command correctly** (review
+  2026-10-24, R-11). The command was pasted into `original_command "…"`
+  verbatim, so a `"` or a backslash in it produced a Croniqfile that did not
+  parse.
 
 ### Security
 
