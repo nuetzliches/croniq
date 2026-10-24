@@ -28,7 +28,7 @@
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="WireMock.Net" Version="1.25.0" />
     <!-- Transitive pin: WireMock.Net 1.6.7 brings System.Linq.Dynamic.Core 1.3.12 which has GHSA-4cv2-4hjh-77rx. Force 1.7.2 (fixed). -->
     <PackageVersion Include="System.Linq.Dynamic.Core" Version="1.7.2" />
