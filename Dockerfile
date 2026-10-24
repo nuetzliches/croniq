@@ -80,7 +80,7 @@ RUN cd crates/croniq-config-wasm \
     && wasm-pack build --target web --release --out-dir pkg
 
 # ── Stage 2: Build the dashboard ─────────────────────────────────────────────
-FROM node:24-bookworm-slim AS ui-builder
+FROM node:26-bookworm-slim AS ui-builder
 
 WORKDIR /build/ui
 COPY ui/package.json ui/package-lock.json ./
