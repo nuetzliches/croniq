@@ -134,13 +134,17 @@ docker compose up
 
 Open **http://localhost:4000**. The demo runners register against [`Croniqfile.demo`](Croniqfile.demo), so you'll see executions, retries, and occasional dead letters streaming in immediately. Tune with `RUNNER_REPLICAS` and `RUNNER_FAIL_RATE` env vars.
 
+The stack pulls the latest release image (`ghcr.io/nuetzliches/croniq:latest`); set `CRONIQ_IMAGE` to pin a version or to use `:main`. To run an image built from your checkout instead (a full Rust build, 10–20 minutes the first time), add the build override: `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
+
 ### Docker (server only)
 
 ```sh
 docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
 ```
 
-On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
+`:latest` is the latest final release. For production, pin `:<version>`; `:main` tracks the main branch. See [Image tags](docs/operations.md#image-tags).
+
+On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one. The generated password stays in `docker logs` and in anything that collects them, so change it after the first login (Settings in the UI, or `POST /v1/users/me/change-password`).
 
 The image runs as the unprivileged `croniq` user (uid 100, gid 101). Named volumes inherit the right owner; a bind mount for `/var/lib/croniq` has to be writable by that uid. To keep a bind mount owned by someone else, start the container as root (`--user 0`, compose `user: "0"`): the entrypoint then fixes the ownership and drops to `croniq` before the server starts.
 

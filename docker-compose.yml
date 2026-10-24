@@ -6,8 +6,15 @@
 # Open http://localhost:4000 in your browser.
 # The two demo runners connect automatically and execute the pre-loaded jobs.
 #
+# Pulls the published image; nothing is compiled. `docker compose pull`
+# fetches a newer release. To run the image built from this checkout instead
+# (a full Rust release build plus the dashboard, 10-20 minutes the first
+# time), add the build override:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+#
 # Tunable env vars (set in shell or .env file):
-#   CRONIQ_IMAGE      — image tag  (default: ghcr.io/nuetzliches/croniq:latest)
+#   CRONIQ_IMAGE      — image  (default: ghcr.io/nuetzliches/croniq:latest,
+#                       the latest release; `:main` for the main branch)
 #   RUNNER_REPLICAS   — demo runner count (default: 2)
 #   RUNNER_FAIL_RATE  — fraction 0.0–1.0 of jobs that fail (default: 0.05)
 #
@@ -18,8 +25,11 @@
 
 services:
   server:
-    image: ${CRONIQ_IMAGE:-croniq:local}
-    build: .
+    # The published image, not `build: .` (review 2026-10-24, C-12): the
+    # quickstart is the adoption path ADR-0002 measures, and a source build
+    # turned a one-command demo into a 10-20 minute compile. The build lives
+    # in docker-compose.build.yml.
+    image: ${CRONIQ_IMAGE:-ghcr.io/nuetzliches/croniq:latest}
     restart: unless-stopped
     # Published to 127.0.0.1 only, never 0.0.0.0 (issue #431). The demo
     # profile below seeds admin/demo-admin, a fixed admin-scoped API key and
@@ -73,8 +83,7 @@ services:
       start_period: 5s
 
   runner:
-    image: ${CRONIQ_IMAGE:-croniq:local}
-    build: .
+    image: ${CRONIQ_IMAGE:-ghcr.io/nuetzliches/croniq:latest}
     entrypoint: ["croniq-demo-runner"]
     restart: unless-stopped
     # The image's HEALTHCHECK probes the server on 4000, because that is what

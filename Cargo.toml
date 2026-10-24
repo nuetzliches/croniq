@@ -18,11 +18,19 @@ members = [
 ]
 
 [workspace.package]
-# Catch up with the most recent release tag. The release workflow rewrites
-# this in-place to match the pushed tag at build time so binaries always
-# carry the matching version (CARGO_PKG_VERSION ends up in `--version`
-# output and the MCP server's identification handshake).
-version = "0.4.0"
+# Not the release version, deliberately, and never bumped by hand: a release
+# cut changes only the CHANGELOGs. This value is CARGO_PKG_VERSION, which
+# `--version`, `GET /version`, the MCP handshake and alert payloads report.
+# CI stamps it on the runner, never in a commit:
+#   - release.yml rewrites it to the pushed tag, e.g. 0.49.0;
+#   - ci.yml's Docker job (main) to the last release plus the commit, e.g.
+#     0.49.0+main.a1c20f2.
+# Every other build - a local `cargo build`, devstack, `cargo install --git` -
+# reports 0.0.0-dev, which cannot be mistaken for a release. It said 0.4.0
+# for 45 releases (review 2026-10-24, C-2). GET /version's `git_sha` names the
+# commit. No square brackets in this comment: both rewrites match up to the
+# first one after the section header.
+version = "0.0.0-dev"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nuetzliches/croniq"

@@ -81,6 +81,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are now built with `otlp,smtp,postgres` like the image, and every PR
   compiles, tests and lints the `smtp`-gated code instead of leaving it to the
   image build after the merge.
+- **`:latest` is the latest final release, and nothing else** (review
+  2026-10-24, C-1). Every push to `main` used to retag `:latest` as well, so
+  it pointed at whichever ran last, a release or an untagged `main` build,
+  and a pre-release tag moved it too. `main` builds are now published as
+  `:main` and `:<sha>`; `:latest` moves only on a release tag without a `-`.
+  **If you pull `:latest` to track `main`, switch to `:main`.** Applies to
+  `croniq`, `croniq-server` and `croniq-ui`. See
+  [Image tags](docs/operations.md#image-tags).
+- **Builds say which build they are** (review 2026-10-24, C-2). Every
+  non-release build reported version 0.4.0 in `--version`, `GET /version`,
+  the MCP handshake and alert payloads. `main` images now report
+  `<last release>+main.<sha>` (e.g. `0.49.0+main.a1c20f2`), and other source
+  builds report `0.0.0-dev`; releases are unchanged.
+- **`docker compose up` pulls the published image** (review 2026-10-24,
+  C-12). The quickstart built the image from source, a 10–20 minute Rust
+  build, although its comment and the README said it pulled `:latest`. The
+  build moved to `docker-compose.build.yml`:
+  `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
 
 ### Fixed
 

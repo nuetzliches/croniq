@@ -36,6 +36,33 @@ confirm the rollout has actually replaced the previous build.
 `env` is read at request time, so changing `CRONIQ_ENV` does not require a
 rebuild — just a restart.
 
+`version` is the same string `croniq-server --version`, the MCP handshake and
+alert payloads report, and it tells you which kind of build you are running:
+
+| `version` | Build |
+| --- | --- |
+| `0.49.0` | A release (tarball, Homebrew, image tag `:0.49.0` / `:latest`). |
+| `0.49.0+main.a1c20f2` | An image built from `main` (`:main`, `:<sha>`): the last release plus the commit. Anything after `+` is build metadata, so semver ranks it equal to `0.49.0`. |
+| `0.0.0-dev` | Anything else built from source: `cargo build`, devstack, `cargo install --git`. `git_sha` names the commit. |
+
+Non-release builds from 0.49.0 and earlier reported `0.4.0`.
+
+## Image tags
+
+`ghcr.io/nuetzliches/croniq` (and `croniq-server`, `croniq-ui`) is published
+under these tags:
+
+| Tag | Moves on | Use |
+| --- | --- | --- |
+| `:<version>`, `:v<version>` | never | Production. Pin this. |
+| `:latest` | every final release (no `-` in the tag) | Trying it out. Never a pre-release, never `main`. |
+| `:main` | every push to `main` | Testing unreleased fixes. Not a release. |
+| `:<commit sha>` | never | Pinning one `main` build. |
+
+Through 0.49.0, every push to `main` also moved `:latest`, so `:latest` pointed
+at whichever had run last, a release or an untagged `main` build. If you
+relied on it tracking `main`, switch to `:main`.
+
 ## HTTP hardening
 
 ### CORS

@@ -314,7 +314,8 @@ jobs:
           build-args: |
             CRONIQ_VERSION=${{ steps.version.outputs.version }}
           # Push by digest only — no tag yet. docker-merge below creates the
-          # manifest list under :latest, :<version>, :<tag> once both arches
+          # manifest list under :<version>, :<tag> (and :latest for a final
+          # release) once both arches
           # are uploaded.
           target: ${{ steps.var.outputs.target }}
           outputs: type=image,name=${{ steps.var.outputs.image }},push-by-digest=true,name-canonical=true,push=true
@@ -331,7 +332,7 @@ jobs:
           # keyed on the base digest plus the instruction text, so a cached one
           # keeps whatever apt served on the day it was first built. On this
           # path that is worse than a red check — a release weeks after the
-          # last one would ship a stale trust store while `:latest` off main is
+          # last one would ship a stale trust store while `:main` is
           # current (#716).
           no-cache-filters: ca-provider
           # BuildKit's own SLSA provenance (full build record, not the
@@ -429,11 +430,22 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        # `:latest` is set here and nowhere else (ci.yml publishes `:main`),
+        # and only for a final release. A pre-release tag (`v0.50.0-rc1`,
+        # anything with a `-`) is marked as a GitHub pre-release below and
+        # skips the Homebrew tap; it must not move `:latest` either
+        # (review 2026-10-24, C-1).
         run: |
-          docker buildx imagetools create \
-            --tag ${{ steps.var.outputs.image }}:latest \
-            --tag ${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }} \
-            --tag ${{ steps.var.outputs.image }}:${{ github.ref_name }} \
+          tags=(
+            --tag "${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }}"
+            --tag "${{ steps.var.outputs.image }}:${{ github.ref_name }}"
+          )
+          if [[ '${{ github.ref_name }}' != *-* ]]; then
+            tags+=(--tag "${{ steps.var.outputs.image }}:latest")
+          else
+            echo "::notice::${{ github.ref_name }} is a pre-release; :latest stays where it is."
+          fi
+          docker buildx imagetools create "${tags[@]}" \
             $(printf '${{ steps.var.outputs.image }}@sha256:%s ' *)
       - name: Inspect image
         id: inspect
