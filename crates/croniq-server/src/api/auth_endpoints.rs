@@ -287,7 +287,7 @@ pub async fn handle_login(
     if !state.password_login_enabled {
         return Err(password_disabled_response());
     }
-    if !state.login_throttle.allow_ip(peer_ip) {
+    if !state.login_throttle.allow_login(peer_ip, &req.username) {
         return Err(rate_limited_response());
     }
     // Resolved before any credential work so a request that cannot be served
@@ -396,6 +396,8 @@ pub async fn handle_login(
                 "user",
                 Some(&user.user_id),
             );
+            // The password was right; the TOTP step is throttled on its own.
+            state.login_throttle.refund_login(peer_ip, &req.username);
             return Ok((
                 HeaderMap::new(),
                 Json(LoginResponse::MfaRequired(MfaRequiredResponse {
@@ -428,6 +430,7 @@ pub async fn handle_login(
             "user",
             Some(&user.user_id),
         );
+        state.login_throttle.refund_login(peer_ip, &req.username);
         return Ok((
             HeaderMap::new(),
             Json(LoginResponse::EnrollmentRequired(
@@ -441,6 +444,8 @@ pub async fn handle_login(
     }
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
+    // Only failed attempts use the throttle budget (review 2026-10-24, A-3).
+    state.login_throttle.refund_login(peer_ip, &req.username);
     let action = if !totp_enabled {
         "auth.login_success"
     } else if req.recovery_code.is_some() {
@@ -552,6 +557,7 @@ pub async fn handle_totp_login(
         return Err(resp);
     }
     state.login_throttle.clear_mfa(&mfa_key);
+    state.login_throttle.refund_login(peer_ip, "");
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     let action = if req.recovery_code.is_some() {

@@ -145,6 +145,11 @@ async fn main() -> Result<()> {
         return run_doctor(&loaded.runtime, refresh_cookie_name.err());
     }
     let refresh_cookie_name = refresh_cookie_name.map_err(anyhow::Error::msg)?;
+    // Review 2026-10-24, A-3: which peers' `X-Forwarded-For` the login
+    // throttle believes. A typo stops the boot rather than silently keying
+    // every login on the proxy's address.
+    let trusted_proxies = croniq_server::api::login_throttle::TrustedProxies::from_env()
+        .map_err(anyhow::Error::msg)?;
 
     // Resolve UI sign-in method gates (issue #138). DSL beats env beats default.
     // The both-disabled check must run before we bind the HTTP listener so the
@@ -366,6 +371,7 @@ async fn main() -> Result<()> {
         s.password_login_enabled = password_login_enabled;
         s.app_base_url = resolve_app_base_url(loaded.runtime.server.app_url.as_deref());
         s.refresh_cookie_name = refresh_cookie_name;
+        s.login_throttle.trusted_proxies = trusted_proxies;
         s.require_totp = require_totp;
         s.retention_configured = croniq_server::diagnostics::retention_configured(&loaded.runtime);
         // Snapshot what a reload cannot change, so every reload path can warn
