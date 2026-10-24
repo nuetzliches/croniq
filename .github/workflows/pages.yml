@@ -59,7 +59,7 @@ jobs:
         # Pinned version, SHA-256-verified tarball; the pins live in the
         # script and the Dockerfile uses the same one (review 2026-10-24,
         # C-5). ~/.cargo/bin is on PATH after the toolchain step.
-        run: sh scripts/install-wasm-pack.sh "$HOME/.cargo/bin"
+        run: sh "$GITHUB_WORKSPACE/scripts/install-wasm-pack.sh" "$HOME/.cargo/bin"
       - name: Build wasm bridge
         run: |
           cd crates/croniq-config-wasm
