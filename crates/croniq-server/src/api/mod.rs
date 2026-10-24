@@ -890,6 +890,47 @@ async fn handle_unknown_api_path(uri: axum::http::Uri) -> (StatusCode, Json<serd
 /// If the queue is empty and the runner has capacity, the handler waits up to
 /// `LONG_POLL_TIMEOUT` for a `work_notify` signal before returning an empty
 /// response. This eliminates the need for runners to busy-poll.
+/// The subset of a poll's `inflight` list whose lease `runner_id` may
+/// refresh.
+///
+/// The list is whatever the runner says. Taken at face value, one runner
+/// could name another runner's execution ids and take over their lease
+/// records; the holder check in the reaper would then see the real holder's
+/// lease as gone and reap live work (review 2026-10-24, P-14). An id whose
+/// lease this runner already holds is refreshed as before. Any other id is
+/// refreshed only when the store says this runner holds the claim — the case
+/// after a server restart emptied the lease map. Without a store there is no
+/// claim state to consult (and no reaper), so the list is taken as is.
+async fn leases_held_by(state: &ServerState, runner_id: &str, inflight: &[String]) -> Vec<String> {
+    if inflight.is_empty() {
+        return Vec::new();
+    }
+    let unverified: Vec<&String> = {
+        let leases = state.runner.lease_renewals.read().await;
+        inflight
+            .iter()
+            .filter(|id| leases.get(*id).is_none_or(|l| l.runner_id != runner_id))
+            .collect()
+    };
+    let Some(store) = state.store.as_ref() else {
+        return inflight.to_vec();
+    };
+    inflight
+        .iter()
+        .filter(|id| {
+            !unverified.contains(id)
+                || uuid::Uuid::parse_str(id)
+                    .ok()
+                    .and_then(|uuid| store.get_execution(uuid).ok().flatten())
+                    .is_some_and(|e| {
+                        e.state == croniq_store::models::ExecutionState::Claimed
+                            && e.runner_id.as_deref() == Some(runner_id)
+                    })
+        })
+        .cloned()
+        .collect()
+}
+
 async fn handle_poll(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
@@ -961,10 +1002,12 @@ async fn handle_poll(
     // the runner reports inflight (issue #438): the stale-claim reaper
     // exempts a claim only while its own lease is fresh, so a slow-but-alive
     // handler stays protected poll by poll instead of riding on runner-wide
-    // liveness.
+    // liveness. Only executions this runner actually holds are refreshed —
+    // see `leases_held_by`.
+    let held = leases_held_by(&state, &req.runner_id, &req.inflight).await;
     state
         .runner
-        .touch_leases(&req.runner_id, &req.inflight, Utc::now())
+        .touch_leases(&req.runner_id, &held, Utc::now())
         .await;
 
     if let RegisterOutcome::TookOver {
@@ -6903,6 +6946,62 @@ mod tests {
         .await;
         assert_eq!(status, 200);
         assert_eq!(body["renewed"], true);
+    }
+
+    /// Review 2026-10-24, P-14: a runner that lists another runner's
+    /// execution in its poll's `inflight` must not take over that lease.
+    #[tokio::test]
+    async fn poll_inflight_cannot_take_over_another_runners_lease() {
+        let (state, store, _rx) = make_bound_state();
+        let owner = runner_token(&state, "client-a");
+        let other = runner_token(&state, "client-b");
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        let poll = |runner: &str, iid: &str| {
+            let mut body = poll_body(runner, iid);
+            body["inflight"] = serde_json::json!([exec.to_string()]);
+            body
+        };
+        let holder = || async {
+            state
+                .runner
+                .lease_renewals
+                .read()
+                .await
+                .get(&exec.to_string())
+                .map(|l| l.runner_id.clone())
+        };
+
+        // The real holder's report creates its lease (the store confirms it).
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &owner,
+            poll("worker-1", "iid-1"),
+        )
+        .await;
+        assert_eq!(holder().await.as_deref(), Some("worker-1"));
+
+        // Another runner naming the same id changes nothing.
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &other,
+            poll("worker-2", "iid-2"),
+        )
+        .await;
+        assert_eq!(status, 200, "the poll itself is served");
+        assert_eq!(holder().await.as_deref(), Some("worker-1"));
+
+        // Nor can it plant a lease where none exists yet.
+        state.runner.lease_renewals.write().await.clear();
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &other,
+            poll("worker-2", "iid-2"),
+        )
+        .await;
+        assert_eq!(holder().await, None);
     }
 
     // ─── #438: renew is a per-execution lease ──────────────────────────────
