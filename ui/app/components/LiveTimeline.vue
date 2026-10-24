@@ -197,6 +197,20 @@ watch(pointerHeld, (held) => (hoverFrozen.value = held ? snapshot() : null))
 const still = computed(() => frozen.value ?? hoverFrozen.value)
 
 /**
+ * Runs the stream has delivered that the still picture leaves out.
+ *
+ * On the card as `data-held-back`, for the e2e suite: it is the proof that a
+ * frame with a new run arrived while the card stood still. The hover-hold test
+ * used to infer that from sleeping, which a slow machine made vacuously true
+ * (review 2026-10-24, U-5).
+ */
+const heldBack = computed(() => {
+  if (!still.value) return 0
+  const shown = new Set(still.value.runs.map((run) => run.id))
+  return runs.value.filter((run) => !shown.has(run.id)).length
+})
+
+/**
  * The range as it was before a look back began, so "Live" returns to the
  * span someone was watching rather than one shaped by how far they dragged.
  */
@@ -614,6 +628,7 @@ onBeforeUnmount(stopMotion)
   <section
     class="rounded-xl border border-default bg-default p-4 shadow-sm"
     data-testid="live-card"
+    :data-held-back="heldBack"
     @click="onLinkClick"
     @pointerenter="hovering = true"
     @pointerleave="hovering = false"
