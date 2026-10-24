@@ -130,6 +130,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still ahead, not the earliest: with `every 15th, 1st of month`, the 15th of
   the next month came before its 1st, so the 1st never fired. The dashboard
   forecast had the same gap.
+- **A fire skipped for a full queue or the rate limit no longer reads as
+  missed** (review 2026-10-24, D-5). Only a fire skipped for maintenance wrote
+  the advance to `job_states`. The other skips moved the schedule on in
+  memory alone and counted the skip as a fire. The stored next fire stayed at
+  the skipped one, so `job_missed_fire` and `croniq_job_overdue` reported a
+  healthy scheduler as stalled. A restart rebuilt the trigger from that time,
+  and under `catch_up all` it replayed the skipped fires into the queue the
+  overflow guard had just capped. Skips now persist the advance and leave
+  `fire_count` and `last_fired_at` alone.
 
 ### Security
 
