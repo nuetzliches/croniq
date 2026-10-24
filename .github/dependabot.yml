@@ -1,4 +1,17 @@
 version: 2
+
+# Every ecosystem with a manifest in this repo, not only the workflow pins
+# (review 2026-10-24, C-9). Minor and patch updates are grouped into one PR
+# per ecosystem (and per directory where the ecosystem has several), so a
+# weekly run yields a handful of PRs instead of dozens; majors stay separate
+# because they are the ones that need reading. Security updates are not
+# affected by `open-pull-requests-limit` or the grouping.
+#
+# The SDK manifests (pip, gomod, nuget, gradle, sdks/typescript) belong to
+# published libraries: a bump there raises the floor every consumer must
+# meet, so they run monthly and pip/npm only widen a range when the new
+# release falls outside it.
+
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -11,3 +24,88 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+
+  # The workspace. Cargo.lock is the shipped dependency set; cargo-deny gates
+  # every bump on advisories and licences.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # Base images of the one Dockerfile (rust, node, debian, alpine, nginx).
+  # `rust:<x>-bookworm` is also the de facto MSRV build: CI's rust job uses
+  # floating stable, so keeping this tag current keeps the two from drifting.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker-images:
+        update-types: [minor, patch]
+
+  # Dashboard: the bundle the image ships.
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      ui-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories:
+      - /sdks/typescript
+      - /sdks/conformance/bindings/typescript
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    versioning-strategy: increase-if-necessary
+    groups:
+      typescript-sdk-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /sdks/python
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    versioning-strategy: increase-if-necessary
+    groups:
+      python-sdk-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: gomod
+    directories:
+      - /sdks/go
+      - /sdks/go/otel
+      - /sdks/go/conformance
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      go-sdk-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: nuget
+    directory: /sdks/dotnet
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      dotnet-sdk-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: gradle
+    directory: /sdks/java
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      java-sdk-minor-patch:
+        update-types: [minor, patch]

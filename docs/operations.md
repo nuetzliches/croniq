@@ -543,7 +543,9 @@ route through a single SMTP transport, assembled at boot from two layers:
    the **only** place credentials may live (the Croniqfile is a read-only
    mount, so it must never carry a password).
 
-The binary must be built with `--features smtp`. Without that feature the
+The binary must be built with `--features smtp`. The official image and the
+release binaries (tarballs, Homebrew) are; a plain `cargo build` or
+`cargo install` from source is not unless you pass the feature. Without it the
 transport degrades to a `NoopSender` that logs the recipient but sends
 nothing, and the API returns the raw invite/reset URL in its response so an
 admin can deliver it out-of-band. Boot diagnostics flag the mismatch as

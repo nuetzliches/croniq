@@ -152,6 +152,13 @@ curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh 
 
 Detects your OS/arch (Linux/macOS, x64/ARM64), downloads the latest release, installs to `/usr/local/bin`. Override with `INSTALL_DIR` or `CRONIQ_VERSION`.
 
+The installer checks the archive against the release's `SHA256SUMS`. From the first release after 0.49.0, release archives, `SHA256SUMS` and images also carry a signed build-provenance attestation, which proves they were built by this repository's release workflow:
+
+```sh
+gh attestation verify croniq-x86_64-unknown-linux-musl.tar.gz --repo nuetzliches/croniq
+gh attestation verify oci://ghcr.io/nuetzliches/croniq:<version> --repo nuetzliches/croniq
+```
+
 ### Homebrew (macOS / Linux)
 
 ```sh
