@@ -642,6 +642,34 @@ pub fn work_item_from_execution(
     }
 }
 
+/// Cancel queued executions the restore does not bring back; returns how many
+/// were cancelled.
+///
+/// A failed cancel used to be dropped with `let _ =` and counted as done. The
+/// row stays `queued`, so the watchdog's reconcile sweep later enqueues it
+/// after all — the run `catch_up none` / `latest` or ephemeral mode said not
+/// to make (review 2026-10-24, D-12). It is logged and left out of the count.
+fn cancel_on_restore(
+    store: &dyn ExecutionStore,
+    job_key: &str,
+    execs: &[&croniq_store::models::Execution],
+) -> usize {
+    let now = chrono::Utc::now();
+    let mut cancelled = 0;
+    for exec in execs {
+        match store.cancel_execution(exec.id, now) {
+            Ok(_) => cancelled += 1,
+            Err(e) => tracing::error!(
+                job_key = %job_key,
+                execution_id = %exec.id,
+                error = %e,
+                "restore: failed to cancel a queued execution the catch-up policy drops"
+            ),
+        }
+    }
+    cancelled
+}
+
 /// Restore queued executions from the database into the in-memory work queue.
 ///
 /// On server restart, executions in `queued` state need to be re-enqueued so
@@ -711,13 +739,10 @@ pub async fn restore_queued_executions(
 
         // Ephemeral jobs never restore queued executions.
         if job.execution_mode == ExecutionMode::Ephemeral {
-            let now = chrono::Utc::now();
-            for exec in &execs {
-                let _ = store.cancel_execution(exec.id, now);
-            }
+            let cancelled = cancel_on_restore(store, &job_key, &execs);
             tracing::debug!(
                 job_key = %job_key,
-                cancelled = execs.len(),
+                cancelled,
                 "ephemeral job — cancelled queued executions on restore"
             );
             continue;
@@ -726,36 +751,26 @@ pub async fn restore_queued_executions(
         match job.catch_up {
             CatchUpPolicy::None => {
                 // Cancel all queued executions — just move to next fire.
-                let now = chrono::Utc::now();
-                for exec in &execs {
-                    let _ = store.cancel_execution(exec.id, now);
-                }
+                let cancelled = cancel_on_restore(store, &job_key, &execs);
                 tracing::info!(
                     job_key = %job_key,
-                    cancelled = execs.len(),
+                    cancelled,
                     "catch_up=none — cancelled queued executions"
                 );
             }
             CatchUpPolicy::Latest => {
                 // Sort by fire_at desc, keep only the most recent one.
                 execs.sort_by_key(|b| std::cmp::Reverse(b.fire_at));
-                let now = chrono::Utc::now();
-                for (i, exec) in execs.iter().enumerate() {
-                    if i == 0 {
-                        // Restore the latest
-                        let item = work_item_from_execution(exec, job);
-                        runner_state.queue.write().await.enqueue(item);
-                        restored += 1;
-                    } else {
-                        // Cancel the rest
-                        let _ = store.cancel_execution(exec.id, now);
-                    }
-                }
+                // Restore the latest, cancel the rest.
+                let item = work_item_from_execution(&execs[0], job);
+                runner_state.queue.write().await.enqueue(item);
+                restored += 1;
                 if execs.len() > 1 {
+                    let cancelled = cancel_on_restore(store, &job_key, &execs[1..]);
                     tracing::info!(
                         job_key = %job_key,
                         restored = 1,
-                        cancelled = execs.len() - 1,
+                        cancelled,
                         "catch_up=latest — coalesced queued executions"
                     );
                 }
@@ -1701,6 +1716,44 @@ mod tests {
         let job = &cfg.runtime.jobs[0];
         assert_eq!(job.metadata.get("env").map(|s| s.as_str()), Some("prod"));
         assert_eq!(job.metadata.get("region").map(|s| s.as_str()), Some("eu"));
+    }
+
+    // Review 2026-10-24, D-12: a failed cancel on restore was dropped and
+    // counted as done.
+    #[test]
+    fn cancel_on_restore_counts_only_what_it_cancelled() {
+        let faulty = crate::fault_store::FaultStore::wrap(crate::store::sqlite_store(
+            SqliteStore::in_memory().unwrap(),
+        ));
+        let now = Utc::now();
+        let exec = croniq_store::models::Execution {
+            id: uuid::Uuid::new_v4(),
+            job_key: "a:b".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            state: croniq_store::models::ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            idempotency_key: None,
+            metadata: Default::default(),
+            created_at: now,
+        };
+        faulty.create_execution(&exec).unwrap();
+
+        faulty.arm_cancel(true);
+        assert_eq!(cancel_on_restore(&*faulty, "a:b", &[&exec]), 0);
+        faulty.arm_cancel(false);
+        assert_eq!(cancel_on_restore(&*faulty, "a:b", &[&exec]), 1);
+        assert_eq!(
+            faulty.get_execution(exec.id).unwrap().unwrap().state,
+            croniq_store::models::ExecutionState::Cancelled
+        );
     }
 
     // ─── restore_trigger_states ───────────────────────────────────────────────

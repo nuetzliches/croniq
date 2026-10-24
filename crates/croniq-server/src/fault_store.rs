@@ -42,6 +42,9 @@ pub struct FaultStore {
     /// `get_job_definition` returns a database error while set (review
     /// 2026-10-24, D-9: a reload must not read the error as "no row").
     pub fail_get_job_definition: AtomicBool,
+    /// `cancel_execution` returns a database error while set (review
+    /// 2026-10-24, D-12).
+    pub fail_cancel: AtomicBool,
     /// Called just before every `create_execution_and_advance_job_state`
     /// delegates — the scheduler's per-fire write. Lets a test look at what
     /// the rest of the system can see while a tick is mid-wave (issue #841).
@@ -58,6 +61,7 @@ impl FaultStore {
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
             fail_get_job_definition: AtomicBool::new(false),
+            fail_cancel: AtomicBool::new(false),
             on_fire_persist: std::sync::Mutex::new(None),
         })
     }
@@ -80,6 +84,10 @@ impl FaultStore {
 
     pub fn arm_get_job_definition(&self) {
         self.fail_get_job_definition.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_cancel(&self, armed: bool) {
+        self.fail_cancel.store(armed, Ordering::SeqCst);
     }
 }
 
@@ -128,6 +136,15 @@ impl ExecutionStore for FaultStore {
         self.inner.claim_execution(id, runner_id, now)
     }
 
+    fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
+        if self.fail_cancel.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected cancel_execution failure".into(),
+            ));
+        }
+        self.inner.cancel_execution(id, now)
+    }
+
     fn count_executions_in_states(
         &self,
         job_key: &str,
@@ -174,7 +191,6 @@ impl ExecutionStore for FaultStore {
         find_execution_by_idempotency_key(job_key: &str, idempotency_key: &str, window_start: DateTime<Utc>) -> Option<Execution>;
         requeue_abandoned(runner_id: &str, now: DateTime<Utc>) -> Vec<Uuid>;
         requeue_if_claimed(id: Uuid, now: DateTime<Utc>) -> bool;
-        cancel_execution(id: Uuid, now: DateTime<Utc>) -> ();
         count_by_state() -> HashMap<ExecutionState, u64>;
         job_execution_metrics() -> Vec<JobExecutionMetrics>;
         job_runtime_since(since: DateTime<Utc>) -> Vec<JobRuntime>;

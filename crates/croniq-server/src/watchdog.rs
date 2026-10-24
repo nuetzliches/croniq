@@ -1950,21 +1950,38 @@ impl WatchdogLoop {
             return;
         }
 
-        // Remove expired items from the queue and cancel in store.
+        // Cancel in the store first, and take the item off the queue only once
+        // that worked. The other order, with the cancel's error dropped, left
+        // a still-`queued` row behind that the reconcile sweep put back in the
+        // queue, for this sweep to expire again on the next pass — and counted
+        // it as expired each time (review 2026-10-24, D-12). A failed cancel
+        // now keeps the item queued; the next sweep tries again.
         let mut q = self.runner.queue.write().await;
         for exec_id in &expired_ids {
-            q.remove(exec_id);
-            if let Ok(uuid) = uuid::Uuid::parse_str(exec_id) {
-                let _ = self.store.cancel_execution(uuid, now);
-                result.expired.push(uuid);
+            let Ok(uuid) = uuid::Uuid::parse_str(exec_id) else {
+                q.remove(exec_id);
+                continue;
+            };
+            match self.store.cancel_execution(uuid, now) {
+                Ok(_) => {
+                    q.remove(exec_id);
+                    result.expired.push(uuid);
+                }
+                Err(e) => tracing::error!(
+                    execution_id = %uuid,
+                    error = %e,
+                    "watchdog: failed to cancel a queued execution past its queue_ttl — kept queued"
+                ),
             }
         }
         drop(q);
 
-        tracing::info!(
-            count = expired_ids.len(),
-            "watchdog: cancelled queued executions due to queue_ttl expiry"
-        );
+        if !result.expired.is_empty() {
+            tracing::info!(
+                count = result.expired.len(),
+                "watchdog: cancelled queued executions due to queue_ttl expiry"
+            );
+        }
     }
 }
 
@@ -2783,6 +2800,48 @@ mod tests {
             })
             .unwrap();
         id
+    }
+
+    // Review 2026-10-24, D-12: the queue_ttl sweep took the item off the queue
+    // and dropped the store cancel's error. The row stayed `queued`, the
+    // reconcile sweep put it back, and the next pass expired it again.
+    #[tokio::test]
+    async fn queue_ttl_expiry_keeps_the_item_when_the_cancel_fails() {
+        let faulty = crate::fault_store::FaultStore::wrap(make_store());
+        let store: DynStore = Arc::clone(&faulty) as DynStore;
+        let runner = make_runner();
+        let now = Utc::now();
+        let old = now - ChronoDuration::minutes(5);
+        let exec_id = seed_queued_at(&*store, "test:job", old);
+        runner.queue.write().await.enqueue(croniq_runner::WorkItem {
+            execution_id: exec_id.to_string(),
+            job_key: "test:job".into(),
+            fire_at: old,
+            scheduled_for: old,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::Value::Null,
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+        let mut job = make_job("test:job");
+        job.queue_ttl = Some("1m".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+
+        faulty.arm_cancel(true);
+        let r1 = watchdog.sweep(now).await;
+        assert!(r1.expired.is_empty(), "a failed cancel is not an expiry");
+        assert_eq!(runner.queue.read().await.len(), 1, "kept queued");
+
+        faulty.arm_cancel(false);
+        let r2 = watchdog.sweep(now).await;
+        assert_eq!(r2.expired, vec![exec_id]);
+        assert_eq!(runner.queue.read().await.len(), 0);
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Cancelled
+        );
     }
 
     #[tokio::test]

@@ -154,6 +154,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   later with every run. A fire made within one interval of its instant now
   advances from the instant itself. A fire caught up after downtime still
   restarts the cadence from the moment it ran, as `catch_up` describes.
+- **A failed cancel no longer counts as done** (review 2026-10-24, D-12). When
+  the `queue_ttl` sweep could not cancel an expired run in the store, it took
+  the run off the queue anyway and counted it as expired. The run stayed
+  `queued` in the store, so the reconcile sweep put it back and the next pass
+  expired it again. The `queue_ttl` sweep now cancels in the store first and
+  keeps the run queued if that fails. Restarts handled a failed cancel under
+  `catch_up none` / `latest` the same way; they now log it and leave it out
+  of the count.
 
 ### Security
 
