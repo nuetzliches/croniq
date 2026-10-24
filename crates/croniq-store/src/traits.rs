@@ -674,9 +674,12 @@ pub trait DslAdoptionStore {
 /// each rule fire so operators (and the future Alerts UI tab) can
 /// see what fired, when, and whether delivery succeeded.
 pub trait AlertStore {
-    /// Insert a delivery row. Idempotent on `delivery_id` (PRIMARY KEY)
-    /// — re-inserting the same id with the same payload is a no-op,
-    /// re-inserting with different payload is an error.
+    /// Insert a delivery row. Idempotent on `delivery_id` (PRIMARY KEY): a
+    /// second insert under an id that exists is a no-op, whatever its
+    /// payload — the first write wins, on both backends. There is no update;
+    /// the evaluator writes every delivery once, under a fresh UUID. (This
+    /// used to promise an error for a differing payload, which neither
+    /// backend ever raised; review 2026-10-24, S-10.)
     fn record_alert_delivery(&self, delivery: &AlertDelivery) -> Result<(), StoreError>;
 
     /// List recent deliveries, newest first. Used by the Alerts tab and an

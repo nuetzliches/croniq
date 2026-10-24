@@ -4909,3 +4909,36 @@ fn alert_deliveries_page_past_a_tie_group_larger_than_the_limit() {
     assert_eq!(window.len(), 1);
     assert_eq!(window[0].delivery_id, older.delivery_id);
 }
+
+/// `record_alert_delivery` is first-write-wins on `delivery_id`, payload or
+/// not (review 2026-10-24, S-10).
+#[test]
+fn record_alert_delivery_keeps_the_first_write_for_an_id() {
+    let store = create_memory_store().unwrap();
+    let first = make_delivery(
+        "billing:invoice",
+        now(),
+        AlertDeliveryState::Failed,
+        AlertDeliveryKind::Alert,
+    );
+    store.record_alert_delivery(&first).unwrap();
+
+    let mut second = first.clone();
+    second.state = AlertDeliveryState::Delivered;
+    second.error = Some("changed".into());
+    store.record_alert_delivery(&second).unwrap();
+
+    let stored = store
+        .get_alert_delivery(&first.delivery_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.state, AlertDeliveryState::Failed);
+    assert_eq!(stored.error, None);
+    assert_eq!(
+        store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap()
+            .len(),
+        1
+    );
+}
