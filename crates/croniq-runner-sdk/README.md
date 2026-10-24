@@ -40,7 +40,12 @@ async fn main() {
         })
         .await;
 
-    runner.start().await.unwrap();
+    // Drains on SIGTERM / Ctrl-C: running handlers finish (up to the drain
+    // timeout) and are acked before this returns.
+    runner
+        .run_until(croniq_runner_sdk::shutdown_signal())
+        .await
+        .unwrap();
 }
 ```
 
@@ -51,7 +56,13 @@ See [`examples/basic.rs`](examples/basic.rs) for a full template (including `reg
 - **Async, `tokio`-native** — handlers are `async` closures; the runner drives up to `max_inflight` concurrent executions.
 - **Server-side cancellation** — the poll response's cancel signal is wired into the handler's `ExecutionContext` so long-running work stops when the server cancels.
 - **Streaming log writer** — `ctx.log_writer()` buffers events into a bounded channel; a flusher batches them and drains before ack. Use it when a handler wraps a chatty subprocess.
-- **Lease renewal** — a per-execution task posts to `/v1/work/renew` until the handler returns.
+- **Lease renewal** — a per-execution task posts to `/v1/work/renew` every `renew_interval` (default 15 s) until the handler returns. A `404`/`409` means the server no longer holds the execution for this runner: the handler is aborted and acked as `failure` ("lease lost"), because the execution may already be running elsewhere. A `403` stops renewing.
+- **Graceful shutdown** — `run_until(shutdown_signal())` stops polling on SIGTERM / Ctrl-C, lets running handlers finish for up to `drain_timeout` (default 30 s), aborts the rest and acks them as `failure`, then returns.
+- **Ack retry** — an ack that fails with a transport error or a 5xx is sent again after 1 s and 2 s (3 attempts). A 4xx is never repeated.
+- **Backoff** — after a failed poll the runner waits `poll_retry_delay`, doubling per further transport/5xx failure up to 60 s, every wait ±20 % so a fleet does not retry in lockstep.
+- **Transport security** — `http://` is accepted only for `localhost`, `127.0.0.0/8` and `::1`. Any other cleartext URL makes `start()` return `ClientError::Config` unless the builder opts in with `allow_insecure_http()`. The same holds for `TriggerClient`.
+- **Hostile identifiers** — an assignment whose `job_key` carries control characters is acked as `failure` without running; one with an unsafe `execution_id` is dropped. Same rule as the other SDKs (conformance cases 13 and 14).
+- **Bearer tokens** — `bearer_token(...)` on the builder, as an alternative to `api_key(...)` (the API key wins when both are set).
 - **Self-registration** — `register_with_schedule("billing:invoice", "5m", fn)` calls `POST /v1/jobs/register`; Croniqfile-managed jobs take precedence.
 - **Catch-all handler** — `set_default_handler(...)` for runners that handle any `job_key` — see [`examples/catch_all.rs`](examples/catch_all.rs).
 - **Persistent runner identity** — resolve a stable runner id from env / data-dir so a restarted runner keeps its identity.

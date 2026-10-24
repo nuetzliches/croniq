@@ -62,14 +62,16 @@ pub mod client;
 pub(crate) mod enrichment;
 pub mod error_chain;
 pub mod handler;
+pub mod identifiers;
 pub mod identity;
 pub mod log_writer;
 pub mod runner;
+pub mod security;
 pub mod trigger;
 
 pub use client::{ClientError, WorkEvent};
 pub use handler::{ExecutionContext, HandlerError};
 pub use identity::resolve_runner_id;
 pub use log_writer::LogWriter;
-pub use runner::CroniqRunner;
+pub use runner::{CroniqRunner, shutdown_signal};
 pub use trigger::{TriggerClient, TriggerError, TriggerResult};
