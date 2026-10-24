@@ -22,7 +22,6 @@ use chrono::{Duration, Utc};
 use croniq_auth::CallerType;
 use croniq_auth::jwt::{JwtConfig, issue_token_pair};
 use croniq_runner::AppState;
-use croniq_scheduler::misfire::MisfirePolicy;
 use croniq_scheduler::schedule::Schedule;
 use croniq_scheduler::trigger::Trigger;
 use croniq_server::api::ServerState;
@@ -104,7 +103,6 @@ fn fixture(with_triggers: bool) -> Arc<ServerState> {
                 chrono_tz::UTC,
                 None,
                 None,
-                MisfirePolicy::default(),
                 Utc::now(),
             ),
         );

@@ -2439,8 +2439,10 @@ paths:
             `pull_api { runner_identity_binding "off" }`.
         "503":
           description: |
-            The runner-identity binding could not be read or written. The
-            check fails closed rather than accepting the request; retry.
+            The runner-identity binding could not be read or written, or
+            the server's completion processor is not running, so the result
+            could not be accepted. The check fails closed rather than
+            accepting the request; retry.
 
   /v1/work/renew:
     post:

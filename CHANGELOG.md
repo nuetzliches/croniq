@@ -89,6 +89,90 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `until` plus `until_id` (the `event_id` / `delivery_id` of the last row
   seen), the keyset cursor `GET /v1/executions` has had since #654; without
   `until_id`, `until` keeps its inclusive meaning.
+- **A dead completion processor or watchdog now restarts the server** (review
+  2026-10-24, D-1). Only the scheduler task was supervised; a panic in either
+  of the other two ended it without a word. Runners then got
+  `200 {received: true}` for results nothing would process, and every claim
+  stayed `claimed` until the reaper ran it again. All three tasks now exit the
+  process with code 70 when they stop, so the orchestrator's restart policy
+  brings back a whole server. `POST /v1/work/ack` answers `503` when the
+  completion processor is not running, so the runner keeps the result and
+  retries. A panic source is gone too: alert error texts were cut at a byte
+  count, which panicked when the cut fell inside a multibyte character, such
+  as an umlaut in an alert script's stderr.
+- **A hanging `shell` alert channel no longer stalls completion processing**
+  (review 2026-10-24, D-7). The script ran synchronously inside the completion
+  processor, which handles one completion at a time, so a `curl` without
+  `--max-time` against an endpoint that never answered stopped every
+  completion behind it and held a runtime worker. The script now runs
+  asynchronously and is killed after 30 seconds; the delivery is recorded as
+  failed.
+- **A Croniqfile reload now reaches the completion processor, the watchdog
+  and the MCP tools** (review 2026-10-24, D-2, D-3, P-1). All three worked
+  from the jobs the server had booted with; only the scheduler saw a reload
+  (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`). A job a reload added
+  fired, but its result was dropped as unknown and the run was later cancelled
+  as stranded, with no retry, dead letter or alert. A reload that changed
+  `retry`, `dead_letter`, `keep_last` or `queue_ttl` was reported as applied
+  and was not. Over `/mcp`, `job_trigger` and `enqueue_job` stamped the
+  `runner shell` command the file had before the reload, so the shell runner
+  ran the old command, and `create_job` accepted a key the file had declared
+  since boot, letting a store row shadow the Croniqfile's definition
+  (ADR-0006). All three now read the Croniqfile's current jobs on every use.
+- **The watchdog leaves adopted jobs to the store and forgets settled
+  alerts** (review 2026-10-24, D-13). It applied the Croniqfile's `keep_last`
+  and `queue_ttl` to jobs adopted through the API, which ADR-0006 gives to the
+  store. The sets that keep `job_sla_missed` and `job_missed_fire` alerts from
+  repeating only grew, by one entry per alert, for as long as the process
+  ran. Now each sweep drops the entries that can no longer match.
+- **A monthly schedule with its days out of order fires on every one of
+  them** (review 2026-10-24, D-6). The next fire was the first listed day
+  still ahead, not the earliest: with `every 15th, 1st of month`, the 15th of
+  the next month came before its 1st, so the 1st never fired. The dashboard
+  forecast had the same gap.
+- **A fire skipped for a full queue or the rate limit no longer reads as
+  missed** (review 2026-10-24, D-5). Only a fire skipped for maintenance wrote
+  the advance to `job_states`. The other skips moved the schedule on in
+  memory alone and counted the skip as a fire. The stored next fire stayed at
+  the skipped one, so `job_missed_fire` and `croniq_job_overdue` reported a
+  healthy scheduler as stalled. A restart rebuilt the trigger from that time,
+  and under `catch_up all` it replayed the skipped fires into the queue the
+  overflow guard had just capped. Skips now persist the advance and leave
+  `fire_count` and `last_fired_at` alone.
+- **A store error while reading an API job no longer brings a deactivated job
+  back** (review 2026-10-24, D-9). Boot and reload read a failed lookup of the
+  job's own row as "no row". That skipped the deactivation check, so a job
+  stopped through the API fired again, and it reset the job's timeout and
+  retries to the defaults. A reload now fails with the store error and leaves
+  the running state as it was; at boot, the server stops and its restart
+  retries.
+- **Interval jobs keep their phase** (review 2026-10-24, D-10). After a
+  reload, the dashboard forecast and `gate_closed_reason` showed every
+  `every …` job as anchored at the reload, while the scheduler kept firing on
+  its old phase. The next interval fire was also computed from the tick that
+  made the fire, so the tick latency added up: `every 10 seconds` drifted
+  later with every run. A fire made within one interval of its instant now
+  advances from the instant itself. A fire caught up after downtime still
+  restarts the cadence from the moment it ran, as `catch_up` describes.
+- **A failed cancel no longer counts as done** (review 2026-10-24, D-12). When
+  the `queue_ttl` sweep could not cancel an expired run in the store, it took
+  the run off the queue anyway and counted it as expired. The run stayed
+  `queued` in the store, so the reconcile sweep put it back and the next pass
+  expired it again. The `queue_ttl` sweep now cancels in the store first and
+  keeps the run queued if that fails. Restarts handled a failed cancel under
+  `catch_up none` / `latest` the same way; they now log it and leave it out
+  of the count.
+- **A result the store could not record no longer starts a second retry
+  chain** (review 2026-10-24, D-14). When writing a finished run's outcome
+  failed, the completion processor still reported a success, or still created
+  the next retry, although the run stayed `claimed` and the stale-claim reaper
+  later ran it again. Now nothing is decided from such a completion; the
+  reaper's re-run is the only follow-up.
+- **A job whose `not_after` passed during downtime finishes at restart**
+  (review 2026-10-24, D-15). The restart took over its last pending fire,
+  which could never run past `not_after`. The job then showed as overdue for
+  good (`croniq_job_overdue`, `job_missed_fire`) instead of finished. It is
+  now marked exhausted at restart.
 
 ### Security
 

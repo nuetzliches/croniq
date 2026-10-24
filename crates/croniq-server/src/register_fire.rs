@@ -243,9 +243,7 @@ pub fn recorded_hashes(rows: Vec<JobRegisterFire>) -> HashMap<String, String> {
 mod tests {
     use chrono::{Duration, TimeZone};
     use croniq_config::{compile::compile, parser::Parser};
-    use croniq_scheduler::{
-        calendar::Calendar, misfire::MisfirePolicy, schedule::Schedule, trigger::TimeWindow,
-    };
+    use croniq_scheduler::{calendar::Calendar, schedule::Schedule, trigger::TimeWindow};
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -271,7 +269,6 @@ mod tests {
                         chrono_tz::UTC,
                         None,
                         None,
-                        MisfirePolicy::FireNow,
                         now,
                     ),
                 )

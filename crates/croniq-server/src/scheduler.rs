@@ -110,11 +110,14 @@ pub enum SchedulerCommand {
     /// Replace the full trigger + job set (hot-reload).
     ///
     /// The ack sender fires once the swap is applied so callers (e.g. the
-    /// admin reload endpoint) can wait for completion before responding.
+    /// admin reload endpoint) can wait for completion before responding. It
+    /// carries the trigger map as the scheduler now holds it — with each
+    /// surviving job's phase and history carried over — which is what the
+    /// shared snapshot must show, not the freshly built triggers that went in.
     Reload {
         triggers: HashMap<String, Trigger>,
         jobs: Vec<JobConfig>,
-        ack: oneshot::Sender<()>,
+        ack: oneshot::Sender<HashMap<String, Trigger>>,
     },
 }
 
@@ -174,6 +177,55 @@ impl SchedulerHeartbeat {
             .lock()
             .map(|c| c.iter().map(|(k, v)| (k.clone(), *v)).collect())
             .unwrap_or_default()
+    }
+}
+
+/// Advance `trigger` past a due fire that will not run, without counting it
+/// as a fire: `last_fired_at` and `fire_count` describe runs that happened.
+fn skip_fire_in_memory(trigger: &mut Trigger, fire_at: DateTime<Utc>, now: DateTime<Utc>) {
+    let (last_fired_at, fire_count) = (trigger.last_fired_at, trigger.fire_count);
+    trigger.mark_fired(fire_at, now);
+    trigger.last_fired_at = last_fired_at;
+    trigger.fire_count = fire_count;
+}
+
+/// [`skip_fire_in_memory`], then persist the advance to `job_states`.
+///
+/// Maintenance skips got this in #786; the queue-overflow and rate-limit skips
+/// only moved memory on and counted the fire (review 2026-10-24, D-5). With
+/// the row left at the skipped fire, the watchdog reported a healthy scheduler
+/// as having missed it (`job_missed_fire`, `croniq_job_overdue`), the history
+/// counted a run that never happened, and a restart rebuilt the trigger from
+/// the stale instant — under `catch_up all`, replaying skipped fires into the
+/// queue the overflow guard had just capped. A failed write keeps the skip; it
+/// is logged, and the next skip or fire writes the row again.
+fn skip_fire(
+    store: &DynStore,
+    trigger: &mut Trigger,
+    fire_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    why: &str,
+) {
+    skip_fire_in_memory(trigger, fire_at, now);
+    let job_state = JobState {
+        job_key: trigger.job_key.clone(),
+        next_fire_at: trigger.next_fire_at,
+        last_fired_at: trigger.last_fired_at,
+        fire_count: trigger.fire_count,
+        status: if trigger.state == TriggerState::Exhausted {
+            JobStatus::Exhausted
+        } else {
+            JobStatus::Active
+        },
+        updated_at: now,
+    };
+    if let Err(e) = store.upsert_job_state(&job_state) {
+        tracing::warn!(
+            job_key = %trigger.job_key,
+            error = %e,
+            reason = why,
+            "failed to persist a skipped fire"
+        );
     }
 }
 
@@ -610,7 +662,7 @@ impl SchedulerLoop {
                 self.reload(triggers, jobs);
                 // The receiver may have dropped (caller lost interest);
                 // ignore send failure.
-                let _ = ack.send(());
+                let _ = ack.send(self.triggers.clone());
             }
         }
     }
@@ -700,39 +752,7 @@ impl SchedulerLoop {
             };
 
             if maintenance_active && self.jobs.contains_key(&trigger.job_key) {
-                let (last_fired_at, fire_count) = (trigger.last_fired_at, trigger.fire_count);
-                trigger.mark_fired(fire_at, now);
-                // The fire did not run, so it is not counted as one.
-                trigger.last_fired_at = last_fired_at;
-                trigger.fire_count = fire_count;
-
-                // Persist the advance (issue #786). Before, only memory moved
-                // on: `job_states` kept the skipped fire as `next_fire_at`, so
-                // the watchdog reported it as missed once the window outlasted
-                // the grace, and a restart during maintenance rebuilt the
-                // trigger from that stale time and caught up a fire the
-                // running process had already skipped. A failed write keeps
-                // the skip; it is logged, and the next skip or fire writes the
-                // row again.
-                let job_state = JobState {
-                    job_key: trigger.job_key.clone(),
-                    next_fire_at: trigger.next_fire_at,
-                    last_fired_at,
-                    fire_count,
-                    status: if trigger.state == TriggerState::Exhausted {
-                        JobStatus::Exhausted
-                    } else {
-                        JobStatus::Active
-                    },
-                    updated_at: now,
-                };
-                if let Err(e) = self.store.upsert_job_state(&job_state) {
-                    tracing::warn!(
-                        job_key = %trigger.job_key,
-                        error = %e,
-                        "failed to persist a fire skipped for maintenance"
-                    );
-                }
+                skip_fire(&self.store, trigger, fire_at, now, "maintenance");
                 maintenance_skipped.push(SkippedFire {
                     job_key: trigger.job_key.clone(),
                     fire_at,
@@ -741,7 +761,7 @@ impl SchedulerLoop {
             }
             if maintenance_active {
                 // Unknown job: there is no row to persist the advance into.
-                trigger.mark_fired(fire_at, now);
+                skip_fire_in_memory(trigger, fire_at, now);
                 continue;
             }
 
@@ -755,7 +775,8 @@ impl SchedulerLoop {
                 Some(j) => j,
                 None => {
                     tracing::warn!(job_key = %trigger.job_key, "trigger fired for unknown job");
-                    trigger.mark_fired(fire_at, now);
+                    // No row to persist into, as under maintenance above.
+                    skip_fire_in_memory(trigger, fire_at, now);
                     continue;
                 }
             };
@@ -844,7 +865,7 @@ impl SchedulerLoop {
                         max = max_depth,
                         "skipping execution — queue overflow"
                     );
-                    trigger.mark_fired(fire_at, now);
+                    skip_fire(&self.store, trigger, fire_at, now, "queue overflow");
                     continue;
                 }
 
@@ -853,7 +874,7 @@ impl SchedulerLoop {
                 // wedge a drained job (the quota-guard leak alongside #263).
                 if !self.quota.allow(&trigger.job_key) {
                     tracing::debug!(job_key = %trigger.job_key, "skipping execution — per-minute rate limit exceeded");
-                    trigger.mark_fired(fire_at, now);
+                    skip_fire(&self.store, trigger, fire_at, now, "rate limit");
                     continue;
                 }
             }
@@ -1035,7 +1056,7 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use croniq_config::compile::{DeadLetterConfig, RetryConfig, RunnerConfig};
     use croniq_runner::AppState;
-    use croniq_scheduler::{misfire::MisfirePolicy, schedule::Schedule, trigger::TriggerState};
+    use croniq_scheduler::{schedule::Schedule, trigger::TriggerState};
     use croniq_store::sqlite::SqliteStore;
     use pretty_assertions::assert_eq;
 
@@ -1084,7 +1105,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             Utc::now() - ChronoDuration::seconds(60),
         );
         trigger.next_fire_at = Some(Utc::now() - ChronoDuration::seconds(5));
@@ -1100,7 +1120,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             Utc::now(),
         )
     }
@@ -2035,7 +2054,6 @@ mod tests {
                 chrono_tz::UTC,
                 None,
                 None,
-                MisfirePolicy::FireNow,
                 Utc::now(),
             ),
         );
@@ -2086,7 +2104,6 @@ mod tests {
                 chrono_tz::UTC,
                 None,
                 None,
-                MisfirePolicy::FireNow,
                 Utc::now(),
             )
         };
@@ -2375,6 +2392,41 @@ mod tests {
         }
         // Default max_queue_depth is 10 — the guard stops enqueuing beyond it.
         assert_eq!(runner.queue.read().await.count_for_job("etl:sync"), 10);
+    }
+
+    /// Review 2026-10-24, D-5: an overflow skip advanced the trigger in memory
+    /// only and counted the fire. `job_states` kept the skipped fire as
+    /// `next_fire_at` — the watchdog's missed-fire sweep and a restart then
+    /// read a healthy scheduler as stalled — and `fire_count` counted a run
+    /// that never happened.
+    #[tokio::test]
+    async fn an_overflow_skip_persists_the_advance_without_counting_a_fire() {
+        let store = make_store();
+        let runner = make_runner();
+        let mut triggers = HashMap::new();
+        triggers.insert("etl:sync".into(), make_trigger_due_now("etl:sync"));
+        let mut job = make_job("etl:sync");
+        job.max_queue_depth = Some(1);
+
+        let mut scheduler =
+            SchedulerLoop::new(triggers, vec![job], Arc::clone(&store), Arc::clone(&runner));
+
+        let now = Utc::now();
+        assert_eq!(scheduler.tick(now).await.fired.len(), 1);
+        let later = now + ChronoDuration::seconds(60);
+        assert!(scheduler.tick(later).await.fired.is_empty(), "queue full");
+
+        let trigger = &scheduler.triggers["etl:sync"];
+        assert_eq!(trigger.fire_count, 1, "the skipped fire did not run");
+        let state = store
+            .list_job_states()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.job_key == "etl:sync")
+            .unwrap();
+        assert_eq!(state.fire_count, 1);
+        assert_eq!(state.next_fire_at, trigger.next_fire_at);
+        assert!(state.next_fire_at.unwrap() > later, "row left at the skip");
     }
 
     /// Regression for the quota-guard leak found alongside #263: a *queued*

@@ -588,7 +588,9 @@ where
 /// Reset on process restart — after a restart, a still-running
 /// execution will produce one duplicate alert. That cost is
 /// proportional to "how many SLAs you breached at restart time" and
-/// is bounded by sweep interval (~30s).
+/// is bounded by sweep interval (~30s). Entries for executions that are no
+/// longer claimed are dropped every sweep, so the set stays bounded by the
+/// claims in flight.
 pub type SlaFiredSet = Arc<Mutex<HashSet<(String, uuid::Uuid)>>>;
 
 /// Build an empty SLA dedup set. Used by `new()` and tests.
@@ -603,7 +605,8 @@ pub fn empty_sla_fired_set() -> SlaFiredSet {
 /// different `next_fire_at`) still alerts.
 ///
 /// Reset on process restart, like [`SlaFiredSet`]. A restart while a job
-/// is still overdue produces at most one duplicate alert.
+/// is still overdue produces at most one duplicate alert. Entries whose
+/// `next_fire_at` has moved on are dropped every sweep.
 pub type MissedFiredSet = Arc<Mutex<HashSet<(String, String, DateTime<Utc>)>>>;
 
 /// When each `maintenance_active` rule last fired, keyed by `(rule_name,
@@ -642,7 +645,17 @@ fn blocked_cause(holder: Option<&Execution>) -> String {
 
 /// Periodically scans for dead runners and requeues their abandoned executions.
 pub struct WatchdogLoop {
-    jobs: HashMap<String, JobConfig>,
+    /// The Croniqfile's jobs as of the last sweep: `keep_last`, `queue_ttl`
+    /// and timeouts, and which keys a job still exists for. Refreshed from
+    /// [`Self::live_jobs`] at the start of every sweep; the sweeps themselves
+    /// stay synchronous over it.
+    jobs: Mutex<HashMap<String, JobConfig>>,
+    /// The list the Croniqfile reload rewrites (`dsl_jobs_shared`). Without it
+    /// the watchdog kept its boot copy: a job added by reload stayed unknown to
+    /// it, one removed stayed known, and a changed `keep_last` / `queue_ttl`
+    /// never applied (review 2026-10-24, D-2, D-3). `None` keeps the
+    /// constructor's list, which is what tests use.
+    live_jobs: Option<Arc<tokio::sync::RwLock<Vec<JobConfig>>>>,
     store: DynStore,
     runner: Arc<AppState>,
     /// Failure-alert configuration (issue #140). Empty default ⇒ the
@@ -717,7 +730,8 @@ impl WatchdogLoop {
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
-            jobs,
+            jobs: Mutex::new(jobs),
+            live_jobs: None,
             store,
             runner,
             alerts,
@@ -765,10 +779,39 @@ impl WatchdogLoop {
         self.triggers = Some(triggers);
     }
 
+    /// Read the Croniqfile's jobs from `jobs`, the list the reload path keeps
+    /// current, at the start of every sweep (review 2026-10-24, D-2).
+    pub fn set_live_jobs(&mut self, jobs: Arc<tokio::sync::RwLock<Vec<JobConfig>>>) {
+        self.live_jobs = Some(jobs);
+    }
+
+    /// Take over the current Croniqfile jobs from [`Self::live_jobs`].
+    async fn refresh_jobs(&self) {
+        let Some(live) = self.live_jobs.as_ref() else {
+            return;
+        };
+        let fresh: HashMap<String, JobConfig> = live
+            .read()
+            .await
+            .iter()
+            .map(|j| (j.key.clone(), j.clone()))
+            .collect();
+        *self.jobs.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
+    }
+
+    /// The Croniqfile's definition of `job_key`, as of the last refresh.
+    fn dsl_job(&self, job_key: &str) -> Option<JobConfig> {
+        self.jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(job_key)
+            .cloned()
+    }
+
     /// Resolve `JobConfig` for a key: DSL map first, then store fallback.
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
-        if let Some(c) = self.jobs.get(job_key) {
-            return Some(c.clone());
+        if let Some(c) = self.dsl_job(job_key) {
+            return Some(c);
         }
         match self.store.get_job_definition(job_key) {
             Ok(Some(def)) => {
@@ -815,7 +858,14 @@ impl WatchdogLoop {
             }
         }
 
-        for job in self.jobs.values() {
+        let jobs: Vec<JobConfig> = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for job in &jobs {
             let Some(keep) = job.keep_last else {
                 continue;
             };
@@ -844,6 +894,7 @@ impl WatchdogLoop {
     /// Run one sweep at `now`.
     pub async fn sweep(&self, now: DateTime<Utc>) -> WatchdogResult {
         let mut result = WatchdogResult::default();
+        self.refresh_jobs().await;
 
         // 1. Find dead runners from the in-memory registry (using configured lease TTL)
         let dead_ids: Vec<String> = {
@@ -1044,6 +1095,21 @@ impl WatchdogLoop {
             }
             None => (LiveJobs::Unknown, std::collections::HashSet::new()),
         };
+
+        // Forget the fires that are no longer overdue: once a job's
+        // `next_fire_at` moves on (or its row goes), its triple can never
+        // match again. Without this the set grew for the life of the process
+        // (review 2026-10-24, D-13).
+        {
+            let current: std::collections::HashSet<(&str, DateTime<Utc>)> = states
+                .iter()
+                .filter_map(|s| Some((s.job_key.as_str(), s.next_fire_at?)))
+                .collect();
+            self.missed_fired
+                .lock()
+                .unwrap()
+                .retain(|(_, job_key, at)| current.contains(&(job_key.as_str(), *at)));
+        }
 
         for state in &states {
             if !live.includes(&state.job_key) {
@@ -1384,7 +1450,7 @@ impl WatchdogLoop {
                 "job",
                 Some(&ack.job_key),
             );
-            let exists = self.jobs.contains_key(&ack.job_key)
+            let exists = self.dsl_job(&ack.job_key).is_some()
                 || matches!(self.store.get_job_definition(&ack.job_key), Ok(Some(_)));
             tracing::warn!(
                 target: "croniq::alerts",
@@ -1432,6 +1498,20 @@ impl WatchdogLoop {
                 return;
             }
         };
+
+        // Forget executions that are no longer in flight, so the set stays
+        // bounded by the claims instead of growing for the life of the process
+        // (review 2026-10-24, D-13). Only from a complete listing: a capped
+        // one may leave out a claim that is still running, and dropping its
+        // entry would alert for it a second time.
+        if claimed.len() < self.claim_sweep_limit as usize {
+            let in_flight: std::collections::HashSet<uuid::Uuid> =
+                claimed.iter().map(|e| e.id).collect();
+            self.sla_fired
+                .lock()
+                .unwrap()
+                .retain(|(_, id)| in_flight.contains(id));
+        }
 
         for execution in &claimed {
             // Prefer started_at over claimed_at: SLA is about
@@ -1764,7 +1844,7 @@ impl WatchdogLoop {
             // Resolve inline (not via resolve_job_config) to tell "job is
             // gone" (Ok(None) ⇒ cancel) apart from a transient store error
             // (Err ⇒ retry next sweep).
-            let known = self.jobs.contains_key(&execution.job_key)
+            let known = self.dsl_job(&execution.job_key).is_some()
                 || match self.store.get_job_definition(&execution.job_key) {
                     Ok(def) => def.is_some(),
                     Err(e) => {
@@ -1832,14 +1912,16 @@ impl WatchdogLoop {
     /// the execution in the store.
     async fn expire_queued_by_ttl(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
         // Collect job keys that have a queue_ttl configured.
-        let ttls: HashMap<&str, chrono::Duration> = self
+        let ttls: HashMap<String, chrono::Duration> = self
             .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter_map(|(key, job)| {
                 let ttl_str = job.queue_ttl.as_deref()?;
                 let std_dur = croniq_execution::retry::parse_duration(ttl_str)?;
                 let dur = chrono::Duration::from_std(std_dur).ok()?;
-                Some((key.as_str(), dur))
+                Some((key.clone(), dur))
             })
             .collect();
 
@@ -1868,21 +1950,38 @@ impl WatchdogLoop {
             return;
         }
 
-        // Remove expired items from the queue and cancel in store.
+        // Cancel in the store first, and take the item off the queue only once
+        // that worked. The other order, with the cancel's error dropped, left
+        // a still-`queued` row behind that the reconcile sweep put back in the
+        // queue, for this sweep to expire again on the next pass — and counted
+        // it as expired each time (review 2026-10-24, D-12). A failed cancel
+        // now keeps the item queued; the next sweep tries again.
         let mut q = self.runner.queue.write().await;
         for exec_id in &expired_ids {
-            q.remove(exec_id);
-            if let Ok(uuid) = uuid::Uuid::parse_str(exec_id) {
-                let _ = self.store.cancel_execution(uuid, now);
-                result.expired.push(uuid);
+            let Ok(uuid) = uuid::Uuid::parse_str(exec_id) else {
+                q.remove(exec_id);
+                continue;
+            };
+            match self.store.cancel_execution(uuid, now) {
+                Ok(_) => {
+                    q.remove(exec_id);
+                    result.expired.push(uuid);
+                }
+                Err(e) => tracing::error!(
+                    execution_id = %uuid,
+                    error = %e,
+                    "watchdog: failed to cancel a queued execution past its queue_ttl — kept queued"
+                ),
             }
         }
         drop(q);
 
-        tracing::info!(
-            count = expired_ids.len(),
-            "watchdog: cancelled queued executions due to queue_ttl expiry"
-        );
+        if !result.expired.is_empty() {
+            tracing::info!(
+                count = result.expired.len(),
+                "watchdog: cancelled queued executions due to queue_ttl expiry"
+            );
+        }
     }
 }
 
@@ -2703,6 +2802,48 @@ mod tests {
         id
     }
 
+    // Review 2026-10-24, D-12: the queue_ttl sweep took the item off the queue
+    // and dropped the store cancel's error. The row stayed `queued`, the
+    // reconcile sweep put it back, and the next pass expired it again.
+    #[tokio::test]
+    async fn queue_ttl_expiry_keeps_the_item_when_the_cancel_fails() {
+        let faulty = crate::fault_store::FaultStore::wrap(make_store());
+        let store: DynStore = Arc::clone(&faulty) as DynStore;
+        let runner = make_runner();
+        let now = Utc::now();
+        let old = now - ChronoDuration::minutes(5);
+        let exec_id = seed_queued_at(&*store, "test:job", old);
+        runner.queue.write().await.enqueue(croniq_runner::WorkItem {
+            execution_id: exec_id.to_string(),
+            job_key: "test:job".into(),
+            fire_at: old,
+            scheduled_for: old,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::Value::Null,
+            timeout: "5m".into(),
+            is_ephemeral: false,
+        });
+        let mut job = make_job("test:job");
+        job.queue_ttl = Some("1m".into());
+        let watchdog = WatchdogLoop::new(vec![job], Arc::clone(&store), Arc::clone(&runner));
+
+        faulty.arm_cancel(true);
+        let r1 = watchdog.sweep(now).await;
+        assert!(r1.expired.is_empty(), "a failed cancel is not an expiry");
+        assert_eq!(runner.queue.read().await.len(), 1, "kept queued");
+
+        faulty.arm_cancel(false);
+        let r2 = watchdog.sweep(now).await;
+        assert_eq!(r2.expired, vec![exec_id]);
+        assert_eq!(runner.queue.read().await.len(), 0);
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Cancelled
+        );
+    }
+
     #[tokio::test]
     async fn reconcile_reenqueues_store_queued_row_missing_from_memory_queue() {
         let store = make_store();
@@ -2842,6 +2983,31 @@ mod tests {
         let q = runner.queue.read().await;
         assert_eq!(q.len(), 1);
         assert_eq!(q.peek().unwrap().timeout, "2m");
+    }
+
+    // Review 2026-10-24, D-2: the watchdog kept its boot copy of the DSL jobs,
+    // so a job a reload added was unknown to it and its queued row was
+    // cancelled as stranded.
+    #[tokio::test]
+    async fn reconcile_knows_a_job_added_by_reload() {
+        let store = make_store();
+        let runner = make_runner();
+        let shared = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let mut watchdog = WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        watchdog.set_live_jobs(Arc::clone(&shared));
+
+        // What `reload::apply_plan` does with the new Croniqfile's jobs.
+        *shared.write().await = vec![make_job("test:new")];
+
+        let exec_id = seed_queued_at(&*store, "test:new", Utc::now() - ChronoDuration::minutes(5));
+        let result = watchdog.sweep(Utc::now()).await;
+
+        assert_eq!(result.reconciled, vec![exec_id]);
+        assert!(result.stranded_cancelled.is_empty());
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
     }
 
     #[tokio::test]
@@ -3184,7 +3350,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            croniq_scheduler::misfire::MisfirePolicy::default(),
             Utc::now(),
         )
     }
@@ -3477,6 +3642,53 @@ mod tests {
             .list_alert_deliveries(&AlertDeliveryFilter::default())
             .unwrap();
         assert_eq!(deliveries.len(), 1);
+    }
+
+    // Review 2026-10-24, D-13: both dedup sets only ever grew. An entry that
+    // can no longer match — the fire time moved on, the execution finished —
+    // is dropped by the next sweep.
+    #[tokio::test]
+    async fn dedup_sets_forget_what_can_no_longer_match() {
+        let store = make_store();
+        let now = Utc::now();
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now - ChronoDuration::minutes(15)),
+            JobStatus::Active,
+        );
+        let exec_id = seed_claimed_at(
+            &*store,
+            "billing:invoice",
+            "runner-1",
+            now - ChronoDuration::minutes(15),
+        );
+        let alerts = alerts_with_sla(vec![
+            missed_fire_rule("backup-liveness", "*", "10m", "ops"),
+            sla_rule("slow", "*", "10m", "ops"),
+        ]);
+        let watchdog = watchdog_with_alerts_only(Arc::clone(&store), alerts);
+
+        let r1 = watchdog.sweep(now).await;
+        assert_eq!(r1.missed_fires.len(), 1);
+        assert_eq!(r1.sla_missed.len(), 1);
+        assert_eq!(watchdog.missed_fired.lock().unwrap().len(), 1);
+        assert_eq!(watchdog.sla_fired.lock().unwrap().len(), 1);
+
+        // The scheduler recovers and the execution ends.
+        seed_job_state(
+            &*store,
+            "billing:backup",
+            Some(now + ChronoDuration::hours(1)),
+            JobStatus::Active,
+        );
+        store.cancel_execution(exec_id, now).unwrap();
+
+        let r2 = watchdog.sweep(now + ChronoDuration::seconds(30)).await;
+        assert!(r2.missed_fires.is_empty());
+        assert!(r2.sla_missed.is_empty());
+        assert!(watchdog.missed_fired.lock().unwrap().is_empty());
+        assert!(watchdog.sla_fired.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

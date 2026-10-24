@@ -15,7 +15,6 @@ use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
 use croniq_scheduler::{
     calendar::Calendar,
-    misfire::MisfirePolicy,
     schedule::Schedule,
     trigger::{MissedFires, MissedPlan, PendingFire, TimeWindow, Trigger, TriggerState},
 };
@@ -298,9 +297,6 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             None => chrono_tz::UTC,
         };
 
-        // Misfire policy: default FireNow (never skip a billing run)
-        let misfire = MisfirePolicy::FireNow;
-
         // Resolve calendar reference. A reference that does not resolve (the
         // calendar failed to compile, or is not defined) is a fault: under the
         // default `strict_calendars` policy the job is failed closed (paused)
@@ -329,7 +325,6 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             tz,
             calendar,
             window,
-            misfire,
             not_before,
             not_after,
             now,
@@ -474,6 +469,24 @@ pub fn restore_trigger_states(
                         "trigger restore: exhausted (once-job already ran or past not_after)"
                     );
                 }
+            }
+            JobStatus::Active if trigger.not_after.is_some_and(|na| now > na) => {
+                // The job's end date passed while the server was down. The
+                // stored fire can never run — `evaluate` refuses anything past
+                // `not_after` — and adopting it left the trigger armed for
+                // good, so the job read as overdue (`croniq_job_overdue`,
+                // `job_missed_fire`) instead of finished (review 2026-10-24,
+                // D-15). The live path exhausts it in `mark_fired`; the
+                // restore has to do the same.
+                trigger.fire_count = job_state.fire_count;
+                trigger.state = TriggerState::Exhausted;
+                trigger.next_fire_at = None;
+                tracing::info!(
+                    job_key = %job_state.job_key,
+                    not_after = ?trigger.not_after,
+                    "trigger restore: not_after passed while the server was down — exhausted"
+                );
+                persist_healed_state(store, trigger, &job_state, now);
             }
             JobStatus::Active => {
                 // Restore the stored next_fire_at so the trigger doesn't skip
@@ -642,6 +655,34 @@ pub fn work_item_from_execution(
     }
 }
 
+/// Cancel queued executions the restore does not bring back; returns how many
+/// were cancelled.
+///
+/// A failed cancel used to be dropped with `let _ =` and counted as done. The
+/// row stays `queued`, so the watchdog's reconcile sweep later enqueues it
+/// after all — the run `catch_up none` / `latest` or ephemeral mode said not
+/// to make (review 2026-10-24, D-12). It is logged and left out of the count.
+fn cancel_on_restore(
+    store: &dyn ExecutionStore,
+    job_key: &str,
+    execs: &[&croniq_store::models::Execution],
+) -> usize {
+    let now = chrono::Utc::now();
+    let mut cancelled = 0;
+    for exec in execs {
+        match store.cancel_execution(exec.id, now) {
+            Ok(_) => cancelled += 1,
+            Err(e) => tracing::error!(
+                job_key = %job_key,
+                execution_id = %exec.id,
+                error = %e,
+                "restore: failed to cancel a queued execution the catch-up policy drops"
+            ),
+        }
+    }
+    cancelled
+}
+
 /// Restore queued executions from the database into the in-memory work queue.
 ///
 /// On server restart, executions in `queued` state need to be re-enqueued so
@@ -711,13 +752,10 @@ pub async fn restore_queued_executions(
 
         // Ephemeral jobs never restore queued executions.
         if job.execution_mode == ExecutionMode::Ephemeral {
-            let now = chrono::Utc::now();
-            for exec in &execs {
-                let _ = store.cancel_execution(exec.id, now);
-            }
+            let cancelled = cancel_on_restore(store, &job_key, &execs);
             tracing::debug!(
                 job_key = %job_key,
-                cancelled = execs.len(),
+                cancelled,
                 "ephemeral job — cancelled queued executions on restore"
             );
             continue;
@@ -726,36 +764,26 @@ pub async fn restore_queued_executions(
         match job.catch_up {
             CatchUpPolicy::None => {
                 // Cancel all queued executions — just move to next fire.
-                let now = chrono::Utc::now();
-                for exec in &execs {
-                    let _ = store.cancel_execution(exec.id, now);
-                }
+                let cancelled = cancel_on_restore(store, &job_key, &execs);
                 tracing::info!(
                     job_key = %job_key,
-                    cancelled = execs.len(),
+                    cancelled,
                     "catch_up=none — cancelled queued executions"
                 );
             }
             CatchUpPolicy::Latest => {
                 // Sort by fire_at desc, keep only the most recent one.
                 execs.sort_by_key(|b| std::cmp::Reverse(b.fire_at));
-                let now = chrono::Utc::now();
-                for (i, exec) in execs.iter().enumerate() {
-                    if i == 0 {
-                        // Restore the latest
-                        let item = work_item_from_execution(exec, job);
-                        runner_state.queue.write().await.enqueue(item);
-                        restored += 1;
-                    } else {
-                        // Cancel the rest
-                        let _ = store.cancel_execution(exec.id, now);
-                    }
-                }
+                // Restore the latest, cancel the rest.
+                let item = work_item_from_execution(execs[0], job);
+                runner_state.queue.write().await.enqueue(item);
+                restored += 1;
                 if execs.len() > 1 {
+                    let cancelled = cancel_on_restore(store, &job_key, &execs[1..]);
                     tracing::info!(
                         job_key = %job_key,
                         restored = 1,
-                        cancelled = execs.len() - 1,
+                        cancelled,
                         "catch_up=latest — coalesced queued executions"
                     );
                 }
@@ -1009,7 +1037,6 @@ pub fn trigger_from_definition(
         tz,
         calendar,
         window,
-        MisfirePolicy::FireNow,
         not_before,
         not_after,
         now,
@@ -1703,6 +1730,44 @@ mod tests {
         assert_eq!(job.metadata.get("region").map(|s| s.as_str()), Some("eu"));
     }
 
+    // Review 2026-10-24, D-12: a failed cancel on restore was dropped and
+    // counted as done.
+    #[test]
+    fn cancel_on_restore_counts_only_what_it_cancelled() {
+        let faulty = crate::fault_store::FaultStore::wrap(crate::store::sqlite_store(
+            SqliteStore::in_memory().unwrap(),
+        ));
+        let now = Utc::now();
+        let exec = croniq_store::models::Execution {
+            id: uuid::Uuid::new_v4(),
+            job_key: "a:b".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            state: croniq_store::models::ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            idempotency_key: None,
+            metadata: Default::default(),
+            created_at: now,
+        };
+        faulty.create_execution(&exec).unwrap();
+
+        faulty.arm_cancel(true);
+        assert_eq!(cancel_on_restore(&*faulty, "a:b", &[&exec]), 0);
+        faulty.arm_cancel(false);
+        assert_eq!(cancel_on_restore(&*faulty, "a:b", &[&exec]), 1);
+        assert_eq!(
+            faulty.get_execution(exec.id).unwrap().unwrap().state,
+            croniq_store::models::ExecutionState::Cancelled
+        );
+    }
+
     // ─── restore_trigger_states ───────────────────────────────────────────────
 
     fn make_store() -> std::sync::Arc<SqliteStore> {
@@ -1726,6 +1791,35 @@ mod tests {
                 updated_at: Utc::now(),
             })
             .unwrap();
+    }
+
+    // Review 2026-10-24, D-15: `not_after` passed between the last fire and
+    // the restart. The restore adopted the stored fire, which `evaluate` never
+    // returns past `not_after`, so the trigger stayed armed and overdue.
+    #[test]
+    fn restore_exhausts_a_trigger_whose_not_after_passed_while_down() {
+        let mut cfg = load_str("job etl:sync { every 1 hours }").unwrap();
+        let now = Utc::now();
+        cfg.triggers.get_mut("etl:sync").unwrap().not_after =
+            Some(now - chrono::Duration::hours(1));
+        let store = make_store();
+        seed_job_state(
+            &store,
+            "etl:sync",
+            croniq_store::models::JobStatus::Active,
+            Some(now - chrono::Duration::hours(2)),
+            4,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["etl:sync"];
+        assert_eq!(trigger.state, TriggerState::Exhausted);
+        assert!(trigger.next_fire_at.is_none());
+        let row = store.get_job_state("etl:sync").unwrap().unwrap();
+        assert_eq!(row.status, croniq_store::models::JobStatus::Exhausted);
+        assert_eq!(row.next_fire_at, None);
+        assert_eq!(row.fire_count, 4);
     }
 
     #[test]
@@ -2032,7 +2126,7 @@ mod tests {
     #[test]
     fn restore_active_gate_allowed_past_instant_is_kept() {
         // A gate-ALLOWED instant in the past is a legitimately missed fire:
-        // MisfirePolicy::FireNow catches it up once. Restore must keep it
+        // `catch_up` decides what runs. Restore must keep it
         // verbatim and not touch the store.
         let mut cfg = load_str(GATED_JOB_SRC).unwrap();
         let store = make_store();

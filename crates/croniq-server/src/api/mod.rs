@@ -1539,6 +1539,21 @@ async fn handle_complete(
     if let Err(s) = runner_identity::authorize_runner(&state, &ctx, &req.runner_id) {
         return (s, Json(CompleteResponse { received: false }));
     }
+    // Nothing is left to process the result when the completion task is gone.
+    // Answering `200 {received: true}` then told the runner its result had
+    // landed while the row stayed `claimed` until the reaper ran it again
+    // (review 2026-10-24, D-1). Checked before the release below, so a refused
+    // completion leaves the runner's in-flight bookkeeping as it was.
+    if state.completion_tx.is_closed() {
+        tracing::error!(
+            execution_id = %req.execution_id,
+            "completion channel closed — refusing completion with 503"
+        );
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(CompleteResponse { received: false }),
+        );
+    }
     // Ownership of the *execution* still matters: owning `runner_id` does not
     // mean this execution was dispatched to it. The store CAS enforces that
     // (state must be `claimed` with a matching `runner_id`); the release below
@@ -1568,6 +1583,10 @@ async fn handle_complete(
 
     if let Err(e) = state.completion_tx.send(event) {
         tracing::error!(error = %e, "completion channel closed");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(CompleteResponse { received: false }),
+        );
     }
 
     (StatusCode::OK, Json(CompleteResponse { received: true }))
@@ -2525,6 +2544,48 @@ mod tests {
         let event = rx.try_recv().unwrap();
         assert_eq!(event.execution_id, "exec-99");
         assert_eq!(event.error.as_deref(), Some("Connection refused"));
+    }
+
+    // Review 2026-10-24, D-1: with the completion task gone the handler used
+    // to answer `200 {received: true}` for a result nothing would process.
+    #[tokio::test]
+    async fn complete_answers_503_when_the_completion_task_is_gone() {
+        let (state, rx) = make_state();
+        drop(rx);
+
+        {
+            let mut reg = state.runner.registry.write().await;
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-7".into()], None, vec![]);
+        }
+
+        let resp = server_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .header("authorization", crate::api::test_auth::admin_bearer())
+                    .method("POST")
+                    .uri("/v1/complete")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "runner_id": "r1",
+                            "execution_id": "exec-7",
+                            "status": "success",
+                            "duration_ms": 10
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["received"], false);
+
+        // Refused before the release: the runner still owns the execution.
+        let reg = state.runner.registry.read().await;
+        assert_eq!(reg.get("r1").unwrap().inflight, vec!["exec-7".to_string()]);
     }
 
     #[tokio::test]
