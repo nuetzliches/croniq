@@ -90,6 +90,14 @@ pub enum TriggerError {
         body: String,
     },
 
+    /// The client is configured in a way it refuses to act on: a cleartext
+    /// `http://` URL to a non-loopback host without
+    /// [`allow_insecure_http`](TriggerClientBuilder::allow_insecure_http)
+    /// (issue #440; review 2026-10-24, K-3). Returned by every
+    /// [`send`](TriggerRequestBuilder::send), before anything goes on the wire.
+    #[error("{0}")]
+    Config(String),
+
     /// The server returned a non-success status other than `429`.
     #[error("server error: {status} — {body}")]
     Server {
@@ -173,6 +181,7 @@ pub struct TriggerClient {
     base_url: String,
     auth_header: Option<String>,
     request_timeout: Duration,
+    config_error: Option<String>,
 }
 
 impl TriggerClient {
@@ -184,6 +193,7 @@ impl TriggerClient {
             api_key: None,
             bearer_token: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            allow_insecure_http: false,
         }
     }
 
@@ -218,6 +228,7 @@ pub struct TriggerClientBuilder {
     api_key: Option<String>,
     bearer_token: Option<String>,
     request_timeout: Duration,
+    allow_insecure_http: bool,
 }
 
 impl TriggerClientBuilder {
@@ -244,8 +255,20 @@ impl TriggerClientBuilder {
         self
     }
 
+    /// Accept a cleartext `http://` server URL on a non-loopback host. Without
+    /// it such a URL makes every [`send`](TriggerRequestBuilder::send) return
+    /// [`TriggerError::Config`]: the credential would travel in the clear.
+    /// `https://` and loopback `http://` need no opt-in.
+    pub fn allow_insecure_http(mut self) -> Self {
+        self.allow_insecure_http = true;
+        self
+    }
+
     /// Build the [`TriggerClient`].
     pub fn build(self) -> TriggerClient {
+        let config_error =
+            crate::security::validate_base_url(&self.server_url, self.allow_insecure_http).err();
+
         // ApiKey wins over Bearer when both are supplied (parity with .NET).
         let auth_header = self
             .api_key
@@ -257,6 +280,7 @@ impl TriggerClientBuilder {
             base_url: self.server_url.trim_end_matches('/').to_string(),
             auth_header,
             request_timeout: self.request_timeout,
+            config_error,
         }
     }
 }
@@ -338,6 +362,9 @@ impl TriggerRequestBuilder<'_> {
     /// - [`TriggerError::Server`] on any other non-success status.
     /// - [`TriggerError::Http`] on transport / timeout / decode failure.
     pub async fn send(self) -> Result<TriggerResult, TriggerError> {
+        if let Some(e) = &self.client.config_error {
+            return Err(TriggerError::Config(e.clone()));
+        }
         if self.body.job_key.trim().is_empty() {
             return Err(TriggerError::EmptyJobKey);
         }
@@ -457,6 +484,25 @@ mod tests {
         let client = TriggerClient::builder("http://127.0.0.1:1").build();
         let err = client.trigger("   ").send().await.unwrap_err();
         assert!(matches!(err, TriggerError::EmptyJobKey));
+    }
+
+    #[tokio::test]
+    async fn cleartext_url_to_a_remote_host_is_refused_before_the_wire() {
+        // Review 2026-10-24, K-3 / issue #440: the key must not leave in the
+        // clear. `example.test` never resolves, so reaching the wire would
+        // surface as `Http`, not `Config`.
+        let client = TriggerClient::builder("http://example.test:4000")
+            .api_key("croniq_key")
+            .build();
+        let err = client.trigger("etl:data-sync").send().await.unwrap_err();
+        assert!(matches!(err, TriggerError::Config(_)), "{err:?}");
+
+        let opted_in = TriggerClient::builder("http://example.test:4000")
+            .allow_insecure_http()
+            .build();
+        assert!(opted_in.config_error.is_none());
+        let https = TriggerClient::builder("https://example.test").build();
+        assert!(https.config_error.is_none());
     }
 
     #[test]

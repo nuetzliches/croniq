@@ -675,8 +675,15 @@ shell-runner:
   # command as root.
   environment:
     CRONIQ_SERVER_URL: http://server:4000
+    # The runner refuses a cleartext URL to anything but loopback, because
+    # the API key travels on every request. Acceptable on a private Compose
+    # network; use https:// across anything else.
+    CRONIQ_ALLOW_INSECURE_HTTP: "1"
     CRONIQ_API_KEY: croniq_…
     RUNNER_MAX_INFLIGHT: "4"
+    # On `docker stop` running jobs get this long to finish before they are
+    # terminated and acked as failed. Keep it below stop_grace_period.
+    RUNNER_DRAIN_TIMEOUT_SECS: "8"
   volumes:
     # Persistent runner identity. Without this, every container recreate
     # generates a new runner_id and the Runner Detail Sheet's history
