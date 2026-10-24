@@ -196,6 +196,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   validator stayed silent. It is now an error in `croniq validate`, in a job,
   a schedule option and `defaults { }` alike, and the compiler keeps the
   inherited zone.
+- **`croniq validate` checks the values of `catch_up`, `execution_mode`,
+  `max_queue_depth`, `keep_last` and `retry`** (review 2026-10-24, F-3). A
+  typo compiled to some value nobody wrote: `catch_up non` became an explicit
+  `all` and replayed every fire missed during a downtime, `execution_mode
+  ephemral` ran queued, an unknown `retry` strategy became exponential, and a
+  non-numeric queue depth or `max_attempts` vanished. Each is now an error
+  with a did-you-mean, and the compiler keeps the inherited setting instead.
+- **A bare `runner { require }` no longer parks a job's executions forever**
+  (review 2026-10-24, F-10). It stamped the capability `""`, which no runner
+  advertises. `require`, `prefer` and `exclude` now take exactly one
+  capability in `croniq validate`, and an empty one is never stamped.
+- **`croniq fmt` no longer panics on a bare `description` or breaks strings
+  with escapes** (review 2026-10-24, F-6 / F-8). A `description` without a
+  value crashed the formatter (and the generator's wasm), and a quoted
+  `"line 1\nline 2"` was written back with a real newline, so the output of
+  `croniq fmt --write` no longer parsed. The formatter now escapes `\n`, `\r`
+  and `\t`, keeps a second `description`, and `validate` reports the bare one.
 
 ### Security
 

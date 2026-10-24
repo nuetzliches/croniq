@@ -120,18 +120,15 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
 fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
     out.push_str(&format!("job {} {{\n", job.key.raw));
 
-    // Description first if present
-    for dob in &job.directives {
-        if let DirectiveOrBlock::Directive(d) = dob
-            && d.key.value == "description"
-        {
-            write_indent(out, indent + 1);
-            out.push_str("description ");
-            out.push_str(&format_string_value(&d.args[0]));
-            out.push('\n');
-            out.push('\n');
-            break;
-        }
+    // Description first if present. Written through the generic directive
+    // emitter: the parser accepts a bare `description`, and indexing
+    // `args[0]` made `croniq fmt` panic on it (review 2026-10-24, F-6).
+    let description = job.directives.iter().position(
+        |dob| matches!(dob, DirectiveOrBlock::Directive(d) if d.key.value == "description"),
+    );
+    if let Some(i) = description {
+        format_directive_or_block(out, &job.directives[i], indent + 1);
+        out.push('\n');
     }
 
     // Schedule
@@ -139,11 +136,11 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
         format_schedule(out, sched, indent + 1);
     }
 
-    // Other directives
-    for dob in &job.directives {
-        match dob {
-            DirectiveOrBlock::Directive(d) if d.key.value == "description" => continue,
-            _ => format_directive_or_block(out, dob, indent + 1),
+    // Other directives. Only the description hoisted above is skipped; a
+    // second one stays where it was rather than being dropped.
+    for (i, dob) in job.directives.iter().enumerate() {
+        if Some(i) != description {
+            format_directive_or_block(out, dob, indent + 1);
         }
     }
 
@@ -561,13 +558,34 @@ fn format_string_value(val: &StringValue) -> String {
     if val.is_placeholder {
         format!("{{{}}}", val.value)
     } else if val.quoted {
-        format!(
-            "\"{}\"",
-            val.value.replace('\\', "\\\\").replace('"', "\\\"")
-        )
+        quote_string(&val.value)
     } else {
         val.value.clone()
     }
+}
+
+/// `value` as a quoted Croniqfile string that lexes back to exactly `value`.
+///
+/// Escapes every character the lexer unescapes (`\\`, `"`, `\n`, `\r`, `\t`).
+/// Escaping only `\\` and `"` wrote a `"line 1\nline 2"` back with a real
+/// newline, which the lexer rejects as an unterminated string — so
+/// `croniq fmt --write` broke the file (review 2026-10-24, F-8). Public for
+/// every other emitter of Croniqfile text (`croniq migrate`, R-11).
+pub fn quote_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn write_indent(out: &mut String, level: usize) {
@@ -913,5 +931,59 @@ job etl:sync {
         // Idempotent: formatting the formatted output changes nothing.
         let again = format(&crate::parser::Parser::parse(&out).unwrap());
         assert_eq!(out, again);
+    }
+
+    #[test]
+    fn bare_description_formats_without_panicking() {
+        // Review 2026-10-24, F-6: `d.args[0]` on an argument-less directive.
+        let src = "job a:b { every 5 minutes; description }";
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains("  description\n"), "{out}");
+        assert_eq!(out, format(&Parser::parse(&out).unwrap()));
+    }
+
+    #[test]
+    fn a_second_description_is_kept() {
+        let src = "job a:b { description one\n every 5 minutes\n description two }";
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains("description one"), "{out}");
+        assert!(out.contains("description two"), "{out}");
+    }
+
+    #[test]
+    fn every_escape_round_trips() {
+        // Review 2026-10-24, F-8: `\n` was written back as a real newline,
+        // which does not lex.
+        let src = r#"job a:b { every 5 minutes; description "l1\nl2\r\tq\"b\\s" }"#;
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains(r#""l1\nl2\r\tq\"b\\s""#), "{out}");
+        let reparsed = Parser::parse(&out).expect("formatted output must parse");
+        assert_eq!(format(&reparsed), out);
+        let Item::Job(job) = &reparsed.items[0] else {
+            panic!("job expected")
+        };
+        let DirectiveOrBlock::Directive(d) = &job.directives[0] else {
+            panic!("directive expected")
+        };
+        assert_eq!(d.args[0].value, "l1\nl2\r\tq\"b\\s");
+    }
+
+    #[test]
+    fn quote_string_lexes_back_to_its_input() {
+        for s in [
+            "",
+            "plain",
+            "a \"b\"",
+            "back\\slash",
+            "multi\nline\r\n",
+            "tab\tbed",
+        ] {
+            let src = format!("vars {{ x {} }}", quote_string(s));
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+            let Item::Vars(v) = &ast.items[0] else {
+                panic!("vars expected")
+            };
+            assert_eq!(v.entries[0].args[0].value, s);
+        }
     }
 }

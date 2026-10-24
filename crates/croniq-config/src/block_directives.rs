@@ -32,6 +32,7 @@
 //! fixed key set.
 
 use crate::ast::*;
+use crate::compile::{CatchUpPolicy, ExecutionMode, RETRY_STRATEGIES};
 use crate::validate::{Diagnostic, Severity};
 
 // ─── Known keys, per block ────────────────────────────────────────────────────
@@ -138,6 +139,49 @@ const JOB_BLOCKS: &[&str] = &["runner", "retry", "dead_letter", "metadata"];
 /// instead of reading like a typo.
 const SCHEDULE_ONLY: &[&str] = &["calendar", "not_before", "not_after"];
 
+// ─── Value domains ───────────────────────────────────────────────────────────
+
+/// What a known directive's value must look like.
+///
+/// The key tables above stop a typo'd *key*; this stops a typo'd *value*.
+/// `compile.rs` reads these values leniently (an unknown word keeps the
+/// inherited setting), so without a check here `catch_up non` replayed every
+/// missed fire, `execution_mode ephemral` ran queued, an unknown `retry`
+/// strategy became the exponential default and `max_queue_depth ten` vanished
+/// — all with a green `validate` (review 2026-10-24, F-3).
+#[derive(Debug, Clone, Copy)]
+enum Domain {
+    /// Exactly one of these words.
+    OneOf(&'static [&'static str]),
+    /// One non-negative integer that fits the compiled `u32`.
+    Count,
+    /// One number from 0 to 1.
+    Fraction,
+    /// One non-empty value. For a directive whose bare form would otherwise
+    /// compile to nothing (review 2026-10-24, F-6).
+    Text,
+}
+
+/// Value domains of the `defaults { }` and `job { }` scalar directives that
+/// share a spelling. Directives not listed are checked by dedicated rules in
+/// [`crate::validate`] (`timezone`, `timeout`, `queue_ttl`, `priority`,
+/// `max_concurrent`, `coalesce`, `concurrency_group`, `window`), are bare
+/// (`singleton`, `run_on_register`), or take free lists (`tags`).
+const SCALAR_VALUES: &[(&str, Domain)] = &[
+    ("execution_mode", Domain::OneOf(ExecutionMode::VALUES)),
+    ("catch_up", Domain::OneOf(CatchUpPolicy::VALUES)),
+    ("max_queue_depth", Domain::Count),
+    ("keep_last", Domain::Count),
+    ("description", Domain::Text),
+];
+
+/// Value domains inside `retry { }`, in `defaults { }` and in a job. The
+/// duration keys (`base`, `cap`, `delay`, `step`) are not checked here.
+const RETRY_VALUES: &[(&str, Domain)] = &[
+    ("max_attempts", Domain::Count),
+    ("jitter", Domain::Fraction),
+];
+
 /// `observability { }` sub-blocks. The outer block takes no directives — the
 /// parser already rejects those — so only the names and bodies need checking.
 const OBSERVABILITY_BLOCKS: &[(&str, &[&str])] = &[
@@ -194,10 +238,12 @@ pub(crate) fn validate_blocks(ast: &Croniqfile, diags: &mut Vec<Diagnostic>) {
                 for dob in &b.directives {
                     match dob {
                         DirectiveOrBlock::Directive(d) => {
-                            check_directive("defaults", DEFAULTS, d, diags)
+                            check_directive("defaults", DEFAULTS, d, diags);
+                            check_value(SCALAR_VALUES, d, diags);
                         }
                         DirectiveOrBlock::Block(nb) => {
-                            check_named_block("defaults", DEFAULTS_BLOCKS, nb, diags)
+                            check_named_block("defaults", DEFAULTS_BLOCKS, nb, diags);
+                            check_retry_values(nb, diags);
                         }
                         DirectiveOrBlock::Comment(_) => {}
                     }
@@ -234,6 +280,7 @@ fn check_job_body(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
             DirectiveOrBlock::Directive(d) => {
                 let key = d.key.value.as_str();
                 if JOB.contains(&key) {
+                    check_value(SCALAR_VALUES, d, diags);
                     continue;
                 }
                 if SCHEDULE_ONLY.contains(&key) {
@@ -282,8 +329,81 @@ fn check_job_body(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                         }
                     }
                 }
+                check_retry_values(nb, diags);
             }
             DirectiveOrBlock::Comment(_) => {}
+        }
+    }
+}
+
+/// Check `d`'s value against its entry in `domains`, if it has one.
+/// Placeholder values resolve at compile time and are not checked.
+fn check_value(domains: &[(&str, Domain)], d: &Directive, diags: &mut Vec<Diagnostic>) {
+    let key = d.key.value.as_str();
+    let Some((_, domain)) = domains.iter().find(|(k, _)| *k == key) else {
+        return;
+    };
+    if d.args.iter().any(|a| a.is_placeholder) {
+        return;
+    }
+    let words: Vec<&str> = d.args.iter().map(|a| a.value.as_str()).collect();
+    let fix = match (domain, words.as_slice()) {
+        (Domain::OneOf(allowed), [v]) if allowed.contains(v) => return,
+        (Domain::Count, [v]) if v.parse::<u32>().is_ok() => return,
+        (Domain::Fraction, [v]) if v.parse::<f64>().is_ok_and(|f| (0.0..=1.0).contains(&f)) => {
+            return;
+        }
+        (Domain::Text, [v]) if !v.is_empty() => return,
+        (Domain::OneOf(allowed), _) => {
+            let guess = match words.as_slice() {
+                [v] => closest(v, allowed).map(|b| format!("did you mean '{b}'? ")),
+                _ => None,
+            };
+            format!(
+                "{}write one of: {}",
+                guess.unwrap_or_default(),
+                allowed.join(", ")
+            )
+        }
+        (Domain::Count, _) => "write a whole number, e.g. `10`".to_string(),
+        (Domain::Fraction, _) => "write a number from 0 to 1, e.g. `0.25`".to_string(),
+        (Domain::Text, _) => "write one value, quoted if it has spaces".to_string(),
+    };
+    let shown = if words.is_empty() {
+        format!("bare `{key}`")
+    } else {
+        format!("`{key} {}`", words.join(" "))
+    };
+    diags.push(Diagnostic {
+        severity: Severity::Error,
+        message: format!("{shown} is not a valid value — {fix}"),
+        span: d.span.into(),
+    });
+}
+
+/// `retry <strategy> { … }`: the strategy and the numeric keys (review
+/// 2026-10-24, F-3). Anything other than a `retry` block is ignored.
+fn check_retry_values(nb: &NamedBlock, diags: &mut Vec<Diagnostic>) {
+    if nb.name.value != "retry" {
+        return;
+    }
+    if let Some(q) = &nb.qualifier
+        && !q.is_placeholder
+        && !RETRY_STRATEGIES.contains(&q.value.as_str())
+    {
+        diags.push(Diagnostic {
+            severity: Severity::Error,
+            message: format!(
+                "unknown retry strategy '{}'{}",
+                q.value,
+                hint(&q.value, RETRY_STRATEGIES)
+            ),
+            span: q.span.into(),
+        });
+    }
+    for inner in &nb.directives {
+        if let DirectiveOrBlock::Directive(d) = inner {
+            check_value(RETRY_VALUES, d, diags);
         }
     }
 }
@@ -577,6 +697,104 @@ mod tests {
             "got: {}",
             msgs[0]
         );
+    }
+
+    // ── value domains (review 2026-10-24, F-3 / F-6) ──────────────────────────
+
+    #[test]
+    fn values_outside_their_domain_are_errors_in_jobs_and_defaults() {
+        let cases: &[(&str, &str)] = &[
+            ("catch_up non", "did you mean 'none'?"),
+            ("catch_up", "bare `catch_up`"),
+            ("execution_mode ephemral", "did you mean 'ephemeral'?"),
+            ("max_queue_depth ten", "whole number"),
+            ("max_queue_depth -1", "whole number"),
+            ("keep_last 1.5", "whole number"),
+            (
+                "retry exponentail { max_attempts 3 }",
+                "unknown retry strategy",
+            ),
+            ("retry { max_attempts three }", "whole number"),
+            ("retry { jitter 1.5 }", "from 0 to 1"),
+        ];
+        for (body, needle) in cases {
+            for src in [
+                format!("job a:b {{ every 5 minutes\n {body} }}"),
+                format!("defaults {{ {body} }}"),
+            ] {
+                let msgs = errors(&src);
+                assert_eq!(msgs.len(), 1, "{src}: {msgs:?}");
+                assert!(msgs[0].contains(needle), "{src}: {}", msgs[0]);
+            }
+        }
+    }
+
+    #[test]
+    fn bare_description_is_an_error() {
+        let msgs = errors("job a:b { every 5 minutes; description }");
+        assert_eq!(msgs.len(), 1, "{msgs:?}");
+        assert!(msgs[0].contains("bare `description`"), "{}", msgs[0]);
+    }
+
+    #[test]
+    fn values_inside_their_domain_and_placeholders_are_silent() {
+        let msgs = errors(
+            r#"
+            defaults { catch_up latest; execution_mode ephemeral; max_queue_depth 0
+                       retry none { } }
+            job a:b { every 5 minutes; catch_up {vars.cu}; keep_last {env.KEEP}
+                      retry linear { max_attempts 5; jitter 0 } }
+            job a:c { every 5 minutes; retry fixed { jitter 1 } }
+            job a:d { every 5 minutes; retry {vars.strategy} { } }
+        "#,
+        );
+        assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    /// The generator's `select` options for a directive with a word domain
+    /// must be that domain — otherwise the form offers a value `validate`
+    /// rejects, or hides one it accepts.
+    #[test]
+    fn generator_select_options_match_the_value_domains() {
+        let js = include_str!("../../../site/generator.js").replace("\r\n", "\n");
+        for (key, domain) in SCALAR_VALUES {
+            let Domain::OneOf(allowed) = domain else {
+                continue;
+            };
+            let marker = format!("key: '{key}',");
+            let line = js
+                .lines()
+                .find(|l| l.contains(&marker) && l.contains("type: 'select'"))
+                .unwrap_or_else(|| panic!("site/generator.js has no select for `{key}`"));
+            let options = line
+                .split_once("options: [")
+                .and_then(|(_, rest)| rest.split_once(']'))
+                .map(|(list, _)| list)
+                .unwrap_or_else(|| panic!("no options list for `{key}`: {line}"));
+            let offered: Vec<&str> = options
+                .split(',')
+                .map(|o| o.trim().trim_matches('\''))
+                .filter(|o| !o.is_empty())
+                .collect();
+            assert_eq!(&offered, allowed, "generator options for `{key}`");
+        }
+        let line = js
+            .lines()
+            .find(|l| l.contains("sub: 'retry'") && l.contains("qualifier:"))
+            .expect("site/generator.js has no retry qualifier select");
+        for strategy in line
+            .split_once("options: [")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .expect("retry qualifier options")
+            .0
+            .split(',')
+            .map(|o| o.trim().trim_matches('\''))
+        {
+            assert!(
+                RETRY_STRATEGIES.contains(&strategy),
+                "generator offers retry strategy `{strategy}`"
+            );
+        }
     }
 
     #[test]

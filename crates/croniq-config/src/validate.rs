@@ -683,6 +683,30 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner {
                             let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
+                            // A capability-less `require` used to stamp the
+                            // capability `""`, which no runner advertises, so
+                            // every execution stayed queued for good (review
+                            // 2026-10-24, F-10). One value, non-empty.
+                            if matches!(d.key.value.as_str(), "require" | "prefer" | "exclude")
+                                && (d.args.len() != 1 || cap.is_empty())
+                            {
+                                diags.push(Diagnostic {
+                                    severity: Severity::Error,
+                                    message: format!(
+                                        "`runner {{ {} }}` takes exactly one capability, got {} \
+                                         (job '{}') — write one line per capability",
+                                        d.key.value,
+                                        if cap.is_empty() && d.args.len() == 1 {
+                                            "an empty one".to_string()
+                                        } else {
+                                            d.args.len().to_string()
+                                        },
+                                        job.key.raw
+                                    ),
+                                    span: d.span.into(),
+                                });
+                                continue;
+                            }
                             match d.key.value.as_str() {
                                 "require" => {
                                     requires.insert(cap.to_string());
@@ -1406,6 +1430,30 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("required and excluded"))
         );
+    }
+
+    #[test]
+    fn runner_capability_directives_need_exactly_one_value() {
+        // Review 2026-10-24, F-10: a bare `require` stamped the capability
+        // `""` and parked every execution in `queued` for good.
+        for body in [
+            "require",
+            "prefer",
+            "exclude",
+            r#"require """#,
+            "require a b",
+        ] {
+            let diags = validate_src(&format!(
+                "job a:b {{ every 5 minutes; runner {{ {body} }} }}"
+            ));
+            let errs = errors(&diags);
+            assert_eq!(errs.len(), 1, "{body}: {diags:?}");
+            assert!(errs[0].message.contains("exactly one capability"), "{body}");
+        }
+        let diags = validate_src(
+            "job a:b { every 5 minutes; runner { require a; require {vars.cap}; prefer b; sticky } }",
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
     }
 
     // ── Sub-30s interval warnings ─────────────────────────────────────────────
