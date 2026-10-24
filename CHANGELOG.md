@@ -18,6 +18,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sets `croniq_refresh{lane_suffix}`, so a lane's dashboard no longer logs the
   main tree's out. See
   [Where the dashboard keeps its tokens](docs/operations.md#where-the-dashboard-keeps-its-tokens).
+- **Rust runner SDK: `renew_interval`, `drain_timeout`, `bearer_token` and
+  `run_until` on the builder** (review 2026-10-24, K-3). The other five SDKs
+  had all of them. `renew_interval` (default 15 s) makes conformance case 05
+  drivable. `drain_timeout` (default 30 s) bounds a drain that used to wait
+  forever on a hung handler: what is still running is aborted and acked as
+  `failure`. `run_until(shutdown_signal())` runs until SIGTERM / Ctrl-C and
+  then drains. A `select!` that dropped `start()` and then called `drain()`,
+  as `examples/basic.rs` did, drained nothing.
 
 - **Runner conformance cases 23–27 pin ack retry, the ack after a drain
   timeout, and duplicate delivery** (review 2026-10-24, K-1, K-4, K-11). Where
@@ -44,12 +52,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
   did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI
   untested.
+- **The runners refuse a cleartext `http://` server URL to a non-loopback
+  host** (review 2026-10-24, K-3; issue #440 for the other SDKs). The API key
+  goes out on every request. `croniq-shell-runner`, `croniq-demo-runner` and
+  the Rust SDK (`CroniqRunner`, `TriggerClient`) now stop at startup with a
+  message unless the URL is `https://`, or `http://` to `localhost`,
+  `127.0.0.0/8` or `::1`. **Upgrade note:** a runner that reaches the server
+  as `http://server:4000` on a Compose network needs
+  `CRONIQ_ALLOW_INSECURE_HTTP=1` (SDK: `allow_insecure_http()`).
+  `docker-compose.yml` sets it for the demo runners. `max_inflight(0)`
+  (`RUNNER_MAX_INFLIGHT=0`), which made a runner poll forever without taking
+  work, is refused the same way (review 2026-10-24, R-12).
+- **Rust runner SDK: poll retries back off exponentially, with jitter**
+  (review 2026-10-24, R-8 / K-9). After a 5xx or a transport failure the wait
+  doubles per failure in a row, from `poll_retry_delay` up to 60 s. Every
+  retry wait is ±20 %, so a fleet no longer polls a restarting server in
+  lockstep. 401 and 409 keep the plain delay their budgets are counted in.
 
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
   versions don't know, so an older devstack asks to be updated before it
   starts the stack. Apart from the `CRONIQ_REFRESH_COOKIE` line above, the
   stack itself is unchanged.
+- **Release binaries can send mail** (review 2026-10-24, C-7). The tarballs
+  and the Homebrew formula were built without the `smtp` feature, so
+  `CRONIQ_SMTP_*` worked in the Docker image and silently did nothing with
+  the binaries (boot diagnostics did flag `email.smtp_feature_missing`). They
+  are now built with `otlp,smtp,postgres` like the image, and every PR
+  compiles, tests and lints the `smtp`-gated code instead of leaving it to the
+  image build after the merge.
+- **`:latest` is the latest final release, and nothing else** (review
+  2026-10-24, C-1). Every push to `main` used to retag `:latest` as well, so
+  it pointed at whichever ran last, a release or an untagged `main` build,
+  and a pre-release tag moved it too. `main` builds are now published as
+  `:main` and `:<sha>`; `:latest` moves only on a release tag without a `-`.
+  **If you pull `:latest` to track `main`, switch to `:main`.** Applies to
+  `croniq`, `croniq-server` and `croniq-ui`. See
+  [Image tags](docs/operations.md#image-tags).
+- **Builds say which build they are** (review 2026-10-24, C-2). Every
+  non-release build reported version 0.4.0 in `--version`, `GET /version`,
+  the MCP handshake and alert payloads. `main` images now report
+  `<last release>+main.<sha>` (e.g. `0.49.0+main.a1c20f2`), and other source
+  builds report `0.0.0-dev`; releases are unchanged.
+- **`docker compose up` pulls the published image** (review 2026-10-24,
+  C-12). The quickstart built the image from source, a 10–20 minute Rust
+  build, although its comment and the README said it pulled `:latest`. The
+  build moved to `docker-compose.build.yml`:
+  `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
 
 - **`POST /v1/jobs` no longer overwrites an existing job** (review 2026-10-24,
   P-4). For a key that already had a row, create was a full upsert: it set
@@ -456,6 +505,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Go SDK: the OpenTelemetry module requires the current core**
   (review 2026-10-24, K-10). `sdks/go/otel/go.mod` still pinned core
   `v0.5.0`; it now requires `v0.6.2`, the latest release.
+- **`docker stop` drains the shell and demo runners** (review 2026-10-24,
+  R-4). Neither binary handled SIGTERM, so the runtime died mid-job: no ack,
+  claims stuck until the reaper requeued them, and outside a container the
+  commands survived in their own process groups and then ran again. Running
+  jobs now get `RUNNER_DRAIN_TIMEOUT_SECS` (default 8, inside Docker's 10 s
+  stop grace) to finish; the rest are terminated and acked as failed.
+- **A lost lease stops the handler** (review 2026-10-24, R-3). The Rust SDK
+  read a `404`/`409` on lease renewal as a harmless race and let the handler
+  run on, while the server had already handed the execution to another
+  runner: two copies of one job, the later ack discarded, the side effect
+  done twice. The handler is now aborted (the shell runner terminates the
+  command's process group) and acked as failure ("lease lost"). A `403` on
+  renewal stops the renew loop instead of logging the same error every 15 s.
+- **A failed ack is retried** (review 2026-10-24, K-1, Rust SDK; the other
+  SDKs follow separately). On a transport error or a 5xx the ack is sent
+  again after 1 s and 2 s; a 4xx is never repeated. Before, a dropped
+  connection on the ack of a successful 20-minute job got the job requeued
+  by the reaper and run a second time.
+- **Shell-runner output lines are capped at 64 KiB, and `\r` ends a line**
+  (review 2026-10-24, R-5). A job writing without newlines (`base64 -w0`, a
+  curl/pv/rsync progress bar) accumulated its whole output as one line in the
+  runner's memory until it ran out, then shipped it as one log event. Invalid
+  UTF-8 is replaced instead of ending the stream. Job output mirrored into the
+  runner's own log can be switched off with
+  `RUST_LOG=info,shell_runner::pipe=off` (R-12).
+- **The README tells you to back up `jwt.secret`** (review 2026-10-24, C-4).
+  Its environment table gave the default of `CRONIQ_JWT_SECRET` as "random
+  per-start". The server actually creates `$CRONIQ_DATA_DIR/jwt.secret` on
+  first boot and keeps using it, and that file signs every token and derives
+  the key that encrypts stored TOTP secrets. An operator who believed the
+  table would not back it up, and losing it signs everyone out and makes
+  every enrolled second factor undecryptable. The table now says so and
+  lists the variables it was missing (`CRONIQ_DATA_DIR`, `CRONIQ_DB`,
+  `CRONIQ_PG_*`, `CRONIQ_OIDC_*`, `CRONIQ_PASSWORD_LOGIN_ENABLED`,
+  `CRONIQ_REQUIRE_TOTP`, `CRONIQ_RUNNER_ENV_PASSTHROUGH`, the demo flags).
+  `SECURITY.md` replaces a support table stuck at 0.10.x with the rule it
+  stated: only the latest minor line gets security fixes (C-11).
 
 ### Security
 
@@ -517,6 +603,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `sha256sum -c` accepts. The line is now matched by exact filename and must
   exist exactly once. The script also runs inside a `main` function, so a
   download cut off mid-script under `curl | sh` runs nothing.
+- **The Rust runner SDK refuses hostile identifiers on ingest** (review
+  2026-10-24, R-7 / K-2; issue #441 for the other SDKs). A `job_key` with
+  control characters (CRLF, ANSI escapes) is acked as `failure` without
+  running, not even by a catch-all handler. An unsafe `execution_id` is
+  dropped without an ack. These are conformance cases 13 and 14. Both values
+  had reached `tracing`, the ack's error text and, for `execution_id`, the
+  path of the authenticated log-events POST unchanged, where `..` steered it
+  onto another path of the same origin. The id is now one encoded path
+  segment, and dot-segments are refused.
+- **Release artefacts carry signed build provenance** (review 2026-10-24,
+  C-8). `SHA256SUMS` sits in the same release as the archives it lists, so it
+  proved integrity but not origin. Every release archive, `SHA256SUMS` and
+  each published image now get a Sigstore-signed GitHub attestation, checked
+  with `gh attestation verify <file|oci://image:tag> --repo
+  nuetzliches/croniq`; the images additionally embed BuildKit's full SLSA
+  provenance and an SPDX SBOM.
+- **No unpinned installer in the build pipeline** (review 2026-10-24, C-5,
+  C-13). CI and the site deploy installed wasm-pack by piping the upstream
+  `init.sh` into a shell, in the deploy job next to the token that publishes
+  the site; they now use the same version- and SHA-256-pinned tarball as the
+  image build, via `scripts/install-wasm-pack.sh`. The image's dashboard stage
+  no longer falls back to an unpinned `npm install` when the lockfile does not
+  match; the build fails instead.
 
 ## [0.49.0] - 2026-10-22
 
@@ -7670,3 +7779,65 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warnings (`unused must_use`, `unit_arg`, stale imports) that had
   accumulated under the old non-`--all-targets` clippy invocation are
   cleaned up.
+
+[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/nuetzliches/croniq/compare/v0.48.1...v0.49.0
+[0.48.1]: https://github.com/nuetzliches/croniq/compare/v0.48.0...v0.48.1
+[0.48.0]: https://github.com/nuetzliches/croniq/compare/v0.47.1...v0.48.0
+[0.47.1]: https://github.com/nuetzliches/croniq/compare/v0.47.0...v0.47.1
+[0.47.0]: https://github.com/nuetzliches/croniq/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/nuetzliches/croniq/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/nuetzliches/croniq/compare/v0.44.0...v0.45.0
+[0.44.0]: https://github.com/nuetzliches/croniq/compare/v0.43.0...v0.44.0
+[0.43.0]: https://github.com/nuetzliches/croniq/compare/v0.42.1...v0.43.0
+[0.42.1]: https://github.com/nuetzliches/croniq/compare/v0.42.0...v0.42.1
+[0.42.0]: https://github.com/nuetzliches/croniq/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/nuetzliches/croniq/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/nuetzliches/croniq/compare/v0.39.1...v0.40.0
+[0.39.1]: https://github.com/nuetzliches/croniq/compare/v0.39.0...v0.39.1
+[0.39.0]: https://github.com/nuetzliches/croniq/compare/v0.38.0...v0.39.0
+[0.38.0]: https://github.com/nuetzliches/croniq/compare/v0.37.0...v0.38.0
+[0.37.0]: https://github.com/nuetzliches/croniq/compare/v0.36.0...v0.37.0
+[0.36.0]: https://github.com/nuetzliches/croniq/compare/v0.35.2...v0.36.0
+[0.35.2]: https://github.com/nuetzliches/croniq/compare/v0.35.1...v0.35.2
+[0.35.1]: https://github.com/nuetzliches/croniq/compare/v0.35.0...v0.35.1
+[0.35.0]: https://github.com/nuetzliches/croniq/compare/v0.34.0...v0.35.0
+[0.34.0]: https://github.com/nuetzliches/croniq/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/nuetzliches/croniq/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/nuetzliches/croniq/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/nuetzliches/croniq/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/nuetzliches/croniq/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/nuetzliches/croniq/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/nuetzliches/croniq/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/nuetzliches/croniq/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/nuetzliches/croniq/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/nuetzliches/croniq/compare/v0.24.1...v0.25.0
+[0.24.1]: https://github.com/nuetzliches/croniq/compare/v0.24.0...v0.24.1
+[0.24.0]: https://github.com/nuetzliches/croniq/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/nuetzliches/croniq/compare/v0.22.3...v0.23.0
+[0.22.3]: https://github.com/nuetzliches/croniq/compare/v0.22.2...v0.22.3
+[0.22.2]: https://github.com/nuetzliches/croniq/compare/v0.22.1...v0.22.2
+[0.22.1]: https://github.com/nuetzliches/croniq/compare/v0.22.0...v0.22.1
+[0.22.0]: https://github.com/nuetzliches/croniq/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/nuetzliches/croniq/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/nuetzliches/croniq/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/nuetzliches/croniq/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/nuetzliches/croniq/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/nuetzliches/croniq/compare/v0.17.3...v0.18.0
+[0.17.3]: https://github.com/nuetzliches/croniq/compare/v0.17.2...v0.17.3
+[0.17.2]: https://github.com/nuetzliches/croniq/compare/v0.17.1...v0.17.2
+[0.17.1]: https://github.com/nuetzliches/croniq/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/nuetzliches/croniq/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/nuetzliches/croniq/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/nuetzliches/croniq/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/nuetzliches/croniq/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/nuetzliches/croniq/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/nuetzliches/croniq/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/nuetzliches/croniq/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/nuetzliches/croniq/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/nuetzliches/croniq/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/nuetzliches/croniq/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/nuetzliches/croniq/compare/v0.7.0...v0.9.0
+[0.7.0]: https://github.com/nuetzliches/croniq/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nuetzliches/croniq/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nuetzliches/croniq/releases/tag/v0.5.0

@@ -6,12 +6,6 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 
-# Normalize line endings for UI sources and generated artifacts.
-src/Croniq.Ui/**/*.ts text eol=lf
-src/Croniq.Ui/**/*.json text eol=lf
-src/Croniq.Ui/**/*.css text eol=lf
-src/Croniq.Ui/**/*.html text eol=lf
-
 # .NET SDK sources — .editorconfig under sdks/dotnet/ enforces end_of_line=lf
 # but `dotnet format --verify-no-changes` running on a Windows runner sees
 # CRLF (the default `core.autocrlf=true` flips LF→CRLF on checkout) and

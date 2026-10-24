@@ -17,7 +17,7 @@ Contact a maintainer privately via the email shown on their GitHub profile (comm
 ### What to include
 
 - A clear description of the issue and affected component (which crate, endpoint, or transport).
-- Croniq version (`croniq-server --version`, or the `version` field of `Cargo.toml`).
+- Croniq version: `croniq-server --version` or `GET /version` (with its `git_sha` if you built from source). The `version` field of `Cargo.toml` is a placeholder; release builds stamp the real one.
 - Steps to reproduce — PoC code, request transcript, or minimal `Croniqfile` are ideal.
 - Impact you have observed or believe is achievable.
 
@@ -31,12 +31,7 @@ We do not currently run a bug bounty program.
 
 ## Supported Versions
 
-Croniq is in active pre-1.0 development. Security fixes are backported only to the **latest minor release line**. Older minors are considered unsupported — please upgrade.
-
-| Version | Status         |
-| ------- | -------------- |
-| 0.10.x  | ✅ Supported   |
-| < 0.10  | ❌ Unsupported |
+Croniq is in active pre-1.0 development. Only the **latest minor release line** — the newest [release](https://github.com/nuetzliches/croniq/releases/latest) and its patch releases — receives security fixes. Every older minor is unsupported; please upgrade. There is deliberately no version table here: it went stale once already.
 
 ## Published Advisories
 

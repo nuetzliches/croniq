@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-auth"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "aes-gcm",
  "base32",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-bridge"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "croniq-config",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-cli"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "clap",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-config"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-config-wasm"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-demo-runner"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "croniq-runner-sdk",
  "rand 0.8.6",
@@ -797,7 +797,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-execution"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "pretty_assertions",
@@ -808,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-mcp"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-runner"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "axum",
  "chrono",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-runner-sdk"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "reqwest",
@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-scheduler"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-server"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-shell-runner"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "croniq-config",
  "croniq-execution",
@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "croniq-store"
-version = "0.4.0"
+version = "0.0.0-dev"
 dependencies = [
  "chrono",
  "criterion",

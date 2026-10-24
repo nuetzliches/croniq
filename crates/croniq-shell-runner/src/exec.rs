@@ -45,14 +45,15 @@ use std::time::Duration;
 
 use croniq_config::compile::RunnerExec;
 use croniq_runner_sdk::{HandlerError, LogWriter};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 /// How many lines of stdout AND stderr to retain in the rolling tail
 /// buffer for failure-snippet assembly. The previous snippet was 400
 /// chars of stderr; 50 lines comfortably covers that for typical line
-/// lengths while bounding memory to ~50 KB / stream worst-case.
+/// lengths. Memory is bounded by [`MAX_LINE_BYTES`] per line: about 3 MiB per
+/// stream in the worst case, a few KB in practice.
 const TAIL_BUFFER_LINES: usize = 50;
 
 /// How many trailing characters to splice into the failure-snippet that
@@ -763,10 +764,69 @@ impl Stream {
     }
 }
 
+/// Longest line a job's output may form before it is cut, in bytes.
+///
+/// `BufReader::lines` had no bound: a job writing without `\n` (`base64 -w0`,
+/// a progress bar redrawn with `\r` by curl, pv, apt or rsync) accumulated its
+/// whole output as one line in memory, until OOM, and then shipped it to the
+/// server as a single log event (review 2026-10-24, R-5). Output past the cap
+/// continues as the next line.
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// Splits a byte stream into log lines: on `\n`, on `\r` (a progress bar's
+/// redraw is a new line, not a longer one), with `\r\n` counted once, and at
+/// [`MAX_LINE_BYTES`]. Invalid UTF-8 is replaced rather than ending the
+/// stream, which is what `lines()` did with it.
+#[derive(Default)]
+struct LineSplitter {
+    buf: Vec<u8>,
+    after_cr: bool,
+}
+
+impl LineSplitter {
+    fn push(&mut self, chunk: &[u8], out: &mut Vec<String>) {
+        for &b in chunk {
+            match b {
+                b'\n' if self.after_cr => self.after_cr = false,
+                b'\n' | b'\r' => {
+                    out.push(String::from_utf8_lossy(&self.buf).into_owned());
+                    self.buf.clear();
+                    self.after_cr = b == b'\r';
+                }
+                _ => {
+                    self.after_cr = false;
+                    self.buf.push(b);
+                    if self.buf.len() >= MAX_LINE_BYTES {
+                        out.push(self.take_capped());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Cut a full buffer, keeping a character split across the cut for the
+    /// next line instead of mangling it.
+    fn take_capped(&mut self) -> String {
+        let cut = match std::str::from_utf8(&self.buf) {
+            Err(e) if e.error_len().is_none() && e.valid_up_to() > 0 => e.valid_up_to(),
+            _ => self.buf.len(),
+        };
+        let rest = self.buf.split_off(cut);
+        let line = String::from_utf8_lossy(&self.buf).into_owned();
+        self.buf = rest;
+        line
+    }
+
+    /// The unterminated last line, if any.
+    fn finish(self) -> Option<String> {
+        (!self.buf.is_empty()).then(|| String::from_utf8_lossy(&self.buf).into_owned())
+    }
+}
+
 /// Reader task body. Pulls lines from one pipe, streams them through
 /// the writer + tracing, and returns the rolling tail buffer.
 async fn stream_lines<R>(
-    reader: R,
+    mut reader: R,
     writer: LogWriter,
     stream: Stream,
 ) -> std::io::Result<VecDeque<String>>
@@ -774,21 +834,38 @@ where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut tail: VecDeque<String> = VecDeque::with_capacity(TAIL_BUFFER_LINES);
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        // 1. Operator-visible container log.
-        tracing::info!(target: "shell_runner::pipe", stream = stream.tracing_target(), line = %line);
-        // 2. Rolling tail buffer for the failure snippet.
-        if tail.len() == TAIL_BUFFER_LINES {
-            tail.pop_front();
+    let mut splitter = LineSplitter::default();
+    let mut chunk = vec![0u8; 8 * 1024];
+    let mut lines = Vec::new();
+    loop {
+        let n = reader.read(&mut chunk).await?;
+        if n == 0 {
+            lines.extend(std::mem::take(&mut splitter).finish());
+        } else {
+            splitter.push(&chunk[..n], &mut lines);
         }
-        tail.push_back(line.clone());
-        // 3. Stream to the server-side execution log panel. Awaits only
-        //    on bounded channel capacity, never on HTTP (per LogWriter
-        //    contract documented in croniq-runner-sdk::log_writer).
-        writer.send(stream.level(), line).await;
+        for line in lines.drain(..) {
+            emit_line(line, &mut tail, &writer, stream).await;
+        }
+        if n == 0 {
+            return Ok(tail);
+        }
     }
-    Ok(tail)
+}
+
+/// Hand one line to the three consumers described on [`run`].
+async fn emit_line(line: String, tail: &mut VecDeque<String>, writer: &LogWriter, stream: Stream) {
+    // 1. Operator-visible container log.
+    tracing::info!(target: "shell_runner::pipe", stream = stream.tracing_target(), line = %line);
+    // 2. Rolling tail buffer for the failure snippet.
+    if tail.len() == TAIL_BUFFER_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(line.clone());
+    // 3. Stream to the server-side execution log panel. Awaits only
+    //    on bounded channel capacity, never on HTTP (per LogWriter
+    //    contract documented in croniq-runner-sdk::log_writer).
+    writer.send(stream.level(), line).await;
 }
 
 /// Convert an `Outcome` into a runner-SDK `Result`. A non-zero exit becomes a
@@ -1253,6 +1330,72 @@ mod tests {
             outcome.stdout_tail.front().map(String::as_str),
             Some(format!("line {expected_oldest}").as_str())
         );
+    }
+
+    // ─── Line splitting (review 2026-10-24, R-5) ─────────────────────────────
+
+    fn split(input: &[u8]) -> Vec<String> {
+        let mut s = LineSplitter::default();
+        let mut out = Vec::new();
+        s.push(input, &mut out);
+        out.extend(s.finish());
+        out
+    }
+
+    #[test]
+    fn carriage_returns_separate_lines_and_crlf_counts_once() {
+        assert_eq!(split(b"a\nb\r\nc"), ["a", "b", "c"]);
+        // curl/pv-style progress: each redraw is its own line.
+        assert_eq!(split(b" 10%\r 50%\r100%\n"), [" 10%", " 50%", "100%"]);
+        // Empty lines are still lines, as with `lines()`.
+        assert_eq!(split(b"a\n\nb\n"), ["a", "", "b"]);
+        // `\r\n` split across two reads is still one separator.
+        let mut s = LineSplitter::default();
+        let mut out = Vec::new();
+        s.push(b"a\r", &mut out);
+        s.push(b"\nb\n", &mut out);
+        assert_eq!(out, ["a", "b"]);
+    }
+
+    #[test]
+    fn a_line_without_newline_is_cut_at_the_cap() {
+        let lines = split(&vec![b'x'; MAX_LINE_BYTES * 2 + 10]);
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|l| l.len() <= MAX_LINE_BYTES));
+        assert_eq!(lines[2].len(), 10);
+    }
+
+    #[test]
+    fn the_cap_does_not_split_a_character() {
+        // One byte short of the cap, then a 2-byte character across it.
+        let mut input = vec![b'x'; MAX_LINE_BYTES - 1];
+        input.extend_from_slice("é".as_bytes());
+        let lines = split(&input);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), MAX_LINE_BYTES - 1);
+        assert_eq!(lines[1], "é");
+        assert!(!lines.concat().contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn invalid_utf8_is_replaced_not_fatal() {
+        assert_eq!(
+            split(b"ok\n\xff\xfe\nafter\n"),
+            ["ok", "\u{fffd}\u{fffd}", "after"]
+        );
+    }
+
+    #[tokio::test]
+    async fn two_hundred_thousand_characters_without_a_newline_stay_bounded() {
+        // Before R-5, `lines()` held all of it as one line and shipped it as
+        // one event.
+        let input = vec![b'A'; 200_000];
+        let tail = stream_lines(&input[..], LogWriter::null(), Stream::Stdout)
+            .await
+            .expect("reads");
+        assert_eq!(tail.len(), 200_000_usize.div_ceil(MAX_LINE_BYTES));
+        assert!(tail.iter().all(|l| l.len() <= MAX_LINE_BYTES));
+        assert_eq!(tail.iter().map(String::len).sum::<usize>(), 200_000);
     }
 
     #[test]

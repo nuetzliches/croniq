@@ -127,14 +127,17 @@ jobs:
 
       - name: Build release binaries
         shell: bash
-        # `--features croniq-server/otlp,croniq-server/postgres` matches the
+        # `--features croniq-server/{otlp,smtp,postgres}` matches the
         # Dockerfile so brew / tarball / image installs all honour
-        # `OTEL_EXPORTER_OTLP_ENDPOINT` and can select `db postgres://…` /
-        # CRONIQ_DB. Runtime gate in src/telemetry.rs keeps the exporter dormant
-        # when unset; SQLite stays the default DB backend.
+        # `OTEL_EXPORTER_OTLP_ENDPOINT`, can send invitation / reset mail via
+        # CRONIQ_SMTP_URL, and can select `db postgres://…` / CRONIQ_DB.
+        # `smtp` was missing here, so only the image could send mail (review
+        # 2026-10-24, C-7); lettre is pure Rust on the rustls / ring stack the
+        # server already links. Each layer stays dormant until its env var is
+        # set; SQLite stays the default DB backend.
         run: |
           cargo build --release --target ${{ matrix.target }} \
-            --features croniq-server/otlp,croniq-server/postgres \
+            --features croniq-server/otlp,croniq-server/smtp,croniq-server/postgres \
             --bin croniq-server \
             --bin croniq \
             --bin croniq-mcp \
@@ -311,7 +314,8 @@ jobs:
           build-args: |
             CRONIQ_VERSION=${{ steps.version.outputs.version }}
           # Push by digest only — no tag yet. docker-merge below creates the
-          # manifest list under :latest, :<version>, :<tag> once both arches
+          # manifest list under :<version>, :<tag> (and :latest for a final
+          # release) once both arches
           # are uploaded.
           target: ${{ steps.var.outputs.target }}
           outputs: type=image,name=${{ steps.var.outputs.image }},push-by-digest=true,name-canonical=true,push=true
@@ -328,9 +332,16 @@ jobs:
           # keyed on the base digest plus the instruction text, so a cached one
           # keeps whatever apt served on the day it was first built. On this
           # path that is worse than a red check — a release weeks after the
-          # last one would ship a stale trust store while `:latest` off main is
+          # last one would ship a stale trust store while `:main` is
           # current (#716).
           no-cache-filters: ca-provider
+          # BuildKit's own SLSA provenance (full build record, not the
+          # default `min`) and an SPDX SBOM, attached to each per-arch image
+          # index and carried into the manifest list by docker-merge. Build
+          # args are recorded verbatim, so none may ever carry a secret; today
+          # the only one is CRONIQ_VERSION (review 2026-10-24, C-8).
+          provenance: mode=max
+          sbom: true
       - name: The shipped CA bundle must match an apt-installed one
         # The same assertion ci.yml runs on main, on the path that actually
         # publishes. `operations.md` and the Dockerfile both say this runs
@@ -382,6 +393,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Sigstore-signed provenance for the published manifest list (C-8).
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -415,21 +430,57 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        # `:latest` is set here and nowhere else (ci.yml publishes `:main`),
+        # and only for a final release. A pre-release tag (`v0.50.0-rc1`,
+        # anything with a `-`) is marked as a GitHub pre-release below and
+        # skips the Homebrew tap; it must not move `:latest` either
+        # (review 2026-10-24, C-1).
         run: |
-          docker buildx imagetools create \
-            --tag ${{ steps.var.outputs.image }}:latest \
-            --tag ${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }} \
-            --tag ${{ steps.var.outputs.image }}:${{ github.ref_name }} \
+          tags=(
+            --tag "${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }}"
+            --tag "${{ steps.var.outputs.image }}:${{ github.ref_name }}"
+          )
+          if [[ '${{ github.ref_name }}' != *-* ]]; then
+            tags+=(--tag "${{ steps.var.outputs.image }}:latest")
+          else
+            echo "::notice::${{ github.ref_name }} is a pre-release; :latest stays where it is."
+          fi
+          docker buildx imagetools create "${tags[@]}" \
             $(printf '${{ steps.var.outputs.image }}@sha256:%s ' *)
       - name: Inspect image
+        id: inspect
         run: |
-          docker buildx imagetools inspect ${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }}
+          ref='${{ steps.var.outputs.image }}:${{ steps.version.outputs.version }}'
+          docker buildx imagetools inspect "$ref"
+          digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "::error::could not read the manifest-list digest of $ref (got '$digest')"; exit 1 ;;
+          esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # A GitHub artifact attestation for the manifest list, pushed next to
+      # the image, so `gh attestation verify oci://<image>:<version> --repo
+      # nuetzliches/croniq` proves the image was built by this workflow from
+      # this tag. The BuildKit provenance above lives inside the image and
+      # is unsigned; this one is signed by Sigstore (review 2026-10-24, C-8).
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.var.outputs.image }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
 
   release:
     name: GitHub Release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: [build, docker-merge]
+    permissions:
+      # Creating the release and uploading its assets.
+      contents: write
+      # Sigstore-signed provenance for the archives and SHA256SUMS (C-8).
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -451,6 +502,18 @@ jobs:
             printf '%s  %s\n' "$hash" "$name" >> SHA256SUMS
           done
           cat SHA256SUMS
+      # SHA256SUMS sits in the same release as the archives it lists, so it
+      # proves integrity, not origin: whoever can replace an asset can replace
+      # the sums too. A signed build-provenance attestation per archive (and
+      # for the sums file) ties each one to this workflow run and tag;
+      # `gh attestation verify <file> --repo nuetzliches/croniq` checks it
+      # (review 2026-10-24, C-8).
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            artifacts/SHA256SUMS
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

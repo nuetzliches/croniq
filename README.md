@@ -134,13 +134,17 @@ docker compose up
 
 Open **http://localhost:4000**. The demo runners register against [`Croniqfile.demo`](Croniqfile.demo), so you'll see executions, retries, and occasional dead letters streaming in immediately. Tune with `RUNNER_REPLICAS` and `RUNNER_FAIL_RATE` env vars.
 
+The stack pulls the latest release image (`ghcr.io/nuetzliches/croniq:latest`); set `CRONIQ_IMAGE` to pin a version or to use `:main`. To run an image built from your checkout instead (a full Rust build, 10–20 minutes the first time), add the build override: `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
+
 ### Docker (server only)
 
 ```sh
 docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
 ```
 
-On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
+`:latest` is the latest final release. For production, pin `:<version>`; `:main` tracks the main branch. See [Image tags](docs/operations.md#image-tags).
+
+On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one. The generated password stays in `docker logs` and in anything that collects them, so change it after the first login (Settings in the UI, or `POST /v1/users/me/change-password`).
 
 The image runs as the unprivileged `croniq` user (uid 100, gid 101). Named volumes inherit the right owner; a bind mount for `/var/lib/croniq` has to be writable by that uid. To keep a bind mount owned by someone else, start the container as root (`--user 0`, compose `user: "0"`): the entrypoint then fixes the ownership and drops to `croniq` before the server starts.
 
@@ -152,6 +156,13 @@ curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh 
 
 Detects your OS/arch (Linux/macOS, x64/ARM64), downloads the latest release, installs to `/usr/local/bin`. Override with `INSTALL_DIR` or `CRONIQ_VERSION`.
 
+The installer checks the archive against the release's `SHA256SUMS`. From the first release after 0.49.0, release archives, `SHA256SUMS` and images also carry a signed build-provenance attestation, which proves they were built by this repository's release workflow:
+
+```sh
+gh attestation verify croniq-x86_64-unknown-linux-musl.tar.gz --repo nuetzliches/croniq
+gh attestation verify oci://ghcr.io/nuetzliches/croniq:<version> --repo nuetzliches/croniq
+```
+
 ### Homebrew (macOS / Linux)
 
 ```sh
@@ -159,6 +170,21 @@ brew install nuetzliches/tap/croniq
 ```
 
 ### From source
+
+Needs a Rust toolchain, Node.js 22+, and for the dashboard's DSL bridge the `wasm32-unknown-unknown` target plus [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
+
+```sh
+git clone https://github.com/nuetzliches/croniq && cd croniq
+cargo build --release --features croniq-server/otlp,croniq-server/smtp,croniq-server/postgres
+export PATH="$PWD/target/release:$PATH"
+
+# The dashboard: `--ui-dir ui/dist` below serves this build. Without it the
+# API runs, but there is no UI.
+rustup target add wasm32-unknown-unknown
+(cd ui && npm ci && npm run build)
+```
+
+Leave out any of the `--features` you don't need; the Docker image ships with all three.
 
 ```sh
 # Zero-to-running in one command (generates a random admin password)
@@ -677,8 +703,15 @@ shell-runner:
   # command as root.
   environment:
     CRONIQ_SERVER_URL: http://server:4000
+    # The runner refuses a cleartext URL to anything but loopback, because
+    # the API key travels on every request. Acceptable on a private Compose
+    # network; use https:// across anything else.
+    CRONIQ_ALLOW_INSECURE_HTTP: "1"
     CRONIQ_API_KEY: croniq_…
     RUNNER_MAX_INFLIGHT: "4"
+    # On `docker stop` running jobs get this long to finish before they are
+    # terminated and acked as failed. Keep it below stop_grace_period.
+    RUNNER_DRAIN_TIMEOUT_SECS: "8"
   volumes:
     # Persistent runner identity. Without this, every container recreate
     # generates a new runner_id and the Runner Detail Sheet's history
@@ -1021,7 +1054,10 @@ environment and reload instead.
 | Variable | Description | Default |
 |---|---|---|
 | `RUST_LOG` | Log level filter | `info` |
-| `CRONIQ_JWT_SECRET` | JWT signing secret. Also derives the at-rest key for stored TOTP seeds, so rotating it needs `CRONIQ_JWT_SECRET_PREVIOUS` (below). | random per-start |
+| `CRONIQ_DATA_DIR` | Data directory: the SQLite database and `jwt.secret`. Same as `croniq-server --data-dir`, which wins when both are given. The image sets `/var/lib/croniq`. | `./.data` |
+| `CRONIQ_DB` | Storage backend: `sqlite` or a `postgres://…` DSN. Wins over the Croniqfile's `server { db … }`. Postgres needs a server built with `--features postgres` (the image and release binaries are); an unknown value stops the boot. | `sqlite` |
+| `CRONIQ_PG_SSLMODE`, `CRONIQ_PG_ROOT_CERT` | TLS to PostgreSQL: the `sslmode` and a PEM CA bundle to trust. See [PostgreSQL TLS](docs/operations.md#postgresql-tls-croniq_pg_sslmode-croniq_pg_root_cert). | — |
+| `CRONIQ_JWT_SECRET` | JWT signing secret. Also derives the at-rest key for stored TOTP seeds, so rotating it needs `CRONIQ_JWT_SECRET_PREVIOUS` (below). When unset, the server uses `$CRONIQ_DATA_DIR/jwt.secret`, creating it on first boot (owner-only permissions) and reusing it afterwards. **Back that file up with the database**: losing it signs every user out and makes every stored TOTP secret undecryptable. See [JWT secret and stored TOTP secrets](docs/operations.md#jwt-secret-and-stored-totp-secrets). | `$CRONIQ_DATA_DIR/jwt.secret` |
 | `CRONIQ_JWT_SECRET_PREVIOUS` | The value `CRONIQ_JWT_SECRET` is being rotated away from. Used to **unwrap stored TOTP seeds only** — never to sign or validate a token. At boot the server re-wraps every stored seed under the new key, so a rotation no longer costs every enrolled user a re-enrolment; drop the variable once the log or `doctor` reports nothing left under the old key. | — |
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
 | `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset). **Seed-only** — read by `croniq init` when the entrypoint creates the database and never again; on an existing deployment it is ignored (the entrypoint says so at boot). Rotate the password in the app instead. | _generated_ |
@@ -1037,6 +1073,13 @@ environment and reload instead.
 | `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
 | `CRONIQ_APP_URL` | Public base URL for invitation, password-reset, and OIDC login links. When unset, it is derived per-request from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so links work behind a reverse proxy with no config. Set it explicitly to pin the URL — recommended on directly-exposed servers, where the `Host` header is untrusted and is **not** used for the public password-reset link. The Croniqfile `server { app_url "…" }` directive sets the same value and takes precedence over this env var. Also drives the CORS allowlist: when set, exactly this origin may call the API cross-origin from a browser; when unset, no CORS headers are emitted (same-origin deployments need none). See [`docs/operations.md`](docs/operations.md). | _auto-detected from request_ |
 | `CRONIQ_REFRESH_COOKIE` | Name of the dashboard's refresh-token cookie. Browsers keep cookies per host, not per port, so two croniq servers on one host (staging beside production, devstack lanes on `localhost`) need different names, or a login on one signs the other out. Letters, digits, `-`, `_`, `.` and the other characters of an RFC 9110 token; the `__Host-`/`__Secure-` prefixes are refused. An invalid name stops the server at boot. See [`docs/operations.md`](docs/operations.md#where-the-dashboard-keeps-its-tokens). | `croniq_refresh` |
+| `CRONIQ_PASSWORD_LOGIN_ENABLED` | `false`/`no`/`off`/`0` turns username/password login off (SSO only). Any other value leaves it on, so a typo cannot lock everyone out. The Croniqfile's `auth { password { enabled … } }` wins where set. See [operations](docs/operations.md#env-override-croniq_password_login_enabled). | on |
+| `CRONIQ_REQUIRE_TOTP` | `true`/`yes`/`on`/`1` makes a second factor mandatory for password logins. Any other value leaves it off. The Croniqfile's `auth { totp { required … } }` wins where set. See [operations](docs/operations.md#env-override-croniq_require_totp). | off |
+| `CRONIQ_OIDC_ISSUER`, `CRONIQ_OIDC_CLIENT_ID`, `CRONIQ_OIDC_REDIRECT_URL` | OIDC single sign-on provider. Fill whatever the Croniqfile's `oidc {}` block leaves out; SSO is enabled only when these three and the client secret resolve. | — |
+| `CRONIQ_OIDC_CLIENT_SECRET` | OIDC client secret. **Env-only**, never read from the Croniqfile. | — |
+| `CRONIQ_OIDC_DEFAULT_ROLE` | Role for a user created by their first SSO login. | `viewer` |
+| `CRONIQ_OIDC_PROVIDER_NAME` | Provider label shown on the sign-in page. | `oidc` |
+| `CRONIQ_OIDC_POST_LOGIN` | Where the dashboard lands after an SSO login. | `/` |
 | `CRONIQ_SMTP_URL` | Legacy composite transport URL (`smtp://user:pass@host:587/?tls=required`). When set, it wins over the decomposed `CRONIQ_SMTP_HOST/PORT/SECURITY` vars and the `smtp {}` block. Requires `--features smtp`. | — |
 | `CRONIQ_SMTP_HOST` | SMTP relay host. Used when `CRONIQ_SMTP_URL` is unset. Overridden by `smtp { host … }`. | — |
 | `CRONIQ_SMTP_PORT` | SMTP relay port. Overridden by `smtp { port … }`. | `587` |
@@ -1044,6 +1087,8 @@ environment and reload instead.
 | `CRONIQ_SMTP_FROM` | Envelope/From address, e.g. `Croniq <noreply@example.com>`. Required for any real send. Overridden by `smtp { from … }`. | — |
 | `CRONIQ_SMTP_USERNAME` | SMTP auth username. **Env-only** — never read from the Croniqfile (a read-only mount). | — |
 | `CRONIQ_SMTP_PASSWORD` | SMTP auth password. **Env-only**. | — |
+| `CRONIQ_RUNNER_ENV_PASSTHROUGH` | **Shell runner**, not the server. Jobs inherit only an allowlist of the runner's environment (`PATH`, `HOME`, locale, …); this comma-separated list adds names, `*` inherits everything except `CRONIQ_*`. See [operations](docs/operations.md#shell-runner-job-environment-croniq_runner_env_passthrough). | — |
+| `CRONIQ_DEMO_MODE`, `CRONIQ_DEMO_MFA` | **Local demo stack only** (`docker-compose.yml`). Mark the deployment as the demo and, with `CRONIQ_DEMO_MFA=1`, seed the public recovery code `123456`. The server refuses to start in demo mode on a non-loopback address. Never set in production. See [operations](docs/operations.md#demo-only-seed-flags). | — |
 
 > **`<VAR>_FILE` convention** — `CRONIQ_SMTP_URL`, `CRONIQ_SMTP_HOST`, `CRONIQ_SMTP_USERNAME`, `CRONIQ_SMTP_PASSWORD`, `CRONIQ_API_KEY`, `CRONIQ_API_CLIENT_<NAME>_KEY`, `CRONIQ_INIT_API_KEY`, and `CRONIQ_ADMIN_PASSWORD` each also accept a `…_FILE` variant pointing at a file whose contents supply the value (trailing newline trimmed). Use it with Docker/Kubernetes mounted secrets so credentials never appear in the process environment. The direct env var wins when both are set. The `_FILE` form is also the only one that can be rotated without restarting the server: a mounted file changes under a live process where an env var cannot, and `SIGHUP` / `POST /v1/admin/reload-config` re-read it.
 >
@@ -1058,6 +1103,9 @@ environment and reload instead.
 | [`README.md`](README.md) | This file — overview, quick start, architecture |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3.1 specification for all REST endpoints |
 | [`docs/operations.md`](docs/operations.md) | Operational notes: public endpoints, environment variables |
+| [`docs/adr/`](docs/adr/README.md) | Architecture decision records: delivery topology, auth-token storage, UI stack, resource ownership, and the other standing constraints |
+| [`CHANGELOG.md`](CHANGELOG.md) | Every user-visible change, per release |
+| [`ROADMAP.md`](ROADMAP.md) | Known improvements not yet scheduled |
 | [`Croniqfile.example`](Croniqfile.example) | Full DSL example with calendars, retries, metadata |
 | [`Croniqfile.demo`](Croniqfile.demo) | Minimal demo profile used by `docker compose up` |
 | [`docker-compose.yml`](docker-compose.yml) | Quickstart stack: server + demo runners |

@@ -57,6 +57,30 @@ pub enum ClientError {
         endpoint: &'static str,
         body: String,
     },
+
+    /// The runner or client is configured in a way the SDK refuses to act on
+    /// — a cleartext `http://` URL to a non-loopback host without the opt-in,
+    /// `max_inflight(0)` — or was handed an identifier it will not put into
+    /// a request path. Permanent: nothing about it changes on a retry.
+    #[error("{0}")]
+    Config(String),
+}
+
+impl ClientError {
+    /// Whether a failed ack is worth sending again (review 2026-10-24, K-1).
+    ///
+    /// Only a transport failure (connection refused or reset, a timeout) or a
+    /// 5xx: the request may never have arrived, or the server failed to
+    /// process it, and the ack is idempotent server-side (CAS-fenced), so a
+    /// repeat cannot complete an execution twice. A 4xx is the server's
+    /// considered answer and repeating the request cannot change it.
+    pub fn is_retryable_ack_failure(&self) -> bool {
+        match self {
+            ClientError::Http(_) => true,
+            ClientError::Server { status, .. } => *status >= 500,
+            _ => false,
+        }
+    }
 }
 
 /// Map a non-2xx response from a work endpoint to a [`ClientError`].
@@ -179,6 +203,11 @@ impl CroniqClient {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn auth_header_for_tests(&self) -> Option<&str> {
+        self.auth_header.as_deref()
+    }
+
     fn add_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(ref auth) = self.auth_header {
             req.header("authorization", auth)
@@ -262,6 +291,31 @@ impl CroniqClient {
         Ok(())
     }
 
+    /// `{base}/v1/work/{execution_id}/events`, with the id as one encoded path
+    /// segment.
+    ///
+    /// Interpolated raw, an id carrying `/`, `?` or `..` steered the
+    /// authenticated POST onto another path of the same origin (review
+    /// 2026-10-24, R-7). The runner refuses such ids on ingest already; this is
+    /// the second fence for a caller that builds requests itself. Dot-segments
+    /// are refused outright because URL normalisation resolves them even when
+    /// percent-encoded.
+    fn events_url(&self, execution_id: &str) -> Result<reqwest::Url, ClientError> {
+        if !crate::identifiers::is_safe_execution_id(execution_id) {
+            return Err(ClientError::Config(format!(
+                "refusing to push log events for the unsafe execution_id {}",
+                crate::identifiers::preview_for_log(execution_id)
+            )));
+        }
+        let mut url = reqwest::Url::parse(&self.base_url)
+            .map_err(|e| ClientError::Config(format!("invalid server URL: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|()| ClientError::Config("server URL cannot carry a path".into()))?
+            .pop_if_empty()
+            .extend(["v1", "work", execution_id, "events"]);
+        Ok(url)
+    }
+
     /// Push structured log events for an execution.
     pub async fn push_events(
         &self,
@@ -269,10 +323,7 @@ impl CroniqClient {
         events: &[WorkEvent],
     ) -> Result<(), ClientError> {
         let resp = self
-            .add_auth(
-                self.http
-                    .post(format!("{}/v1/work/{}/events", self.base_url, execution_id)),
-            )
+            .add_auth(self.http.post(self.events_url(execution_id)?))
             .json(events)
             .timeout(self.request_timeout)
             .send()
@@ -419,6 +470,89 @@ mod tests {
         let rendered = err.to_string();
         assert!(rendered.contains("revoked"), "{rendered}");
         assert!(rendered.contains("Restart the runner"), "{rendered}");
+    }
+
+    #[test]
+    fn events_url_keeps_the_execution_id_inside_its_segment() {
+        // Review 2026-10-24, R-7: interpolated raw, the id steered the
+        // authenticated POST onto another path of the same origin.
+        let client = CroniqClient::new("https://croniq.example/prefix/");
+        let url = client.events_url("4f9c1c0e-8a5b-4d4e").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://croniq.example/prefix/v1/work/4f9c1c0e-8a5b-4d4e/events"
+        );
+        for hostile in [
+            "..",
+            ".",
+            "../../v1/admin",
+            "a/b",
+            "a?x=1",
+            "a#f",
+            "",
+            "a\r\nb",
+        ] {
+            assert!(
+                matches!(client.events_url(hostile), Err(ClientError::Config(_))),
+                "{hostile:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn only_transport_failures_and_5xx_are_retryable_acks() {
+        // Review 2026-10-24, K-1: a 4xx is the server's answer; repeating the
+        // request cannot change it.
+        assert!(
+            ClientError::Server {
+                status: 500,
+                body: String::new()
+            }
+            .is_retryable_ack_failure()
+        );
+        assert!(
+            ClientError::Server {
+                status: 503,
+                body: String::new()
+            }
+            .is_retryable_ack_failure()
+        );
+        for status in [400, 404, 409, 422] {
+            assert!(
+                !ClientError::Server {
+                    status,
+                    body: String::new()
+                }
+                .is_retryable_ack_failure(),
+                "{status}"
+            );
+        }
+        assert!(
+            !work_endpoint_error("/v1/work/ack", 401, String::new()).is_retryable_ack_failure()
+        );
+        assert!(
+            !work_endpoint_error("/v1/work/ack", 403, String::new()).is_retryable_ack_failure()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_is_a_retryable_ack_failure() {
+        // Bind and drop: the port is then very likely closed.
+        let addr = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let client = CroniqClient::new(&format!("http://{addr}"));
+        let req = AckRequest {
+            runner_id: "r1".into(),
+            execution_id: "e1".into(),
+            status: "success".into(),
+            error: None,
+            duration_ms: Some(1),
+            attempt: 1,
+        };
+        let err = client.ack(&req).await.unwrap_err();
+        assert!(err.is_retryable_ack_failure(), "{err:?}");
     }
 
     #[test]

@@ -16,10 +16,17 @@
 //!   RUNNER_FAIL_RATE        — fraction 0.0–1.0 that fail (default: 0.05)
 //!   RUNNER_MAX_INFLIGHT     — concurrency cap  (default: 4)
 //!   RUNNER_TAGS             — comma-separated free-form filter tags (optional)
+//!   RUNNER_DRAIN_TIMEOUT_SECS — on SIGTERM / Ctrl-C, how long running jobs may
+//!                             finish before they are aborted and acked as
+//!                             failed (default: 8, inside Docker's 10 s grace)
+//!   CRONIQ_ALLOW_INSECURE_HTTP — `1` accepts a cleartext http:// server URL on
+//!                             a non-loopback host (the Compose demo sets it)
 
 use std::time::Duration;
 
-use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id};
+use croniq_runner_sdk::{
+    CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id, shutdown_signal,
+};
 use rand::Rng as _; // for gen_range
 use tracing::{info, warn};
 
@@ -66,10 +73,22 @@ async fn main() {
     let mut builder = CroniqRunner::builder(&server_url, &runner_id)
         .capabilities(vec!["demo".into()])
         .tags(tags)
-        .max_inflight(max_inflight);
+        .max_inflight(max_inflight)
+        .drain_timeout(Duration::from_secs(
+            std::env::var("RUNNER_DRAIN_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(8),
+        ));
 
     if let Ok(key) = std::env::var("CRONIQ_API_KEY") {
         builder = builder.api_key(&key);
+    }
+    if std::env::var("CRONIQ_ALLOW_INSECURE_HTTP")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+    {
+        builder = builder.allow_insecure_http();
     }
 
     let runner = builder.build();
@@ -96,7 +115,8 @@ async fn main() {
         .set_default_handler(move |ctx: ExecutionContext| simulate(ctx, fail_rate))
         .await;
 
-    if let Err(e) = runner.start().await {
+    // SIGTERM / Ctrl-C drain instead of dying mid-job (review 2026-10-24, R-4).
+    if let Err(e) = runner.run_until(shutdown_signal()).await {
         tracing::error!(error = %e, "runner exited with error");
         std::process::exit(1);
     }

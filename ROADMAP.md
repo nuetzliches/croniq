@@ -1,7 +1,7 @@
 # Croniq Roadmap
 
 Living punchlist of known improvements. Each item is sized for a single focused PR.
-Last reviewed: 2026-05-27.
+Last reviewed: 2026-10-24.
 
 ## Observability
 
@@ -93,3 +93,17 @@ are the deliberate gaps left for follow-up:
   a freshly-minted scoped API key. v2 scope: full code-skeleton
   generation per language (Rust / Python / Shell-runner). Issue #93
   Wish 2. ([ui/app/pages/RunnersView.vue](ui/app/pages/RunnersView.vue))
+
+## Credentials in output
+
+- **TTY-aware secret output in the Docker entrypoint** — `croniq init` and
+  `croniq quickstart` already reveal a generated secret only on a terminal and
+  otherwise write it to `$DATA_DIR/initial-credentials` (0600)
+  ([secret_output.rs](crates/croniq-cli/src/commands/secret_output.rs)). The
+  entrypoint does not use that path: it generates the admin password itself,
+  hands it to `croniq init --password`, and echoes it in a banner, so it lands
+  in `docker logs` and every log shipper attached to the container. The
+  README only tells operators to rotate it after the first login (review
+  2026-10-24, C-14). Let `croniq init` generate the password and keep it in
+  the credentials file, and print the file's path instead of the value.
+  ([docker-entrypoint.sh](docker-entrypoint.sh))

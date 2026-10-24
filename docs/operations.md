@@ -36,6 +36,33 @@ confirm the rollout has actually replaced the previous build.
 `env` is read at request time, so changing `CRONIQ_ENV` does not require a
 rebuild — just a restart.
 
+`version` is the same string `croniq-server --version`, the MCP handshake and
+alert payloads report, and it tells you which kind of build you are running:
+
+| `version` | Build |
+| --- | --- |
+| `0.49.0` | A release (tarball, Homebrew, image tag `:0.49.0` / `:latest`). |
+| `0.49.0+main.a1c20f2` | An image built from `main` (`:main`, `:<sha>`): the last release plus the commit. Anything after `+` is build metadata, so semver ranks it equal to `0.49.0`. |
+| `0.0.0-dev` | Anything else built from source: `cargo build`, devstack, `cargo install --git`. `git_sha` names the commit. |
+
+Non-release builds from 0.49.0 and earlier reported `0.4.0`.
+
+## Image tags
+
+`ghcr.io/nuetzliches/croniq` (and `croniq-server`, `croniq-ui`) is published
+under these tags:
+
+| Tag | Moves on | Use |
+| --- | --- | --- |
+| `:<version>`, `:v<version>` | never | Production. Pin this. |
+| `:latest` | every final release (no `-` in the tag) | Trying it out. Never a pre-release, never `main`. |
+| `:main` | every push to `main` | Testing unreleased fixes. Not a release. |
+| `:<commit sha>` | never | Pinning one `main` build. |
+
+Through 0.49.0, every push to `main` also moved `:latest`, so `:latest` pointed
+at whichever had run last, a release or an untagged `main` build. If you
+relied on it tracking `main`, switch to `:main`.
+
 ## HTTP hardening
 
 ### CORS
@@ -496,6 +523,42 @@ unaffected on the success path (nothing is signalled when the command exits on
 its own), but that background process is inside the group and *will* be
 terminated if the execution is cancelled or times out.
 
+### Runner shutdown, lost leases and failed acks
+
+These hold for `croniq-shell-runner`, `croniq-demo-runner` and anything built
+on the Rust runner SDK (review 2026-10-24):
+
+- **`SIGTERM` / `Ctrl-C` drain the runner.** It stops polling, gives running
+  jobs `RUNNER_DRAIN_TIMEOUT_SECS` (default 8, inside Docker's 10 s stop grace)
+  to finish, terminates the rest the way a cancel does and acks them as
+  failed ("runner shutting down"), then exits 0. Before, `docker stop` killed
+  the runner mid-job: no ack, the claims stayed `claimed` until the stale-claim
+  reaper requeued them, and outside a container the commands kept running in
+  their own process groups. Raise the drain timeout together with
+  `stop_grace_period`.
+- **A lost lease stops the job.** When a lease renewal is answered with `404`
+  or `409`, the server no longer holds the execution for this runner — the
+  claim was reaped after a network partition longer than `timeout + grace`, or
+  released at a server restart — and may already have dispatched it
+  elsewhere. The runner now terminates the command and acks the execution as
+  failed ("lease lost") instead of letting both copies run. A `403` on renewal
+  stops renewing after one error line.
+- **A failed ack is retried.** A transport error or a 5xx is retried after 1 s
+  and 2 s (three attempts); a 4xx is not. Before, one dropped connection on
+  the ack made the reaper requeue an execution that had already succeeded.
+- **Cleartext needs an opt-in.** A `CRONIQ_SERVER_URL` with `http://` and a
+  host other than `localhost`, `127.0.0.0/8` or `::1` stops the runner at
+  startup unless `CRONIQ_ALLOW_INSECURE_HTTP=1`. The API key is on every
+  request, so set it only on a network you trust, such as a Compose network.
+- **Output lines are capped.** The shell runner splits job output on `\n` and
+  on `\r`, so each redraw of a progress bar is its own line, and cuts any line
+  at 64 KiB. Before, output without newlines accumulated in memory as one
+  line until the runner ran out of memory.
+- **Job output in the runner's own log.** Every output line is also logged
+  under the tracing target `shell_runner::pipe`.
+  `RUST_LOG=info,shell_runner::pipe=off` keeps it out of the runner's log. The
+  execution's log panel still shows it.
+
 ### SMTP (`CRONIQ_SMTP_*` + `smtp {}` block)
 
 The alert `email` channel, invitation mails, and password-reset mails all
@@ -507,7 +570,9 @@ route through a single SMTP transport, assembled at boot from two layers:
    the **only** place credentials may live (the Croniqfile is a read-only
    mount, so it must never carry a password).
 
-The binary must be built with `--features smtp`. Without that feature the
+The binary must be built with `--features smtp`. The official image and the
+release binaries (tarballs, Homebrew) are; a plain `cargo build` or
+`cargo install` from source is not unless you pass the feature. Without it the
 transport degrades to a `NoopSender` that logs the recipient but sends
 nothing, and the API returns the raw invite/reset URL in its response so an
 admin can deliver it out-of-band. Boot diagnostics flag the mismatch as

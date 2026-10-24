@@ -36,15 +36,10 @@ async fn main() {
 
     tracing::info!("runner starting — press Ctrl+C to stop");
 
-    tokio::select! {
-        result = runner.start() => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "runner exited with error");
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("shutting down...");
-            runner.drain();
-        }
+    // Drains on SIGTERM / Ctrl-C: in-flight handlers finish (up to the drain
+    // timeout) and are acked before `run_until` returns. A `select!` that
+    // drops `start()` and then calls `drain()` would drain nothing.
+    if let Err(e) = runner.run_until(croniq_runner_sdk::shutdown_signal()).await {
+        tracing::error!(error = %e, "runner exited with error");
     }
 }
