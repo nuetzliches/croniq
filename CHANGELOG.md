@@ -302,6 +302,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OIDC ID tokens against the IdP's public key, so no secret value is involved.
   It is ignored in `deny.toml` with that reasoning.
 
+- **The dashboard carries its Content-Security-Policy as a meta tag too**
+  (review 2026-10-24, U-7). The policy came only as a response header from
+  croniq-server or the `croniq-ui` container, so a `dist/` served by another
+  web server ran with no CSP at all. `index.html` now holds the same policy,
+  minus `frame-ancestors`, which a meta tag cannot express. Where the header
+  is sent it still applies; the two are identical, and a unit test fails when
+  they drift.
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
   crates use for constant-time comparisons, generated masks and compared
   `u128` values in non-constant time (RUSTSEC-2026-0385); in Croniq it sits
