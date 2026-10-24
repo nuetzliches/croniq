@@ -5,13 +5,13 @@
 [versions]
 # Language / toolchain
 java = "21"
-kotlin = "2.0.21"
+kotlin = "2.4.21"
 
 # Runtime libraries
-jackson = "2.18.1"
-slf4j = "2.0.16"
-snakeyaml = "2.3"
-kotlinx-coroutines = "1.9.0"
+jackson = "2.22.4"
+slf4j = "2.0.20"
+snakeyaml = "2.7"
+kotlinx-coroutines = "1.11.0"
 
 # Spring Boot (starter module + AutoConfiguration). Tracking the latest
 # 3.x LTS line — JDK 21 baseline matches our toolchain pin.
@@ -20,15 +20,15 @@ spring-boot = "3.4.0"
 # OpenTelemetry — pinned but not yet wired in core. The otel module ships
 # in PR-7; the version lives here so PR-2..6 can reference it without
 # editing the catalog again.
-opentelemetry = "1.43.0"
+opentelemetry = "1.67.0"
 
 # Test libraries
 junit = "5.11.3"
-assertj = "3.26.3"
-wiremock = "3.9.2"
-mockito = "5.14.2"
-awaitility = "4.2.2"
-logback = "1.5.12"
+assertj = "3.27.7"
+wiremock = "3.13.2"
+mockito = "5.24.0"
+awaitility = "4.3.0"
+logback = "1.6.5"
 
 # Build / tooling plugins
 spotless = "6.25.0"
@@ -39,7 +39,7 @@ checkstyle = "10.20.1"
 # the nexus plugin only supports the legacy OSSRH UI (s01.oss.sonatype.org),
 # but new Maven Central namespaces verified after 2024-06 use the Central
 # Portal exclusively.
-maven-publish = "0.30.0"
+maven-publish = "0.37.0"
 
 [libraries]
 # --- Runtime ---
