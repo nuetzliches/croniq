@@ -664,7 +664,7 @@ pub async fn restore_queued_executions(
 ) -> usize {
     use croniq_config::compile::{ExecutionMode, execution_was_requested};
 
-    let executions = match store.find_queued_executions(&[], 1000) {
+    let executions = match store.find_queued_executions(1000) {
         Ok(execs) => execs,
         Err(e) => {
             tracing::warn!(error = %e, "could not load queued executions for restore");

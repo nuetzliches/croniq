@@ -4,8 +4,9 @@
 //! but the SQL strings are opaque `&str` to the compiler — a reserved-word
 //! collision (`window`), a JSONB/TEXT type mismatch, or a wrong `$n` binding
 //! only surfaces when the statements actually run against a server. This test
-//! drives every method of the seven traits the SQLite backend also implements
-//! so those runtime bugs are caught in CI.
+//! drives a selection of methods from each trait so those runtime bugs are
+//! caught in CI. It is not exhaustive: a method missing here has only been
+//! exercised against SQLite (`src/contract_tests.rs`).
 //!
 //! It is a no-op unless `CRONIQ_TEST_PG_URL` points at a reachable Postgres
 //! (e.g. `postgres://croniq:croniq@localhost:5432/croniq`). CI sets it against
@@ -57,7 +58,7 @@ fn pg_backend_exercises_all_traits() {
     job_definitions(&store, &s);
     trigger_definitions(&store, &s);
     calendar_definitions(&store, &s);
-    execution_logs(&store);
+    execution_logs(&store, &s);
     execution_retention(&store, &s);
     execution_job_key_search(&store, &s);
     execution_completion_cas(&store, &s);
@@ -69,6 +70,104 @@ fn pg_backend_exercises_all_traits() {
     job_alert_acks(&store, &s);
     job_failure_streaks(&store, &s);
     notes_inbox(&store, &s);
+    dead_letter_page_limit(&store, &s);
+    keyset_cursors(&store, &s);
+
+    // The user sent an invitation in `auth_invitations`; deleting them used
+    // to fail on the `invited_by` foreign key (review 2026-10-24, S-2).
+    store.users_delete(&user_id).unwrap();
+    assert!(store.users_get_by_id(&user_id).unwrap().is_none());
+}
+
+/// The `(until, until_id)` cursors of the audit log and the alert-delivery
+/// log, whose SQL reuses one `$n` twice (review 2026-10-24, S-8).
+fn keyset_cursors(store: &PgStore, s: &str) {
+    let action = format!("cursor.probe.{s}");
+    for n in 0..3 {
+        store
+            .audit_log(&AuditEvent {
+                event_id: format!("ev-{s}-{n}"),
+                actor_type: "user".into(),
+                actor_id: None,
+                action: action.clone(),
+                target_type: "job".into(),
+                target_id: None,
+                diff_json: None,
+                ip_address: None,
+                user_agent: None,
+                created_at: ts(),
+            })
+            .unwrap();
+    }
+    let page = store
+        .audit_list(&AuditFilter {
+            action: Some(action.clone()),
+            until: Some(ts()),
+            until_id: Some(format!("ev-{s}-2")),
+            ..Default::default()
+        })
+        .unwrap();
+    let ids: Vec<String> = page.into_iter().map(|e| e.event_id).collect();
+    assert_eq!(ids, vec![format!("ev-{s}-1"), format!("ev-{s}-0")]);
+
+    let job_key = format!("cursor-{s}:probe");
+    for n in 0..3 {
+        store
+            .record_alert_delivery(&AlertDelivery {
+                delivery_id: format!("dl-{s}-{n}"),
+                rule_name: "failures".into(),
+                channel_name: "ops".into(),
+                job_key: job_key.clone(),
+                execution_id: None,
+                state: AlertDeliveryState::Delivered,
+                error: None,
+                fired_at: ts(),
+                delivered_at: None,
+                kind: AlertDeliveryKind::Alert,
+            })
+            .unwrap();
+    }
+    let page = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            job_key: Some(job_key),
+            until: Some(ts()),
+            until_id: Some(format!("dl-{s}-1")),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].delivery_id, format!("dl-{s}-0"));
+}
+
+/// `list_dead_letters` clamps `limit` on Postgres as it always did on SQLite
+/// (review 2026-10-24, S-4).
+fn dead_letter_page_limit(store: &PgStore, s: &str) {
+    let job_key = format!("page-{s}:dead");
+    for _ in 0..=MAX_PAGE_LIMIT {
+        store
+            .add_dead_letter(&DeadLetter {
+                id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                job_key: job_key.clone(),
+                fire_at: ts(),
+                scheduled_for: ts(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "exhausted".into(),
+                metadata: HashMap::new(),
+                created_at: ts(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+    let page = store
+        .list_dead_letters(&DeadLetterFilter {
+            job_key: Some(job_key.clone()),
+            limit: Some(u32::MAX),
+        })
+        .unwrap();
+    assert_eq!(page.len(), MAX_PAGE_LIMIT as usize);
+    store.clear_dead_letters(Some(&job_key)).unwrap();
 }
 
 /// The notes inbox (migration 033): threads, the unread rule, the marker.
@@ -872,7 +971,7 @@ fn calendar_definitions(store: &PgStore, s: &str) {
     store
         .create_calendar(&CalendarDefinition {
             calendar_id: calendar_id.clone(),
-            name: "Holidays".into(),
+            name: format!("Holidays-{s}"),
             timezone: Some("Europe/Berlin".into()),
             rules: "[{\"skip\":\"2026-12-25\"}]".into(),
             managed_by: "api".into(),
@@ -881,7 +980,16 @@ fn calendar_definitions(store: &PgStore, s: &str) {
         })
         .unwrap();
     let got = store.get_calendar(&calendar_id).unwrap().expect("calendar");
-    assert_eq!(got.name, "Holidays");
+    assert_eq!(got.name, format!("Holidays-{s}"));
+
+    // Names are unique since migration 037 (review 2026-10-24, P-12): a
+    // second row under the name is a conflict, not a second calendar.
+    let mut twin = got.clone();
+    twin.calendar_id = format!("cal-twin-{s}");
+    assert!(matches!(
+        store.create_calendar(&twin),
+        Err(StoreError::Conflict(_))
+    ));
     assert!(got.rules.contains("2026-12-25"));
     assert!(
         store
@@ -895,8 +1003,9 @@ fn calendar_definitions(store: &PgStore, s: &str) {
     assert!(store.get_calendar(&calendar_id).unwrap().is_none());
 }
 
-fn execution_logs(store: &PgStore) {
-    let execution_id = Uuid::new_v4();
+fn execution_logs(store: &PgStore, s: &str) {
+    // Logs need a parent row since migration 038 (review 2026-10-24, S-6).
+    let execution_id = seed_execution(store, &format!("logs-{s}:probe"), None);
     // Batch of three sharing one timestamp — seq (0,1,2) is the tiebreaker.
     let entries: Vec<ExecutionLogEntry> = (0..3)
         .map(|i| ExecutionLogEntry {
@@ -932,6 +1041,21 @@ fn execution_logs(store: &PgStore) {
     );
     assert_eq!(logs[0].message, "line 0");
     assert_eq!(logs[3].message, "line 3");
+
+    // A line for an execution that does not exist (or was pruned) is
+    // rejected, as on SQLite, instead of becoming an orphan retention never
+    // deletes.
+    let orphan = ExecutionLogEntry {
+        id: Uuid::new_v4(),
+        execution_id: Uuid::new_v4(),
+        timestamp: ts(),
+        level: "info".into(),
+        message: "late line".into(),
+        fields: HashMap::new(),
+        seq: 0,
+    };
+    assert!(store.append_log(&orphan).is_err());
+    assert!(store.append_logs_batch(&[orphan]).is_err());
 }
 
 /// Seed an execution, optionally driving it to a terminal state at a chosen

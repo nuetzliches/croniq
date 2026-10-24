@@ -6,6 +6,45 @@ use crate::models::*;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+/// Upper bound on `limit` for the paged listings: dead letters, alert
+/// deliveries, notes and the audit log. Both backends clamp to it whatever
+/// the caller asks for, so an unchecked query parameter cannot pull a whole
+/// table through the store lock in one call (review 2026-10-24, S-4).
+pub const MAX_PAGE_LIMIT: u32 = 1000;
+
+/// Upper bound on [`ExecutionFilter::limit`] in
+/// [`ExecutionStore::list_executions`]. Higher than [`MAX_PAGE_LIMIT`]
+/// because the stats endpoints aggregate over up to this many runs in one
+/// read; a page served to a client should stay at the HTTP layer's own,
+/// lower cap. Before the clamp `?limit=4000000000` reached the database
+/// as-is (review 2026-10-24, S-4).
+pub const MAX_EXECUTIONS_LIMIT: u32 = 100_000;
+
+/// The [`StoreError::Conflict`] that [`CalendarDefinitionStore::create_calendar`]
+/// returns when another calendar already holds `name`.
+pub fn calendar_name_taken(name: &str) -> StoreError {
+    StoreError::Conflict(format!("calendar name '{name}' is already taken"))
+}
+
+/// What [`AuthStore::users_delete`] removes, in order, `$1` being the user id
+/// (review 2026-10-24, S-2).
+///
+/// Tables with `ON DELETE CASCADE` (TOTP, recovery codes, PATs, OIDC links,
+/// password resets, favorites, the notes marker) follow the user by
+/// themselves. These do not: `invitations.invited_by` is a plain foreign key,
+/// so deleting anyone who had ever invited someone failed with a constraint
+/// violation — which the handler dropped, answering 204 while the user stayed
+/// active and able to sign in. `password_credentials` and `refresh_tokens`
+/// carry no key at all and were left behind. The invitations the user sent go
+/// with them: a pending one from a removed account should not stay redeemable,
+/// and `invited_by` cannot be NULL. The audit log keeps the history.
+pub const USER_DELETE_STATEMENTS: &[&str] = &[
+    "DELETE FROM invitations WHERE invited_by = $1",
+    "DELETE FROM refresh_tokens WHERE user_id = $1",
+    "DELETE FROM password_credentials WHERE user_id = $1",
+    "DELETE FROM users WHERE user_id = $1",
+];
+
 /// Errors from store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -106,15 +145,17 @@ pub trait ExecutionStore {
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError>;
 
-    /// Find the next queued execution matching runner capabilities.
-    /// Returns executions ordered by fire_at (oldest first).
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError>;
+    /// Up to `limit` queued executions, oldest `fire_at` first.
+    ///
+    /// Took a runner's capabilities until review 2026-10-24 (S-9) and
+    /// filtered `__require` after fetching `limit * 4` rows, so a runner
+    /// behind more than that many older rows it could not serve got nothing.
+    /// No caller ever passed capabilities (dispatch matches them on its own
+    /// queue), so the filter was dead code with a starvation bug and is gone.
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError>;
 
-    /// List executions with optional filters.
+    /// List executions with optional filters. `limit` defaults to 100 and is
+    /// clamped to [`MAX_EXECUTIONS_LIMIT`].
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError>;
 
     /// List `claimed` executions whose `claimed_at` is at or before `cutoff`,
@@ -333,7 +374,8 @@ pub trait DeadLetterStore {
     /// Get a dead letter by ID.
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError>;
 
-    /// List dead letters.
+    /// List dead letters. `limit` defaults to 100 and is clamped to
+    /// [`MAX_PAGE_LIMIT`].
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError>;
     /// How many dead letters match, ignoring any page limit.
     ///
@@ -463,6 +505,8 @@ pub trait AuthStore {
     fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError>;
     fn users_list(&self) -> Result<Vec<User>, StoreError>;
     fn users_update(&self, user: &User) -> Result<(), StoreError>;
+    /// Delete a user together with everything that only exists for them,
+    /// in one transaction: see [`USER_DELETE_STATEMENTS`].
     fn users_delete(&self, user_id: &str) -> Result<(), StoreError>;
     fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
     /// Count active users with role=admin. Used by user_update / user_delete to
@@ -598,6 +642,10 @@ pub trait TriggerDefinitionStore {
 
 /// Calendar definition persistence.
 pub trait CalendarDefinitionStore {
+    /// Insert a calendar, or replace the row with the same `calendar_id`.
+    ///
+    /// Names are unique (migration 037): a name another row already holds
+    /// fails with [`StoreError::Conflict`], built by [`calendar_name_taken`].
     fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError>;
     fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError>;
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError>;
@@ -626,13 +674,17 @@ pub trait DslAdoptionStore {
 /// each rule fire so operators (and the future Alerts UI tab) can
 /// see what fired, when, and whether delivery succeeded.
 pub trait AlertStore {
-    /// Insert a delivery row. Idempotent on `delivery_id` (PRIMARY KEY)
-    /// — re-inserting the same id with the same payload is a no-op,
-    /// re-inserting with different payload is an error.
+    /// Insert a delivery row. Idempotent on `delivery_id` (PRIMARY KEY): a
+    /// second insert under an id that exists is a no-op, whatever its
+    /// payload — the first write wins, on both backends. There is no update;
+    /// the evaluator writes every delivery once, under a fresh UUID. (This
+    /// used to promise an error for a differing payload, which neither
+    /// backend ever raised; review 2026-10-24, S-10.)
     fn record_alert_delivery(&self, delivery: &AlertDelivery) -> Result<(), StoreError>;
 
-    /// List recent deliveries, newest first. Used by the future Alerts
-    /// tab and an admin diagnostic endpoint.
+    /// List recent deliveries, newest first. Used by the Alerts tab and an
+    /// admin diagnostic endpoint. `limit` defaults to 200 and is clamped to
+    /// [`MAX_PAGE_LIMIT`].
     fn list_alert_deliveries(
         &self,
         filter: &AlertDeliveryFilter,
@@ -774,7 +826,8 @@ pub trait NoteStore {
 
     fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError>;
 
-    /// Notes matching `filter`, newest first. `limit` defaults to 100.
+    /// Notes matching `filter`, newest first. `limit` defaults to 100 and is
+    /// clamped to [`MAX_PAGE_LIMIT`].
     fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError>;
 
     /// Returns `Ok(true)` when a row was removed, `Ok(false)` when none existed.

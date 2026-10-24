@@ -291,7 +291,12 @@ pub async fn handle_delete(
             Err(s) => return s,
         }
     }
-    let _ = store.users_delete(&user_id);
+    // A failed delete is a 500, not a 204 with a `user.deleted` audit row for
+    // a user who is still there and can still sign in (review 2026-10-24, S-2).
+    if let Err(e) = store.users_delete(&user_id) {
+        tracing::warn!(user_id = %user_id, error = %e, "user delete failed");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
     audit::record(store, &ctx, "user.deleted", "user", Some(&user_id), None);
     StatusCode::NO_CONTENT
 }

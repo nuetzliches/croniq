@@ -613,6 +613,12 @@ pub struct AuditFilter {
     pub target_id: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// Second half of the cursor, as in [`ExecutionFilter::until_id`]: with
+    /// it `until` is strict and ties are broken by `event_id`, without it
+    /// `until` stays inclusive. One request writes several audit rows with
+    /// the same timestamp, and an inclusive bound cannot get past a tie group
+    /// larger than `limit` (review 2026-10-24, S-8).
+    pub until_id: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -818,6 +824,13 @@ pub struct AlertDeliveryFilter {
     pub job_key: Option<String>,
     pub rule_name: Option<String>,
     pub since: Option<DateTime<Utc>>,
+    /// Upper bound on `fired_at`, inclusive unless `until_id` is set — the
+    /// keyset cursor of [`ExecutionFilter`], so a client can page past the
+    /// newest `limit` rows at all (review 2026-10-24, S-8).
+    pub until: Option<DateTime<Utc>>,
+    /// Second half of the cursor: with it `until` is strict and ties are
+    /// broken by `delivery_id`.
+    pub until_id: Option<String>,
     pub limit: Option<u32>,
 }
 

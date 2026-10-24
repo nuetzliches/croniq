@@ -86,6 +86,11 @@ pub struct ListDeliveriesQuery {
     /// know when their filter has a typo.
     pub state: Option<String>,
     pub since: Option<DateTime<Utc>>,
+    /// Upper bound on `fired_at`; inclusive unless `until_id` is given.
+    pub until: Option<DateTime<Utc>>,
+    /// With `until`, the `delivery_id` of the last row seen: the next page
+    /// then starts strictly after it (review 2026-10-24, S-8).
+    pub until_id: Option<String>,
     /// Maximum rows to return. Capped server-side at 500 so a typo
     /// (`limit=999999`) can't pull the entire delivery log.
     pub limit: Option<u32>,
@@ -115,6 +120,8 @@ pub async fn handle_list_deliveries(
         job_key: q.job_key,
         rule_name: q.rule_name,
         since: q.since,
+        until: q.until,
+        until_id: q.until_id,
         limit: Some(q.limit.unwrap_or(100).min(500)),
     };
     let mut deliveries = store

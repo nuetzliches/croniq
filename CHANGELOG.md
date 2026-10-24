@@ -41,6 +41,61 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared `croniq_refresh` name; it now stops the boot like any other unusable
   name. `croniq-server doctor` reports an unusable name as a critical finding
   instead of calling a configuration healthy that the next start refuses.
+- **A migration interrupted half-way no longer stops every later boot**
+  (review 2026-10-24, S-1). SQLite migrations ran statement by statement, and
+  SQLite has no `ADD COLUMN IF NOT EXISTS`: a process killed between two
+  `ALTER TABLE`s of one migration kept the first column but not the record, so
+  the next start replayed the migration into `duplicate column name` and
+  failed for good. Each migration now commits together with its record, on
+  SQLite and on Postgres, so it is applied whole or not at all.
+- **One malformed database row no longer takes the whole server down**
+  (review 2026-10-24, S-5). The SQLite store panicked on a timestamp that is
+  not RFC 3339 (such as `datetime('now')`'s `2026-01-01 00:00:00`) or on an id
+  that is not a UUID, with the connection mutex held. The mutex was then
+  poisoned and every later store call panicked too — scheduler, watchdog and
+  every API route — until a restart, after which the same row did it again.
+  Such a row now fails only the call that reads it, with an error naming the
+  value, and a panic under the lock no longer poisons the store on either
+  backend. On Postgres a panicking call no longer ends the store thread.
+- **The per-job concurrency guard no longer scans the job's whole history**
+  (review 2026-10-24, S-3). Every poll that offers a `singleton` or
+  `max_concurrent` job counts the job's claimed runs, under the queue lock.
+  That count walked every execution the job ever had, so a job with a long
+  history and no retention slowed every poll. Migration 036 adds a partial
+  index over queued and claimed runs, on SQLite and Postgres, and the count
+  now reads only that.
+- **The store clamps every listing's `limit`** (review 2026-10-24, S-4).
+  `list_executions` took any `limit` as-is on both backends, so
+  `?limit=4000000000` read the entire history in one call with the store lock
+  held; it is now clamped to 100 000, the most the stats endpoints aggregate
+  over. Dead letters, alert deliveries and notes are clamped to 1 000 on both
+  backends — dead letters had been clamped on SQLite only. This is a backstop
+  behind the HTTP handlers' own, lower limits.
+- **Postgres no longer keeps log lines of executions that do not exist**
+  (review 2026-10-24, S-6). On SQLite a log line has always had to name an
+  existing execution; on Postgres it did not, so a runner's late log batch for
+  a run that retention had already pruned was stored, and retention, which
+  deletes only the logs of the runs it prunes, never removed it. Migration 038
+  deletes such orphans and adds the missing foreign key; a late batch is now
+  rejected on both backends.
+- **Calendar names are unique** (review 2026-10-24, P-12). Triggers refer to a
+  calendar by name, but two API calendars could share one, and which of them
+  gated a trigger then depended on read order. `POST /v1/calendars`, a rename
+  through `PUT /v1/calendars/{id}`, and adopting a Croniqfile calendar whose
+  name an API calendar already holds now answer `409` with
+  `error: name_taken`. Migration 037 adds a unique index; a database that
+  already holds duplicates keeps the oldest row under the name (and with it
+  every trigger naming it) and renames the others to
+  `<name> (duplicate <calendar_id>)`, so they stay visible and can be checked
+  and deleted.
+- **The audit log and the alert-delivery log page past same-instant rows**
+  (review 2026-10-24, S-8). `GET /v1/audit` paged by an inclusive `until`
+  alone, so a group of events sharing one timestamp that was larger than
+  `limit` — one request writes several — returned the same page forever.
+  `GET /v1/alerts/deliveries` had no cursor at all. Both now take
+  `until` plus `until_id` (the `event_id` / `delivery_id` of the last row
+  seen), the keyset cursor `GET /v1/executions` has had since #654; without
+  `until_id`, `until` keeps its inclusive meaning.
 
 - **A schedule the server cannot run is refused when it is written** (review
   2026-10-24, P-6). `POST /v1/schedules {"cron_expression": "jeden Tag"}`
@@ -146,6 +201,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **undici 8.12.3 in the dashboard's build tree; RUSTSEC-2026-0387 assessed.**
+  `npm audit` flagged three undici advisories (GHSA-4qv8-2p9j-2685,
+  GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c) in a build-time dependency of
+  `ui/`; nothing of it ships in the dashboard bundle. `crypto-bigint` 0.5.5
+  (RUSTSEC-2026-0387, non-constant-time arithmetic) has no patched 0.5
+  release; Croniq reaches it only through `jsonwebtoken`'s EC verification of
+  OIDC ID tokens against the IdP's public key, so no secret value is involved.
+  It is ignored in `deny.toml` with that reasoning.
+
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
   crates use for constant-time comparisons, generated masks and compared
   `u128` values in non-constant time (RUSTSEC-2026-0385); in Croniq it sits
@@ -154,6 +218,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including one that was closed or owned elsewhere (RUSTSEC-2026-0386, an
   unsoundness advisory); Croniq does not construct an `AsyncFd` itself.
   Lockfile only; no manifest change.
+- **Deleting a user who had sent an invitation now deletes them** (review
+  2026-10-24, S-2). The delete failed on the invitation's reference to its
+  sender, and `DELETE /v1/users/{id}` ignored the failure: it answered `204`
+  and wrote `user.deleted` to the audit log while the account stayed active
+  and could still sign in. The store now removes the user in one transaction
+  together with their password credentials, refresh tokens and the
+  invitations they sent (a pending invitation from a removed account is no
+  longer redeemable); other per-user data already followed. A delete that
+  fails is now a `500`.
 
 ## [0.49.0] - 2026-10-22
 

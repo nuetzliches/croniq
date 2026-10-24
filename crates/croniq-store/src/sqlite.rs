@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params, params_from_iter};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
 /// SQLite-backed store.
@@ -40,6 +40,16 @@ impl SqliteStore {
             conn: Mutex::new(conn),
         })
     }
+
+    /// The connection, also after a panic while it was held (review
+    /// 2026-10-24, S-5). Poisoning protects no in-memory invariant here: the
+    /// state lives in the database, a write that runs in a transaction rolls
+    /// back when its guard drops during the unwind, and a restart would not
+    /// repair anything else either. Propagating the poison only turned one
+    /// bad call into a dead store for the rest of the process.
+    fn lock(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|p| p.into_inner())
+    }
 }
 
 // ─── Helpers ───
@@ -52,14 +62,48 @@ fn opt_dt_to_sql(dt: &Option<DateTime<Utc>>) -> Option<String> {
     dt.map(|d| d.to_rfc3339())
 }
 
-fn sql_to_dt(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .expect("invalid datetime in DB")
-        .with_timezone(&Utc)
+// Row parsing fails with an error, never a panic (review 2026-10-24, S-5).
+// Every mapper runs with the connection mutex held: an `expect` on a timestamp
+// in `datetime('now')` form (`2026-01-01 00:00:00`) or on a hand-edited UUID
+// used to poison the mutex, and every later store call — scheduler, watchdog,
+// every API route — panicked on it until the process restarted.
+
+/// A value in column `idx` that does not parse as `what`.
+fn bad_column(idx: usize, what: &str, value: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        idx,
+        rusqlite::types::Type::Text,
+        format!("invalid {what} in DB: {value:?}").into(),
+    )
 }
 
-fn sql_to_opt_dt(s: Option<String>) -> Option<DateTime<Utc>> {
-    s.map(|v| sql_to_dt(&v))
+fn parse_dt(idx: usize, s: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| bad_column(idx, "datetime", s))
+}
+
+fn parse_opt_dt(idx: usize, s: Option<String>) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    s.map(|v| parse_dt(idx, &v)).transpose()
+}
+
+fn parse_uuid(idx: usize, s: &str) -> rusqlite::Result<Uuid> {
+    Uuid::parse_str(s).map_err(|_| bad_column(idx, "UUID", s))
+}
+
+/// The RFC 3339 timestamp in column `idx`.
+fn dt_col(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<DateTime<Utc>> {
+    parse_dt(idx, &row.get::<_, String>(idx)?)
+}
+
+/// The nullable RFC 3339 timestamp in column `idx`.
+fn opt_dt_col(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    parse_opt_dt(idx, row.get(idx)?)
+}
+
+/// The UUID in column `idx`.
+fn uuid_col(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<Uuid> {
+    parse_uuid(idx, &row.get::<_, String>(idx)?)
 }
 
 fn map_err(e: rusqlite::Error) -> StoreError {
@@ -70,7 +114,7 @@ fn map_err(e: rusqlite::Error) -> StoreError {
 
 impl JobStore for SqliteStore {
     fn get_job_state(&self, job_key: &str) -> Result<Option<JobState>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT job_key, next_fire_at, last_fired_at, fire_count, status, updated_at FROM job_states WHERE job_key = ?1")
             .map_err(map_err)?;
@@ -79,11 +123,11 @@ impl JobStore for SqliteStore {
             .query_row(params![job_key], |row| {
                 Ok(JobState {
                     job_key: row.get(0)?,
-                    next_fire_at: sql_to_opt_dt(row.get(1)?),
-                    last_fired_at: sql_to_opt_dt(row.get(2)?),
+                    next_fire_at: opt_dt_col(row, 1)?,
+                    last_fired_at: opt_dt_col(row, 2)?,
                     fire_count: row.get::<_, i64>(3)? as u64,
                     status: parse_job_status(&row.get::<_, String>(4)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    updated_at: dt_col(row, 5)?,
                 })
             })
             .optional()
@@ -93,12 +137,12 @@ impl JobStore for SqliteStore {
     }
 
     fn upsert_job_state(&self, state: &JobState) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         upsert_job_state_with(&conn, state)
     }
 
     fn list_job_states(&self) -> Result<Vec<JobState>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT job_key, next_fire_at, last_fired_at, fire_count, status, updated_at FROM job_states ORDER BY job_key")
             .map_err(map_err)?;
@@ -107,11 +151,11 @@ impl JobStore for SqliteStore {
             .query_map([], |row| {
                 Ok(JobState {
                     job_key: row.get(0)?,
-                    next_fire_at: sql_to_opt_dt(row.get(1)?),
-                    last_fired_at: sql_to_opt_dt(row.get(2)?),
+                    next_fire_at: opt_dt_col(row, 1)?,
+                    last_fired_at: opt_dt_col(row, 2)?,
                     fire_count: row.get::<_, i64>(3)? as u64,
                     status: parse_job_status(&row.get::<_, String>(4)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    updated_at: dt_col(row, 5)?,
                 })
             })
             .map_err(map_err)?;
@@ -120,7 +164,7 @@ impl JobStore for SqliteStore {
     }
 
     fn list_register_fires(&self) -> Result<Vec<JobRegisterFire>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT job_key, config_hash, fired_at FROM job_register_fires ORDER BY job_key",
@@ -132,7 +176,7 @@ impl JobStore for SqliteStore {
                 Ok(JobRegisterFire {
                     job_key: row.get(0)?,
                     config_hash: row.get(1)?,
-                    fired_at: sql_to_dt(&row.get::<_, String>(2)?),
+                    fired_at: dt_col(row, 2)?,
                 })
             })
             .map_err(map_err)?;
@@ -141,7 +185,7 @@ impl JobStore for SqliteStore {
     }
 
     fn upsert_register_fire(&self, record: &JobRegisterFire) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO job_register_fires (job_key, config_hash, fired_at)
              VALUES (?1, ?2, ?3)
@@ -159,7 +203,7 @@ impl JobStore for SqliteStore {
     }
 
     fn delete_register_fire(&self, job_key: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM job_register_fires WHERE job_key = ?1",
             params![job_key],
@@ -169,7 +213,7 @@ impl JobStore for SqliteStore {
     }
 
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM job_states WHERE job_key = ?1",
             params![job_key],
@@ -183,7 +227,7 @@ impl JobStore for SqliteStore {
 
 impl ExecutionStore for SqliteStore {
     fn create_execution(&self, exec: &Execution) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         insert_execution_with(&conn, exec)
     }
 
@@ -192,7 +236,7 @@ impl ExecutionStore for SqliteStore {
         exec: &Execution,
         job_state: &JobState,
     ) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         insert_execution_with(&tx, exec)?;
         upsert_job_state_with(&tx, job_state)?;
@@ -201,7 +245,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn get_execution(&self, id: Uuid) -> Result<Option<Execution>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE id = ?1")
             .map_err(map_err)?;
@@ -217,7 +261,7 @@ impl ExecutionStore for SqliteStore {
         runner_id: &str,
         now: DateTime<Utc>,
     ) -> Result<Execution, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = conn
             .execute(
                 "UPDATE executions SET state = 'claimed', runner_id = ?1, claimed_at = ?2, started_at = ?2 WHERE id = ?3 AND state = 'queued'",
@@ -247,7 +291,7 @@ impl ExecutionStore for SqliteStore {
         dead_reason: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = conn
             .execute(
                 "UPDATE executions SET state = ?1, completed_at = ?2, duration_ms = ?3, error = ?4, dead_reason = ?5 WHERE id = ?6 AND state = 'claimed' AND (?7 IS NULL OR runner_id = ?7)",
@@ -265,50 +309,19 @@ impl ExecutionStore for SqliteStore {
         Ok(affected > 0)
     }
 
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError> {
-        let conn = self.conn.lock().unwrap();
-        // Fetch more than limit to allow for post-filtering by capabilities.
-        // If capabilities is empty, all executions match (no filtering needed).
-        let fetch_limit = if capabilities.is_empty() {
-            limit
-        } else {
-            limit * 4
-        };
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError> {
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
             .map_err(map_err)?;
-
         let rows = stmt
-            .query_map(params![fetch_limit], row_to_execution)
+            .query_map(params![limit], row_to_execution)
             .map_err(map_err)?;
-
-        let all: Vec<Execution> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
-
-        if capabilities.is_empty() {
-            return Ok(all);
-        }
-
-        // Post-filter: execution matches if its __require caps are all present in runner capabilities
-        Ok(all
-            .into_iter()
-            .filter(|exec| {
-                let require: Vec<String> = exec
-                    .metadata
-                    .get("__require")
-                    .and_then(|v| serde_json::from_str(v).ok())
-                    .unwrap_or_default();
-                require.iter().all(|req| capabilities.contains(req))
-            })
-            .take(limit as usize)
-            .collect())
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut sql = String::from(
             "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE 1=1",
         );
@@ -389,7 +402,7 @@ impl ExecutionStore for SqliteStore {
         // to the other.
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
-        let limit = filter.limit.unwrap_or(100);
+        let limit = filter.limit.unwrap_or(100).min(MAX_EXECUTIONS_LIMIT);
         param_values.push(Box::new(limit));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
@@ -409,7 +422,7 @@ impl ExecutionStore for SqliteStore {
         cutoff: DateTime<Utc>,
         limit: u32,
     ) -> Result<Vec<Execution>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // claimed_at is RFC 3339 text, which compares lexicographically in
         // chronological order (same trick as the since/until filters in
         // list_executions). NULL claimed_at sorts first in ASC, matching the
@@ -437,7 +450,7 @@ impl ExecutionStore for SqliteStore {
         idempotency_key: &str,
         window_start: DateTime<Utc>,
     ) -> Result<Option<Execution>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // created_at is stored as RFC 3339 text, which compares
         // lexicographically in chronological order (same trick as the
         // since/until filters in list_executions).
@@ -465,16 +478,13 @@ impl ExecutionStore for SqliteStore {
         runner_id: &str,
         _now: DateTime<Utc>,
     ) -> Result<Vec<Uuid>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT id FROM executions WHERE runner_id = ?1 AND state = 'claimed'")
             .map_err(map_err)?;
 
         let ids: Vec<Uuid> = stmt
-            .query_map(params![runner_id], |row| {
-                let id_str: String = row.get(0)?;
-                Ok(Uuid::parse_str(&id_str).unwrap())
-            })
+            .query_map(params![runner_id], |row| uuid_col(row, 0))
             .map_err(map_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_err)?;
@@ -491,7 +501,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn requeue_if_claimed(&self, id: Uuid, _now: DateTime<Utc>) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = conn
             .execute(
                 "UPDATE executions SET state = 'queued', runner_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = ?1 AND state = 'claimed'",
@@ -502,7 +512,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE executions SET state = 'cancelled', completed_at = ?1 WHERE id = ?2 AND state IN ('queued', 'claimed')",
             params![dt_to_sql(&now), id.to_string()],
@@ -512,7 +522,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn count_by_state(&self) -> Result<HashMap<ExecutionState, u64>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT state, COUNT(*) FROM executions GROUP BY state")
             .map_err(map_err)?;
@@ -541,11 +551,12 @@ impl ExecutionStore for SqliteStore {
         if states.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let placeholders: Vec<String> = (0..states.len()).map(|i| format!("?{}", i + 2)).collect();
         let sql = format!(
-            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN ({})",
-            placeholders.join(", ")
+            "SELECT COUNT(*) FROM executions WHERE job_key = ?1 AND state IN ({}){}",
+            placeholders.join(", "),
+            inflight_index_term(states)
         );
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
 
@@ -571,7 +582,7 @@ impl ExecutionStore for SqliteStore {
         if states.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let placeholders: Vec<String> = (0..states.len()).map(|i| format!("?{}", i + 2)).collect();
         let sql = format!(
             "SELECT COUNT(*) FROM executions WHERE concurrency_group = ?1 AND state IN ({})",
@@ -594,7 +605,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn job_execution_metrics(&self) -> Result<Vec<JobExecutionMetrics>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
 
         // Cumulative duration-bucket columns are generated from the shared
         // boundary list so the SQL and the Prometheus renderer can't drift.
@@ -637,7 +648,7 @@ impl ExecutionStore for SqliteStore {
                     cancelled: row.get::<_, i64>(4)? as u64,
                     duration_count: row.get::<_, i64>(5)? as u64,
                     duration_sum_ms: row.get::<_, i64>(6)?,
-                    last_run_at: sql_to_opt_dt(row.get::<_, Option<String>>(7)?),
+                    last_run_at: opt_dt_col(row, 7)?,
                     duration_buckets,
                 })
             })
@@ -647,7 +658,7 @@ impl ExecutionStore for SqliteStore {
     }
 
     fn job_runtime_since(&self, since: DateTime<Utc>) -> Result<Vec<JobRuntime>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             // The lower median wait: row `(n + 1) / 2` of each job's waits in
             // ascending order — what Postgres' `percentile_disc(0.5)` picks.
@@ -715,7 +726,7 @@ impl ExecutionStore for SqliteStore {
         cutoff: DateTime<Utc>,
         limit: u32,
     ) -> Result<u64, StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         let cutoff_s = dt_to_sql(&cutoff);
         // Child logs first: `execution_logs` has an enforced FK to
@@ -751,7 +762,7 @@ impl ExecutionStore for SqliteStore {
         keep_last: u32,
         limit: u32,
     ) -> Result<u64, StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         // Keep the newest `keep_last` terminal rows (OFFSET), delete up to
         // `limit` older ones. Child logs first (see `prune_executions_older_than`).
@@ -782,7 +793,7 @@ impl ExecutionStore for SqliteStore {
 
 impl RunnerStore for SqliteStore {
     fn upsert_runner(&self, runner: &Runner) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let caps = serde_json::to_string(&runner.capabilities).unwrap();
         let inflight = serde_json::to_string(&runner.inflight).unwrap();
         conn.execute(
@@ -809,7 +820,7 @@ impl RunnerStore for SqliteStore {
     }
 
     fn get_runner(&self, runner_id: &str) -> Result<Option<Runner>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners WHERE runner_id = ?1")
             .map_err(map_err)?;
@@ -820,7 +831,7 @@ impl RunnerStore for SqliteStore {
     }
 
     fn list_runners(&self) -> Result<Vec<Runner>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners ORDER BY runner_id")
             .map_err(map_err)?;
@@ -831,7 +842,7 @@ impl RunnerStore for SqliteStore {
     }
 
     fn remove_runner(&self, runner_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM runners WHERE runner_id = ?1",
             params![runner_id],
@@ -846,7 +857,7 @@ impl RunnerStore for SqliteStore {
         inflight: &[Uuid],
         now: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let inflight_json = serde_json::to_string(&inflight).unwrap();
         conn.execute(
             "UPDATE runners SET last_poll_at = ?1, inflight = ?2, status = 'online' WHERE runner_id = ?3",
@@ -866,7 +877,7 @@ impl RunnerStore for SqliteStore {
         // atomic with respect to other callers of this store: a second
         // credential racing the first poll of a `runner_id` reads back the
         // winner's owner instead of overwriting it.
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO runner_identities (runner_id, owner_id, bound_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(runner_id) DO NOTHING",
@@ -882,7 +893,7 @@ impl RunnerStore for SqliteStore {
     }
 
     fn runner_identity_owner(&self, runner_id: &str) -> Result<Option<String>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.query_row(
             "SELECT owner_id FROM runner_identities WHERE runner_id = ?1",
             params![runner_id],
@@ -893,7 +904,7 @@ impl RunnerStore for SqliteStore {
     }
 
     fn runner_identity_release(&self, runner_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM runner_identities WHERE runner_id = ?1",
             params![runner_id],
@@ -907,7 +918,7 @@ impl RunnerStore for SqliteStore {
 
 impl DeadLetterStore for SqliteStore {
     fn add_dead_letter(&self, dl: &DeadLetter) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         insert_dead_letter_with(&conn, dl)
     }
 
@@ -920,7 +931,7 @@ impl DeadLetterStore for SqliteStore {
         dead_letter: &DeadLetter,
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         let updated = update_to_dead_with(
             &tx,
@@ -946,7 +957,7 @@ impl DeadLetterStore for SqliteStore {
         dead_letter_id: Uuid,
         execution: &Execution,
     ) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         let affected = tx
             .execute(
@@ -966,7 +977,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE id = ?1")
             .map_err(map_err)?;
@@ -977,7 +988,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut sql = String::from(
             "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at, scheduled_for FROM dead_letters WHERE 1=1",
         );
@@ -990,7 +1001,7 @@ impl DeadLetterStore for SqliteStore {
         }
 
         sql.push_str(" ORDER BY created_at DESC");
-        let limit = filter.limit.unwrap_or(100).min(1000);
+        let limit = filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT);
         param_values.push(Box::new(limit));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
@@ -1005,7 +1016,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn count_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let count: i64 = match job_key {
             Some(key) => conn.query_row(
                 "SELECT COUNT(1) FROM dead_letters WHERE job_key = ?1",
@@ -1019,7 +1030,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM dead_letters WHERE id = ?1",
             params![id.to_string()],
@@ -1032,7 +1043,7 @@ impl DeadLetterStore for SqliteStore {
         if ids.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!("DELETE FROM dead_letters WHERE id IN ({placeholders})");
         let affected = conn
@@ -1042,7 +1053,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn clear_dead_letters(&self, job_key: Option<&str>) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = match job_key {
             Some(jk) => conn
                 .execute("DELETE FROM dead_letters WHERE job_key = ?1", params![jk])
@@ -1055,7 +1066,7 @@ impl DeadLetterStore for SqliteStore {
     }
 
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = conn
             .execute(
                 "DELETE FROM dead_letters WHERE expires_at IS NOT NULL AND expires_at <= ?1",
@@ -1070,7 +1081,7 @@ impl DeadLetterStore for SqliteStore {
 
 impl AuthStore for SqliteStore {
     fn create_client(&self, client: &ApiClient) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let scopes = serde_json::to_string(&client.scopes).unwrap_or_default();
         conn.execute(
             "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at, managed_by)
@@ -1082,7 +1093,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn get_client(&self, client_id: &str) -> Result<Option<ApiClient>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients WHERE client_id = ?1")
             .map_err(map_err)?
             .query_row(params![client_id], |row| {
@@ -1092,7 +1103,7 @@ impl AuthStore for SqliteStore {
                     name: row.get(1)?,
                     scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
                     is_active: row.get::<_, bool>(3)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    created_at: dt_col(row, 4)?,
                     managed_by: row.get(5)?,
                 })
             })
@@ -1101,7 +1112,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT client_id, name, scopes, is_active, created_at, managed_by FROM api_clients ORDER BY name").map_err(map_err)?;
         let rows = stmt
             .query_map([], |row| {
@@ -1111,7 +1122,7 @@ impl AuthStore for SqliteStore {
                     name: row.get(1)?,
                     scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
                     is_active: row.get::<_, bool>(3)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    created_at: dt_col(row, 4)?,
                     managed_by: row.get(5)?,
                 })
             })
@@ -1120,7 +1131,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn delete_client(&self, client_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM api_keys WHERE client_id = ?1",
             params![client_id],
@@ -1135,7 +1146,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn create_api_key(&self, key: &ApiKey) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO api_keys (key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![key.key_id, key.client_id, key.key_hash, key.key_prefix, opt_dt_to_sql(&key.expires_at), opt_dt_to_sql(&key.revoked_at), dt_to_sql(&key.created_at)],
@@ -1144,7 +1155,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at
                FROM api_keys WHERE key_hash = ?1
@@ -1159,9 +1170,9 @@ impl AuthStore for SqliteStore {
                 client_id: row.get(1)?,
                 key_hash: row.get(2)?,
                 key_prefix: row.get(3)?,
-                expires_at: sql_to_opt_dt(row.get(4)?),
-                revoked_at: sql_to_opt_dt(row.get(5)?),
-                created_at: sql_to_dt(&row.get::<_, String>(6)?),
+                expires_at: opt_dt_col(row, 4)?,
+                revoked_at: opt_dt_col(row, 5)?,
+                created_at: dt_col(row, 6)?,
             })
         })
         .optional()
@@ -1169,7 +1180,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE api_keys SET revoked_at = ?1 WHERE key_id = ?2",
             params![dt_to_sql(&now), key_id],
@@ -1179,7 +1190,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn restore_api_key(&self, key_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE api_keys SET revoked_at = NULL, expires_at = NULL WHERE key_id = ?1",
             params![key_id],
@@ -1193,7 +1204,7 @@ impl AuthStore for SqliteStore {
         key_id: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE api_keys SET expires_at = ?1 WHERE key_id = ?2",
             params![expires_at.as_ref().map(dt_to_sql), key_id],
@@ -1203,7 +1214,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE client_id = ?1 ORDER BY created_at DESC").map_err(map_err)?;
         let rows = stmt
             .query_map(params![client_id], |row| {
@@ -1212,9 +1223,9 @@ impl AuthStore for SqliteStore {
                     client_id: row.get(1)?,
                     key_hash: row.get(2)?,
                     key_prefix: row.get(3)?,
-                    expires_at: sql_to_opt_dt(row.get(4)?),
-                    revoked_at: sql_to_opt_dt(row.get(5)?),
-                    created_at: sql_to_dt(&row.get::<_, String>(6)?),
+                    expires_at: opt_dt_col(row, 4)?,
+                    revoked_at: opt_dt_col(row, 5)?,
+                    created_at: dt_col(row, 6)?,
                 })
             })
             .map_err(map_err)?;
@@ -1222,7 +1233,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT user_id, username, password_hash, failed_attempts, locked_until, created_at FROM password_credentials WHERE username = ?1")
             .map_err(map_err)?
             .query_row(params![username], |row| {
@@ -1231,8 +1242,8 @@ impl AuthStore for SqliteStore {
                     username: row.get(1)?,
                     password_hash: row.get(2)?,
                     failed_attempts: row.get::<_, u32>(3)?,
-                    locked_until: sql_to_opt_dt(row.get(4)?),
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    locked_until: opt_dt_col(row, 4)?,
+                    created_at: dt_col(row, 5)?,
                 })
             })
             .optional()
@@ -1240,7 +1251,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn upsert_credentials(&self, cred: &PasswordCredential) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, locked_until, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -1251,7 +1262,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO refresh_tokens (token_hash, client_id, user_id, expires_at, revoked_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![token.token_hash, token.client_id, token.user_id, dt_to_sql(&token.expires_at), opt_dt_to_sql(&token.revoked_at), dt_to_sql(&token.created_at)],
@@ -1260,7 +1271,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT token_hash, client_id, user_id, expires_at, revoked_at, created_at FROM refresh_tokens WHERE token_hash = ?1 AND revoked_at IS NULL")
             .map_err(map_err)?
             .query_row(params![token_hash], |row| {
@@ -1268,9 +1279,9 @@ impl AuthStore for SqliteStore {
                     token_hash: row.get(0)?,
                     client_id: row.get(1)?,
                     user_id: row.get(2)?,
-                    expires_at: sql_to_dt(&row.get::<_, String>(3)?),
-                    revoked_at: sql_to_opt_dt(row.get(4)?),
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    expires_at: dt_col(row, 3)?,
+                    revoked_at: opt_dt_col(row, 4)?,
+                    created_at: dt_col(row, 5)?,
                 })
             })
             .optional()
@@ -1278,7 +1289,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn refresh_token_is_known(&self, token_hash: &str) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(1) FROM refresh_tokens WHERE token_hash = ?1",
@@ -1290,7 +1301,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE refresh_tokens SET revoked_at = ?1 WHERE token_hash = ?2",
             params![dt_to_sql(&now), token_hash],
@@ -1300,7 +1311,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_create(&self, user: &User) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO users (user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -1327,7 +1338,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE user_id = ?1")
             .map_err(map_err)?
             .query_row(params![user_id], map_user_row)
@@ -1336,7 +1347,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE username = ?1")
             .map_err(map_err)?
             .query_row(params![username], map_user_row)
@@ -1345,7 +1356,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_list(&self) -> Result<Vec<User>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY username")
             .map_err(map_err)?;
@@ -1361,14 +1372,17 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_delete(&self, user_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM users WHERE user_id = ?1", params![user_id])
-            .map_err(map_err)?;
-        Ok(())
+        let mut conn = self.lock();
+        let tx = conn.transaction().map_err(map_err)?;
+        for sql in USER_DELETE_STATEMENTS {
+            tx.execute(&sql.replace("$1", "?1"), params![user_id])
+                .map_err(map_err)?;
+        }
+        tx.commit().map_err(map_err)
     }
 
     fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE users SET last_login_at = ?1, updated_at = ?1 WHERE user_id = ?2",
             params![dt_to_sql(&at), user_id],
@@ -1378,7 +1392,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_count_active_admins(&self) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1",
@@ -1390,7 +1404,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_token_generation(&self, user_id: &str) -> Result<Option<i64>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.query_row(
             "SELECT token_generation FROM users WHERE user_id = ?1",
             [user_id],
@@ -1404,7 +1418,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn users_bump_token_generation(&self, user_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // Read-modify-write in one statement so two concurrent bumps (a reset
         // racing a deactivation) cannot land on the same value.
         conn.execute(
@@ -1416,7 +1430,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO invitations (invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -1436,7 +1450,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE invitation_id = ?1")
             .map_err(map_err)?
             .query_row(params![invitation_id], map_invitation_row)
@@ -1448,7 +1462,7 @@ impl AuthStore for SqliteStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<Invitation>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE token_hash = ?1")
             .map_err(map_err)?
             .query_row(params![token_hash], map_invitation_row)
@@ -1457,7 +1471,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations ORDER BY created_at DESC")
             .map_err(map_err)?;
@@ -1470,7 +1484,7 @@ impl AuthStore for SqliteStore {
         invitation_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE invitations SET accepted_at = ?1 WHERE invitation_id = ?2",
             params![dt_to_sql(&at), invitation_id],
@@ -1480,7 +1494,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE invitations SET revoked_at = ?1 WHERE invitation_id = ?2",
             params![dt_to_sql(&at), invitation_id],
@@ -1490,7 +1504,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO password_resets (reset_id, user_id, token_hash, expires_at, used_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1510,7 +1524,7 @@ impl AuthStore for SqliteStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<PasswordReset>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT reset_id, user_id, token_hash, expires_at, used_at, created_at FROM password_resets WHERE token_hash = ?1")
             .map_err(map_err)?
             .query_row(params![token_hash], |row| {
@@ -1518,9 +1532,9 @@ impl AuthStore for SqliteStore {
                     reset_id: row.get(0)?,
                     user_id: row.get(1)?,
                     token_hash: row.get(2)?,
-                    expires_at: sql_to_dt(&row.get::<_, String>(3)?),
-                    used_at: sql_to_opt_dt(row.get(4)?),
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    expires_at: dt_col(row, 3)?,
+                    used_at: opt_dt_col(row, 4)?,
+                    created_at: dt_col(row, 5)?,
                 })
             })
             .optional()
@@ -1532,7 +1546,7 @@ impl AuthStore for SqliteStore {
         reset_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE password_resets SET used_at = ?1 WHERE reset_id = ?2",
             params![dt_to_sql(&at), reset_id],
@@ -1542,7 +1556,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO totp_secrets (user_id, secret_enc, enabled, confirmed_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -1563,7 +1577,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT user_id, secret_enc, enabled, confirmed_at, created_at FROM totp_secrets WHERE user_id = ?1",
         )
@@ -1573,8 +1587,8 @@ impl AuthStore for SqliteStore {
                 user_id: row.get(0)?,
                 secret_enc: row.get(1)?,
                 enabled: row.get::<_, bool>(2)?,
-                confirmed_at: sql_to_opt_dt(row.get(3)?),
-                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                confirmed_at: opt_dt_col(row, 3)?,
+                created_at: dt_col(row, 4)?,
             })
         })
         .optional()
@@ -1587,7 +1601,7 @@ impl AuthStore for SqliteStore {
         enabled: bool,
         confirmed_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE totp_secrets SET enabled = ?1, confirmed_at = ?2 WHERE user_id = ?3",
             params![enabled as i64, opt_dt_to_sql(&confirmed_at), user_id,],
@@ -1597,7 +1611,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn totp_delete(&self, user_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // Recovery codes cascade via FK ON DELETE CASCADE (foreign_keys PRAGMA on),
         // but be explicit to keep the contract test stable across backends.
         conn.execute(
@@ -1618,7 +1632,7 @@ impl AuthStore for SqliteStore {
         user_id: &str,
         codes: &[RecoveryCode],
     ) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction().map_err(map_err)?;
         tx.execute(
             "DELETE FROM recovery_codes WHERE user_id = ?1",
@@ -1648,7 +1662,7 @@ impl AuthStore for SqliteStore {
         user_id: &str,
         code_hash: &str,
     ) -> Result<Option<RecoveryCode>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT code_id, user_id, code_hash, used_at, created_at FROM recovery_codes
              WHERE user_id = ?1 AND code_hash = ?2 AND used_at IS NULL",
@@ -1659,8 +1673,8 @@ impl AuthStore for SqliteStore {
                 code_id: row.get(0)?,
                 user_id: row.get(1)?,
                 code_hash: row.get(2)?,
-                used_at: sql_to_opt_dt(row.get(3)?),
-                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                used_at: opt_dt_col(row, 3)?,
+                created_at: dt_col(row, 4)?,
             })
         })
         .optional()
@@ -1668,7 +1682,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE recovery_codes SET used_at = ?1 WHERE code_id = ?2",
             params![dt_to_sql(&at), code_id],
@@ -1678,7 +1692,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?1 AND used_at IS NULL",
@@ -1690,7 +1704,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let scopes_json =
             serde_json::to_string(&pat.scopes).map_err(|e| StoreError::Database(e.to_string()))?;
         conn.execute(
@@ -1717,7 +1731,7 @@ impl AuthStore for SqliteStore {
         &self,
         token_hash: &str,
     ) -> Result<Option<PersonalAccessToken>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at
              FROM personal_access_tokens WHERE token_hash = ?1",
@@ -1729,7 +1743,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at FROM personal_access_tokens WHERE user_id = ?1 ORDER BY created_at DESC")
             .map_err(map_err)?;
@@ -1740,7 +1754,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE personal_access_tokens SET revoked_at = ?1 WHERE token_id = ?2",
             params![dt_to_sql(&at), token_id],
@@ -1750,7 +1764,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE personal_access_tokens SET last_used_at = ?1 WHERE token_id = ?2",
             params![dt_to_sql(&at), token_id],
@@ -1760,7 +1774,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO oidc_identities (provider, subject, user_id, email, linked_at, last_login_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -1786,7 +1800,7 @@ impl AuthStore for SqliteStore {
         provider: &str,
         subject: &str,
     ) -> Result<Option<OidcIdentity>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT provider, subject, user_id, email, linked_at, last_login_at FROM oidc_identities WHERE provider = ?1 AND subject = ?2",
         )
@@ -1797,8 +1811,8 @@ impl AuthStore for SqliteStore {
                 subject: row.get(1)?,
                 user_id: row.get(2)?,
                 email: row.get(3)?,
-                linked_at: sql_to_dt(&row.get::<_, String>(4)?),
-                last_login_at: sql_to_opt_dt(row.get(5)?),
+                linked_at: dt_col(row, 4)?,
+                last_login_at: opt_dt_col(row, 5)?,
             })
         })
         .optional()
@@ -1811,7 +1825,7 @@ impl AuthStore for SqliteStore {
         subject: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE oidc_identities SET last_login_at = ?1 WHERE provider = ?2 AND subject = ?3",
             params![dt_to_sql(&at), provider, subject],
@@ -1821,7 +1835,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO oidc_pending_logins (state, nonce, redirect_to, created_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1838,7 +1852,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // Atomic read+delete to make state single-use even under
         // concurrent callbacks. SQLite has no RETURNING DELETE in older
         // versions, so we select first, then delete by PK.
@@ -1852,8 +1866,8 @@ impl AuthStore for SqliteStore {
                     state: row.get(0)?,
                     nonce: row.get(1)?,
                     redirect_to: row.get(2)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(3)?),
-                    expires_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    created_at: dt_col(row, 3)?,
+                    expires_at: dt_col(row, 4)?,
                 })
             })
             .optional()
@@ -1869,7 +1883,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let affected = conn
             .execute(
                 "DELETE FROM oidc_pending_logins WHERE expires_at < ?1",
@@ -1880,7 +1894,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO audit_log (event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -1902,7 +1916,7 @@ impl AuthStore for SqliteStore {
     }
 
     fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // Build a dynamic WHERE clause. Bind params in the same order
         // they're pushed onto `clauses`/`vals`.
         let mut clauses: Vec<&str> = Vec::new();
@@ -1932,8 +1946,19 @@ impl AuthStore for SqliteStore {
             vals.push(dt_to_sql(&t));
         }
         if let Some(t) = filter.until {
-            clauses.push("created_at <= ?");
-            vals.push(dt_to_sql(&t));
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    clauses.push("(created_at < ? OR (created_at = ? AND event_id < ?))");
+                    vals.push(dt_to_sql(&t));
+                    vals.push(dt_to_sql(&t));
+                    vals.push(id.clone());
+                }
+                None => {
+                    clauses.push("created_at <= ?");
+                    vals.push(dt_to_sql(&t));
+                }
+            }
         }
 
         let where_sql = if clauses.is_empty() {
@@ -1941,10 +1966,10 @@ impl AuthStore for SqliteStore {
         } else {
             format!("WHERE {}", clauses.join(" AND "))
         };
-        let limit = filter.limit.unwrap_or(200).min(1000);
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         let sql = format!(
             "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at
-             FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT {limit}"
+             FROM audit_log {where_sql} ORDER BY created_at DESC, event_id DESC LIMIT {limit}"
         );
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
         let bind_params: Vec<&dyn rusqlite::ToSql> =
@@ -1961,7 +1986,7 @@ impl AuthStore for SqliteStore {
                     diff_json: row.get(6)?,
                     ip_address: row.get(7)?,
                     user_agent: row.get(8)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(9)?),
+                    created_at: dt_col(row, 9)?,
                 })
             })
             .map_err(map_err)?;
@@ -1979,10 +2004,10 @@ fn map_pat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken>
         token_hash: row.get(3)?,
         token_prefix: row.get(4)?,
         scopes,
-        expires_at: sql_to_opt_dt(row.get(6)?),
-        revoked_at: sql_to_opt_dt(row.get(7)?),
-        last_used_at: sql_to_opt_dt(row.get(8)?),
-        created_at: sql_to_dt(&row.get::<_, String>(9)?),
+        expires_at: opt_dt_col(row, 6)?,
+        revoked_at: opt_dt_col(row, 7)?,
+        last_used_at: opt_dt_col(row, 8)?,
+        created_at: dt_col(row, 9)?,
     })
 }
 
@@ -2002,10 +2027,10 @@ fn map_invitation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Invitation> {
         role,
         token_hash: row.get(3)?,
         invited_by: row.get(4)?,
-        expires_at: sql_to_dt(&row.get::<_, String>(5)?),
-        accepted_at: sql_to_opt_dt(row.get(6)?),
-        revoked_at: sql_to_opt_dt(row.get(7)?),
-        created_at: sql_to_dt(&row.get::<_, String>(8)?),
+        expires_at: dt_col(row, 5)?,
+        accepted_at: opt_dt_col(row, 6)?,
+        revoked_at: opt_dt_col(row, 7)?,
+        created_at: dt_col(row, 8)?,
     })
 }
 
@@ -2026,9 +2051,9 @@ fn map_user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         display_name: row.get(3)?,
         role,
         is_active: row.get::<_, bool>(5)?,
-        created_at: sql_to_dt(&row.get::<_, String>(6)?),
-        updated_at: sql_to_dt(&row.get::<_, String>(7)?),
-        last_login_at: sql_to_opt_dt(row.get(8)?),
+        created_at: dt_col(row, 6)?,
+        updated_at: dt_col(row, 7)?,
+        last_login_at: opt_dt_col(row, 8)?,
     })
 }
 
@@ -2045,8 +2070,8 @@ fn map_job_def_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobDefinition> {
         assigned_runner_id: row.get(2)?,
         is_active: row.get::<_, bool>(3)?,
         metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
-        created_at: sql_to_dt(&row.get::<_, String>(5)?),
-        updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+        created_at: dt_col(row, 5)?,
+        updated_at: dt_col(row, 6)?,
         timeout: row.get(7)?,
         max_retries: max_retries.map(|n| n as u32),
         dead_letter_enabled: dead_letter_enabled.map(|n| n != 0),
@@ -2059,7 +2084,7 @@ fn map_job_def_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobDefinition> {
 
 impl JobDefinitionStore for SqliteStore {
     fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let metadata = serde_json::to_string(&job.metadata).unwrap_or_default();
         let tags = serde_json::to_string(&job.tags).unwrap_or_else(|_| "[]".into());
         conn.execute(
@@ -2103,7 +2128,7 @@ impl JobDefinitionStore for SqliteStore {
     }
 
     fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare(
             "SELECT job_key, description, assigned_runner_id, is_active, metadata,
                     created_at, updated_at, timeout, max_retries, dead_letter_enabled, tags,
@@ -2117,7 +2142,7 @@ impl JobDefinitionStore for SqliteStore {
     }
 
     fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT job_key, description, assigned_runner_id, is_active, metadata,
@@ -2131,7 +2156,7 @@ impl JobDefinitionStore for SqliteStore {
     }
 
     fn delete_job_definition(&self, job_key: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM trigger_definitions WHERE job_key = ?1",
             params![job_key],
@@ -2150,7 +2175,7 @@ impl JobDefinitionStore for SqliteStore {
 
 impl TriggerDefinitionStore for SqliteStore {
     fn create_trigger(&self, t: &TriggerDefinition) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO trigger_definitions (trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -2161,7 +2186,7 @@ impl TriggerDefinitionStore for SqliteStore {
     }
 
     fn get_trigger(&self, trigger_id: &str) -> Result<Option<TriggerDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE trigger_id = ?1")
             .map_err(map_err)?
             .query_row(params![trigger_id], |row| {
@@ -2172,12 +2197,12 @@ impl TriggerDefinitionStore for SqliteStore {
                     timezone: row.get(3)?,
                     calendar: row.get(4)?,
                     window: row.get(5)?,
-                    not_before: sql_to_opt_dt(row.get(6)?),
-                    not_after: sql_to_opt_dt(row.get(7)?),
+                    not_before: opt_dt_col(row, 6)?,
+                    not_after: opt_dt_col(row, 7)?,
                     enabled: row.get::<_, bool>(8)?,
                     managed_by: row.get(9)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(10)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(11)?),
+                    created_at: dt_col(row, 10)?,
+                    updated_at: dt_col(row, 11)?,
                 })
             })
             .optional()
@@ -2185,7 +2210,7 @@ impl TriggerDefinitionStore for SqliteStore {
     }
 
     fn list_triggers(&self, job_key: Option<&str>) -> Result<Vec<TriggerDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         if let Some(jk) = job_key {
             let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE job_key = ?1 ORDER BY created_at").map_err(map_err)?;
             let rows = stmt
@@ -2200,7 +2225,7 @@ impl TriggerDefinitionStore for SqliteStore {
     }
 
     fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM trigger_definitions WHERE trigger_id = ?1",
             params![trigger_id],
@@ -2215,7 +2240,7 @@ impl TriggerDefinitionStore for SqliteStore {
         // the trigger_id; everything else (`api`, `runner`, future
         // operator imports) is editable. Returns rows_affected as the
         // found-flag — the handler maps `false` to 404.
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n = conn
             .execute(
                 "UPDATE trigger_definitions
@@ -2240,18 +2265,27 @@ impl TriggerDefinitionStore for SqliteStore {
 
 impl CalendarDefinitionStore for SqliteStore {
     fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO calendar_definitions (calendar_id, name, timezone, rules, managed_by, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(calendar_id) DO UPDATE SET name=excluded.name, timezone=excluded.timezone, rules=excluded.rules, managed_by=excluded.managed_by, updated_at=excluded.updated_at",
             params![cal.calendar_id, cal.name, cal.timezone, cal.rules, cal.managed_by, dt_to_sql(&cal.created_at), dt_to_sql(&cal.updated_at)],
-        ).map_err(map_err)?;
+        ).map_err(|e| match &e {
+            // The only unique key the upsert does not absorb is the name
+            // (migration 037, review 2026-10-24, P-12).
+            rusqlite::Error::SqliteFailure(f, _)
+                if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                calendar_name_taken(&cal.name)
+            }
+            _ => map_err(e),
+        })?;
         Ok(())
     }
 
     fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.prepare("SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions WHERE calendar_id = ?1")
             .map_err(map_err)?
             .query_row(params![calendar_id], |row| {
@@ -2261,8 +2295,8 @@ impl CalendarDefinitionStore for SqliteStore {
                     timezone: row.get(2)?,
                     rules: row.get(3)?,
                     managed_by: row.get(4)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+                    created_at: dt_col(row, 5)?,
+                    updated_at: dt_col(row, 6)?,
                 })
             })
             .optional()
@@ -2270,7 +2304,7 @@ impl CalendarDefinitionStore for SqliteStore {
     }
 
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions ORDER BY name").map_err(map_err)?;
         let rows = stmt
             .query_map([], |row| {
@@ -2280,8 +2314,8 @@ impl CalendarDefinitionStore for SqliteStore {
                     timezone: row.get(2)?,
                     rules: row.get(3)?,
                     managed_by: row.get(4)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+                    created_at: dt_col(row, 5)?,
+                    updated_at: dt_col(row, 6)?,
                 })
             })
             .map_err(map_err)?;
@@ -2289,7 +2323,7 @@ impl CalendarDefinitionStore for SqliteStore {
     }
 
     fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM calendar_definitions WHERE calendar_id = ?1 AND managed_by != 'dsl'",
             params![calendar_id],
@@ -2303,7 +2337,7 @@ impl CalendarDefinitionStore for SqliteStore {
 
 impl ExecutionLogStore for SqliteStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let next = next_seq_for_execution(&conn, entry.execution_id)?;
         insert_log_with(&conn, entry, next)
     }
@@ -2312,7 +2346,7 @@ impl ExecutionLogStore for SqliteStore {
         if entries.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         // Group by execution_id so each group gets a contiguous seq range.
         // In practice every entry in a single batch shares one execution_id
         // (push_log_events is per-execution), but be defensive.
@@ -2337,7 +2371,7 @@ impl ExecutionLogStore for SqliteStore {
         execution_id: Uuid,
         limit: u32,
     ) -> Result<Vec<ExecutionLogEntry>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, execution_id, timestamp, level, message, fields, seq \
@@ -2347,13 +2381,11 @@ impl ExecutionLogStore for SqliteStore {
             .map_err(map_err)?;
         let rows = stmt
             .query_map(params![execution_id.to_string(), limit], |row| {
-                let id_str: String = row.get(0)?;
-                let exec_id_str: String = row.get(1)?;
                 let fields_str: String = row.get(5)?;
                 Ok(ExecutionLogEntry {
-                    id: Uuid::parse_str(&id_str).unwrap(),
-                    execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
-                    timestamp: sql_to_dt(&row.get::<_, String>(2)?),
+                    id: uuid_col(row, 0)?,
+                    execution_id: uuid_col(row, 1)?,
+                    timestamp: dt_col(row, 2)?,
                     level: row.get(3)?,
                     message: row.get(4)?,
                     fields: serde_json::from_str(&fields_str).unwrap_or_default(),
@@ -2406,7 +2438,7 @@ fn insert_log_with(
 
 impl DslAdoptionStore for SqliteStore {
     fn insert_adoption(&self, adoption: &DslAdoption) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO dsl_adoptions (resource_type, resource_key, adopted_at, adopted_by)
              VALUES (?1, ?2, ?3, ?4)
@@ -2425,7 +2457,7 @@ impl DslAdoptionStore for SqliteStore {
     }
 
     fn delete_adoption(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n = conn
             .execute(
                 "DELETE FROM dsl_adoptions WHERE resource_type = ?1 AND resource_key = ?2",
@@ -2436,7 +2468,7 @@ impl DslAdoptionStore for SqliteStore {
     }
 
     fn is_adopted(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM dsl_adoptions WHERE resource_type = ?1 AND resource_key = ?2",
@@ -2448,7 +2480,7 @@ impl DslAdoptionStore for SqliteStore {
     }
 
     fn list_adoptions(&self, resource_type: &str) -> Result<Vec<DslAdoption>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT resource_type, resource_key, adopted_at, adopted_by
@@ -2460,7 +2492,7 @@ impl DslAdoptionStore for SqliteStore {
                 Ok(DslAdoption {
                     resource_type: row.get(0)?,
                     resource_key: row.get(1)?,
-                    adopted_at: sql_to_dt(&row.get::<_, String>(2)?),
+                    adopted_at: dt_col(row, 2)?,
                     adopted_by: row.get(3)?,
                 })
             })
@@ -2471,7 +2503,7 @@ impl DslAdoptionStore for SqliteStore {
 
 impl AlertStore for SqliteStore {
     fn record_alert_delivery(&self, d: &AlertDelivery) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT OR IGNORE INTO alert_deliveries
                 (delivery_id, rule_name, channel_name, job_key, execution_id,
@@ -2498,7 +2530,7 @@ impl AlertStore for SqliteStore {
         &self,
         filter: &AlertDeliveryFilter,
     ) -> Result<Vec<AlertDelivery>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut sql = String::from(
             "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
                     state, error, fired_at, delivered_at, kind
@@ -2517,8 +2549,23 @@ impl AlertStore for SqliteStore {
             sql.push_str(" AND fired_at >= ?");
             params.push(Box::new(dt_to_sql(&since)));
         }
-        sql.push_str(" ORDER BY fired_at DESC");
-        let limit = filter.limit.unwrap_or(200);
+        if let Some(until) = filter.until {
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    sql.push_str(" AND (fired_at < ? OR (fired_at = ? AND delivery_id < ?))");
+                    params.push(Box::new(dt_to_sql(&until)));
+                    params.push(Box::new(dt_to_sql(&until)));
+                    params.push(Box::new(id.clone()));
+                }
+                None => {
+                    sql.push_str(" AND fired_at <= ?");
+                    params.push(Box::new(dt_to_sql(&until)));
+                }
+            }
+        }
+        sql.push_str(" ORDER BY fired_at DESC, delivery_id DESC");
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         sql.push_str(&format!(" LIMIT {limit}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
@@ -2534,7 +2581,7 @@ impl AlertStore for SqliteStore {
         rule_name: &str,
         job_key: &str,
     ) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT fired_at FROM alert_deliveries
@@ -2546,16 +2593,13 @@ impl AlertStore for SqliteStore {
                  ORDER BY fired_at DESC LIMIT 1",
             )
             .map_err(map_err)?;
-        stmt.query_row(params![rule_name, job_key], |row| {
-            let s: String = row.get(0)?;
-            Ok(sql_to_dt(&s))
-        })
-        .optional()
-        .map_err(map_err)
+        stmt.query_row(params![rule_name, job_key], |row| dt_col(row, 0))
+            .optional()
+            .map_err(map_err)
     }
 
     fn get_alert_delivery(&self, delivery_id: &str) -> Result<Option<AlertDelivery>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
@@ -2569,7 +2613,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn upsert_alert_rule_override(&self, ov: &AlertRuleOverride) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO alert_rule_overrides
                 (rule_name, enabled, snooze_until, throttle_secs,
@@ -2602,7 +2646,7 @@ impl AlertStore for SqliteStore {
         &self,
         rule_name: &str,
     ) -> Result<Option<AlertRuleOverride>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT rule_name, enabled, snooze_until, throttle_secs,
@@ -2616,7 +2660,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn list_alert_rule_overrides(&self) -> Result<Vec<AlertRuleOverride>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT rule_name, enabled, snooze_until, throttle_secs,
@@ -2631,7 +2675,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn delete_alert_rule_override(&self, rule_name: &str) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n = conn
             .execute(
                 "DELETE FROM alert_rule_overrides WHERE rule_name = ?1",
@@ -2645,7 +2689,7 @@ impl AlertStore for SqliteStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Vec<String>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let now_sql = dt_to_sql(&now);
         let cleared = {
             let mut stmt = conn
@@ -2674,7 +2718,7 @@ impl AlertStore for SqliteStore {
         &self,
         valid_rule_names: &[String],
     ) -> Result<Vec<String>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let existing = {
             let mut stmt = conn
                 .prepare("SELECT rule_name FROM alert_rule_overrides")
@@ -2701,7 +2745,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn upsert_job_alert_ack(&self, ack: &JobAlertAck) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             &format!(
                 "INSERT OR REPLACE INTO job_alert_acks ({JOB_ALERT_ACK_COLUMNS})
@@ -2725,7 +2769,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn get_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.query_row(
             &format!("SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE job_key = ?1"),
             params![job_key],
@@ -2736,7 +2780,7 @@ impl AlertStore for SqliteStore {
     }
 
     fn list_job_alert_acks(&self) -> Result<Vec<JobAlertAck>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks ORDER BY acked_at DESC"
@@ -2749,7 +2793,7 @@ impl AlertStore for SqliteStore {
     fn take_job_alert_ack(&self, job_key: &str) -> Result<Option<JobAlertAck>, StoreError> {
         // Read and delete under the one connection lock, so a concurrent
         // take cannot see the row as well.
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let ack = conn
             .query_row(
                 &format!("SELECT {JOB_ALERT_ACK_COLUMNS} FROM job_alert_acks WHERE job_key = ?1"),
@@ -2775,7 +2819,7 @@ impl AlertStore for SqliteStore {
         error: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE job_alert_acks SET
                 suppressed_count = suppressed_count
@@ -2794,7 +2838,7 @@ impl AlertStore for SqliteStore {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Vec<JobAlertAck>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let now_sql = dt_to_sql(&now);
         let expired = {
             let mut stmt = conn
@@ -2824,7 +2868,7 @@ impl AlertStore for SqliteStore {
         error: &str,
         at: DateTime<Utc>,
     ) -> Result<JobFailureStreak, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let at_sql = dt_to_sql(&at);
         conn.execute(
             "INSERT INTO job_failure_streaks
@@ -2854,7 +2898,7 @@ impl AlertStore for SqliteStore {
     ) -> Result<Option<JobFailureStreak>, StoreError> {
         // Read and delete under the one connection lock, so a concurrent
         // take cannot see the row as well.
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let streak = conn
             .query_row(
                 &format!(
@@ -2879,7 +2923,7 @@ impl AlertStore for SqliteStore {
 
 impl MaintenanceStore for SqliteStore {
     fn get_maintenance(&self) -> Result<MaintenanceState, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT manual_active, window_start, window_end, note, updated_by, updated_at,
@@ -2894,7 +2938,7 @@ impl MaintenanceStore for SqliteStore {
     }
 
     fn set_maintenance(&self, state: &MaintenanceState) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO maintenance
                 (id, manual_active, window_start, window_end, note, updated_by, updated_at,
@@ -2925,7 +2969,7 @@ impl MaintenanceStore for SqliteStore {
 
 impl NoteStore for SqliteStore {
     fn create_note(&self, note: &JobNote) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO job_notes
                 (id, job_key, execution_id, kind, body, author_id, author_name, created_at)
@@ -2946,7 +2990,7 @@ impl NoteStore for SqliteStore {
     }
 
     fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.query_row(
             "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
              FROM job_notes WHERE id = ?1",
@@ -2958,7 +3002,7 @@ impl NoteStore for SqliteStore {
     }
 
     fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut sql = String::from(
             "SELECT id, job_key, execution_id, kind, body, author_id, author_name, created_at
              FROM job_notes WHERE 1=1",
@@ -2977,7 +3021,7 @@ impl NoteStore for SqliteStore {
             sql.push_str(&format!(" AND execution_id IN ({})", marks.join(", ")));
         }
         sql.push_str(" ORDER BY created_at DESC, id DESC");
-        param_values.push(Box::new(filter.limit.unwrap_or(100)));
+        param_values.push(Box::new(filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT)));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
@@ -2991,7 +3035,7 @@ impl NoteStore for SqliteStore {
     }
 
     fn delete_note(&self, id: Uuid) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let removed = conn
             .execute(
                 "DELETE FROM job_notes WHERE id = ?1",
@@ -3004,7 +3048,7 @@ impl NoteStore for SqliteStore {
     fn list_note_threads(&self, query: &NoteThreadQuery) -> Result<NoteThreadPage, StoreError> {
         // One lock for all four reads: `latest_note_at` must not name a note
         // written after the page was read.
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
 
         // Grouping on (job_key, execution_id) puts every note that names no
         // run into one group per job — the job's own thread. The comparisons
@@ -3042,7 +3086,7 @@ impl NoteStore for SqliteStore {
                         job_key: row.get(0)?,
                         execution_id: execution_id.and_then(|id| Uuid::parse_str(&id).ok()),
                         execution: None,
-                        last_note_at: sql_to_dt(&row.get::<_, String>(2)?),
+                        last_note_at: dt_col(row, 2)?,
                         note_count: row.get::<_, i64>(3)?.max(0) as u64,
                         mine: row.get(4)?,
                         unread: row.get(5)?,
@@ -3067,7 +3111,7 @@ impl NoteStore for SqliteStore {
             .map_err(map_err)?;
         Ok(NoteThreadPage {
             threads,
-            latest_note_at: sql_to_opt_dt(latest),
+            latest_note_at: parse_opt_dt(0, latest).map_err(map_err)?,
         })
     }
 
@@ -3076,7 +3120,7 @@ impl NoteStore for SqliteStore {
         reader_id: &str,
         seen_at: Option<DateTime<Utc>>,
     ) -> Result<u64, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // Two fixed statements rather than one with `?2 IS NULL OR …`: the
         // planner cannot use the created_at index (migration 033) for a range
         // that may not be there, and this count is polled by every dashboard.
@@ -3103,7 +3147,7 @@ impl NoteStore for SqliteStore {
     }
 
     fn get_notes_seen(&self, user_id: &str) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         notes_seen(&conn, user_id)
     }
 
@@ -3112,7 +3156,7 @@ impl NoteStore for SqliteStore {
         user_id: &str,
         at: DateTime<Utc>,
     ) -> Result<DateTime<Utc>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         // `MAX` on the text is `MAX` on the instant: both sides come from
         // `dt_to_sql`, which always writes `+00:00` and 0, 3, 6 or 9 fraction
         // digits, and `+` sorts below `.` and below every digit — so a shorter
@@ -3214,12 +3258,12 @@ fn notes_seen(conn: &Connection, user_id: &str) -> Result<Option<DateTime<Utc>>,
         )
         .optional()
         .map_err(map_err)?;
-    Ok(sql_to_opt_dt(seen))
+    parse_opt_dt(0, seen).map_err(map_err)
 }
 
 impl FavoriteStore for SqliteStore {
     fn list_favorites(&self, user_id: &str) -> Result<Vec<String>, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn
             .prepare("SELECT job_key FROM user_favorite_jobs WHERE user_id = ?1 ORDER BY job_key")
             .map_err(map_err)?;
@@ -3235,7 +3279,7 @@ impl FavoriteStore for SqliteStore {
         job_key: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO user_favorite_jobs (user_id, job_key, created_at)
              VALUES (?1, ?2, ?3)
@@ -3247,7 +3291,7 @@ impl FavoriteStore for SqliteStore {
     }
 
     fn remove_favorite(&self, user_id: &str, job_key: &str) -> Result<bool, StoreError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let removed = conn
             .execute(
                 "DELETE FROM user_favorite_jobs WHERE user_id = ?1 AND job_key = ?2",
@@ -3263,28 +3307,27 @@ impl Store for SqliteStore {}
 // ─── Row mappers ───
 
 fn row_to_execution(row: &rusqlite::Row<'_>) -> Result<Execution, rusqlite::Error> {
-    let id_str: String = row.get(0)?;
     let metadata_str: String = row.get(12)?;
-    let fire_at = sql_to_dt(&row.get::<_, String>(2)?);
+    let fire_at = dt_col(row, 2)?;
     Ok(Execution {
-        id: Uuid::parse_str(&id_str).unwrap(),
+        id: uuid_col(row, 0)?,
         job_key: row.get(1)?,
         fire_at,
         // NULL for rows written before migration 022 (or by an older binary
         // running against a migrated DB) — fall back to fire_at.
-        scheduled_for: sql_to_opt_dt(row.get(15)?).unwrap_or(fire_at),
+        scheduled_for: opt_dt_col(row, 15)?.unwrap_or(fire_at),
         attempt: row.get::<_, u32>(3)?,
         state: parse_execution_state(&row.get::<_, String>(4)?),
         runner_id: row.get(5)?,
-        claimed_at: sql_to_opt_dt(row.get(6)?),
-        started_at: sql_to_opt_dt(row.get(7)?),
-        completed_at: sql_to_opt_dt(row.get(8)?),
+        claimed_at: opt_dt_col(row, 6)?,
+        started_at: opt_dt_col(row, 7)?,
+        completed_at: opt_dt_col(row, 8)?,
         duration_ms: row.get(9)?,
         error: row.get(10)?,
         dead_reason: row.get(11)?,
         idempotency_key: row.get(14)?,
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-        created_at: sql_to_dt(&row.get::<_, String>(13)?),
+        created_at: dt_col(row, 13)?,
     })
 }
 
@@ -3295,40 +3338,37 @@ fn row_to_runner(row: &rusqlite::Row<'_>) -> Result<Runner, rusqlite::Error> {
         runner_id: row.get(0)?,
         capabilities: serde_json::from_str(&caps_str).unwrap_or_default(),
         max_inflight: row.get::<_, u32>(2)?,
-        last_poll_at: sql_to_dt(&row.get::<_, String>(3)?),
+        last_poll_at: dt_col(row, 3)?,
         inflight: serde_json::from_str(&inflight_str).unwrap_or_default(),
         status: parse_runner_status(&row.get::<_, String>(5)?),
-        registered_at: sql_to_dt(&row.get::<_, String>(6)?),
+        registered_at: dt_col(row, 6)?,
     })
 }
 
 fn row_to_dead_letter(row: &rusqlite::Row<'_>) -> Result<DeadLetter, rusqlite::Error> {
-    let id_str: String = row.get(0)?;
-    let exec_id_str: String = row.get(1)?;
     let metadata_str: String = row.get(7)?;
-    let fire_at = sql_to_dt(&row.get::<_, String>(3)?);
+    let fire_at = dt_col(row, 3)?;
     Ok(DeadLetter {
-        id: Uuid::parse_str(&id_str).unwrap(),
-        execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
+        id: uuid_col(row, 0)?,
+        execution_id: uuid_col(row, 1)?,
         job_key: row.get(2)?,
         fire_at,
         // NULL for rows written before migration 022 — fall back to fire_at.
-        scheduled_for: sql_to_opt_dt(row.get(10)?).unwrap_or(fire_at),
+        scheduled_for: opt_dt_col(row, 10)?.unwrap_or(fire_at),
         attempt: row.get::<_, u32>(4)?,
         error: row.get(5)?,
         dead_reason: row.get(6)?,
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-        created_at: sql_to_dt(&row.get::<_, String>(8)?),
-        expires_at: sql_to_opt_dt(row.get(9)?),
+        created_at: dt_col(row, 8)?,
+        expires_at: opt_dt_col(row, 9)?,
     })
 }
 
 fn row_to_job_note(row: &rusqlite::Row<'_>) -> Result<JobNote, rusqlite::Error> {
-    let id: String = row.get(0)?;
     let execution_id: Option<String> = row.get(2)?;
     let kind: String = row.get(3)?;
     Ok(JobNote {
-        id: Uuid::parse_str(&id).unwrap(),
+        id: uuid_col(row, 0)?,
         job_key: row.get(1)?,
         execution_id: execution_id.and_then(|id| Uuid::parse_str(&id).ok()),
         // The CHECK constraint keeps anything else out of the table.
@@ -3336,7 +3376,7 @@ fn row_to_job_note(row: &rusqlite::Row<'_>) -> Result<JobNote, rusqlite::Error> 
         body: row.get(4)?,
         author_id: row.get(5)?,
         author_name: row.get(6)?,
-        created_at: sql_to_dt(&row.get::<_, String>(7)?),
+        created_at: dt_col(row, 7)?,
     })
 }
 
@@ -3351,8 +3391,8 @@ fn row_to_alert_delivery(row: &rusqlite::Row<'_>) -> Result<AlertDelivery, rusql
         execution_id: row.get(4)?,
         state,
         error: row.get(6)?,
-        fired_at: sql_to_dt(&row.get::<_, String>(7)?),
-        delivered_at: sql_to_opt_dt(row.get(8)?),
+        fired_at: dt_col(row, 7)?,
+        delivered_at: opt_dt_col(row, 8)?,
         kind: AlertDeliveryKind::parse_db(&row.get::<_, String>(9)?),
     })
 }
@@ -3364,10 +3404,10 @@ fn row_to_job_failure_streak(row: &rusqlite::Row<'_>) -> Result<JobFailureStreak
     Ok(JobFailureStreak {
         job_key: row.get(0)?,
         consecutive: row.get::<_, i64>(1)?.max(0) as u32,
-        since: sql_to_dt(&row.get::<_, String>(2)?),
+        since: dt_col(row, 2)?,
         last_execution_id: row.get(3)?,
         last_error: row.get(4)?,
-        last_failed_at: sql_to_dt(&row.get::<_, String>(5)?),
+        last_failed_at: dt_col(row, 5)?,
     })
 }
 
@@ -3380,12 +3420,12 @@ fn row_to_job_alert_ack(row: &rusqlite::Row<'_>) -> Result<JobAlertAck, rusqlite
         note: row.get(1)?,
         acked_by: row.get(2)?,
         acked_by_name: row.get(3)?,
-        acked_at: sql_to_dt(&row.get::<_, String>(4)?),
-        expires_at: sql_to_dt(&row.get::<_, String>(5)?),
+        acked_at: dt_col(row, 4)?,
+        expires_at: dt_col(row, 5)?,
         suppressed_count: row.get::<_, i64>(6)?.max(0) as u32,
         last_execution_id: row.get(7)?,
         last_error: row.get(8)?,
-        last_suppressed_at: sql_to_opt_dt(row.get(9)?),
+        last_suppressed_at: opt_dt_col(row, 9)?,
     })
 }
 
@@ -3395,24 +3435,24 @@ fn row_to_alert_rule_override(
     Ok(AlertRuleOverride {
         rule_name: row.get(0)?,
         enabled: row.get(1)?,
-        snooze_until: sql_to_opt_dt(row.get(2)?),
+        snooze_until: opt_dt_col(row, 2)?,
         throttle_secs: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
         note: row.get(4)?,
         set_by_user_id: row.get(5)?,
-        set_at: sql_to_dt(&row.get::<_, String>(6)?),
-        expires_at: sql_to_opt_dt(row.get(7)?),
+        set_at: dt_col(row, 6)?,
+        expires_at: opt_dt_col(row, 7)?,
     })
 }
 
 fn row_to_maintenance(row: &rusqlite::Row<'_>) -> Result<MaintenanceState, rusqlite::Error> {
     Ok(MaintenanceState {
         manual_active: row.get(0)?,
-        window_start: sql_to_opt_dt(row.get(1)?),
-        window_end: sql_to_opt_dt(row.get(2)?),
+        window_start: opt_dt_col(row, 1)?,
+        window_end: opt_dt_col(row, 2)?,
         note: row.get(3)?,
         updated_by: row.get(4)?,
-        updated_at: sql_to_opt_dt(row.get(5)?),
-        active_since: sql_to_opt_dt(row.get(6)?),
+        updated_at: opt_dt_col(row, 5)?,
+        active_since: opt_dt_col(row, 6)?,
     })
 }
 
@@ -3424,12 +3464,12 @@ fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusq
         timezone: row.get(3)?,
         calendar: row.get(4)?,
         window: row.get(5)?,
-        not_before: sql_to_opt_dt(row.get(6)?),
-        not_after: sql_to_opt_dt(row.get(7)?),
+        not_before: opt_dt_col(row, 6)?,
+        not_after: opt_dt_col(row, 7)?,
         enabled: row.get::<_, bool>(8)?,
         managed_by: row.get(9)?,
-        created_at: sql_to_dt(&row.get::<_, String>(10)?),
-        updated_at: sql_to_dt(&row.get::<_, String>(11)?),
+        created_at: dt_col(row, 10)?,
+        updated_at: dt_col(row, 11)?,
     })
 }
 
@@ -3551,6 +3591,25 @@ fn upsert_job_state_with(conn: &rusqlite::Connection, state: &JobState) -> Resul
 
 // ─── String conversions ───
 
+/// The literal WHERE term of the partial index `idx_executions_job_key_inflight`
+/// (migration 036) when every requested state lies inside it, else nothing.
+///
+/// Both planners use a partial index only when they can prove that the query
+/// implies its predicate, and a bound `state IN (?2)` proves nothing. The
+/// concurrency guard asks for `[Claimed]` on every poll under the queue lock;
+/// without this term it walked the job's whole history through
+/// `idx_executions_job_key` (review 2026-10-24, S-3).
+pub(crate) fn inflight_index_term(states: &[ExecutionState]) -> &'static str {
+    if states
+        .iter()
+        .all(|s| matches!(s, ExecutionState::Queued | ExecutionState::Claimed))
+    {
+        " AND state IN ('queued', 'claimed')"
+    } else {
+        ""
+    }
+}
+
 fn state_to_str(state: ExecutionState) -> &'static str {
     match state {
         ExecutionState::Queued => "queued",
@@ -3613,5 +3672,96 @@ impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn execution(job_key: &str) -> Execution {
+        let at = Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+        Execution {
+            id: Uuid::new_v4(),
+            job_key: job_key.into(),
+            fire_at: at,
+            scheduled_for: at,
+            attempt: 1,
+            state: ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            idempotency_key: None,
+            metadata: HashMap::new(),
+            created_at: at,
+        }
+    }
+
+    /// A row a human or a script wrote in `datetime('now')` form, or with a
+    /// UUID that is not one, fails the call that reads it and nothing else
+    /// (review 2026-10-24, S-5). It used to panic under the connection mutex,
+    /// poison it, and take every later store call down with it.
+    #[test]
+    fn a_malformed_row_is_an_error_not_a_dead_store() {
+        let store = SqliteStore::in_memory().unwrap();
+        let bad = execution("ops:hand-edited");
+        let good = execution("ops:fine");
+        store.create_execution(&bad).unwrap();
+        store.create_execution(&good).unwrap();
+        store
+            .lock()
+            .execute(
+                "UPDATE executions SET created_at = '2026-01-01 00:00:00' WHERE id = ?1",
+                params![bad.id.to_string()],
+            )
+            .unwrap();
+
+        let err = store.get_execution(bad.id).unwrap_err();
+        assert!(
+            err.to_string().contains("2026-01-01 00:00:00"),
+            "the error names the offending value: {err}"
+        );
+        assert!(store.list_executions(&ExecutionFilter::default()).is_err());
+        // The store is still alive for every row that is fine.
+        assert_eq!(store.get_execution(good.id).unwrap().unwrap().id, good.id);
+
+        let id = Uuid::new_v4();
+        store.lock().execute(
+            "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at)
+             VALUES (?1, 'not-a-uuid', 'ops:hand-edited', '2026-10-01T12:00:00Z', 1, 'x', 'x', '{}', '2026-10-01T12:00:00Z')",
+            params![id.to_string()],
+        )
+        .unwrap();
+        assert!(store.get_dead_letter(id).is_err());
+        assert!(store.list_job_states().is_ok());
+    }
+
+    /// A panic while the connection is held must not wedge the store.
+    #[test]
+    fn a_panic_under_the_lock_does_not_poison_the_store() {
+        let store = SqliteStore::in_memory().unwrap();
+        std::thread::scope(|s| {
+            let joined = s
+                .spawn(|| {
+                    let _conn = store.lock();
+                    panic!("boom while holding the connection");
+                })
+                .join();
+            assert!(joined.is_err());
+        });
+        assert!(store.conn.is_poisoned());
+        store.create_execution(&execution("ops:after")).unwrap();
+        assert_eq!(
+            store
+                .list_executions(&ExecutionFilter::default())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

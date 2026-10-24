@@ -306,3 +306,75 @@ async fn tokens_minted_before_the_upgrade_still_validate() {
         "a claimless token must read as generation 0 and still validate"
     );
 }
+
+/// `DELETE /v1/users/{id}` on someone who had sent an invitation answered 204
+/// and audited `user.deleted` while the store had refused the delete on the
+/// `invited_by` foreign key: the user stayed active and could sign in
+/// (review 2026-10-24, S-2).
+#[tokio::test]
+async fn deleting_a_user_who_sent_an_invitation_removes_them() {
+    let (app, store) = fixture();
+    let now = Utc::now();
+    store
+        .users_create(&User {
+            user_id: "u-other".into(),
+            username: "other".into(),
+            email: None,
+            display_name: None,
+            role: Role::Admin,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .unwrap();
+    store
+        .upsert_credentials(&PasswordCredential {
+            user_id: "u-other".into(),
+            username: "other".into(),
+            password_hash: hash_password(PASSWORD).unwrap(),
+            failed_attempts: 0,
+            locked_until: None,
+            created_at: now,
+        })
+        .unwrap();
+    store
+        .invitations_create(&croniq_store::models::Invitation {
+            invitation_id: "inv-1".into(),
+            email: "new@example.com".into(),
+            role: Role::Viewer,
+            token_hash: "hash-inv-1".into(),
+            invited_by: "u-other".into(),
+            expires_at: now + chrono::Duration::days(3),
+            accepted_at: None,
+            revoked_at: None,
+            created_at: now,
+        })
+        .unwrap();
+
+    let token = login(app.clone(), PASSWORD).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/users/u-other")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(store.users_get_by_id("u-other").unwrap().is_none());
+    assert!(store.get_credentials("other").unwrap().is_none());
+
+    let (status, _) = post(
+        app,
+        "/v1/auth/login",
+        None,
+        serde_json::json!({ "username": "other", "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

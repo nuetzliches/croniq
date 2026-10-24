@@ -37,6 +37,10 @@ pub struct ListParams {
     pub since: Option<DateTime<Utc>>,
     #[serde(default)]
     pub until: Option<DateTime<Utc>>,
+    /// With `until`, the `event_id` of the last row seen: the next page then
+    /// starts strictly after it (review 2026-10-24, S-8).
+    #[serde(default)]
+    pub until_id: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
 }
@@ -92,6 +96,7 @@ pub async fn handle_list(
         target_id: params.target_id,
         since: params.since,
         until: params.until,
+        until_id: params.until_id,
         limit: params.limit,
     };
     let events = store

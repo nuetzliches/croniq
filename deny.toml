@@ -42,6 +42,15 @@ decryption with a private key on attacker-supplied ciphertext, which is the
 operation the timing oracle needs. Revisit when rsa ships the
 constant-time implementation.
 """ },
+    { id = "RUSTSEC-2026-0387", reason = """
+Non-constant-time arithmetic in `crypto-bigint`. The fix is in 0.7.6;
+0.5.5 has none, and `elliptic-curve` 0.13 (via jsonwebtoken -> p256/p384
+for ES256/ES384) pins the 0.5 line. Croniq never signs with an EC key:
+its own tokens are HS256, and EC math runs only when OIDC verifies an
+IdP's ID token against the IdP's public key — public inputs only, so there
+is no secret for a timing side channel to leak. Revisit when jsonwebtoken
+moves to elliptic-curve 0.14.
+""" },
 ]
 
 [licenses]

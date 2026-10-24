@@ -36,34 +36,6 @@ fn make_execution(job_key: &str, _i: usize) -> Execution {
     }
 }
 
-fn make_execution_with_caps(job_key: &str, caps: &[&str]) -> Execution {
-    let mut meta = HashMap::new();
-    if !caps.is_empty() {
-        meta.insert(
-            "__require".into(),
-            serde_json::to_string(&caps).unwrap_or_default(),
-        );
-    }
-    Execution {
-        id: Uuid::new_v4(),
-        job_key: job_key.into(),
-        fire_at: utc(2026, 4, 12, 10, 0),
-        scheduled_for: utc(2026, 4, 12, 10, 0),
-        attempt: 1,
-        state: ExecutionState::Queued,
-        runner_id: None,
-        claimed_at: None,
-        started_at: None,
-        completed_at: None,
-        duration_ms: None,
-        error: None,
-        dead_reason: None,
-        idempotency_key: None,
-        metadata: meta,
-        created_at: utc(2026, 4, 12, 10, 0),
-    }
-}
-
 fn make_job_state(job_key: &str) -> JobState {
     JobState {
         job_key: job_key.into(),
@@ -165,28 +137,7 @@ fn bench_find_queued(c: &mut Criterion) {
     for n in [100, 1000, 10_000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             let store = seed_store(n);
-            b.iter(|| black_box(store.find_queued_executions(&[], 10).unwrap()))
-        });
-    }
-    group.finish();
-}
-
-fn bench_find_queued_with_caps(c: &mut Criterion) {
-    let mut group = c.benchmark_group("store/find_queued_caps");
-    for n in [100, 1000, 10_000] {
-        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            let store = SqliteStore::in_memory().unwrap();
-            for i in 0..n {
-                let exec = if i % 2 == 0 {
-                    make_execution_with_caps("bench:job", &["billing"])
-                } else {
-                    make_execution_with_caps("bench:job", &["etl"])
-                };
-                store.create_execution(&exec).unwrap();
-            }
-
-            let caps = vec!["billing".to_string()];
-            b.iter(|| black_box(store.find_queued_executions(&caps, 10).unwrap()))
+            b.iter(|| black_box(store.find_queued_executions(10).unwrap()))
         });
     }
     group.finish();
@@ -201,7 +152,7 @@ fn bench_complete_execution(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let store = seed_store(n);
-                    let execs = store.find_queued_executions(&[], 1).unwrap();
+                    let execs = store.find_queued_executions(1).unwrap();
                     let id = execs[0].id;
                     // Claim it first
                     store
@@ -254,7 +205,6 @@ criterion_group!(
     bench_upsert_job_state,
     bench_get_execution,
     bench_find_queued,
-    bench_find_queued_with_caps,
     bench_complete_execution,
     bench_list_job_states,
 );

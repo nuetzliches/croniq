@@ -1655,7 +1655,9 @@ impl CroniqMcp {
             created_at: now,
             updated_at: now,
         };
-        store.create_calendar(&cal).map_err(internal_error)?;
+        store
+            .create_calendar(&cal)
+            .map_err(|e| calendar_write_error(e, &cal.name))?;
         // A schedule may already name this calendar and sit paused for the
         // lack of it.
         self.notify_calendar_changed(std::slice::from_ref(&cal.name));
@@ -1722,7 +1724,9 @@ impl CroniqMcp {
         }
         existing.updated_at = Utc::now();
 
-        store.create_calendar(&existing).map_err(internal_error)?;
+        store
+            .create_calendar(&existing)
+            .map_err(|e| calendar_write_error(e, &existing.name))?;
         // Running triggers keep the gate they were built with until told
         // (issue #393): both names on a rename, the old one now dangling.
         let mut affected = vec![old_name];
@@ -2328,6 +2332,19 @@ fn internal_error(e: impl std::fmt::Display) -> McpError {
     McpError::internal_error("internal error; the server log has the details", None)
 }
 
+/// A failed calendar write: a name another calendar holds (the store's unique
+/// index, review 2026-10-24, P-12) is the caller's to fix, as the HTTP
+/// endpoints' `409 name_taken`; anything else is [`internal_error`].
+fn calendar_write_error(e: croniq_store::traits::StoreError, name: &str) -> McpError {
+    match e {
+        croniq_store::traits::StoreError::Conflict(_) => McpError::invalid_params(
+            format!("name_taken: a calendar named '{name}' already exists"),
+            None,
+        ),
+        e => internal_error(e),
+    }
+}
+
 /// A value `croniq_scheduler::input` refused, as the tool's error. The code
 /// leads the message, matching the `error` field the HTTP endpoints answer
 /// with for the same value.
@@ -2648,6 +2665,22 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// Calendar names are unique (P-12). A taken name is the caller's to fix,
+    /// not an internal error.
+    #[tokio::test]
+    async fn create_calendar_reports_a_taken_name() {
+        let (server, _) = make_server_recording();
+        server
+            .create_calendar(create_calendar_params("ops", None, ""))
+            .await
+            .unwrap();
+        let err = server
+            .create_calendar(create_calendar_params("ops", None, ""))
+            .await
+            .unwrap_err();
+        assert!(err.message.starts_with("name_taken"), "{}", err.message);
     }
 
     /// The tools ran the parser only, and no zone check at all, so they stored
