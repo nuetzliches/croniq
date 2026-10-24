@@ -37,6 +37,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **undici 8.12.3 in the dashboard's build tree; RUSTSEC-2026-0387 assessed.**
+  `npm audit` flagged three undici advisories (GHSA-4qv8-2p9j-2685,
+  GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c) in a build-time dependency of
+  `ui/`; nothing of it ships in the dashboard bundle. `crypto-bigint` 0.5.5
+  (RUSTSEC-2026-0387, non-constant-time arithmetic) has no patched 0.5
+  release; Croniq reaches it only through `jsonwebtoken`'s EC verification of
+  OIDC ID tokens against the IdP's public key, so no secret value is involved.
+  It is ignored in `deny.toml` with that reasoning.
+
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
   crates use for constant-time comparisons, generated masks and compared
   `u128` values in non-constant time (RUSTSEC-2026-0385); in Croniq it sits
