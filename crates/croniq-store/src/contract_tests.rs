@@ -4837,3 +4837,120 @@ fn users_delete_removes_an_inviter_with_their_credentials_and_tokens() {
     assert!(store.invitations_get("inv-2").unwrap().is_some());
     assert!(store.users_get_by_id("u-ben").unwrap().is_some());
 }
+
+// ─── Keyset cursors (review 2026-10-24, S-8) ───
+
+/// Page through a listing with `(until, until_id)` taken from the last row of
+/// each page and return every id seen, in order.
+fn walk_pages<T>(
+    mut page: impl FnMut(Option<(chrono::DateTime<Utc>, String)>) -> Vec<T>,
+    key: impl Fn(&T) -> (chrono::DateTime<Utc>, String),
+) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    for _ in 0..10 {
+        let rows = page(cursor.clone());
+        let Some(last) = rows.last() else {
+            return seen;
+        };
+        cursor = Some(key(last));
+        seen.extend(rows.iter().map(|r| key(r).1));
+    }
+    panic!("the cursor never ran out: {seen:?}");
+}
+
+#[test]
+fn audit_list_pages_past_a_tie_group_larger_than_the_limit() {
+    let store = create_memory_store().unwrap();
+    // One request, five audit rows, one timestamp.
+    for n in 0..5 {
+        store
+            .audit_log(&AuditEvent {
+                event_id: format!("ev-{n}"),
+                actor_type: "user".into(),
+                actor_id: Some("u-1".into()),
+                action: "job.updated".into(),
+                target_type: "job".into(),
+                target_id: Some("billing:invoice".into()),
+                diff_json: None,
+                ip_address: None,
+                user_agent: None,
+                created_at: now(),
+            })
+            .unwrap();
+    }
+    let seen = walk_pages(
+        |cursor| {
+            store
+                .audit_list(&AuditFilter {
+                    until: cursor.as_ref().map(|c| c.0),
+                    until_id: cursor.map(|c| c.1),
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .unwrap()
+        },
+        |e| (e.created_at, e.event_id.clone()),
+    );
+    assert_eq!(seen, vec!["ev-4", "ev-3", "ev-2", "ev-1", "ev-0"]);
+
+    // Without `until_id` the bound stays inclusive, as before.
+    let inclusive = store
+        .audit_list(&AuditFilter {
+            until: Some(now()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(inclusive.len(), 5);
+}
+
+#[test]
+fn alert_deliveries_page_past_a_tie_group_larger_than_the_limit() {
+    let store = create_memory_store().unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let d = make_delivery(
+            "billing:invoice",
+            now(),
+            AlertDeliveryState::Delivered,
+            AlertDeliveryKind::Alert,
+        );
+        ids.push(d.delivery_id.clone());
+        store.record_alert_delivery(&d).unwrap();
+    }
+    // An older one, which the inclusive `until` must not cut off either.
+    let older = make_delivery(
+        "billing:invoice",
+        now() - chrono::Duration::minutes(1),
+        AlertDeliveryState::Failed,
+        AlertDeliveryKind::Alert,
+    );
+    store.record_alert_delivery(&older).unwrap();
+
+    let seen = walk_pages(
+        |cursor| {
+            store
+                .list_alert_deliveries(&AlertDeliveryFilter {
+                    until: cursor.as_ref().map(|c| c.0),
+                    until_id: cursor.map(|c| c.1),
+                    limit: Some(2),
+                    ..Default::default()
+                })
+                .unwrap()
+        },
+        |d| (d.fired_at, d.delivery_id.clone()),
+    );
+    ids.sort();
+    ids.reverse();
+    ids.push(older.delivery_id.clone());
+    assert_eq!(seen, ids);
+
+    let window = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            until: Some(now() - chrono::Duration::seconds(30)),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(window.len(), 1);
+    assert_eq!(window[0].delivery_id, older.delivery_id);
+}

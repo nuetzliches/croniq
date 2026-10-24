@@ -81,6 +81,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every trigger naming it) and renames the others to
   `<name> (duplicate <calendar_id>)`, so they stay visible and can be checked
   and deleted.
+- **The audit log and the alert-delivery log page past same-instant rows**
+  (review 2026-10-24, S-8). `GET /v1/audit` paged by an inclusive `until`
+  alone, so a group of events sharing one timestamp that was larger than
+  `limit` — one request writes several — returned the same page forever.
+  `GET /v1/alerts/deliveries` had no cursor at all. Both now take
+  `until` plus `until_id` (the `event_id` / `delivery_id` of the last row
+  seen), the keyset cursor `GET /v1/executions` has had since #654; without
+  `until_id`, `until` keeps its inclusive meaning.
 
 ### Security
 

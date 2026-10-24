@@ -2576,13 +2576,29 @@ impl AuthStore for PgStore {
             idx += 1;
         }
         if let Some(t) = filter.until {
-            params.push(Box::new(t));
-            sql.push_str(&format!(" AND created_at <= ${idx}"));
-            idx += 1;
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    params.push(Box::new(t));
+                    params.push(Box::new(id.clone()));
+                    let next = idx + 1;
+                    sql.push_str(&format!(
+                        " AND (created_at < ${idx} OR (created_at = ${idx} AND event_id < ${next}))"
+                    ));
+                    idx += 2;
+                }
+                None => {
+                    params.push(Box::new(t));
+                    sql.push_str(&format!(" AND created_at <= ${idx}"));
+                    idx += 1;
+                }
+            }
         }
         let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${idx}"));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC, event_id DESC LIMIT ${idx}"
+        ));
 
         let params_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -3071,9 +3087,30 @@ impl AlertStore for PgStore {
             sql.push_str(&format!(" AND fired_at >= ${idx}"));
             idx += 1;
         }
+        if let Some(until) = filter.until {
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    params.push(Box::new(until));
+                    params.push(Box::new(id.clone()));
+                    let next = idx + 1;
+                    sql.push_str(&format!(
+                        " AND (fired_at < ${idx} OR (fired_at = ${idx} AND delivery_id < ${next}))"
+                    ));
+                    idx += 2;
+                }
+                None => {
+                    params.push(Box::new(until));
+                    sql.push_str(&format!(" AND fired_at <= ${idx}"));
+                    idx += 1;
+                }
+            }
+        }
         let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
-        sql.push_str(&format!(" ORDER BY fired_at DESC LIMIT ${idx}"));
+        sql.push_str(&format!(
+            " ORDER BY fired_at DESC, delivery_id DESC LIMIT ${idx}"
+        ));
 
         let params_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
             params.iter().map(|p| p.as_ref()).collect();

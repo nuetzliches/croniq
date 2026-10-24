@@ -1977,8 +1977,19 @@ impl AuthStore for SqliteStore {
             vals.push(dt_to_sql(&t));
         }
         if let Some(t) = filter.until {
-            clauses.push("created_at <= ?");
-            vals.push(dt_to_sql(&t));
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    clauses.push("(created_at < ? OR (created_at = ? AND event_id < ?))");
+                    vals.push(dt_to_sql(&t));
+                    vals.push(dt_to_sql(&t));
+                    vals.push(id.clone());
+                }
+                None => {
+                    clauses.push("created_at <= ?");
+                    vals.push(dt_to_sql(&t));
+                }
+            }
         }
 
         let where_sql = if clauses.is_empty() {
@@ -1989,7 +2000,7 @@ impl AuthStore for SqliteStore {
         let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         let sql = format!(
             "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at
-             FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT {limit}"
+             FROM audit_log {where_sql} ORDER BY created_at DESC, event_id DESC LIMIT {limit}"
         );
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
         let bind_params: Vec<&dyn rusqlite::ToSql> =
@@ -2569,7 +2580,22 @@ impl AlertStore for SqliteStore {
             sql.push_str(" AND fired_at >= ?");
             params.push(Box::new(dt_to_sql(&since)));
         }
-        sql.push_str(" ORDER BY fired_at DESC");
+        if let Some(until) = filter.until {
+            match &filter.until_id {
+                // Keyset cursor, as in `list_executions` (S-8).
+                Some(id) => {
+                    sql.push_str(" AND (fired_at < ? OR (fired_at = ? AND delivery_id < ?))");
+                    params.push(Box::new(dt_to_sql(&until)));
+                    params.push(Box::new(dt_to_sql(&until)));
+                    params.push(Box::new(id.clone()));
+                }
+                None => {
+                    sql.push_str(" AND fired_at <= ?");
+                    params.push(Box::new(dt_to_sql(&until)));
+                }
+            }
+        }
+        sql.push_str(" ORDER BY fired_at DESC, delivery_id DESC");
         let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         sql.push_str(&format!(" LIMIT {limit}"));
 
