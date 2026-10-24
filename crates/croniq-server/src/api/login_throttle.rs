@@ -49,6 +49,8 @@ pub const IP_MAX_ATTEMPTS: usize = 30;
 pub const IP_TOTAL_MAX_ATTEMPTS: usize = IP_MAX_ATTEMPTS * 10;
 /// Usernames are cut to this many characters before they become a map key.
 const USERNAME_KEY_MAX: usize = 128;
+/// Minimum gap between two password-reset mails for one account.
+pub const RESET_MAIL_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 /// Length of the per-IP sliding window.
 pub const IP_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// Failed second-factor attempts after which an `mfa_token` is invalidated.
@@ -87,6 +89,8 @@ pub struct LoginThrottle {
     ip_totals: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     /// Peers whose `X-Forwarded-For` is believed (`CRONIQ_TRUSTED_PROXIES`).
     pub trusted_proxies: TrustedProxies,
+    /// Last password-reset mail per user id ([`RESET_MAIL_COOLDOWN`]).
+    reset_mails: Mutex<HashMap<String, Instant>>,
     mfa_failures: Mutex<HashMap<String, MfaEntry>>,
     consumed_steps: Mutex<HashMap<String, StepEntry>>,
 }
@@ -132,6 +136,26 @@ impl LoginThrottle {
         pair.push(now);
         total.push(now);
         true
+    }
+
+    /// Whether a password-reset mail may go to `user_id` now; records it if
+    /// so. At most one per [`RESET_MAIL_COOLDOWN`] per account.
+    pub fn allow_reset_mail(&self, user_id: &str) -> bool {
+        self.allow_reset_mail_at(user_id, Instant::now())
+    }
+
+    fn allow_reset_mail_at(&self, user_id: &str, now: Instant) -> bool {
+        let mut map = self.reset_mails.lock().unwrap();
+        if map.len() > PRUNE_THRESHOLD {
+            map.retain(|_, last| now.duration_since(*last) < RESET_MAIL_COOLDOWN);
+        }
+        match map.get(user_id) {
+            Some(last) if now.duration_since(*last) < RESET_MAIL_COOLDOWN => false,
+            _ => {
+                map.insert(user_id.to_string(), now);
+                true
+            }
+        }
     }
 
     /// Give back the attempt recorded by [`LoginThrottle::allow_login`] once
@@ -455,6 +479,17 @@ mod tests {
             }
         }
         assert_eq!(allowed, IP_TOTAL_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn reset_mails_are_spaced_per_account() {
+        // Review 2026-10-24, A-5.
+        let t = LoginThrottle::default();
+        let now = Instant::now();
+        assert!(t.allow_reset_mail_at("u1", now));
+        assert!(!t.allow_reset_mail_at("u1", now + Duration::from_secs(60)));
+        assert!(t.allow_reset_mail_at("u2", now), "per account");
+        assert!(t.allow_reset_mail_at("u1", now + RESET_MAIL_COOLDOWN));
     }
 
     #[test]

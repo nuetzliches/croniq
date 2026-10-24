@@ -652,6 +652,15 @@ impl AuthStore for PgStoreHandle {
         self.call(move |s| s.invitations_mark_accepted(&invitation_id, at))
     }
 
+    fn invitations_claim(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
+        let invitation_id = invitation_id.to_owned();
+        self.call(move |s| s.invitations_claim(&invitation_id, at))
+    }
+
     fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
         let invitation_id = invitation_id.to_owned();
         self.call(move |s| s.invitations_revoke(&invitation_id, at))
@@ -677,6 +686,15 @@ impl AuthStore for PgStoreHandle {
     ) -> Result<(), StoreError> {
         let reset_id = reset_id.to_owned();
         self.call(move |s| s.password_resets_mark_used(&reset_id, at))
+    }
+
+    fn password_resets_invalidate_for_user(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let user_id = user_id.to_owned();
+        self.call(move |s| s.password_resets_invalidate_for_user(&user_id, at))
     }
 
     fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError> {

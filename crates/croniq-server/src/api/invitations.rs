@@ -283,7 +283,23 @@ pub async fn handle_accept(
         return StatusCode::CONFLICT;
     }
 
+    let pw_hash = match hash_password(&req.password) {
+        Ok(h) => h,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    };
+
+    // Claim the invitation before creating anything. The checks above read
+    // the row and the writes below come later, so two concurrent redemptions
+    // of one token both used to pass and create two accounts with the
+    // invited role. The claim is a conditional update; exactly one caller
+    // wins it (review 2026-10-24, A-6).
     let now = Utc::now();
+    match store.invitations_claim(&invite.invitation_id, now) {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::GONE,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    }
+
     let user_id = Uuid::new_v4().to_string();
     let user = User {
         user_id: user_id.clone(),
@@ -300,20 +316,21 @@ pub async fn handle_accept(
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
-    let pw_hash = match hash_password(&req.password) {
-        Ok(h) => h,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    let _ = store.upsert_credentials(&PasswordCredential {
-        user_id,
-        username: req.username,
-        password_hash: pw_hash,
-        failed_attempts: 0,
-        locked_until: None,
-        created_at: now,
-    });
-
-    let _ = store.invitations_mark_accepted(&invite.invitation_id, now);
+    // A user row without a credential cannot sign in; report the failure
+    // instead of answering 201 for an account nobody can use.
+    if store
+        .upsert_credentials(&PasswordCredential {
+            user_id,
+            username: req.username,
+            password_hash: pw_hash,
+            failed_attempts: 0,
+            locked_until: None,
+            created_at: now,
+        })
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
 
     // Public endpoint — no CallerContext. Actor is the freshly-created
     // user; target is the invitation that just got consumed.

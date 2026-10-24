@@ -714,6 +714,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot finish a two-step sign-in it started earlier, and each failure is
   audited as `auth.totp_failed`.
 
+- **Password reset and invitation redemption are bounded** (review
+  2026-10-24, A-5, A-6). `POST /v1/auth/password-reset/request` now goes
+  through the login throttle (429 when exhausted), sends at most one reset
+  mail per account every five minutes, and retires the account's older reset
+  links when it issues a new one; `…/confirm` retires every open link of the
+  account and refuses a deactivated account (410). Redeeming an invitation
+  now claims it with a conditional update before the account is created, so
+  one invitation yields one account even when it is redeemed twice at once,
+  and a failure to store the new account's password is reported instead of
+  answering 201.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

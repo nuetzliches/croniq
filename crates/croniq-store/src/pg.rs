@@ -2123,6 +2123,22 @@ impl AuthStore for PgStore {
         Ok(())
     }
 
+    fn invitations_claim(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
+        let mut db = self.client.lock().unwrap();
+        let n = db
+            .execute(
+                "UPDATE invitations SET accepted_at = $1 \
+                 WHERE invitation_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL",
+                &[&at, &invitation_id],
+            )
+            .map_err(map_err)?;
+        Ok(n == 1)
+    }
+
     fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
         let mut db = self.lock();
         db.execute(
@@ -2181,6 +2197,20 @@ impl AuthStore for PgStore {
         db.execute(
             "UPDATE password_resets SET used_at = $1 WHERE reset_id = $2",
             &[&at, &reset_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn password_resets_invalidate_for_user(
+        &self,
+        user_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut db = self.client.lock().unwrap();
+        db.execute(
+            "UPDATE password_resets SET used_at = $1 WHERE user_id = $2 AND used_at IS NULL",
+            &[&at, &user_id],
         )
         .map_err(map_err)?;
         Ok(())

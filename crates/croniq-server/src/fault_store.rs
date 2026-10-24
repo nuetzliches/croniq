@@ -302,10 +302,12 @@ impl AuthStore for FaultStore {
         invitations_get_by_token_hash(token_hash: &str) -> Option<Invitation>;
         invitations_list() -> Vec<Invitation>;
         invitations_mark_accepted(invitation_id: &str, at: DateTime<Utc>) -> ();
+        invitations_claim(invitation_id: &str, at: DateTime<Utc>) -> bool;
         invitations_revoke(invitation_id: &str, at: DateTime<Utc>) -> ();
         password_resets_create(reset: &PasswordReset) -> ();
         password_resets_get_by_token_hash(token_hash: &str) -> Option<PasswordReset>;
         password_resets_mark_used(reset_id: &str, at: DateTime<Utc>) -> ();
+        password_resets_invalidate_for_user(user_id: &str, at: DateTime<Utc>) -> ();
         totp_upsert(secret: &TotpSecret) -> ();
         totp_get(user_id: &str) -> Option<TotpSecret>;
         totp_set_enabled(user_id: &str, enabled: bool, confirmed_at: Option<DateTime<Utc>>) -> ();

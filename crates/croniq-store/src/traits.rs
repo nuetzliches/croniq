@@ -544,6 +544,11 @@ pub trait AuthStore {
         invitation_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+    /// Atomically mark an open invitation accepted: only a row that is
+    /// neither accepted nor revoked is updated. Returns whether this call
+    /// claimed it — two concurrent redemptions of one token see `true` once.
+    fn invitations_claim(&self, invitation_id: &str, at: DateTime<Utc>)
+    -> Result<bool, StoreError>;
     fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
 
     // Password resets — same hash-on-create / raw-token-on-redeem pattern.
@@ -555,6 +560,13 @@ pub trait AuthStore {
     fn password_resets_mark_used(
         &self,
         reset_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+    /// Mark every unused reset token of `user_id` used, so at most the one
+    /// issued next (if any) can be redeemed.
+    fn password_resets_invalidate_for_user(
+        &self,
+        user_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 

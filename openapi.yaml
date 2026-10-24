@@ -3279,7 +3279,8 @@ paths:
               properties:
                 username: { type: string }
       responses:
-        "202": { description: Reset processed (whether or not the user exists) }
+        "202": { description: "Reset processed (whether or not the user exists). At most one reset mail per account every five minutes; a request inside that window is answered the same way and sends nothing." }
+        "429": { description: "Too many attempts from this client address (shared with the login throttle)" }
 
   /v1/auth/password-reset/confirm:
     post:
@@ -3301,7 +3302,7 @@ paths:
         "204": { description: Password updated }
         "400": { description: new_password too short }
         "401": { description: Token unknown }
-        "410": { description: Token expired or already used }
+        "410": { description: "Token expired or already used (a newer reset request retires older tokens), or the account is deactivated" }
         "404": { description: User vanished between issue and use }
 
   /v1/auth/oidc/config:
