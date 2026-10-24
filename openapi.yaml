@@ -257,7 +257,7 @@ components:
     DslManagedError:
       type: object
       properties:
-        error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted] }
+        error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted, name_taken] }
         message: { type: string }
 
     ApiClient:
@@ -2159,6 +2159,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "409":
+          description: |
+            The name is taken: by a Croniqfile calendar (`error: dsl_managed`)
+            or by another API calendar (`error: name_taken`). Calendar names
+            are unique.
 
   /v1/calendars/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
@@ -2186,7 +2191,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
         "409":
-          description: DSL-managed; mutation refused.
+          description: |
+            DSL-managed, mutation refused (`error: dsl_managed`), or the new
+            name is held by another calendar (`error: name_taken`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslManagedError" }
@@ -2231,7 +2238,10 @@ paths:
               schema: { $ref: "#/components/schemas/DslManagedError" }
         "404": { description: DSL calendar with that name not found }
         "409":
-          description: Policy disabled or other adoption refusal.
+          description: |
+            Policy disabled (`error: adoption_disabled`), other adoption
+            refusal, or an API calendar already holds the name
+            (`error: name_taken`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DslManagedError" }

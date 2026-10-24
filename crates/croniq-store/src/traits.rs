@@ -20,6 +20,12 @@ pub const MAX_PAGE_LIMIT: u32 = 1000;
 /// as-is (review 2026-10-24, S-4).
 pub const MAX_EXECUTIONS_LIMIT: u32 = 100_000;
 
+/// The [`StoreError::Conflict`] that [`CalendarDefinitionStore::create_calendar`]
+/// returns when another calendar already holds `name`.
+pub fn calendar_name_taken(name: &str) -> StoreError {
+    StoreError::Conflict(format!("calendar name '{name}' is already taken"))
+}
+
 /// Errors from store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -614,6 +620,10 @@ pub trait TriggerDefinitionStore {
 
 /// Calendar definition persistence.
 pub trait CalendarDefinitionStore {
+    /// Insert a calendar, or replace the row with the same `calendar_id`.
+    ///
+    /// Names are unique (migration 037): a name another row already holds
+    /// fails with [`StoreError::Conflict`], built by [`calendar_name_taken`].
     fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError>;
     fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError>;
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError>;

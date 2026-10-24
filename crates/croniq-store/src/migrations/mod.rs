@@ -116,6 +116,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("036_execution_inflight_index.sql"),
     ),
     (
+        "037_calendar_unique_name",
+        include_str!("037_calendar_unique_name.sql"),
+    ),
+    (
         "038_execution_logs_fk",
         include_str!("038_execution_logs_fk.sql"),
     ),
@@ -1288,6 +1292,58 @@ mod tests {
             ]),
             ""
         );
+    }
+
+    #[test]
+    fn migration_037_renames_duplicate_calendars_and_makes_names_unique() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "036_execution_inflight_index").unwrap();
+
+        // Three API calendars share a name: the oldest, and two created in
+        // the same instant later (the tie is broken by calendar_id).
+        let seed = |id: &str, name: &str, created_at: &str| {
+            conn.execute(
+                "INSERT INTO calendar_definitions
+                 (calendar_id, name, rules, managed_by, created_at, updated_at)
+                 VALUES (?1, ?2, '', 'api', ?3, ?3)",
+                params![id, name, created_at],
+            )
+            .unwrap();
+        };
+        seed("c-3", "holidays", "2026-01-01T00:00:00+00:00");
+        seed("c-2", "holidays", "2026-02-01T00:00:00+00:00");
+        seed("c-1", "holidays", "2026-02-01T00:00:00+00:00");
+        seed("c-9", "team-days", "2026-03-01T00:00:00+00:00");
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "037_calendar_unique_name")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        let name_of = |id: &str| -> String {
+            conn.query_row(
+                "SELECT name FROM calendar_definitions WHERE calendar_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        // The oldest keeps the name, and with it every trigger naming it.
+        assert_eq!(name_of("c-3"), "holidays");
+        assert_eq!(name_of("c-1"), "holidays (duplicate c-1)");
+        assert_eq!(name_of("c-2"), "holidays (duplicate c-2)");
+        assert_eq!(name_of("c-9"), "team-days");
+
+        // From here on the schema refuses a second row with a taken name.
+        let dup = conn.execute(
+            "INSERT INTO calendar_definitions
+             (calendar_id, name, rules, managed_by, created_at, updated_at)
+             VALUES ('c-10', 'team-days', '', 'api', '2026-04-01T00:00:00+00:00',
+                     '2026-04-01T00:00:00+00:00')",
+            [],
+        );
+        assert!(dup.is_err(), "a duplicate name must be rejected");
     }
 
     /// 038 changes nothing on SQLite, where `execution_logs.execution_id`

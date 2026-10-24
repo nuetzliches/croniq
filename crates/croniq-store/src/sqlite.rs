@@ -2288,7 +2288,16 @@ impl CalendarDefinitionStore for SqliteStore {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(calendar_id) DO UPDATE SET name=excluded.name, timezone=excluded.timezone, rules=excluded.rules, managed_by=excluded.managed_by, updated_at=excluded.updated_at",
             params![cal.calendar_id, cal.name, cal.timezone, cal.rules, cal.managed_by, dt_to_sql(&cal.created_at), dt_to_sql(&cal.updated_at)],
-        ).map_err(map_err)?;
+        ).map_err(|e| match &e {
+            // The only unique key the upsert does not absorb is the name
+            // (migration 037, review 2026-10-24, P-12).
+            rusqlite::Error::SqliteFailure(f, _)
+                if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                calendar_name_taken(&cal.name)
+            }
+            _ => map_err(e),
+        })?;
         Ok(())
     }
 

@@ -71,6 +71,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deletes only the logs of the runs it prunes, never removed it. Migration 038
   deletes such orphans and adds the missing foreign key; a late batch is now
   rejected on both backends.
+- **Calendar names are unique** (review 2026-10-24, P-12). Triggers refer to a
+  calendar by name, but two API calendars could share one, and which of them
+  gated a trigger then depended on read order. `POST /v1/calendars`, a rename
+  through `PUT /v1/calendars/{id}`, and adopting a Croniqfile calendar whose
+  name an API calendar already holds now answer `409` with
+  `error: name_taken`. Migration 037 adds a unique index; a database that
+  already holds duplicates keeps the oldest row under the name (and with it
+  every trigger naming it) and renames the others to
+  `<name> (duplicate <calendar_id>)`, so they stay visible and can be checked
+  and deleted.
 
 ### Security
 

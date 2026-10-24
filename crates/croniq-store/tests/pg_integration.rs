@@ -905,7 +905,7 @@ fn calendar_definitions(store: &PgStore, s: &str) {
     store
         .create_calendar(&CalendarDefinition {
             calendar_id: calendar_id.clone(),
-            name: "Holidays".into(),
+            name: format!("Holidays-{s}"),
             timezone: Some("Europe/Berlin".into()),
             rules: "[{\"skip\":\"2026-12-25\"}]".into(),
             managed_by: "api".into(),
@@ -914,7 +914,16 @@ fn calendar_definitions(store: &PgStore, s: &str) {
         })
         .unwrap();
     let got = store.get_calendar(&calendar_id).unwrap().expect("calendar");
-    assert_eq!(got.name, "Holidays");
+    assert_eq!(got.name, format!("Holidays-{s}"));
+
+    // Names are unique since migration 037 (review 2026-10-24, P-12): a
+    // second row under the name is a conflict, not a second calendar.
+    let mut twin = got.clone();
+    twin.calendar_id = format!("cal-twin-{s}");
+    assert!(matches!(
+        store.create_calendar(&twin),
+        Err(StoreError::Conflict(_))
+    ));
     assert!(got.rules.contains("2026-12-25"));
     assert!(
         store

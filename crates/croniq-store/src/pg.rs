@@ -151,6 +151,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("034_job_alert_acks", PG_MIGRATION_034),
     ("035_job_failure_streaks", PG_MIGRATION_035),
     ("036_execution_inflight_index", PG_MIGRATION_036),
+    ("037_calendar_unique_name", PG_MIGRATION_037),
     ("038_execution_logs_fk", PG_MIGRATION_038),
 ];
 
@@ -403,6 +404,22 @@ const PG_MIGRATION_036: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_executions_job_key_inflight
     ON executions(job_key, state)
     WHERE state IN ('queued', 'claimed');
+"#;
+
+// Calendar names are unique. Mirrors migrations/037_calendar_unique_name.sql —
+// see there for how existing duplicates are renamed before the index is built.
+const PG_MIGRATION_037: &str = r#"
+UPDATE calendar_definitions
+SET name = name || ' (duplicate ' || calendar_id || ')'
+WHERE EXISTS (
+    SELECT 1 FROM calendar_definitions AS older
+    WHERE older.name = calendar_definitions.name
+      AND (older.created_at < calendar_definitions.created_at
+           OR (older.created_at = calendar_definitions.created_at
+               AND older.calendar_id < calendar_definitions.calendar_id))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_definitions_name
+    ON calendar_definitions(name);
 "#;
 
 // Execution logs belong to an existing execution (review 2026-10-24, S-6).
@@ -2795,7 +2812,15 @@ impl CalendarDefinitionStore for PgStore {
                 &cal.updated_at,
             ],
         )
-        .map_err(map_err)?;
+        .map_err(|e| {
+            // The only unique key the upsert does not absorb is the name
+            // (migration 037, review 2026-10-24, P-12).
+            if e.code() == Some(&postgres::error::SqlState::UNIQUE_VIOLATION) {
+                calendar_name_taken(&cal.name)
+            } else {
+                map_err(e)
+            }
+        })?;
         Ok(())
     }
 

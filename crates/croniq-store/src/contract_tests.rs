@@ -4729,3 +4729,45 @@ fn append_log_rejects_an_unknown_execution() {
     assert!(store.read_logs(unknown, 10).unwrap().is_empty());
     assert!(store.read_logs(known, 10).unwrap().is_empty());
 }
+
+/// Calendar names are unique (review 2026-10-24, P-12): triggers name their
+/// calendar, so two rows with one name made the gate depend on read order.
+#[test]
+fn create_calendar_rejects_a_taken_name_but_keeps_upserting_by_id() {
+    let store = create_memory_store().unwrap();
+    let cal = |id: &str, name: &str| CalendarDefinition {
+        calendar_id: id.into(),
+        name: name.into(),
+        timezone: None,
+        rules: "include weekly monday".into(),
+        managed_by: "api".into(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    store.create_calendar(&cal("c-1", "holidays")).unwrap();
+    store.create_calendar(&cal("c-2", "team-days")).unwrap();
+
+    // A second row with the name, and a rename onto it, are both conflicts.
+    assert!(matches!(
+        store.create_calendar(&cal("c-3", "holidays")),
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store.create_calendar(&cal("c-2", "holidays")),
+        Err(StoreError::Conflict(_))
+    ));
+    assert_eq!(
+        store.get_calendar("c-2").unwrap().unwrap().name,
+        "team-days"
+    );
+
+    // Saving a row under its own name is the ordinary update path.
+    let mut edited = cal("c-1", "holidays");
+    edited.rules = "include weekly friday".into();
+    store.create_calendar(&edited).unwrap();
+    assert_eq!(
+        store.get_calendar("c-1").unwrap().unwrap().rules,
+        "include weekly friday"
+    );
+    assert_eq!(store.list_calendars().unwrap().len(), 2);
+}
