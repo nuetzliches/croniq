@@ -309,46 +309,15 @@ impl ExecutionStore for SqliteStore {
         Ok(affected > 0)
     }
 
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError> {
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError> {
         let conn = self.lock();
-        // Fetch more than limit to allow for post-filtering by capabilities.
-        // If capabilities is empty, all executions match (no filtering needed).
-        let fetch_limit = if capabilities.is_empty() {
-            limit
-        } else {
-            limit * 4
-        };
         let mut stmt = conn
             .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
             .map_err(map_err)?;
-
         let rows = stmt
-            .query_map(params![fetch_limit], row_to_execution)
+            .query_map(params![limit], row_to_execution)
             .map_err(map_err)?;
-
-        let all: Vec<Execution> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
-
-        if capabilities.is_empty() {
-            return Ok(all);
-        }
-
-        // Post-filter: execution matches if its __require caps are all present in runner capabilities
-        Ok(all
-            .into_iter()
-            .filter(|exec| {
-                let require: Vec<String> = exec
-                    .metadata
-                    .get("__require")
-                    .and_then(|v| serde_json::from_str(v).ok())
-                    .unwrap_or_default();
-                require.iter().all(|req| capabilities.contains(req))
-            })
-            .take(limit as usize)
-            .collect())
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {

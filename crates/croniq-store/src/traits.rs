@@ -145,13 +145,14 @@ pub trait ExecutionStore {
         now: DateTime<Utc>,
     ) -> Result<bool, StoreError>;
 
-    /// Find the next queued execution matching runner capabilities.
-    /// Returns executions ordered by fire_at (oldest first).
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError>;
+    /// Up to `limit` queued executions, oldest `fire_at` first.
+    ///
+    /// Took a runner's capabilities until review 2026-10-24 (S-9) and
+    /// filtered `__require` after fetching `limit * 4` rows, so a runner
+    /// behind more than that many older rows it could not serve got nothing.
+    /// No caller ever passed capabilities (dispatch matches them on its own
+    /// queue), so the filter was dead code with a starvation bug and is gone.
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError>;
 
     /// List executions with optional filters. `limit` defaults to 100 and is
     /// clamped to [`MAX_EXECUTIONS_LIMIT`].

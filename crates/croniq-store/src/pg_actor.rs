@@ -260,13 +260,8 @@ impl ExecutionStore for PgStoreHandle {
         })
     }
 
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError> {
-        let capabilities = capabilities.to_vec();
-        self.call(move |s| s.find_queued_executions(&capabilities, limit))
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError> {
+        self.call(move |s| s.find_queued_executions(limit))
     }
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {

@@ -964,42 +964,15 @@ impl ExecutionStore for PgStore {
         Ok(affected > 0)
     }
 
-    fn find_queued_executions(
-        &self,
-        capabilities: &[String],
-        limit: u32,
-    ) -> Result<Vec<Execution>, StoreError> {
+    fn find_queued_executions(&self, limit: u32) -> Result<Vec<Execution>, StoreError> {
         let mut client = self.lock();
-        let fetch_limit = if capabilities.is_empty() {
-            limit
-        } else {
-            limit * 4
-        };
         let rows = client
             .query(
                 "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at, idempotency_key, scheduled_for FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
-                &[&(fetch_limit as i64)],
+                &[&(limit as i64)],
             )
             .map_err(map_err)?;
-
-        let all: Vec<Execution> = rows.iter().map(row_to_execution).collect();
-
-        if capabilities.is_empty() {
-            return Ok(all);
-        }
-
-        Ok(all
-            .into_iter()
-            .filter(|exec| {
-                let require: Vec<String> = exec
-                    .metadata
-                    .get("__require")
-                    .and_then(|v| serde_json::from_str(v).ok())
-                    .unwrap_or_default();
-                require.iter().all(|req| capabilities.contains(req))
-            })
-            .take(limit as usize)
-            .collect())
+        Ok(rows.iter().map(row_to_execution).collect())
     }
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
