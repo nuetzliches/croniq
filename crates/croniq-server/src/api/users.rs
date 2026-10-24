@@ -130,6 +130,7 @@ pub async fn handle_create(
     Json(req): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserView>), StatusCode> {
     require_user_admin(&ctx)?;
+    require_may_assign_role(&ctx, req.role)?;
     if req.username.trim().is_empty() || validate_password(&req.password).is_err() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -220,6 +221,10 @@ pub async fn handle_update(
         .users_get_by_id(&user_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    require_may_manage_user(&ctx, &user)?;
+    if let Some(role) = req.role {
+        require_may_assign_role(&ctx, role)?;
+    }
 
     let demotes_admin = req
         .role
@@ -284,6 +289,9 @@ pub async fn handle_delete(
     let Some(user) = store.users_get_by_id(&user_id).ok().flatten() else {
         return StatusCode::NOT_FOUND;
     };
+    if let Err(s) = require_may_manage_user(&ctx, &user) {
+        return s;
+    }
     if user.role == Role::Admin && user.is_active {
         match would_leave_no_admins(store, &user) {
             Ok(true) => return StatusCode::CONFLICT,
@@ -426,6 +434,27 @@ fn require_user_admin(ctx: &CallerContext) -> Result<(), StatusCode> {
     }
 }
 
+/// Refuse to hand out `role` unless the caller already holds that role's
+/// power. `users:admin` alone is not the `admin` wildcard, so a caller with
+/// only that scope must not create, invite or promote an admin — that would
+/// turn the scope into `admin` by one hop (review 2026-10-24, A-1).
+pub(crate) fn require_may_assign_role(ctx: &CallerContext, role: Role) -> Result<(), StatusCode> {
+    if role == Role::Admin && !ctx.is_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(())
+}
+
+/// The same bound for edits to an existing account: a non-admin caller
+/// must not change an admin's email (and with it the password-reset
+/// target), deactivate or delete one (review 2026-10-24, A-1).
+fn require_may_manage_user(ctx: &CallerContext, user: &User) -> Result<(), StatusCode> {
+    if user.role == Role::Admin && !ctx.is_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(())
+}
+
 /// Require that the caller is a user (not an API key). Returns the
 /// user_id; this is the same value as `caller_id` for users but the
 /// explicit accessor makes intent clear.
@@ -482,6 +511,100 @@ mod tests {
             v.get("totp_enabled").is_none(),
             "totp_enabled must be omitted unless explicitly set (got {v})"
         );
+    }
+
+    fn users_admin_ctx() -> CallerContext {
+        CallerContext {
+            caller_type: CallerType::User,
+            caller_id: "ops-1".into(),
+            client_id: "ops-1".into(),
+            user_id: Some("ops-1".into()),
+            role: Some(Role::Operator),
+            auth_method: croniq_auth::AuthMethod::Pat,
+            scopes: vec![Scope::USERS_ADMIN.into()],
+            token_generation: None,
+        }
+    }
+
+    fn state_with_admin() -> (Arc<ServerState>, crate::store::DynStore) {
+        let store =
+            crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        store.users_create(&sample_user()).unwrap();
+        let mut viewer = sample_user();
+        viewer.user_id = "u2".into();
+        viewer.username = "viewer".into();
+        viewer.role = Role::Viewer;
+        store.users_create(&viewer).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = ServerState::with_auth(
+            croniq_runner::AppState::new(),
+            tx,
+            None,
+            Some(Arc::clone(&store)),
+        );
+        (state, store)
+    }
+
+    /// Review 2026-10-24, A-1: `users:admin` without the `admin` wildcard
+    /// must not mint, promote or edit admins.
+    #[tokio::test]
+    async fn users_admin_scope_cannot_grant_or_touch_admin_role() {
+        let (state, store) = state_with_admin();
+        let create = |role| {
+            handle_create(
+                State(Arc::clone(&state)),
+                Extension(users_admin_ctx()),
+                Json(CreateUserRequest {
+                    username: format!("new-{role:?}"),
+                    password: "a-long-enough-password-1".into(),
+                    role,
+                    email: None,
+                    display_name: None,
+                }),
+            )
+        };
+        assert_eq!(create(Role::Admin).await.err(), Some(StatusCode::FORBIDDEN));
+        assert!(create(Role::Viewer).await.is_ok());
+
+        let promote = handle_update(
+            State(Arc::clone(&state)),
+            Extension(users_admin_ctx()),
+            axum::extract::Path("u2".into()),
+            Json(UpdateUserRequest {
+                email: None,
+                display_name: None,
+                role: Some(Role::Admin),
+                is_active: None,
+            }),
+        )
+        .await;
+        assert_eq!(promote.err(), Some(StatusCode::FORBIDDEN));
+        assert_eq!(
+            store.users_get_by_id("u2").unwrap().unwrap().role,
+            Role::Viewer
+        );
+
+        let edit_admin = handle_update(
+            State(Arc::clone(&state)),
+            Extension(users_admin_ctx()),
+            axum::extract::Path("u1".into()),
+            Json(UpdateUserRequest {
+                email: Some("attacker@example.com".into()),
+                display_name: None,
+                role: None,
+                is_active: None,
+            }),
+        )
+        .await;
+        assert_eq!(edit_admin.err(), Some(StatusCode::FORBIDDEN));
+
+        let delete = handle_delete(
+            State(Arc::clone(&state)),
+            Extension(users_admin_ctx()),
+            axum::extract::Path("u1".into()),
+        )
+        .await;
+        assert_eq!(delete, StatusCode::FORBIDDEN);
     }
 
     // `GET /v1/users/me` sets the flag explicitly; it must then serialize

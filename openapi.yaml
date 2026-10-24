@@ -3423,7 +3423,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
         "400": { description: Validation error (empty username or short password) }
-        "403": { description: Missing scope }
+        "403": { description: "Missing scope, or role admin requested by a caller without the admin scope" }
         "409": { description: Username already exists }
 
   /v1/users/{id}:
@@ -3442,6 +3442,8 @@ paths:
       description: >
         PATCH the role to a non-admin value, or set is_active=false, on
         the last active admin returns 409 Conflict — the lock-out guard.
+        A caller holding `users:admin` without the `admin` scope gets 403
+        when it sets role admin or targets a user whose role is admin.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         required: true
@@ -3462,6 +3464,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
+        "403": { description: "Missing scope, or an admin role change or admin target without the admin scope" }
         "409": { description: Operation would leave zero active admins }
         "404": { description: Not found }
     delete:
@@ -3469,6 +3472,7 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
         "204": { description: Deleted }
+        "403": { description: "Missing scope, or the target is an admin and the caller lacks the admin scope" }
         "404": { description: Not found }
         "409": { description: Last active admin — refuse }
 
@@ -3564,6 +3568,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
         "400": { description: "Empty email, or `expires_in_hours` of 0 or above 720." }
+        "403": { description: "Missing scope, or role admin requested by a caller without the admin scope" }
 
   /v1/invitations/{id}:
     delete:

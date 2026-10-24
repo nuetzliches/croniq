@@ -121,6 +121,7 @@ pub async fn handle_create(
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreateInvitationResponse>), StatusCode> {
     require_user_admin(&ctx)?;
+    super::users::require_may_assign_role(&ctx, req.role)?;
     if req.email.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -469,5 +470,29 @@ mod tests {
             Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
             Ok(_) => panic!("zero hours must be refused"),
         }
+    }
+
+    /// Review 2026-10-24, A-1: `users:admin` alone may invite operators and
+    /// viewers, but not admins.
+    #[tokio::test]
+    async fn users_admin_scope_cannot_invite_an_admin() {
+        let store = make_store();
+        let mut ctx = admin_ctx();
+        ctx.role = Some(Role::Operator);
+        ctx.scopes = vec![Scope::USERS_ADMIN.into()];
+        let invite = |role| {
+            handle_create(
+                State(state_with(&store)),
+                Extension(ctx.clone()),
+                HeaderMap::new(),
+                Json(CreateInvitationRequest {
+                    email: format!("{role:?}@example.com"),
+                    role,
+                    expires_in_hours: None,
+                }),
+            )
+        };
+        assert_eq!(invite(Role::Admin).await.err(), Some(StatusCode::FORBIDDEN));
+        assert!(invite(Role::Operator).await.is_ok());
     }
 }
