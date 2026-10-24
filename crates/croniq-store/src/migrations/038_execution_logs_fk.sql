@@ -1,0 +1,12 @@
+-- Execution logs belong to an existing execution (review 2026-10-24, S-6).
+--
+-- Nothing to do on SQLite: `execution_logs.execution_id` has referenced
+-- `executions(id)` since 003, so a log line for an unknown or already pruned
+-- execution is rejected. The Postgres schema lacked that foreign key, so there
+-- the same append succeeded and the orphans outlived retention, which only
+-- deletes the logs of the executions it prunes itself. The Postgres
+-- counterpart of this migration deletes those orphans and adds the key.
+--
+-- The entry exists on SQLite so that the Postgres list stays a subsequence of
+-- this one under the same name and number.
+SELECT 1;

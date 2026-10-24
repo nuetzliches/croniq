@@ -58,7 +58,7 @@ fn pg_backend_exercises_all_traits() {
     job_definitions(&store, &s);
     trigger_definitions(&store, &s);
     calendar_definitions(&store, &s);
-    execution_logs(&store);
+    execution_logs(&store, &s);
     execution_retention(&store, &s);
     execution_job_key_search(&store, &s);
     execution_completion_cas(&store, &s);
@@ -928,8 +928,9 @@ fn calendar_definitions(store: &PgStore, s: &str) {
     assert!(store.get_calendar(&calendar_id).unwrap().is_none());
 }
 
-fn execution_logs(store: &PgStore) {
-    let execution_id = Uuid::new_v4();
+fn execution_logs(store: &PgStore, s: &str) {
+    // Logs need a parent row since migration 038 (review 2026-10-24, S-6).
+    let execution_id = seed_execution(store, &format!("logs-{s}:probe"), None);
     // Batch of three sharing one timestamp — seq (0,1,2) is the tiebreaker.
     let entries: Vec<ExecutionLogEntry> = (0..3)
         .map(|i| ExecutionLogEntry {
@@ -965,6 +966,21 @@ fn execution_logs(store: &PgStore) {
     );
     assert_eq!(logs[0].message, "line 0");
     assert_eq!(logs[3].message, "line 3");
+
+    // A line for an execution that does not exist (or was pruned) is
+    // rejected, as on SQLite, instead of becoming an orphan retention never
+    // deletes.
+    let orphan = ExecutionLogEntry {
+        id: Uuid::new_v4(),
+        execution_id: Uuid::new_v4(),
+        timestamp: ts(),
+        level: "info".into(),
+        message: "late line".into(),
+        fields: HashMap::new(),
+        seq: 0,
+    };
+    assert!(store.append_log(&orphan).is_err());
+    assert!(store.append_logs_batch(&[orphan]).is_err());
 }
 
 /// Seed an execution, optionally driving it to a terminal state at a chosen

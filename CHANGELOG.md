@@ -64,6 +64,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   over. Dead letters, alert deliveries and notes are clamped to 1 000 on both
   backends — dead letters had been clamped on SQLite only. This is a backstop
   behind the HTTP handlers' own, lower limits.
+- **Postgres no longer keeps log lines of executions that do not exist**
+  (review 2026-10-24, S-6). On SQLite a log line has always had to name an
+  existing execution; on Postgres it did not, so a runner's late log batch for
+  a run that retention had already pruned was stored, and retention, which
+  deletes only the logs of the runs it prunes, never removed it. Migration 038
+  deletes such orphans and adds the missing foreign key; a late batch is now
+  rejected on both backends.
 
 ### Security
 

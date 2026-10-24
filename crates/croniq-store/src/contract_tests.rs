@@ -4702,3 +4702,30 @@ fn list_executions_accepts_an_absurd_limit() {
         .unwrap();
     assert_eq!(rows.len(), 1);
 }
+
+/// A log line names an existing execution (review 2026-10-24, S-6). Pinned
+/// for both backends: Postgres accepted orphans until migration 038, and
+/// retention, which deletes only the logs of the runs it prunes, never
+/// reached them.
+#[test]
+fn append_log_rejects_an_unknown_execution() {
+    let store = create_memory_store().unwrap();
+    let unknown = Uuid::new_v4();
+    assert!(
+        store
+            .append_log(&log_entry(unknown, "info", "late line"))
+            .is_err()
+    );
+    let known = seed_execution(&store, "orphan");
+    // One bad line fails the batch as a whole; the good line is not kept.
+    assert!(
+        store
+            .append_logs_batch(&[
+                log_entry(known, "info", "fine"),
+                log_entry(unknown, "info", "late line"),
+            ])
+            .is_err()
+    );
+    assert!(store.read_logs(unknown, 10).unwrap().is_empty());
+    assert!(store.read_logs(known, 10).unwrap().is_empty());
+}

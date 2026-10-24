@@ -115,6 +115,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "036_execution_inflight_index",
         include_str!("036_execution_inflight_index.sql"),
     ),
+    (
+        "038_execution_logs_fk",
+        include_str!("038_execution_logs_fk.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
@@ -1283,6 +1287,36 @@ mod tests {
                 ExecutionState::Completed
             ]),
             ""
+        );
+    }
+
+    /// 038 changes nothing on SQLite, where `execution_logs.execution_id`
+    /// has been a foreign key since 003; the entry exists so the Postgres
+    /// counterpart has a slot. Pin the semantics both backends now share.
+    #[test]
+    fn migration_038_keeps_logs_tied_to_an_existing_execution() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        apply_through(&conn, "038_execution_logs_fk").unwrap();
+        conn.execute(
+            "INSERT INTO executions
+             (id, job_key, fire_at, attempt, state, metadata, created_at)
+             VALUES (?1, 'ops:logged', '2026-10-01T00:00:00Z', 1, 'claimed', '{}',
+                     '2026-10-01T00:00:00Z')",
+            [&uuid_str(1)],
+        )
+        .unwrap();
+        let append = |execution_id: &str, n: u8| {
+            conn.execute(
+                "INSERT INTO execution_logs (id, execution_id, timestamp, message)
+                 VALUES (?1, ?2, '2026-10-01T00:00:01Z', 'line')",
+                params![uuid_str(n), execution_id],
+            )
+        };
+        append(&uuid_str(1), 10).unwrap();
+        assert!(
+            append(&uuid_str(2), 11).is_err(),
+            "a log line for an unknown execution must be rejected"
         );
     }
 

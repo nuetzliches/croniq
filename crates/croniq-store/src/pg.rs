@@ -151,6 +151,7 @@ const PG_MIGRATIONS: &[(&str, &str)] = &[
     ("034_job_alert_acks", PG_MIGRATION_034),
     ("035_job_failure_streaks", PG_MIGRATION_035),
     ("036_execution_inflight_index", PG_MIGRATION_036),
+    ("038_execution_logs_fk", PG_MIGRATION_038),
 ];
 
 const PG_MIGRATION_001: &str = r#"
@@ -402,6 +403,28 @@ const PG_MIGRATION_036: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_executions_job_key_inflight
     ON executions(job_key, state)
     WHERE state IN ('queued', 'claimed');
+"#;
+
+// Execution logs belong to an existing execution (review 2026-10-24, S-6).
+// SQLite has had this key since 003; here an append for an unknown or pruned
+// execution succeeded, and retention, which deletes only the logs of the runs
+// it prunes, never reached those orphans. They are deleted first, because the
+// key cannot be added while one exists. Postgres has no
+// `ADD CONSTRAINT IF NOT EXISTS`, hence the catalog check.
+const PG_MIGRATION_038: &str = r#"
+DELETE FROM execution_logs l
+ WHERE NOT EXISTS (SELECT 1 FROM executions e WHERE e.id = l.execution_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'execution_logs_execution_id_fkey'
+    ) THEN
+        ALTER TABLE execution_logs
+            ADD CONSTRAINT execution_logs_execution_id_fkey
+            FOREIGN KEY (execution_id) REFERENCES executions(id);
+    END IF;
+END
+$$;
 "#;
 
 const PG_MIGRATION_002: &str = r#"
