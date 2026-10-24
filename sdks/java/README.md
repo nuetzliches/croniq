@@ -22,7 +22,7 @@ Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) 
 ## Toolchain
 
 - **JDK 21+** required. Virtual threads change the concurrency design enough that supporting earlier JDKs would mean two parallel implementations — see issue #133's "Out of scope".
-- **Gradle 8.10+** with the Kotlin DSL. The wrapper script (`./gradlew`) pins the version; no global Gradle install is needed.
+- **Gradle 9.8+** with the Kotlin DSL. The wrapper script (`./gradlew`) pins the version; no global Gradle install is needed.
 
 ## Build & test
 

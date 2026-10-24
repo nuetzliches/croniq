@@ -8,6 +8,13 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Dependencies moved to their current releases (#917, #919).** The build
+  runs on Gradle 9.8.2 and compiles Kotlin with 2.4.21; Jackson 2.22.4,
+  SLF4J 2.0.20, SnakeYAML 2.7, kotlinx-coroutines 1.11.0 and OpenTelemetry
+  1.67.0 are what the published POMs now declare. `croniq-runner-kotlin-ext`
+  therefore pulls in kotlin-stdlib 2.4.21. The Vanniktech publish plugin moves
+  from 0.30.0 to 0.37.0, which only knows the Central Portal, so
+  `publishToMavenCentral()` no longer takes a `SonatypeHost`.
 - **The poll retry delay is jittered by ±20 % (review 2026-10-24, K-9).**
   After a failed poll the loop waited exactly `pollRetryDelay()`, so every
   runner that saw the same server outage retried in lockstep and hit the
@@ -21,6 +28,13 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`OpenTelemetryObserver(OpenTelemetry)` emitted no spans with OpenTelemetry
+  Java 1.67.** It asked for the tracer with
+  `getTracer(name, getImplementationVersion())`, and the jar manifest has no
+  `Implementation-Version`, so the version was null; OpenTelemetry 1.67
+  answers that with a no-op tracer. The observer now builds the tracer with
+  `tracerBuilder(name)` and sets the version only when there is one. The
+  `OpenTelemetryObserver(Tracer)` constructor was not affected.
 - **A failed ack is retried (review 2026-10-24, K-1).** One connection reset
   or request timeout on the ack of a handler that had already succeeded cost a
   full second run: the execution left the in-flight set, the stale-claim reaper

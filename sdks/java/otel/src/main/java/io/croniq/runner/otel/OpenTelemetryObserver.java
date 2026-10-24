@@ -53,8 +53,20 @@ public final class OpenTelemetryObserver implements CroniqRunnerObserver {
     private final ConcurrentHashMap<String, Span> activeSpans = new ConcurrentHashMap<>();
 
     public OpenTelemetryObserver(OpenTelemetry openTelemetry) {
-        this(openTelemetry.getTracer(
-                INSTRUMENTATION_NAME, OpenTelemetryObserver.class.getPackage().getImplementationVersion()));
+        this(buildTracer(openTelemetry));
+    }
+
+    // The jar manifest carries no Implementation-Version, so the version is
+    // usually null. With OpenTelemetry Java 1.67, getTracer(name, null)
+    // hands back a no-op tracer and every span is silently dropped; set the
+    // version only when there is one.
+    private static Tracer buildTracer(OpenTelemetry openTelemetry) {
+        var builder = openTelemetry.tracerBuilder(INSTRUMENTATION_NAME);
+        String version = OpenTelemetryObserver.class.getPackage().getImplementationVersion();
+        if (version != null) {
+            builder.setInstrumentationVersion(version);
+        }
+        return builder.build();
     }
 
     /** Constructor for callers who pre-build their own {@link Tracer}. */
