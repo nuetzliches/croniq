@@ -88,10 +88,16 @@ operator-visible behaviour. `docs/adr/README.md` states the admission test.
   [`migrations/mod.rs`](crates/croniq-store/src/migrations/mod.rs). Numbers
   are monotonic; new ones pick the next free slot at PR-open time.
 - When two migration PRs are in flight at once, the second one to merge
-  rebases to bump its number above the first. Migrations are idempotent
-  and additive (or use `IF NOT EXISTS` guards), so order shifts don't
-  break data — but the embedded list must stay monotonic so the runner
-  applies in deterministic order.
+  rebases to bump its number above the first. Migrations are additive,
+  so order shifts don't break data — but the embedded list must stay
+  monotonic so the runner applies in deterministic order. They are not
+  all idempotent (SQLite has no `ADD COLUMN IF NOT EXISTS`); instead each
+  one runs in a transaction together with its `_migrations` record, so a
+  migration is applied and recorded whole or not at all.
+- A Postgres counterpart goes into `PG_MIGRATIONS` in
+  [`pg.rs`](crates/croniq-store/src/pg.rs) under the same name. That list
+  may skip SQLite-only entries but must stay an ordered subsequence of the
+  SQLite one; `pg::tests` checks this.
 - Always include a unit test under `migrations::tests` that applies the
   migration against a hand-bootstrapped schema state and asserts the
   expected post-condition (see `migration_009_backfills_orphan_dead_executions`

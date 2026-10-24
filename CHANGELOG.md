@@ -34,6 +34,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared `croniq_refresh` name; it now stops the boot like any other unusable
   name. `croniq-server doctor` reports an unusable name as a critical finding
   instead of calling a configuration healthy that the next start refuses.
+- **A migration interrupted half-way no longer stops every later boot**
+  (review 2026-10-24, S-1). SQLite migrations ran statement by statement, and
+  SQLite has no `ADD COLUMN IF NOT EXISTS`: a process killed between two
+  `ALTER TABLE`s of one migration kept the first column but not the record, so
+  the next start replayed the migration into `duplicate column name` and
+  failed for good. Each migration now commits together with its record, on
+  SQLite and on Postgres, so it is applied whole or not at all.
 
 ### Security
 

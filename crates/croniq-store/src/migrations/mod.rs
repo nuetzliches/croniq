@@ -2,10 +2,13 @@
 //!
 //! Numbers are monotonic; pick the next free slot when opening a PR. If
 //! two migration PRs are in flight at once, the second to merge rebases
-//! to bump its number above the first. Migrations are idempotent and
-//! additive (or use `IF NOT EXISTS` guards) so order shifts don't break
-//! existing data, but the embedded list must stay monotonic for
-//! deterministic apply order. See AGENTS.md for the full convention.
+//! to bump its number above the first. Migrations are additive, so order
+//! shifts don't break existing data, but the embedded list must stay
+//! monotonic for deterministic apply order. Each migration runs in its own
+//! transaction together with its `_migrations` record, so a migration is
+//! either applied and recorded or not applied at all — the `ALTER TABLE …
+//! ADD COLUMN` ones are not idempotent and rely on that. See AGENTS.md for
+//! the full convention.
 
 use rusqlite::Connection;
 
@@ -112,6 +115,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
 
 /// Run all pending migrations.
 pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+    migrate_with(conn, MIGRATIONS)
+}
+
+fn migrate_with(conn: &Connection, migrations: &[(&str, &str)]) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS _migrations (
             name TEXT PRIMARY KEY,
@@ -119,15 +126,25 @@ pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         );",
     )?;
 
-    for (name, sql) in MIGRATIONS {
+    for (name, sql) in migrations {
         let applied: bool = conn
             .prepare("SELECT COUNT(*) FROM _migrations WHERE name = ?1")?
             .query_row([name], |row| row.get::<_, i64>(0))
             .map(|c| c > 0)?;
 
         if !applied {
-            conn.execute_batch(sql)?;
-            conn.execute("INSERT INTO _migrations (name) VALUES (?1)", [name])?;
+            // One transaction per migration, holding both its statements and
+            // its `_migrations` record (review 2026-10-24, S-1). In autocommit
+            // each statement landed on its own, and SQLite has no
+            // `ADD COLUMN IF NOT EXISTS`: a process killed between two
+            // `ALTER`s left the first column in place and the record missing,
+            // so the next boot replayed the migration into `duplicate column
+            // name` and `SqliteStore::open` failed for good. SQLite DDL is
+            // transactional, so a crash now rolls the whole migration back.
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(sql)?;
+            tx.execute("INSERT INTO _migrations (name) VALUES (?1)", [name])?;
+            tx.commit()?;
         }
     }
 
@@ -1198,5 +1215,89 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+        conn.prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+        ))
+        .unwrap()
+        .exists([column])
+        .unwrap()
+    }
+
+    fn recorded(conn: &Connection, name: &str) -> bool {
+        conn.prepare("SELECT 1 FROM _migrations WHERE name = ?1")
+            .unwrap()
+            .exists([name])
+            .unwrap()
+    }
+
+    /// A migration that stops half-way must not brick the next boot
+    /// (review 2026-10-24, S-1). The second `ALTER` fails here the way a
+    /// process kill between the two would end it: without the per-migration
+    /// transaction the first column stayed, the record did not, and every
+    /// later `migrate` replayed the first `ALTER` into `duplicate column name`.
+    #[test]
+    fn a_half_applied_migration_is_rolled_back_and_retried_cleanly() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE widgets (id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        let broken: &[(&str, &str)] = &[(
+            "900_two_columns",
+            "ALTER TABLE widgets ADD COLUMN colour TEXT;
+             ALTER TABLE no_such_table ADD COLUMN size INTEGER;",
+        )];
+        assert!(migrate_with(&conn, broken).is_err());
+        assert!(
+            !column_exists(&conn, "widgets", "colour"),
+            "the first ALTER of a failed migration must be rolled back"
+        );
+        assert!(!recorded(&conn, "900_two_columns"));
+
+        // The next boot re-runs the whole migration and gets through.
+        let fixed: &[(&str, &str)] = &[(
+            "900_two_columns",
+            "ALTER TABLE widgets ADD COLUMN colour TEXT;
+             ALTER TABLE widgets ADD COLUMN size INTEGER;",
+        )];
+        migrate_with(&conn, fixed).unwrap();
+        assert!(column_exists(&conn, "widgets", "colour"));
+        assert!(column_exists(&conn, "widgets", "size"));
+        assert!(recorded(&conn, "900_two_columns"));
+
+        // And a boot after that is a no-op rather than a replay.
+        migrate_with(&conn, fixed).unwrap();
+    }
+
+    /// The real list, end to end: a fresh database takes every migration,
+    /// and a second boot against it applies nothing.
+    #[test]
+    fn migrate_twice_is_a_noop() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        migrate(&conn).unwrap();
+        let count = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(&conn), MIGRATIONS.len() as i64);
+        migrate(&conn).unwrap();
+        assert_eq!(count(&conn), MIGRATIONS.len() as i64);
+    }
+
+    /// Migration names are unique and sorted, so the apply order is the
+    /// numeric order AGENTS.md promises.
+    #[test]
+    fn migration_names_are_strictly_increasing() {
+        for pair in MIGRATIONS.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "{} must sort before {}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
     }
 }

@@ -95,9 +95,14 @@ impl PgStore {
             if applied.iter().any(|a| a == name) {
                 continue;
             }
-            db.batch_execute(sql).map_err(map_err)?;
-            db.execute("INSERT INTO _migrations (name) VALUES ($1)", &[&name])
+            // Statements and record commit together, as on SQLite (review
+            // 2026-10-24, S-1). The early migrations are `IF NOT EXISTS`
+            // throughout, but 037/038 rewrite rows and add a constraint.
+            let mut tx = db.transaction().map_err(map_err)?;
+            tx.batch_execute(sql).map_err(map_err)?;
+            tx.execute("INSERT INTO _migrations (name) VALUES ($1)", &[&name])
                 .map_err(map_err)?;
+            tx.commit().map_err(map_err)?;
         }
 
         Ok(())
