@@ -39,6 +39,12 @@ pub struct FaultStore {
     /// deliberate asymmetry: the per-job guard dispatches on a store error,
     /// the group guard does not.
     pub fail_job_count: AtomicBool,
+    /// `append_logs_batch` returns a database error while set. Drives the
+    /// events endpoint's `503` (review 2026-10-24, P-11).
+    pub fail_append_logs: AtomicBool,
+    /// `create_job_definition` returns a database error while set. Drives the
+    /// adopt handler's store-failure body (review 2026-10-24, P-10).
+    pub fail_job_definition_write: AtomicBool,
     /// `get_job_definition` returns a database error while set (review
     /// 2026-10-24, D-9: a reload must not read the error as "no row").
     pub fail_get_job_definition: AtomicBool,
@@ -63,6 +69,8 @@ impl FaultStore {
             fail_claim: AtomicBool::new(false),
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
+            fail_append_logs: AtomicBool::new(false),
+            fail_job_definition_write: AtomicBool::new(false),
             fail_get_job_definition: AtomicBool::new(false),
             fail_cancel: AtomicBool::new(false),
             fail_complete: AtomicBool::new(false),
@@ -84,6 +92,14 @@ impl FaultStore {
 
     pub fn arm_job_count(&self) {
         self.fail_job_count.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_append_logs(&self) {
+        self.fail_append_logs.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_job_definition_write(&self) {
+        self.fail_job_definition_write.store(true, Ordering::SeqCst);
     }
 
     pub fn arm_get_job_definition(&self) {
@@ -315,8 +331,16 @@ impl AuthStore for FaultStore {
 }
 
 impl JobDefinitionStore for FaultStore {
+    fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
+        if self.fail_job_definition_write.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected failure: no such table: job_definitions".into(),
+            ));
+        }
+        self.inner.create_job_definition(job)
+    }
+
     delegate! {
-        create_job_definition(job: &JobDefinition) -> ();
         list_job_definitions() -> Vec<JobDefinition>;
         delete_job_definition(job_key: &str) -> ();
     }
@@ -360,9 +384,17 @@ impl DslAdoptionStore for FaultStore {
 }
 
 impl ExecutionLogStore for FaultStore {
+    fn append_logs_batch(&self, entries: &[ExecutionLogEntry]) -> Result<(), StoreError> {
+        if self.fail_append_logs.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected append_logs_batch failure".into(),
+            ));
+        }
+        self.inner.append_logs_batch(entries)
+    }
+
     delegate! {
         append_log(entry: &ExecutionLogEntry) -> ();
-        append_logs_batch(entries: &[ExecutionLogEntry]) -> ();
         read_logs(execution_id: Uuid, limit: u32) -> Vec<ExecutionLogEntry>;
     }
 }

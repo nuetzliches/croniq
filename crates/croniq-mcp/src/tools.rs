@@ -26,7 +26,7 @@
 //! | Tool                  | Description                                          |
 //! |-----------------------|------------------------------------------------------|
 //! | `enqueue_job`         | Add a work item to the dispatch queue                |
-//! | `cancel_execution`    | Remove a pending execution from queue                |
+//! | `cancel_execution`    | Cancel a queued or running execution                 |
 //! | `job_trigger`         | Fire a job immediately                               |
 //! | `create_job`          | Create a store-managed job (`--data-dir`)            |
 //! | `update_job`          | Patch mutable job metadata (`--data-dir`)            |
@@ -47,8 +47,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{CalendarConfig, JobConfig};
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use croniq_scheduler::input;
 use croniq_scheduler::live_jobs::LiveJobs;
 use croniq_scheduler::trigger::Trigger;
 use croniq_store::models::{
@@ -103,6 +104,29 @@ pub trait JobSync: Send + Sync {
     fn job_changed(&self, job_key: &str);
     /// The job's definition was deleted.
     fn job_removed(&self, job_key: &str);
+    /// A calendar was created, edited, renamed or deleted. `names` holds every
+    /// name the change touched (both, on a rename), so the host can re-attach
+    /// the gate on running triggers that reference one of them (issue #393).
+    ///
+    /// The HTTP calendar endpoints have always done this; the MCP tools wrote
+    /// the row and stopped, so a running trigger kept its old gate until the
+    /// next reload (review 2026-10-24, P-8). Defaults to nothing, for hosts
+    /// without a scheduler.
+    fn calendar_changed(&self, _names: &[String]) {}
+    /// A runner was removed from the registry. The host releases what it ties
+    /// to the id: the credential binding of ADR-0008 and the executions the
+    /// runner still holds (review 2026-10-24, P-13 and P-15). Defaults to
+    /// nothing, for hosts without either.
+    fn runner_removed(&self, _runner_id: &str) {}
+    /// The calendars the Croniqfile declares, as the host keeps them across
+    /// reloads. `None` when the host has no Croniqfile.
+    ///
+    /// The calendar and schedule tools need these names to refuse what the
+    /// HTTP endpoints refuse: a store calendar that would shadow a Croniqfile
+    /// one, and a schedule that names a calendar nobody declares (P-8).
+    fn dsl_calendars(&self) -> Option<Arc<tokio::sync::RwLock<Vec<CalendarConfig>>>> {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -689,6 +713,48 @@ impl CroniqMcp {
         }
     }
 
+    /// Report a calendar write, so running triggers that reference one of
+    /// `names` pick up the new gate (P-8).
+    fn notify_calendar_changed(&self, names: &[String]) {
+        if let Some(ref sync) = self.job_sync {
+            sync.calendar_changed(names);
+        }
+    }
+
+    /// Whether the Croniqfile declares a calendar called `name`.
+    async fn is_dsl_calendar(&self, name: &str) -> bool {
+        let Some(dsl) = self.job_sync.as_ref().and_then(|s| s.dsl_calendars()) else {
+            return false;
+        };
+        dsl.read().await.iter().any(|c| c.name == name)
+    }
+
+    /// Refuse a schedule's `calendar` that neither the Croniqfile nor the store
+    /// declares, as `POST`/`PUT /v1/schedules` do (issue #393, P-8). Empty
+    /// means "no calendar".
+    async fn check_calendar_known(&self, calendar: Option<&str>) -> Result<(), McpError> {
+        let Some(name) = calendar.filter(|c| !c.is_empty()) else {
+            return Ok(());
+        };
+        if self.is_dsl_calendar(name).await {
+            return Ok(());
+        }
+        let known = self
+            .require_store()?
+            .list_calendars()
+            .map_err(internal_error)?
+            .iter()
+            .any(|c| c.name == name);
+        if known {
+            Ok(())
+        } else {
+            Err(McpError::invalid_params(
+                format!("unknown_calendar: calendar '{name}' is not defined"),
+                None,
+            ))
+        }
+    }
+
     /// Resolve what a manually fired execution inherits from its job config:
     /// the DSL-compiled metadata (so `__runner_exec` reaches the shell runner,
     /// issue #89), the runner capabilities (issue #549) and the execution
@@ -846,8 +912,7 @@ impl CroniqMcp {
             })
             .collect();
 
-        serde_json::to_string_pretty(&runners)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&runners).map_err(internal_error)
     }
 
     /// Get detailed information about a specific runner by ID.
@@ -888,8 +953,7 @@ impl CroniqMcp {
                     last_poll_at: r.last_poll_at.to_rfc3339(),
                 };
 
-                serde_json::to_string_pretty(&detail)
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))
+                serde_json::to_string_pretty(&detail).map_err(internal_error)
             }
         }
     }
@@ -947,8 +1011,7 @@ impl CroniqMcp {
             items,
         };
 
-        serde_json::to_string_pretty(&report)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&report).map_err(internal_error)
     }
 
     /// List all job states from the persistent store.
@@ -963,9 +1026,7 @@ impl CroniqMcp {
             )
         })?;
 
-        let states = store
-            .list_job_states()
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let states = store.list_job_states().map_err(internal_error)?;
 
         // A `job_states` row outlives the job that created it, so a raw
         // listing offers an agent jobs that no longer exist — permanently
@@ -1009,8 +1070,7 @@ impl CroniqMcp {
             })
             .collect();
 
-        serde_json::to_string_pretty(&states)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&states).map_err(internal_error)
     }
 
     /// List recent executions with optional filters.
@@ -1060,12 +1120,9 @@ impl CroniqMcp {
             ..Default::default()
         };
 
-        let executions = store
-            .list_executions(&filter)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let executions = store.list_executions(&filter).map_err(internal_error)?;
 
-        serde_json::to_string_pretty(&executions)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&executions).map_err(internal_error)
     }
 
     // ── Operate tools ─────────────────────────────────────────────────────────
@@ -1123,9 +1180,7 @@ impl CroniqMcp {
                 metadata: metadata.clone(),
                 created_at: now,
             };
-            store
-                .create_execution(&execution)
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            store.create_execution(&execution).map_err(internal_error)?;
         }
 
         let item = WorkItem {
@@ -1154,10 +1209,17 @@ impl CroniqMcp {
         ))
     }
 
-    /// Cancel a pending execution before it is dispatched to a runner.
-    /// Has no effect if the execution has already been claimed.
+    /// Cancel an execution, queued or running, as
+    /// `POST /v1/executions/{id}/cancel` does.
+    ///
+    /// The description used to say "no effect if already dispatched", while
+    /// `store.cancel_execution` flipped a `claimed` row to `cancelled` too —
+    /// without telling the runner. The runner went on working, its ack failed
+    /// the CAS, and the history said "cancelled" about a run that finished
+    /// (review 2026-10-24, P-7). A claimed execution now has the cancel pushed
+    /// to its runner, which aborts it on its next poll.
     #[tool(
-        description = "Cancel a pending execution. Has no effect if already dispatched to a runner. Requires --mutations."
+        description = "Cancel an execution. A queued one is removed from the queue; one already running on a runner is cancelled there too (the runner aborts it on its next poll). A finished execution cannot be cancelled. Requires --mutations."
     )]
     async fn cancel_execution(
         &self,
@@ -1171,22 +1233,59 @@ impl CroniqMcp {
             queue.remove(&p.execution_id)
         };
 
-        // Also cancel in the persistent store (best-effort).
-        if let Some(store) = &self.store
-            && let Ok(id) = Uuid::parse_str(&p.execution_id)
-        {
-            let now = Utc::now();
-            let _ = store.cancel_execution(id, now);
-        }
+        let queue_only = || {
+            if removed {
+                format!("Execution '{}' removed from queue.", p.execution_id)
+            } else {
+                format!(
+                    "Execution '{}' was not in the queue (may already be dispatched or never existed).",
+                    p.execution_id
+                )
+            }
+        };
+        // No store, or an id that cannot name a store row: the queue is all
+        // there is.
+        let (Some(store), Ok(id)) = (&self.store, Uuid::parse_str(&p.execution_id)) else {
+            return Ok(queue_only());
+        };
+        let execution = store.get_execution(id).map_err(internal_error)?;
+        let Some(execution) = execution else {
+            return Ok(queue_only());
+        };
 
-        Ok(if removed {
-            format!("Execution '{}' removed from queue.", p.execution_id)
-        } else {
-            format!(
-                "Execution '{}' was not in the queue (may already be dispatched or never existed).",
+        let now = Utc::now();
+        match execution.state {
+            ExecutionState::Cancelled => Ok(format!(
+                "Execution '{}' was already cancelled.",
                 p.execution_id
-            )
-        })
+            )),
+            ExecutionState::Queued => {
+                store.cancel_execution(id, now).map_err(internal_error)?;
+                Ok(format!("Execution '{}' cancelled.", p.execution_id))
+            }
+            ExecutionState::Claimed => {
+                // Pushed before the store flip, in the HTTP handler's order.
+                if let Some(runner_id) = execution.runner_id.as_deref() {
+                    self.state.push_cancel(runner_id, &p.execution_id).await;
+                }
+                store.cancel_execution(id, now).map_err(internal_error)?;
+                Ok(format!(
+                    "Execution '{}' cancelled; runner '{}' aborts it on its next poll.",
+                    p.execution_id,
+                    execution.runner_id.as_deref().unwrap_or("unknown")
+                ))
+            }
+            ExecutionState::Completed | ExecutionState::Failed | ExecutionState::Dead => {
+                Err(McpError::invalid_params(
+                    format!(
+                        "Execution '{}' has already finished ({}); there is nothing to cancel.",
+                        p.execution_id,
+                        execution.state.as_str()
+                    ),
+                    None,
+                ))
+            }
+        }
     }
 
     /// Immediately fire a job by enqueuing a new execution.
@@ -1293,9 +1392,7 @@ impl CroniqMcp {
                 metadata: metadata.clone(),
                 created_at: now,
             };
-            store
-                .create_execution(&execution)
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            store.create_execution(&execution).map_err(internal_error)?;
         }
 
         let item = WorkItem {
@@ -1358,7 +1455,7 @@ impl CroniqMcp {
 
         let mut job = store
             .get_job_definition(&p.job_key)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Job '{}' not found.", p.job_key), None)
             })?;
@@ -1390,9 +1487,7 @@ impl CroniqMcp {
         }
         job.updated_at = Utc::now();
 
-        store
-            .create_job_definition(&job)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        store.create_job_definition(&job).map_err(internal_error)?;
         self.notify_changed(&p.job_key);
 
         Ok(format!("Updated job '{}'.", p.job_key))
@@ -1416,7 +1511,7 @@ impl CroniqMcp {
 
         let dl = store
             .get_dead_letter(dl_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(
                     format!("Dead letter '{}' not found", p.dead_letter_id),
@@ -1493,7 +1588,7 @@ impl CroniqMcp {
                     ),
                     None,
                 ),
-                e => McpError::internal_error(e.to_string(), None),
+                e => internal_error(e),
             })?;
 
         // Look up job config for require/prefer/timeout
@@ -1542,11 +1637,8 @@ impl CroniqMcp {
     )]
     async fn list_calendars(&self) -> Result<String, McpError> {
         let store = self.require_store()?;
-        let cals = store
-            .list_calendars()
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&cals)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        let cals = store.list_calendars().map_err(internal_error)?;
+        serde_json::to_string_pretty(&cals).map_err(internal_error)
     }
 
     /// Fetch a single calendar definition by its UUID.
@@ -1558,19 +1650,18 @@ impl CroniqMcp {
         let store = self.require_store()?;
         let cal = store
             .get_calendar(&p.calendar_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Calendar '{}' not found.", p.calendar_id), None)
             })?;
-        serde_json::to_string_pretty(&cal)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&cal).map_err(internal_error)
     }
 
     /// Create a new calendar. The `rules` body must parse as Croniqfile DSL —
     /// validation runs the same parser as the HTTP endpoint, so syntactic
     /// errors are reported back to the caller.
     #[tool(
-        description = "Create a new calendar with name, timezone, and rule lines. Validates rules with the Croniqfile DSL parser. Requires --mutations and --data-dir."
+        description = "Create a new calendar with name, timezone, and rule lines. Refuses a name the Croniqfile declares; validates the rules and the timezone as the HTTP endpoint does. Requires --mutations and --data-dir."
     )]
     async fn create_calendar(
         &self,
@@ -1579,8 +1670,17 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        validate_calendar_rules(&p.rules)
-            .map_err(|msg| McpError::invalid_params(format!("invalid_rules: {msg}"), None))?;
+        // The same refusals as `POST /v1/calendars` (P-8): a store calendar
+        // must not shadow a Croniqfile one, and its zone and rules must be
+        // ones the loader can use.
+        if self.is_dsl_calendar(&p.name).await {
+            return Err(McpError::invalid_params(
+                dsl_calendar_refusal_msg(&p.name, "edit"),
+                None,
+            ));
+        }
+        input::check_calendar_rules(&p.rules).map_err(invalid_input)?;
+        input::check_timezone(p.timezone.as_deref()).map_err(invalid_input)?;
 
         let now = Utc::now();
         let cal = croniq_store::models::CalendarDefinition {
@@ -1594,9 +1694,11 @@ impl CroniqMcp {
         };
         store
             .create_calendar(&cal)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&cal)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+            .map_err(|e| calendar_write_error(e, &cal.name))?;
+        // A schedule may already name this calendar and sit paused for the
+        // lack of it.
+        self.notify_calendar_changed(std::slice::from_ref(&cal.name));
+        serde_json::to_string_pretty(&cal).map_err(internal_error)
     }
 
     /// Patch fields of an existing calendar. Omitted fields stay; an empty
@@ -1619,13 +1721,13 @@ impl CroniqMcp {
         }
 
         if let Some(ref rules) = p.rules {
-            validate_calendar_rules(rules)
-                .map_err(|msg| McpError::invalid_params(format!("invalid_rules: {msg}"), None))?;
+            input::check_calendar_rules(rules).map_err(invalid_input)?;
         }
+        input::check_timezone(p.timezone.as_deref()).map_err(invalid_input)?;
 
         let mut existing = store
             .get_calendar(&p.calendar_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Calendar '{}' not found.", p.calendar_id), None)
             })?;
@@ -1637,7 +1739,18 @@ impl CroniqMcp {
             ));
         }
 
+        let old_name = existing.name.clone();
         if let Some(name) = p.name {
+            // Renaming onto a Croniqfile name would shadow it on the next
+            // read; `PUT /v1/calendars/{id}` refuses it too (P-8).
+            if name != existing.name && self.is_dsl_calendar(&name).await {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "dsl_managed: calendar '{name}' is managed by the Croniqfile; pick a different name"
+                    ),
+                    None,
+                ));
+            }
             existing.name = name;
         }
         if let Some(tz) = p.timezone {
@@ -1650,9 +1763,15 @@ impl CroniqMcp {
 
         store
             .create_calendar(&existing)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&existing)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+            .map_err(|e| calendar_write_error(e, &existing.name))?;
+        // Running triggers keep the gate they were built with until told
+        // (issue #393): both names on a rename, the old one now dangling.
+        let mut affected = vec![old_name];
+        if existing.name != affected[0] {
+            affected.push(existing.name.clone());
+        }
+        self.notify_calendar_changed(&affected);
+        serde_json::to_string_pretty(&existing).map_err(internal_error)
     }
 
     /// Delete a calendar. Jobs that referenced it will fall back to their
@@ -1674,9 +1793,8 @@ impl CroniqMcp {
             ));
         }
 
-        if let Some(existing) = store
-            .get_calendar(&p.calendar_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+        let existing = store.get_calendar(&p.calendar_id).map_err(internal_error)?;
+        if let Some(ref existing) = existing
             && existing.managed_by == "dsl"
         {
             return Err(McpError::invalid_params(
@@ -1687,7 +1805,12 @@ impl CroniqMcp {
 
         store
             .delete_calendar(&p.calendar_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .map_err(internal_error)?;
+        // Triggers gated by the deleted calendar fail closed rather than keep
+        // a gate that no longer exists (issue #393, P-8).
+        if let Some(existing) = existing {
+            self.notify_calendar_changed(&[existing.name]);
+        }
 
         Ok(format!("Calendar '{}' deleted.", p.calendar_id))
     }
@@ -1718,8 +1841,7 @@ impl CroniqMcp {
             p.window_minutes,
             p.bucket_minutes,
         );
-        serde_json::to_string_pretty(&result)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&result).map_err(internal_error)
     }
 
     /// Tail the captured stdout/stderr log for one execution. Useful for
@@ -1735,11 +1857,8 @@ impl CroniqMcp {
         let id = Uuid::parse_str(&p.execution_id).map_err(|e| {
             McpError::invalid_params(format!("Invalid execution_id UUID: {e}"), None)
         })?;
-        let logs = store
-            .read_logs(id, p.limit)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&logs)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        let logs = store.read_logs(id, p.limit).map_err(internal_error)?;
+        serde_json::to_string_pretty(&logs).map_err(internal_error)
     }
 
     // ── Runner mutations ──────────────────────────────────────────────────────
@@ -1748,16 +1867,25 @@ impl CroniqMcp {
     /// been decommissioned and won't reconnect — the cleanup releases the
     /// runner_id slot for reuse and silences stale-runner noise.
     #[tool(
-        description = "Remove a runner from the in-memory registry. Intended for cleanup of decommissioned runners. Requires --mutations."
+        description = "Deregister a runner, as DELETE /v1/runners/{id} does: removes it from the registry, frees its runner_id for another credential, and requeues the executions it still held. Intended for cleanup of decommissioned runners. Requires --mutations."
     )]
     async fn delete_runner(
         &self,
         Parameters(p): Parameters<DeleteRunnerParams>,
     ) -> Result<String, McpError> {
         self.require_mutations()?;
-        let mut reg = self.state.registry.write().await;
-        match reg.remove(&p.runner_id) {
-            Some(_) => Ok(format!("Runner '{}' removed.", p.runner_id)),
+        let removed = self.state.registry.write().await.remove(&p.runner_id);
+        match removed {
+            Some(_) => {
+                // The registry entry is the half this crate owns. The host
+                // releases the credential binding and requeues the runner's
+                // claims, as `DELETE /v1/runners/{id}` does (review
+                // 2026-10-24, P-15).
+                if let Some(ref sync) = self.job_sync {
+                    sync.runner_removed(&p.runner_id);
+                }
+                Ok(format!("Runner '{}' removed.", p.runner_id))
+            }
             None => Err(McpError::invalid_params(
                 format!("Runner '{}' not found.", p.runner_id),
                 None,
@@ -1777,10 +1905,9 @@ impl CroniqMcp {
         let store = self.require_store()?;
         if let Some(job) = store
             .get_job_definition(&p.job_key)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
         {
-            return serde_json::to_string_pretty(&job)
-                .map_err(|e| McpError::internal_error(e.to_string(), None));
+            return serde_json::to_string_pretty(&job).map_err(internal_error);
         }
         if let Some(cfg) = self.dsl_job(&p.job_key).await {
             // Synthesize a JobDefinition view of the DSL job — same fields the
@@ -1803,8 +1930,7 @@ impl CroniqMcp {
                 dead_letter_replay_max_age: None,
                 tags: cfg.tags.clone(),
             };
-            return serde_json::to_string_pretty(&synth)
-                .map_err(|e| McpError::internal_error(e.to_string(), None));
+            return serde_json::to_string_pretty(&synth).map_err(internal_error);
         }
         Err(McpError::invalid_params(
             format!("Job '{}' not found.", p.job_key),
@@ -1827,6 +1953,22 @@ impl CroniqMcp {
         if self.is_dsl_job(&p.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_job_refusal_msg(&p.job_key),
+                None,
+            ));
+        }
+
+        // Create does not overwrite, as `POST /v1/jobs` (review 2026-10-24,
+        // P-4): the upsert re-activated a deactivated job and dropped its tags.
+        if store
+            .get_job_definition(&p.job_key)
+            .map_err(internal_error)?
+            .is_some()
+        {
+            return Err(McpError::invalid_params(
+                format!(
+                    "job_exists: job '{}' already exists; change it with update_job, or delete it first",
+                    p.job_key
+                ),
                 None,
             ));
         }
@@ -1856,12 +1998,9 @@ impl CroniqMcp {
             dead_letter_replay_max_age: p.dead_letter_replay_max_age,
             tags: p.tags.unwrap_or_default(),
         };
-        store
-            .create_job_definition(&job)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        store.create_job_definition(&job).map_err(internal_error)?;
         self.notify_changed(&job.job_key);
-        serde_json::to_string_pretty(&job)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&job).map_err(internal_error)
     }
 
     /// Delete a store-managed job. Refuses DSL-managed jobs. Schedules and
@@ -1886,7 +2025,7 @@ impl CroniqMcp {
 
         store
             .delete_job_definition(&p.job_key)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .map_err(internal_error)?;
         self.notify_removed(&p.job_key);
         Ok(format!("Job '{}' deleted.", p.job_key))
     }
@@ -1932,9 +2071,8 @@ impl CroniqMcp {
         let store = self.require_store()?;
         let triggers = store
             .list_triggers(p.job_key.as_deref())
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&triggers)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+            .map_err(internal_error)?;
+        serde_json::to_string_pretty(&triggers).map_err(internal_error)
     }
 
     /// Fetch one store-managed schedule by trigger ID.
@@ -1958,12 +2096,11 @@ impl CroniqMcp {
         }
         let trigger = store
             .get_trigger(&p.trigger_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Schedule '{}' not found.", p.trigger_id), None)
             })?;
-        serde_json::to_string_pretty(&trigger)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&trigger).map_err(internal_error)
     }
 
     /// Create a store-managed schedule for an existing job. **Note**: the
@@ -1987,6 +2124,14 @@ impl CroniqMcp {
             ));
         }
 
+        // The checks `POST /v1/schedules` runs (P-6, P-8): an expression the
+        // loader cannot build took the job out of the scheduler without a
+        // fault, and a zone or calendar typo paused it.
+        input::check_schedule(p.cron_expression.as_deref()).map_err(invalid_input)?;
+        input::check_window(p.window.as_deref()).map_err(invalid_input)?;
+        input::check_timezone(p.timezone.as_deref()).map_err(invalid_input)?;
+        self.check_calendar_known(p.calendar.as_deref()).await?;
+
         let now = Utc::now();
         let trigger = TriggerDefinition {
             trigger_id: Uuid::new_v4().to_string(),
@@ -2002,12 +2147,9 @@ impl CroniqMcp {
             created_at: now,
             updated_at: now,
         };
-        store
-            .create_trigger(&trigger)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        store.create_trigger(&trigger).map_err(internal_error)?;
         self.notify_changed(&trigger.job_key);
-        serde_json::to_string_pretty(&trigger)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&trigger).map_err(internal_error)
     }
 
     /// Patch fields of an existing store-managed schedule. The live scheduler
@@ -2033,18 +2175,23 @@ impl CroniqMcp {
 
         let mut existing = store
             .get_trigger(&p.trigger_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Schedule '{}' not found.", p.trigger_id), None)
             })?;
 
-        if existing.managed_by == "dsl" {
+        // A row whose job the Croniqfile has taken over since it was written
+        // is the file's to schedule (P-2), like a `managed_by: dsl` row.
+        if existing.managed_by == "dsl" || self.is_dsl_job(&existing.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_schedule_refusal_msg(&p.trigger_id, &existing.job_key),
                 None,
             ));
         }
 
+        // Only the fields this call sends, as `PUT /v1/schedules` does: an
+        // older row with a bad expression can still be disabled.
+        input::check_schedule(p.cron_expression.as_deref()).map_err(invalid_input)?;
         if let Some(cron) = p.cron_expression {
             existing.cron_expression = Some(cron);
         }
@@ -2057,11 +2204,12 @@ impl CroniqMcp {
         if let Some(enabled) = p.enabled {
             existing.enabled = enabled;
         }
+        input::check_timezone(existing.timezone.as_deref()).map_err(invalid_input)?;
+        self.check_calendar_known(existing.calendar.as_deref())
+            .await?;
         existing.updated_at = Utc::now();
 
-        let updated = store
-            .update_trigger(&existing)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let updated = store.update_trigger(&existing).map_err(internal_error)?;
         if !updated {
             return Err(McpError::invalid_params(
                 format!(
@@ -2072,8 +2220,7 @@ impl CroniqMcp {
             ));
         }
         self.notify_changed(&existing.job_key);
-        serde_json::to_string_pretty(&existing)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&existing).map_err(internal_error)
     }
 
     /// Delete a store-managed schedule. The live scheduler is updated through
@@ -2105,10 +2252,19 @@ impl CroniqMcp {
             .ok()
             .flatten()
             .map(|t| t.job_key);
+        // A leftover API row for a job the Croniqfile now declares (P-2).
+        if let Some(ref key) = job_key
+            && self.is_dsl_job(key).await
+        {
+            return Err(McpError::invalid_params(
+                dsl_schedule_refusal_msg(&p.trigger_id, key),
+                None,
+            ));
+        }
 
         store
             .delete_trigger(&p.trigger_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .map_err(internal_error)?;
         if let Some(job_key) = job_key {
             self.notify_changed(&job_key);
         }
@@ -2131,11 +2287,8 @@ impl CroniqMcp {
             job_key: p.job_key,
             limit: Some(p.limit),
         };
-        let letters: Vec<DeadLetter> = store
-            .list_dead_letters(&filter)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        serde_json::to_string_pretty(&letters)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        let letters: Vec<DeadLetter> = store.list_dead_letters(&filter).map_err(internal_error)?;
+        serde_json::to_string_pretty(&letters).map_err(internal_error)
     }
 
     /// Fetch one dead-letter entry by UUID.
@@ -2152,14 +2305,14 @@ impl CroniqMcp {
         })?;
         let dl = store
             .get_dead_letter(id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 McpError::invalid_params(
                     format!("Dead letter '{}' not found.", p.dead_letter_id),
                     None,
                 )
             })?;
-        serde_json::to_string_pretty(&dl).map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&dl).map_err(internal_error)
     }
 
     /// Permanently drop a dead-letter entry without retrying. Use when the
@@ -2176,9 +2329,7 @@ impl CroniqMcp {
         let id = Uuid::parse_str(&p.dead_letter_id).map_err(|e| {
             McpError::invalid_params(format!("Invalid dead_letter_id UUID: {e}"), None)
         })?;
-        store
-            .remove_dead_letter(id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        store.remove_dead_letter(id).map_err(internal_error)?;
         Ok(format!("Dead letter '{}' dropped.", p.dead_letter_id))
     }
 }
@@ -2197,30 +2348,45 @@ impl CroniqMcp {
 
         let mut job = store
             .get_job_definition(job_key)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(internal_error)?
             .ok_or_else(|| McpError::invalid_params(format!("Job '{job_key}' not found."), None))?;
         job.is_active = active;
         job.updated_at = Utc::now();
-        store
-            .create_job_definition(&job)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        store.create_job_definition(&job).map_err(internal_error)?;
         self.notify_changed(job_key);
-        serde_json::to_string_pretty(&job)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))
+        serde_json::to_string_pretty(&job).map_err(internal_error)
     }
 }
 
-/// Validate free-form calendar rules by wrapping them in a dummy `calendar`
-/// block and running the Croniqfile parser. Mirrors the HTTP handler so MCP
-/// callers see the same error wording the API would produce.
-fn validate_calendar_rules(rules: &str) -> Result<(), String> {
-    if rules.trim().is_empty() {
-        return Ok(());
+/// A store (or serialisation) failure, as the tool's error.
+///
+/// The tools passed the error text through: rusqlite / tokio-postgres
+/// messages with table and column names, at worst DSN fragments, landed in the
+/// context of whatever LLM agent called the tool (review 2026-10-24, P-10).
+/// The HTTP handlers answer a bare `500`; the detail goes to the server log.
+fn internal_error(e: impl std::fmt::Display) -> McpError {
+    tracing::warn!(error = %e, "MCP tool failed on a store or serialisation error");
+    McpError::internal_error("internal error; the server log has the details", None)
+}
+
+/// A failed calendar write: a name another calendar holds (the store's unique
+/// index, review 2026-10-24, P-12) is the caller's to fix, as the HTTP
+/// endpoints' `409 name_taken`; anything else is [`internal_error`].
+fn calendar_write_error(e: croniq_store::traits::StoreError, name: &str) -> McpError {
+    match e {
+        croniq_store::traits::StoreError::Conflict(_) => McpError::invalid_params(
+            format!("name_taken: a calendar named '{name}' already exists"),
+            None,
+        ),
+        e => internal_error(e),
     }
-    let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
-    croniq_config::parser::Parser::parse(&source)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+}
+
+/// A value `croniq_scheduler::input` refused, as the tool's error. The code
+/// leads the message, matching the `error` field the HTTP endpoints answer
+/// with for the same value.
+fn invalid_input(e: input::InputError) -> McpError {
+    McpError::invalid_params(e.to_string(), None)
 }
 
 // ─── ServerHandler implementation ────────────────────────────────────────────
@@ -2432,6 +2598,8 @@ mod tests {
     #[derive(Default)]
     struct RecordingSync {
         calls: std::sync::Mutex<Vec<(String, String)>>,
+        /// What `dsl_calendars` hands the tools, as a host with a Croniqfile.
+        dsl_calendars: Option<Arc<tokio::sync::RwLock<Vec<CalendarConfig>>>>,
     }
 
     impl RecordingSync {
@@ -2453,6 +2621,305 @@ mod tests {
                 .unwrap()
                 .push(("removed".into(), job_key.into()));
         }
+        fn calendar_changed(&self, names: &[String]) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("calendar".into(), names.join(",")));
+        }
+        fn runner_removed(&self, runner_id: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("runner_removed".into(), runner_id.into()));
+        }
+        fn dsl_calendars(&self) -> Option<Arc<tokio::sync::RwLock<Vec<CalendarConfig>>>> {
+            self.dsl_calendars.clone()
+        }
+    }
+
+    /// A server whose host declares `dsl` in its Croniqfile: the calendars in
+    /// `dsl_calendars`, the jobs in the live job view.
+    fn make_server_with_croniqfile(dsl: &str) -> (CroniqMcp, Arc<RecordingSync>) {
+        let ast = croniq_config::parser::Parser::parse(dsl).unwrap();
+        let compiled = croniq_config::compile::compile(&ast);
+        let sync = Arc::new(RecordingSync {
+            dsl_calendars: Some(Arc::new(tokio::sync::RwLock::new(compiled.calendars))),
+            ..Default::default()
+        });
+        let store: DynStore = Arc::new(croniq_store::sqlite::SqliteStore::in_memory().unwrap());
+        let server = CroniqMcp::new_with_store(AppState::new(), store, compiled.jobs, true)
+            .with_job_sync(Arc::clone(&sync) as Arc<dyn JobSync>);
+        (server, sync)
+    }
+
+    fn create_calendar_params(
+        name: &str,
+        timezone: Option<&str>,
+        rules: &str,
+    ) -> Parameters<CreateCalendarParams> {
+        Parameters(CreateCalendarParams {
+            name: name.into(),
+            timezone: timezone.map(str::to_string),
+            rules: rules.into(),
+        })
+    }
+
+    fn schedule_params(job_key: &str, cron: &str) -> CreateScheduleParams {
+        CreateScheduleParams {
+            job_key: job_key.into(),
+            cron_expression: Some(cron.into()),
+            timezone: None,
+            calendar: None,
+            window: None,
+            enabled: true,
+        }
+    }
+
+    /// `create_calendar` stored a calendar named like a Croniqfile one, which
+    /// shadows it on the next read; `POST /v1/calendars` refuses that with 409
+    /// (review 2026-10-24, P-8).
+    #[tokio::test]
+    async fn create_calendar_refuses_a_croniqfile_name() {
+        let (server, _) =
+            make_server_with_croniqfile("calendar \"business\" {\n  include weekly weekday\n}\n");
+        let err = server
+            .create_calendar(create_calendar_params("business", None, ""))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("managed by the Croniqfile"),
+            "{}",
+            err.message
+        );
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .list_calendars()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Calendar names are unique (P-12). A taken name is the caller's to fix,
+    /// not an internal error.
+    #[tokio::test]
+    async fn create_calendar_reports_a_taken_name() {
+        let (server, _) = make_server_recording();
+        server
+            .create_calendar(create_calendar_params("ops", None, ""))
+            .await
+            .unwrap();
+        let err = server
+            .create_calendar(create_calendar_params("ops", None, ""))
+            .await
+            .unwrap_err();
+        assert!(err.message.starts_with("name_taken"), "{}", err.message);
+    }
+
+    /// The tools ran the parser only, and no zone check at all, so they stored
+    /// what the HTTP endpoint refuses (P-8).
+    #[tokio::test]
+    async fn create_calendar_runs_the_http_checks() {
+        let (server, _) = make_server_recording();
+        let err = server
+            .create_calendar(create_calendar_params("biz", None, "include weekly funday"))
+            .await
+            .unwrap_err();
+        assert!(err.message.starts_with("invalid_rules"), "{}", err.message);
+
+        let err = server
+            .create_calendar(create_calendar_params(
+                "biz",
+                Some("Europe/Berln"),
+                "include weekly weekday",
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("unknown_timezone"),
+            "{}",
+            err.message
+        );
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .list_calendars()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// A rename onto a Croniqfile name is refused, and an edit reports both
+    /// names so running triggers pick up the new gate (issue #393, P-8).
+    #[tokio::test]
+    async fn update_calendar_refuses_a_croniqfile_name_and_reports_the_change() {
+        let (server, sync) =
+            make_server_with_croniqfile("calendar \"business\" {\n  include weekly weekday\n}\n");
+        let created = server
+            .create_calendar(create_calendar_params(
+                "ops",
+                None,
+                "include weekly weekday",
+            ))
+            .await
+            .unwrap();
+        let id = serde_json::from_str::<serde_json::Value>(&created).unwrap()["calendar_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let err = server
+            .update_calendar(Parameters(UpdateCalendarParams {
+                calendar_id: id.clone(),
+                name: Some("business".into()),
+                timezone: None,
+                rules: None,
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message.starts_with("dsl_managed"), "{}", err.message);
+
+        server
+            .update_calendar(Parameters(UpdateCalendarParams {
+                calendar_id: id.clone(),
+                name: Some("ops-2".into()),
+                timezone: None,
+                rules: None,
+            }))
+            .await
+            .unwrap();
+        server
+            .delete_calendar(Parameters(DeleteCalendarParams { calendar_id: id }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sync.calls(),
+            vec![
+                ("calendar".to_string(), "ops".to_string()),
+                ("calendar".to_string(), "ops,ops-2".to_string()),
+                ("calendar".to_string(), "ops-2".to_string()),
+            ]
+        );
+    }
+
+    /// `create_schedule` checked neither the expression, nor the zone, nor the
+    /// calendar (P-6, P-8).
+    #[tokio::test]
+    async fn create_schedule_runs_the_http_checks() {
+        let (server, _) =
+            make_server_with_croniqfile("calendar \"business\" {\n  include weekly weekday\n}\n");
+
+        let err = server
+            .create_schedule(Parameters(schedule_params("etl:nightly", "jeden Tag")))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("invalid_schedule"),
+            "{}",
+            err.message
+        );
+
+        let mut p = schedule_params("etl:nightly", "5m");
+        p.window = Some("02:00-06:00".into());
+        let err = server.create_schedule(Parameters(p)).await.unwrap_err();
+        assert!(err.message.starts_with("invalid_window"), "{}", err.message);
+
+        let mut p = schedule_params("etl:nightly", "5m");
+        p.timezone = Some("Europe/Berln".into());
+        let err = server.create_schedule(Parameters(p)).await.unwrap_err();
+        assert!(
+            err.message.starts_with("unknown_timezone"),
+            "{}",
+            err.message
+        );
+
+        let mut p = schedule_params("etl:nightly", "5m");
+        p.calendar = Some("nope".into());
+        let err = server.create_schedule(Parameters(p)).await.unwrap_err();
+        assert!(
+            err.message.starts_with("unknown_calendar"),
+            "{}",
+            err.message
+        );
+
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .list_triggers(None)
+                .unwrap()
+                .is_empty()
+        );
+
+        // A Croniqfile calendar is a known one.
+        let mut p = schedule_params("etl:nightly", "5m");
+        p.calendar = Some("business".into());
+        server.create_schedule(Parameters(p)).await.unwrap();
+    }
+
+    /// An API row left behind for a job the Croniqfile has since taken over
+    /// is the file's to schedule (review 2026-10-24, P-2).
+    #[tokio::test]
+    async fn schedule_tools_leave_a_croniqfile_job_alone() {
+        let (server, sync) =
+            make_server_with_croniqfile("job billing:close {\n  every 5 minutes\n}\n");
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        server
+            .store
+            .as_ref()
+            .unwrap()
+            .create_trigger(&TriggerDefinition {
+                trigger_id: id.clone(),
+                job_key: "billing:close".into(),
+                cron_expression: Some("1m".into()),
+                timezone: None,
+                calendar: None,
+                window: None,
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let err = server
+            .update_schedule(Parameters(UpdateScheduleParams {
+                trigger_id: id.clone(),
+                cron_expression: Some("10m".into()),
+                timezone: None,
+                calendar: None,
+                enabled: None,
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("DSL-managed job"), "{}", err.message);
+        let err = server
+            .delete_schedule(Parameters(DeleteScheduleParams {
+                trigger_id: id.clone(),
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("DSL-managed job"), "{}", err.message);
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .get_trigger(&id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(sync.calls().is_empty());
     }
 
     fn make_server_recording() -> (CroniqMcp, Arc<RecordingSync>) {
@@ -2672,6 +3139,41 @@ mod tests {
         assert_eq!(arr[0]["status"], "online");
     }
 
+    /// The tool removed the registry entry and nothing else, leaving the
+    /// ADR-0008 binding behind (review 2026-10-24, P-15). It now hands the
+    /// rest to the host.
+    #[tokio::test]
+    async fn delete_runner_reports_the_removal_to_the_host() {
+        let (server, sync) = make_server_recording();
+        {
+            let mut reg = server.state.registry.write().await;
+            let _ = reg.register_or_update("runner-1", vec![], 3, vec![], None, vec![]);
+        }
+        server
+            .delete_runner(Parameters(DeleteRunnerParams {
+                runner_id: "runner-1".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            sync.calls(),
+            vec![("runner_removed".to_string(), "runner-1".to_string())]
+        );
+    }
+
+    /// Every tool mapped a store error with `internal_error(e.to_string())`,
+    /// so rusqlite / tokio-postgres text reached the calling agent (review
+    /// 2026-10-24, P-10). The tools share one mapping now, and it keeps the
+    /// detail in the server log.
+    #[test]
+    fn a_store_error_does_not_reach_the_caller() {
+        let err = internal_error(croniq_store::traits::StoreError::Database(
+            "no such table: job_definitions (host=db.internal password=hunter2)".into(),
+        ));
+        assert!(!err.message.contains("job_definitions"), "{}", err.message);
+        assert!(!err.message.contains("hunter2"), "{}", err.message);
+    }
+
     #[tokio::test]
     async fn get_runner_not_found() {
         let server = make_server();
@@ -2842,6 +3344,69 @@ mod tests {
             .unwrap();
 
         assert!(result.contains("not in the queue"));
+    }
+
+    /// A claimed execution was flipped to `cancelled` in the store with no
+    /// word to its runner: the run went on, its ack failed the CAS, and the
+    /// history called it cancelled (review 2026-10-24, P-7). The cancel now
+    /// reaches the runner, as `POST /v1/executions/{id}/cancel` does.
+    #[tokio::test]
+    async fn cancel_execution_on_a_claimed_run_tells_its_runner() {
+        let server = make_server_with_mutations();
+        let store = server.store.clone().unwrap();
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        store
+            .create_execution(&croniq_store::models::Execution {
+                id,
+                job_key: "etl:nightly".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+        store.claim_execution(id, "r1", now).unwrap();
+
+        let result = server
+            .cancel_execution(Parameters(CancelExecutionParams {
+                execution_id: id.to_string(),
+            }))
+            .await
+            .unwrap();
+        assert!(result.contains("aborts it"), "{result}");
+        assert_eq!(
+            store.get_execution(id).unwrap().unwrap().state,
+            ExecutionState::Cancelled
+        );
+        assert_eq!(server.state.drain_cancels("r1").await, vec![id.to_string()]);
+
+        // A finished run has nothing to cancel.
+        seed_execution(&store, "etl:done");
+        let done = store
+            .list_executions(&croniq_store::models::ExecutionFilter {
+                job_key: Some("etl:done".into()),
+                ..Default::default()
+            })
+            .unwrap()[0]
+            .id;
+        let err = server
+            .cancel_execution(Parameters(CancelExecutionParams {
+                execution_id: done.to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("already finished"), "{}", err.message);
     }
 
     #[tokio::test]
@@ -3894,6 +4459,33 @@ mod tests {
         assert!(!stored.metadata.contains_key(RUNNER_EXEC_METADATA_KEY));
         assert!(!stored.metadata.contains_key("__max_concurrent"));
         assert_eq!(stored.metadata["env"], "staging");
+    }
+
+    /// `create_job` on an existing key was an upsert that re-activated a
+    /// deactivated job (review 2026-10-24, P-4).
+    #[tokio::test]
+    async fn create_job_refuses_an_existing_key() {
+        let server = make_server_with_mutations();
+        seed_job(&server, "etl:nightly");
+        server
+            .deactivate_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+
+        let params: CreateJobParams =
+            serde_json::from_value(serde_json::json!({ "job_key": "etl:nightly" })).unwrap();
+        let err = server.create_job(Parameters(params)).await.unwrap_err();
+        assert!(err.message.starts_with("job_exists"), "{}", err.message);
+        let job = server
+            .store
+            .as_ref()
+            .unwrap()
+            .get_job_definition("etl:nightly")
+            .unwrap()
+            .unwrap();
+        assert!(!job.is_active);
     }
 
     #[tokio::test]

@@ -20,7 +20,8 @@ use uuid::Uuid;
 
 use super::ServerState;
 use crate::api::auth_middleware::require_scope;
-use crate::api::calendars::ValidationError;
+use crate::api::calendars::{ValidationError, bad_input};
+use crate::api::jobs::is_dsl_managed;
 use crate::loader::{ResolvedCalendars, synth_trigger_def_from_dsl};
 
 /// Shorthand for the structured error shape shared with the calendars API,
@@ -64,12 +65,24 @@ fn check_calendar_known(
 /// rather than from a paused job hours later. An empty string means "unset",
 /// matching `check_calendar_known`.
 fn check_timezone_valid(timezone: Option<&str>) -> Result<(), (StatusCode, Json<ValidationError>)> {
-    let Some(name) = timezone.filter(|t| !t.is_empty()) else {
-        return Ok(());
-    };
-    croniq_config::timezone::parse(name)
-        .map_err(|e| verr(StatusCode::BAD_REQUEST, "unknown_timezone", e.to_string()))?;
-    Ok(())
+    croniq_scheduler::input::check_timezone(timezone).map_err(bad_input)
+}
+
+/// Reject a `cron_expression` or `window` the loader cannot build (review
+/// 2026-10-24, P-6).
+///
+/// The loader fails such a row closed rather than refusing it:
+/// `trigger_from_definition` answers `None` for an unparseable expression, so
+/// `sync_job` sent `RemoveJob` and a `201` left the job silently out of the
+/// scheduler, with no `config_fault` to say why. A typo in `window` was worse,
+/// because it parsed as "no window" and the job fired around the clock. Both
+/// are refused here with the same checks the MCP tools run.
+fn check_schedule_fields(
+    cron_expression: Option<&str>,
+    window: Option<&str>,
+) -> Result<(), (StatusCode, Json<ValidationError>)> {
+    croniq_scheduler::input::check_schedule(cron_expression).map_err(bad_input)?;
+    croniq_scheduler::input::check_window(window).map_err(bad_input)
 }
 
 #[derive(Deserialize, Default)]
@@ -186,6 +199,7 @@ pub async fn handle_create(
         ));
     }
 
+    check_schedule_fields(req.cron_expression.as_deref(), req.window.as_deref())?;
     let resolved = state.resolved_calendars().await;
     check_calendar_known(req.calendar.as_deref(), &resolved)?;
     check_timezone_valid(req.timezone.as_deref())?;
@@ -318,7 +332,13 @@ pub async fn handle_update(
     // above; we additionally guard against a stored row whose
     // `managed_by` says `dsl` (defensive, not expected). Every other
     // origin (`api`, `runner`, future operator imports) is editable.
-    if existing.managed_by == "dsl" {
+    //
+    // And against an API row whose *job* the Croniqfile has since taken over
+    // (review 2026-10-24, P-2). `POST` refuses a DSL key, but only at create
+    // time: add the job to the file later and the old row stays. Editing it
+    // pushed an `AddJob` that replaced the Croniqfile's trigger in the running
+    // scheduler, so the API overrode a resource the file declares.
+    if existing.managed_by == "dsl" || is_dsl_managed(&state, &existing.job_key).await {
         return Err(verr(
             StatusCode::CONFLICT,
             "dsl_managed",
@@ -326,6 +346,10 @@ pub async fn handle_update(
         ));
     }
 
+    // Only the fields this request sends: a row written before the check
+    // existed must still be editable (to disable it, say) without first
+    // having its old expression fixed.
+    check_schedule_fields(req.cron_expression.as_deref(), req.window.as_deref())?;
     if let Some(cron) = req.cron_expression {
         existing.cron_expression = Some(cron);
     }
@@ -424,6 +448,14 @@ pub async fn handle_delete(
         .ok()
         .flatten()
         .map(|t| t.job_key);
+    // A leftover API row for a job the Croniqfile now declares (P-2): deleting
+    // it sent `RemoveJob` for that key, and the file's job stopped firing until
+    // the next reload. The row is the API's, but the key is not.
+    if let Some(ref key) = job_key
+        && is_dsl_managed(&state, key).await
+    {
+        return StatusCode::CONFLICT;
+    }
     match store.delete_trigger(&trigger_id) {
         Ok(_) => {
             if let Some(job_key) = job_key {
@@ -1024,5 +1056,136 @@ mod tests {
             SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "api:job"),
             other => panic!("expected RemoveJob, got {other:?}"),
         }
+    }
+
+    /// An unparseable expression was stored with `201`, and the sync then took
+    /// the job out of the scheduler without a word (review 2026-10-24, P-6).
+    #[tokio::test]
+    async fn create_schedule_with_unparseable_cron_returns_400() {
+        let store = make_store();
+        let (state, mut sched_rx) = make_state_sched(vec![], Arc::clone(&store));
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/schedules",
+            serde_json::json!({ "job_key": "api:typo", "cron_expression": "jeden Tag" }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "invalid_schedule");
+        assert!(store.list_triggers(Some("api:typo")).unwrap().is_empty());
+        assert!(
+            sched_rx.try_recv().is_err(),
+            "nothing may reach the scheduler"
+        );
+    }
+
+    /// A `window` typo parsed as "no window", so the job fired around the clock.
+    #[tokio::test]
+    async fn create_schedule_with_malformed_window_returns_400() {
+        let store = make_store();
+        let (state, _rx) = make_state_sched(vec![], Arc::clone(&store));
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/schedules",
+            serde_json::json!({
+                "job_key": "api:windowed",
+                "cron_expression": "5m",
+                "window": "02:00-06:00",
+            }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "invalid_window");
+        assert!(
+            store
+                .list_triggers(Some("api:windowed"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_schedule_with_unparseable_cron_returns_400_and_keeps_the_row() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "1m");
+        let (state, mut sched_rx) = make_state_sched(vec![], Arc::clone(&store));
+
+        let (status, body) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "cron_expression": "every day at 25:00" }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "invalid_schedule");
+        let row = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(row.cron_expression.as_deref(), Some("1m"));
+        assert!(sched_rx.try_recv().is_err());
+    }
+
+    /// A row written before the check existed can still be switched off: only
+    /// the fields a request sends are checked.
+    #[tokio::test]
+    async fn disabling_a_legacy_row_with_a_bad_expression_still_works() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:legacy", "jeden Tag");
+        let (state, _rx) = make_state_sched(vec![], Arc::clone(&store));
+
+        let (status, body) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "enabled": false }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["enabled"], false);
+    }
+
+    /// `POST` refuses a DSL key only at create time. Once the Croniqfile takes
+    /// the job over, the old API row must not be able to replace or remove the
+    /// file's trigger in the running scheduler (review 2026-10-24, P-2).
+    #[tokio::test]
+    async fn api_row_for_a_job_the_croniqfile_now_owns_is_read_only() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "dsl:taken", "1m");
+        let (state, mut sched_rx) =
+            make_state_sched(vec![dsl_job("dsl:taken")], Arc::clone(&store));
+
+        let (status, body) = put_json(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "cron_expression": "10m" }),
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], "dsl_managed");
+
+        let status = status_of(
+            server_router(Arc::clone(&state)),
+            "DELETE",
+            &format!("/v1/schedules/{id}"),
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert!(store.get_trigger(&id).unwrap().is_some());
+        assert!(
+            sched_rx.try_recv().is_err(),
+            "the Croniqfile's trigger must be left alone"
+        );
+    }
+
+    /// The sync itself also leaves a Croniqfile key alone, for the paths that
+    /// reach it without a handler's check (a calendar edit, an MCP tool).
+    #[tokio::test]
+    async fn sync_job_ignores_a_croniqfile_key() {
+        let store = make_store();
+        seed_api_trigger(&store, "dsl:taken", "1m");
+        let (state, mut sched_rx) =
+            make_state_sched(vec![dsl_job("dsl:taken")], Arc::clone(&store));
+
+        crate::api::job_sync::sync_job(&state, "dsl:taken").await;
+        assert!(sched_rx.try_recv().is_err());
     }
 }

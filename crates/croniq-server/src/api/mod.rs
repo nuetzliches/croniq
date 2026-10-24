@@ -45,7 +45,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware,
-    routing::{delete, get, post, put},
+    routing::{any, delete, get, post, put},
 };
 use chrono::{DateTime, Utc};
 use croniq_auth::CallerContext;
@@ -93,6 +93,16 @@ const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
 /// queue room without stalling throughput. The SDKs surface it as
 /// `retryAfterMs`.
 const TRIGGER_OVERFLOW_RETRY_AFTER_SECS: u64 = 1;
+
+/// Most rows one `GET /v1/executions` returns (review 2026-10-24, P-5).
+///
+/// `limit` went into the SQL as given, so `?limit=4000000000` read the whole
+/// history, metadata included, into one response while holding the store
+/// mutex every other request waits on. Dead letters and alert deliveries were
+/// capped; executions were not. A larger `limit` is clamped, not refused, so a
+/// client asking for "everything" gets a full page and pages on with
+/// `until`/`until_id`.
+pub const MAX_EXECUTIONS_LIMIT: u32 = 1000;
 
 // ─── Server state ─────────────────────────────────────────────────────────────
 
@@ -834,7 +844,14 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/auth/oidc/config", get(oidc::handle_config))
         // Combined sign-in-method probe (issue #138). Canonical replacement
         // for the OIDC-only `/v1/auth/oidc/config`; both are kept for now.
-        .route("/v1/auth/config", get(oidc::handle_auth_config));
+        .route("/v1/auth/config", get(oidc::handle_auth_config))
+        // Every other path under `/v1/` is an API path nobody registered.
+        // Without this it fell through to the dashboard's SPA fallback and
+        // answered `200 text/html` (review 2026-10-24, P-9): a typo in a
+        // client (`/v1/jobz`) looked like success with an unparseable body.
+        // The router prefers any registered route over this catch-all, so it
+        // only sees what nothing else matches.
+        .route("/v1/{*rest}", any(handle_unknown_api_path));
 
     // Explicit CORS allowlist (issue #429). The only browser origin that
     // legitimately calls this API cross-origin is a dashboard served from the
@@ -855,6 +872,18 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
+
+/// `404` for a path under `/v1/` that no route serves. JSON, like every other
+/// API error, rather than the dashboard's `index.html` (P-9).
+async fn handle_unknown_api_path(uri: axum::http::Uri) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "not_found",
+            "message": format!("no API endpoint at {}", uri.path()),
+        })),
+    )
+}
 
 /// `POST /v1/poll` — heartbeat + work dispatch with long-poll support.
 ///
@@ -1319,6 +1348,9 @@ async fn try_dequeue_for(
     // queued for a runner that fits, they are not lost.
     let mut ephemeral_dispatched: HashMap<String, u64> = HashMap::new();
     let mut ephemeral_dropped: HashMap<String, u64> = HashMap::new();
+    // Items the registry refused although the store already records them as
+    // claimed by this runner — see below.
+    let mut refused: Vec<WorkItem> = Vec::new();
     let assignments: Vec<WorkAssignment> = {
         let mut reg = state.runner.registry.write().await;
         items
@@ -1332,11 +1364,50 @@ async fn try_dequeue_for(
                         &mut ephemeral_dropped
                     };
                     *tally.entry(item.job_key.clone()).or_insert(0) += 1;
+                } else if !claimed {
+                    refused.push(item);
+                    return None;
                 }
                 claimed.then(|| WorkAssignment::from(item))
             })
             .collect()
     };
+    // The registry refuses a claim for a runner it no longer holds — removed
+    // by `DELETE /v1/runners/{id}` between this poll's registration and here.
+    // The store claim above has already been written, so the item was out of
+    // the queue, its row `claimed`, and no runner would ever get it: it hung
+    // until the stale-claim reaper's `timeout + grace` (review 2026-10-24,
+    // P-13). Hand it back instead.
+    if !refused.is_empty() {
+        let now = Utc::now();
+        let mut q = state.runner.queue.write().await;
+        for item in refused {
+            let back = match (&state.store, uuid::Uuid::parse_str(&item.execution_id)) {
+                (Some(store), Ok(id)) => match store.requeue_if_claimed(id, now) {
+                    Ok(requeued) => requeued,
+                    Err(e) => {
+                        tracing::warn!(
+                            execution_id = %item.execution_id,
+                            error = %e,
+                            "could not hand back a refused claim; the stale-claim reaper will"
+                        );
+                        false
+                    }
+                },
+                _ => true,
+            };
+            if back {
+                tracing::info!(
+                    execution_id = %item.execution_id,
+                    runner_id = %runner_id,
+                    "runner left the registry mid-dispatch; execution returned to the queue"
+                );
+                q.enqueue(item);
+            }
+        }
+        drop(q);
+        state.runner.work_notify.notify_waiters();
+    }
     for (job_key, count) in ephemeral_dispatched {
         state
             .runner
@@ -1626,14 +1697,59 @@ async fn handle_delete_runner(
     if let Err(s) = require_scope(&ctx, Scope::RUNNERS_WRITE) {
         return s;
     }
+    deregister_runner(&state, &runner_id).await;
+    StatusCode::NO_CONTENT
+}
+
+/// Remove a runner and release what the server ties to its id. Shared by
+/// `DELETE /v1/runners/{id}` and the MCP `delete_runner` tool, which only
+/// emptied the registry entry (review 2026-10-24, P-15).
+///
+/// - The credential binding (ADR-0008): deregistering is the operator-driven
+///   handover, so a different credential can claim the id on its next poll.
+///   The MCP tool left the binding in place, and that next poll got `403`.
+/// - The executions the runner still holds go back to the queue now rather
+///   than after the stale-claim reaper's `timeout + grace` (P-13). A removed
+///   runner is not going to report them, and a `singleton` job's later fires
+///   wait on its claim.
+pub(crate) async fn deregister_runner(state: &Arc<ServerState>, runner_id: &str) {
     {
         let mut reg = state.runner.registry.write().await;
-        reg.remove(&runner_id);
+        reg.remove(runner_id);
     }
-    // Deregistering is the operator-driven handover: it frees the id so a
-    // different credential can claim it on its next poll.
-    runner_identity::release_runner(&state, &runner_id);
-    StatusCode::NO_CONTENT
+    runner_identity::release_runner(state, runner_id);
+
+    let Some(store) = state.store.clone() else {
+        return;
+    };
+    let dsl_jobs = state.dsl_jobs.clone();
+    let lookup_store = Arc::clone(&store);
+    let requeued = crate::watchdog::requeue_abandoned_for_runner(
+        &store,
+        &state.runner,
+        runner_id,
+        Utc::now(),
+        |job_key| {
+            if let Some(jobs) = dsl_jobs.as_ref()
+                && let Ok(jobs) = jobs.try_read()
+                && let Some(c) = jobs.iter().find(|j| j.key == job_key)
+            {
+                return Some(c.clone());
+            }
+            match lookup_store.get_job_definition(job_key) {
+                Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                _ => None,
+            }
+        },
+    )
+    .await;
+    if !requeued.is_empty() {
+        tracing::info!(
+            runner_id = %runner_id,
+            count = requeued.len(),
+            "deregistered runner: requeued the executions it held"
+        );
+    }
 }
 
 /// `POST /v1/trigger` — immediately enqueue a job execution.
@@ -1765,6 +1881,27 @@ async fn handle_trigger(
         jobs.iter().find(|j| j.key == req.job_key).cloned()
     } else {
         None
+    };
+    // A job created through `POST /v1/jobs` (or adopted) lives in the store,
+    // not in `dsl_jobs`. Without this fallback a manual trigger of such a job
+    // ran under the `5m` default instead of its own `timeout`, and the reaper
+    // killed a two-hour job after five minutes plus grace (review 2026-10-24,
+    // P-3; #551 fixed only the Croniqfile half). The dead-letter replay and
+    // the watchdog's requeue resolve a job the same way.
+    let dsl_job = match (dsl_job, state.store.as_ref()) {
+        (Some(job), _) => Some(job),
+        (None, Some(store)) => match store.get_job_definition(&req.job_key) {
+            Ok(def) => def.map(|d| crate::loader::job_config_from_job_def(&d)),
+            Err(e) => {
+                tracing::warn!(
+                    job_key = %req.job_key,
+                    error = %e,
+                    "trigger: could not read the job definition; using defaults"
+                );
+                None
+            }
+        },
+        (None, None) => None,
     };
 
     // ── Trigger fold (`coalesce`, issue #759) ────────────────────────────────
@@ -2169,7 +2306,10 @@ async fn handle_list_executions(
             .filter(|v| !v.is_empty()),
         runner_id: params.get("runner_id").cloned(),
         states: exec_states,
-        limit: params.get("limit").and_then(|l| l.parse().ok()),
+        limit: params
+            .get("limit")
+            .and_then(|l| l.parse::<u32>().ok())
+            .map(|l| l.min(MAX_EXECUTIONS_LIMIT)),
         // `since` / `until` were in `ExecutionFilter` and in the SQL from the
         // start; this handler simply never read them, so the one HTTP entry
         // point to the execution history could not express a time window at
@@ -3330,6 +3470,91 @@ mod tests {
         }
     }
 
+    /// An unknown path under `/v1/` fell through to the dashboard's SPA
+    /// fallback and answered `200 text/html` (review 2026-10-24, P-9).
+    #[tokio::test]
+    async fn an_unknown_api_path_is_a_json_404_not_the_dashboard() {
+        let ui = tempfile::tempdir().unwrap();
+        std::fs::write(ui.path().join("index.html"), "<!doctype html>").unwrap();
+        let (state, _rx) = make_state();
+        let app = crate::ui_assets::mount(server_router(state), ui.path());
+
+        let send = |uri: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let res = send("/v1/jobz").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert!(
+            res.headers()[axum::http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("application/json")
+        );
+        let res = send("/v1/jobs/some-key/nothing/here").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+        // Registered routes keep their own answer: auth first.
+        assert_eq!(send("/v1/jobs").await.status(), StatusCode::UNAUTHORIZED);
+        // And a client-side route outside `/v1/` is still the dashboard.
+        assert_eq!(send("/jobs/etl:nightly").await.status(), StatusCode::OK);
+    }
+
+    /// A job created through the API lives in the store, not in `dsl_jobs`.
+    /// The trigger handler looked only at the latter, so a `timeout: "2h"`
+    /// API job got the `5m` default stamped and the reaper killed it after
+    /// five minutes plus grace (review 2026-10-24, P-3).
+    #[tokio::test]
+    async fn trigger_inherits_a_store_jobs_timeout() {
+        use croniq_store::sqlite::SqliteStore;
+        let store: DynStore = crate::store::sqlite_store(SqliteStore::in_memory().unwrap());
+        let now = Utc::now();
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "api:long".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: now,
+                updated_at: now,
+                timeout: Some("2h".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+        let (mut state, _rx) = make_state_with_dsl_jobs(vec![]);
+        Arc::get_mut(&mut state).unwrap().store = Some(Arc::clone(&store));
+
+        let body = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "api:long" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.peek_n(1)[0].timeout, "2h");
+        let id = uuid::Uuid::parse_str(body["execution_id"].as_str().unwrap()).unwrap();
+        let row = store.get_execution(id).unwrap().unwrap();
+        assert_eq!(
+            row.metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .map(String::as_str),
+            Some("2h"),
+            "the reaper judges the row by this stamp"
+        );
+    }
+
     #[tokio::test]
     async fn trigger_without_job_timeout_falls_back_to_default() {
         // Neither the caller nor the job declares one: the historical 5m
@@ -3748,6 +3973,33 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), 5, "no row may be returned twice: {seen:?}");
+    }
+
+    /// `limit` went into the SQL as given, so one request could read the whole
+    /// history under the store mutex (review 2026-10-24, P-5). It is clamped.
+    #[tokio::test]
+    async fn executions_limit_is_capped() {
+        let (state, store) = make_store_state();
+        let base = Utc::now() - chrono::Duration::hours(5);
+        for i in 0..(MAX_EXECUTIONS_LIMIT as i64 + 5) {
+            seed_keyed_execution(
+                &store,
+                "etl:sync",
+                &format!("k{i}"),
+                ExecutionState::Completed,
+                base + chrono::Duration::milliseconds(i),
+            );
+        }
+
+        let page = get_json(
+            server_router(Arc::clone(&state)),
+            "/v1/executions?limit=4000000000",
+        )
+        .await;
+        assert_eq!(
+            page.as_array().unwrap().len(),
+            MAX_EXECUTIONS_LIMIT as usize
+        );
     }
 
     /// `until` without `until_id` keeps the inclusive window semantics #636
@@ -6319,6 +6571,119 @@ mod tests {
         id
     }
 
+    /// The MCP `delete_runner` tool emptied the registry entry and left the
+    /// ADR-0008 binding, so the next poll under that id with another
+    /// credential got `403`; `DELETE /v1/runners/{id}` releases it (review
+    /// 2026-10-24, P-15). Both now go through `deregister_runner`, which also
+    /// hands the runner's claims back to the queue (P-13).
+    #[tokio::test]
+    async fn mcp_runner_removal_releases_the_binding_and_the_claims() {
+        use croniq_mcp::JobSync as _;
+        let (state, store, _rx) = make_bound_state();
+        let old = runner_token(&state, "client-a");
+        let new = runner_token(&state, "client-b");
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &old,
+            poll_body("worker-1", "iid-old"),
+        )
+        .await;
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "billing:invoice".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("10m".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        // What the MCP tool does: the registry entry, then the host hook.
+        state.runner.registry.write().await.remove("worker-1");
+        crate::api::job_sync::SchedulerJobSync::new(Arc::clone(&state)).runner_removed("worker-1");
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while store.get_execution(exec).unwrap().unwrap().state != ExecutionState::Queued {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the claim was never handed back"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &new,
+            poll_body("worker-1", "iid-new"),
+        )
+        .await;
+        assert_eq!(status, 200, "the id is free for another credential");
+    }
+
+    /// The store claim is written before the registry claim. When the
+    /// registry refuses (the runner was deregistered mid-poll), the item was
+    /// out of the queue with its row `claimed`, and nobody got it until the
+    /// stale-claim reaper (review 2026-10-24, P-13).
+    #[tokio::test]
+    async fn a_claim_the_registry_refuses_goes_back_to_the_queue() {
+        let (state, store, _rx) = make_guard_state();
+        let now = Utc::now();
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: "test:queued-1m".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: id.to_string(),
+            job_key: "test:queued-1m".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: false,
+        });
+
+        let assignments = try_dequeue_for(&state, "never-registered", &[], 5).await;
+        assert!(assignments.is_empty());
+        assert_eq!(
+            store.get_execution(id).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+    }
+
     /// (a) A foreign credential must not poll under someone else's
     /// `runner_id`. The damage is not the empty poll response — it is the
     /// takeover: registering a new `instance_id` under an existing
@@ -6464,6 +6829,27 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(body["accepted"], 1);
         assert_eq!(store.read_logs(exec, 100).unwrap().len(), 1);
+    }
+
+    /// A store failure while appending logs answered `200 {accepted: 0}`, and
+    /// every SDK reads a 2xx as delivered and drops the batch (review
+    /// 2026-10-24, P-11). It is a retryable `503` now.
+    #[tokio::test]
+    async fn events_answer_503_when_the_store_cannot_take_them() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        faulty.arm_append_logs();
+        let admin = crate::api::test_auth::admin_bearer();
+        let token = admin.strip_prefix("Bearer ").unwrap();
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/work/{exec}/events"),
+            token,
+            serde_json::json!([{ "level": "info", "message": "a line" }]),
+        )
+        .await;
+        assert_eq!(status, 503);
     }
 
     /// (d) A foreign credential must not renew another runner's lease —

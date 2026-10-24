@@ -110,6 +110,18 @@ pub async fn sync_job_with(state: &ServerState, job_key: &str, known: Known<'_>)
         return;
     };
 
+    // A key the Croniqfile declares is the reload's to schedule, whatever API
+    // rows still carry it (review 2026-10-24, P-2). A leftover API trigger for
+    // such a key, reached here through a calendar edit or an MCP tool, used to
+    // replace the file's trigger in the running scheduler — or remove it.
+    if crate::api::jobs::is_dsl_managed(state, job_key).await {
+        tracing::debug!(
+            job_key = %job_key,
+            "not syncing a Croniqfile-owned job from its API rows"
+        );
+        return;
+    }
+
     // The job's own row decides whether it may fire at all. A missing row is
     // not a reason to stop: `POST /v1/schedules` can create a trigger for a key
     // that has no `job_definitions` row, and that job fires today.
@@ -261,6 +273,43 @@ impl croniq_mcp::JobSync for SchedulerJobSync {
 
     fn job_removed(&self, job_key: &str) {
         remove_job(&self.state, job_key);
+    }
+
+    fn calendar_changed(&self, names: &[String]) {
+        // The rebuild `PUT /v1/calendars/{id}` runs (issue #393), reached from
+        // `/mcp` too (review 2026-10-24, P-8). Spawned for the reason
+        // `job_changed` is: the trait is sync and the tool has already
+        // written the store.
+        let state = Arc::clone(&self.state);
+        let names = names.to_vec();
+        tokio::spawn(async move {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let rebuilt = crate::api::calendars::propagate_calendar_change(&state, &names).await;
+            if rebuilt > 0 {
+                tracing::info!(
+                    rebuilt,
+                    "MCP calendar change propagated to running triggers"
+                );
+            }
+        });
+    }
+
+    fn runner_removed(&self, runner_id: &str) {
+        // What `DELETE /v1/runners/{id}` does after the registry entry goes:
+        // release the ADR-0008 binding and requeue the runner's claims
+        // (review 2026-10-24, P-13, P-15). The tool removed the entry only, so
+        // the next poll with another credential got `403`.
+        let state = Arc::clone(&self.state);
+        let runner_id = runner_id.to_string();
+        tokio::spawn(async move {
+            crate::api::deregister_runner(&state, &runner_id).await;
+        });
+    }
+
+    fn dsl_calendars(
+        &self,
+    ) -> Option<Arc<tokio::sync::RwLock<Vec<croniq_config::compile::CalendarConfig>>>> {
+        self.state.dsl_calendars.clone()
     }
 }
 
@@ -508,5 +557,34 @@ mod tests {
             SchedulerCommand::RemoveJob { job_key } => assert_eq!(job_key, "dsl:job"),
             other => panic!("expected RemoveJob, got {other:?}"),
         }
+    }
+
+    /// A calendar written over `/mcp` re-attaches the gate on the running
+    /// triggers that name it, as `PUT /v1/calendars/{id}` does (review
+    /// 2026-10-24, P-8). The MCP tool wrote the row and stopped before.
+    #[tokio::test]
+    async fn a_calendar_change_from_the_mcp_rebuilds_the_triggers_that_use_it() {
+        use croniq_mcp::JobSync as _;
+        let (state, store, mut rx) = wired();
+        let mut gated = trigger("etl:gated", true);
+        gated.calendar = Some("biz".into());
+        store.create_trigger(&gated).unwrap();
+        store.create_trigger(&trigger("etl:free", true)).unwrap();
+
+        let sync = SchedulerJobSync::new(Arc::clone(&state));
+        sync.calendar_changed(&["biz".to_string()]);
+
+        let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the propagation never reached the scheduler")
+            .unwrap();
+        match cmd {
+            SchedulerCommand::AddJob { job, .. } => assert_eq!(job.key, "etl:gated"),
+            other => panic!("expected AddJob, got {other:?}"),
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "only the job that names the calendar"
+        );
     }
 }

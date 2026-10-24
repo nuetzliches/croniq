@@ -100,6 +100,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   build moved to `docker-compose.build.yml`:
   `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
 
+- **`POST /v1/jobs` no longer overwrites an existing job** (review 2026-10-24,
+  P-4). For a key that already had a row, create was a full upsert: it set
+  `is_active` back to `true`, so a job an operator had deactivated started
+  firing again, and it dropped the job's tags and metadata. It now answers
+  `409 job_exists`, and `PUT /v1/jobs/{key}` remains the way to change a job.
+  The MCP `create_job` tool refuses the same way.
+
 ### Fixed
 
 - **`CRONIQ_REFRESH_COOKIE` holds its boot contract in every case** (#880).
@@ -370,6 +377,107 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   console formatted every buffered event again for each new line; each row is
   now computed once, when its event arrives.
 
+- **A schedule the server cannot run is refused when it is written** (review
+  2026-10-24, P-6). `POST /v1/schedules {"cron_expression": "jeden Tag"}`
+  answered `201`, and the job then left the scheduler without a word: the
+  loader could not build the expression, so the sync removed the job and
+  recorded no fault. A typo in `window` parsed as "no window", and the job
+  fired around the clock. `POST` and `PUT /v1/schedules` now answer
+  `400 invalid_schedule` or `400 invalid_window`, using the parser the loader
+  uses. `PUT` checks only the fields it is sent, so an older row with a bad
+  expression can still be disabled.
+- **An API schedule for a job the Croniqfile now declares is read-only**
+  (review 2026-10-24, P-2). `POST /v1/schedules` refused a Croniqfile job key
+  only at create time. Once the file took the job over, the old API row stayed
+  editable: `PUT` replaced the file's trigger in the running scheduler and
+  `DELETE` stopped the file's job until the next reload. Both now answer
+  `409 dsl_managed`, and the scheduler sync leaves a Croniqfile key alone
+  whatever API rows still carry it.
+
+- **The MCP calendar and schedule tools refuse what the HTTP endpoints
+  refuse** (review 2026-10-24, P-8). `create_calendar` stored a calendar named
+  like a Croniqfile one (which then shadowed it), took any timezone, and ran
+  the rule parser without the semantic checks, so `include weekly funday`
+  was stored over `/mcp` and refused over HTTP. `update_calendar` could
+  rename a calendar onto a Croniqfile name, and calendar edits did not reach
+  running triggers until the next reload. `create_schedule` and
+  `update_schedule` checked neither the expression, the window, the timezone
+  nor the calendar. Both surfaces now call the same checks, and a calendar
+  write over `/mcp` re-attaches the gate on running triggers as
+  `PUT /v1/calendars/{id}` does.
+
+- **A runner's registration no longer undoes what an operator set** (review
+  2026-10-24, P-4). SDK runners call `POST /v1/jobs/register` at every boot,
+  and on an existing job it replaced the whole row: tags and metadata gone,
+  `is_active` back to `true`, the trigger re-enabled and its `window` cleared.
+  A job deactivated from the dashboard fired again after the runner's next
+  restart. Register now patches: the fields the request carries replace the
+  stored ones, and `is_active`, tags, metadata, the trigger's `enabled` and
+  `window`, and both `created_at` stay. A deactivated job is updated but stays
+  out of the scheduler, and the response says `registered_inactive`. A
+  malformed `timeout` is refused with `400 invalid_duration`, as on
+  `POST /v1/jobs`.
+
+- **`POST /v1/trigger` uses an API job's own `timeout`** (review 2026-10-24,
+  P-3). The handler looked a job up in the Croniqfile only, so a job created
+  with `POST /v1/jobs {"timeout": "2h"}` and fired by hand ran under the
+  `5m` default, and the stale-claim reaper took it back after five minutes
+  plus grace. The handler now falls back to the stored job, as the
+  dead-letter replay and the watchdog's requeue already did.
+
+- **`GET /v1/executions` caps `limit` at 1000** (review 2026-10-24, P-5).
+  The value went into the query as given, so `?limit=4000000000` read the
+  whole execution history, metadata included, into one response while every
+  other request waited on the store. A larger `limit` is now clamped to 1000;
+  page on with `until`/`until_id`.
+
+- **The MCP `cancel_execution` tool cancels a running execution on its
+  runner** (review 2026-10-24, P-7). The tool said it had "no effect if
+  already dispatched", but it marked a claimed execution `cancelled` in the
+  store without telling the runner: the run carried on, its ack was refused,
+  and the history called a finished run cancelled. It now pushes the cancel
+  to the runner, as `POST /v1/executions/{id}/cancel` does, and refuses a
+  finished execution.
+
+- **An unknown path under `/v1/` answers `404` JSON** (review 2026-10-24,
+  P-9). With the dashboard served, `GET /v1/jobz` fell through to the SPA
+  fallback and answered `200 text/html`, so a client typo looked like success
+  with a body it could not parse. Paths under `/v1/` that no endpoint serves
+  now answer `404 {"error": "not_found"}`; the dashboard's own client-side
+  routes are unchanged.
+
+- **`POST /v1/work/{id}/events` answers `503` when the store cannot take the
+  batch** (review 2026-10-24, P-11). It answered `200 {"accepted": 0}`, and
+  the SDKs treat any 2xx as delivered and drop the batch, so a store hiccup
+  lost the logs without anyone retrying. The status is now `503`, the
+  retryable answer `POST /v1/work/renew` already gives for a store failure.
+
+- **Deregistering a runner hands its work back and frees its id on every
+  path** (review 2026-10-24, P-13 and P-15). `DELETE /v1/runners/{id}` left
+  the executions the runner held `claimed` until the stale-claim reaper's
+  `timeout + grace`, and a poll that raced the delete took an execution off
+  the queue, marked it claimed, and gave it to nobody. The MCP `delete_runner`
+  tool removed the registry entry only, so the runner id stayed bound to the
+  old credential and the next poll with another one got `403`. Both paths now
+  release the binding and requeue the runner's claims, and a claim the
+  registry refuses mid-poll goes back to the queue.
+
+- **Store errors no longer reach API and MCP callers verbatim** (review
+  2026-10-24, P-10). The job adopt/unadopt endpoints and every MCP tool put
+  the database driver's error text (table and column names, at worst parts of
+  the connection string) into their answer, which over `/mcp` lands in an LLM
+  agent's context. They now say which step failed and log the detail, as the
+  other endpoints do.
+
+- **`openapi.yaml` matches the handlers again** (review 2026-10-24). The
+  spec now documents the `409` and `404` answers of the job, schedule and
+  calendar endpoints, the `400` the schedule, calendar, register, log and
+  dead-letter endpoints give, the full status set of `POST /v1/jobs/register`,
+  the request bodies of `POST` and `PUT /v1/calendars` (missing until now),
+  the lowercase runner `status` and the runner `tags`, `started_at`,
+  `dead_reason`, `metadata` and `idempotency_key` on executions, `seq` and
+  `?level=` on execution logs, `tags` on `POST /v1/work/poll`, and the
+  `cancelled` ack status.
 - **Go SDK: a failed ack is retried instead of costing a second run**
   (review 2026-10-24, K-1). A handler that had succeeded lost its ack to a
   connection reset or a request timeout; the runner logged "failed to ack",

@@ -1372,22 +1372,11 @@ pub fn synth_trigger_def_from_dsl(
     }
 }
 
-/// Build a runtime [`Schedule`] from a persisted `cron_expression`.
-///
-/// API-created triggers store interval shorthand (`"5m"`, `"300"`,
-/// `"*/5 * * * *"`); DSL-synthesized and adopted triggers store a canonical DSL
-/// schedule line (`"every day at 02:00"`, `"every monday friday at 09:00"`,
-/// `"once at \"…\""`) — see [`CompiledSchedule::to_dsl`]. The shorthand is tried
-/// first so the fast path and existing API values are untouched, then the full
-/// DSL grammar, so *every* schedule shape rebuilds — not just `Interval`
-/// (issue found while fixing #393). Malformed expressions yield `None`.
-fn schedule_from_expr(expr: &str) -> Option<Schedule> {
-    if let Some(seconds) = parse_interval_seconds(expr) {
-        return Some(Schedule::Interval { seconds });
-    }
-    let kind = croniq_config::parser::parse_schedule_expr(expr).ok()?;
-    Schedule::from_ast(&kind).ok()
-}
+// Building a runtime `Schedule` from a persisted `cron_expression` lives in
+// `croniq_scheduler::input`, so the write-time check the API and the MCP run
+// on that column (`check_schedule`) is this exact function: a value the API
+// accepts is a value this loader can schedule (review 2026-10-24, P-6).
+use croniq_scheduler::input::{parse_interval_seconds, schedule_from_expr};
 
 /// Reconstruct the [`CompiledSchedule`] a persisted `cron_expression` describes,
 /// mirroring [`schedule_from_expr`] but for the config-side schedule type used
@@ -1399,32 +1388,6 @@ fn compiled_schedule_from_expr(expr: &str) -> Option<croniq_config::schedule::Co
     }
     let kind = croniq_config::parser::parse_schedule_expr(expr).ok()?;
     Some(CompiledSchedule::from_ast(&kind))
-}
-
-fn parse_interval_seconds(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Ok(n) = s.parse::<u64>() {
-        return Some(n);
-    }
-    if let Some(n) = s.strip_suffix('s') {
-        return n.parse().ok();
-    }
-    if let Some(n) = s.strip_suffix('m') {
-        return n.parse::<u64>().ok().map(|v| v * 60);
-    }
-    if let Some(n) = s.strip_suffix('h') {
-        return n.parse::<u64>().ok().map(|v| v * 3600);
-    }
-    // Try parsing as cron-like interval: */N * * * * → every N minutes
-    if let Some(rest) = s.strip_prefix("*/")
-        && let Some(n) = rest
-            .split_whitespace()
-            .next()
-            .and_then(|n| n.parse::<u64>().ok())
-    {
-        return Some(n * 60);
-    }
-    None
 }
 
 #[cfg(test)]
