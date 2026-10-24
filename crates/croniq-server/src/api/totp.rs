@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
-use croniq_auth::CallerContext;
 use croniq_auth::CallerType;
 use croniq_auth::crypto::{unwrap_totp_secret, wrap_totp_secret};
 use croniq_auth::password::verify_password;
 use croniq_auth::totp::{enroll_user, hash_recovery_code, verify_code};
+use croniq_auth::{AuthMethod, CallerContext};
 use croniq_store::models::{RecoveryCode, TotpSecret};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -97,8 +97,10 @@ pub async fn handle_confirm(
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<ConfirmRequest>,
 ) -> StatusCode {
-    let Ok((user_id, jwt_secret)) = require_user_with_jwt(&ctx, &state) else {
-        return StatusCode::UNAUTHORIZED;
+    let (user_id, jwt_secret) = match require_user_with_jwt(&ctx, &state) {
+        Ok(v) => v,
+        Err(StatusCode::FORBIDDEN) => return StatusCode::FORBIDDEN,
+        Err(_) => return StatusCode::UNAUTHORIZED,
     };
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
@@ -118,8 +120,9 @@ pub async fn handle_disable(
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<PasswordOnlyRequest>,
 ) -> StatusCode {
-    let Some(user_id) = ctx.user_id.as_deref() else {
-        return StatusCode::FORBIDDEN;
+    let user_id = match require_interactive_user(&ctx) {
+        Ok(id) => id,
+        Err(s) => return s,
     };
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
@@ -142,9 +145,7 @@ pub async fn handle_regenerate(
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<PasswordOnlyRequest>,
 ) -> Result<Json<RegenerateResponse>, StatusCode> {
-    let Some(user_id) = ctx.user_id.as_deref() else {
-        return Err(StatusCode::FORBIDDEN);
-    };
+    let user_id = require_interactive_user(&ctx)?;
     let store = state
         .store
         .as_ref()
@@ -178,14 +179,26 @@ pub async fn handle_regenerate(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/// Every `/v1/users/me/totp/*` handler requires an interactive user session.
+///
+/// A personal access token is a user caller too, but it is a long-lived
+/// bearer credential that a script or CI job holds — not proof that the
+/// account owner is at the keyboard. Letting it disable 2FA or mint fresh
+/// recovery codes means a leaked PAT plus a phished password removes the
+/// second factor; `POST /v1/users/me/tokens` already refuses PAT callers for
+/// the same reason (review 2026-10-24, A-7).
+fn require_interactive_user(ctx: &CallerContext) -> Result<&str, StatusCode> {
+    if ctx.caller_type != CallerType::User || ctx.auth_method == AuthMethod::Pat {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    ctx.user_id.as_deref().ok_or(StatusCode::UNAUTHORIZED)
+}
+
 fn require_user_with_jwt<'a>(
     ctx: &'a CallerContext,
     state: &'a Arc<ServerState>,
 ) -> Result<(&'a str, &'a str), StatusCode> {
-    if ctx.caller_type != CallerType::User {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let user_id = ctx.user_id.as_deref().ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = require_interactive_user(ctx)?;
     let secret = state
         .jwt_config
         .as_ref()
@@ -297,4 +310,72 @@ pub(crate) fn confirm_pending_enrollment(
         .totp_set_enabled(user_id, true, Some(Utc::now()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(method: AuthMethod) -> CallerContext {
+        CallerContext {
+            caller_type: CallerType::User,
+            caller_id: "u1".into(),
+            client_id: "u1".into(),
+            user_id: Some("u1".into()),
+            role: Some(croniq_store::models::Role::Viewer),
+            auth_method: method,
+            scopes: vec!["jobs:read".into()],
+            token_generation: None,
+        }
+    }
+
+    /// Review 2026-10-24, A-7: a PAT is not an interactive session and must
+    /// not reach any TOTP self-service handler. The refusal comes before the
+    /// store is consulted, so a store-less state is enough to observe it.
+    #[tokio::test]
+    async fn totp_self_service_refuses_pat_callers() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = ServerState::with_auth(croniq_runner::AppState::new(), tx, None, None);
+        let pw = || {
+            Json(PasswordOnlyRequest {
+                password: "pw".into(),
+            })
+        };
+
+        let disable = handle_disable(
+            State(Arc::clone(&state)),
+            Extension(ctx(AuthMethod::Pat)),
+            pw(),
+        )
+        .await;
+        assert_eq!(disable, StatusCode::FORBIDDEN);
+        let regen = handle_regenerate(
+            State(Arc::clone(&state)),
+            Extension(ctx(AuthMethod::Pat)),
+            pw(),
+        )
+        .await;
+        assert_eq!(regen.err(), Some(StatusCode::FORBIDDEN));
+        let setup = handle_setup(State(Arc::clone(&state)), Extension(ctx(AuthMethod::Pat))).await;
+        assert_eq!(setup.err(), Some(StatusCode::FORBIDDEN));
+        let confirm = handle_confirm(
+            State(Arc::clone(&state)),
+            Extension(ctx(AuthMethod::Pat)),
+            Json(ConfirmRequest {
+                code: "000000".into(),
+            }),
+        )
+        .await;
+        assert_eq!(confirm, StatusCode::FORBIDDEN);
+
+        // A password session gets past the guard (and then fails on the
+        // missing store, not on the caller check).
+        let disable = handle_disable(
+            State(Arc::clone(&state)),
+            Extension(ctx(AuthMethod::Password)),
+            pw(),
+        )
+        .await;
+        assert_eq!(disable, StatusCode::SERVICE_UNAVAILABLE);
+    }
 }

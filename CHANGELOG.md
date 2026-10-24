@@ -686,6 +686,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now carries only those of its scopes that the owner's current role grants,
   re-evaluated on every request.
 
+- **TOTP self-service refuses personal access tokens** (review 2026-10-24,
+  A-7). Every `/v1/users/me/totp/*` endpoint — setup, confirm, disable and
+  recovery-code regeneration — now answers 403 to a PAT caller, as
+  `POST /v1/users/me/tokens` already did. A PAT is a long-lived bearer
+  credential, not an interactive session, and together with the account
+  password it was enough to switch the second factor off.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

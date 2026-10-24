@@ -3651,6 +3651,7 @@ paths:
       responses:
         "204": { description: "TOTP disabled, recovery codes wiped" }
         "401": { description: Password wrong }
+        "403": { description: "Caller is not an interactive user session (API key or personal access token)" }
 
   /v1/users/me/totp/recovery-codes/regenerate:
     post:
