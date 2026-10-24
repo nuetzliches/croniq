@@ -27,6 +27,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   starts the stack. Apart from the `CRONIQ_REFRESH_COOKIE` line above, the
   stack itself is unchanged.
 
+- **`POST /v1/jobs` no longer overwrites an existing job** (review 2026-10-24,
+  P-4). For a key that already had a row, create was a full upsert: it set
+  `is_active` back to `true`, so a job an operator had deactivated started
+  firing again, and it dropped the job's tags and metadata. It now answers
+  `409 job_exists`, and `PUT /v1/jobs/{key}` remains the way to change a job.
+  The MCP `create_job` tool refuses the same way.
+
 ### Fixed
 
 - **`CRONIQ_REFRESH_COOKIE` holds its boot contract in every case** (#880).
@@ -63,6 +70,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nor the calendar. Both surfaces now call the same checks, and a calendar
   write over `/mcp` re-attaches the gate on running triggers as
   `PUT /v1/calendars/{id}` does.
+
+- **A runner's registration no longer undoes what an operator set** (review
+  2026-10-24, P-4). SDK runners call `POST /v1/jobs/register` at every boot,
+  and on an existing job it replaced the whole row: tags and metadata gone,
+  `is_active` back to `true`, the trigger re-enabled and its `window` cleared.
+  A job deactivated from the dashboard fired again after the runner's next
+  restart. Register now patches: the fields the request carries replace the
+  stored ones, and `is_active`, tags, metadata, the trigger's `enabled` and
+  `window`, and both `created_at` stay. A deactivated job is updated but stays
+  out of the scheduler, and the response says `registered_inactive`. A
+  malformed `timeout` is refused with `400 invalid_duration`, as on
+  `POST /v1/jobs`.
 
 ### Security
 

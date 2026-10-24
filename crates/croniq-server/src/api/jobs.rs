@@ -37,6 +37,12 @@ pub enum JobError {
     DslManaged {
         job_key: String,
     },
+    /// `POST /v1/jobs` for a key that already has a row (review 2026-10-24,
+    /// P-4). Create used to overwrite it, which reset `is_active` to `true`
+    /// and dropped the tags; `PUT /v1/jobs/{key}` is the update.
+    Exists {
+        job_key: String,
+    },
     /// A caller-supplied duration field did not parse (issue #559). Carries
     /// `parse_duration_checked`'s message, which already names the offending
     /// value and the accepted grammar.
@@ -71,6 +77,16 @@ impl IntoResponse for JobError {
                     "error": "dsl_managed",
                     "message": format!(
                         "Job '{job_key}' is managed by the Croniqfile. Edit the file and reload, or call POST /v1/jobs/{job_key}/adopt to take ownership (requires `policy {{ dsl_adopt_on_mutate true }}`)."
+                    ),
+                })),
+            )
+                .into_response(),
+            Self::Exists { job_key } => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "job_exists",
+                    "message": format!(
+                        "Job '{job_key}' already exists. Change it with PUT /v1/jobs/{job_key}, or delete it first."
                     ),
                 })),
             )
@@ -509,6 +525,21 @@ pub async fn handle_create(
         });
     }
 
+    // Create does not overwrite (P-4). It used to be a full upsert, so a
+    // second `POST` for a key silently re-activated a job an operator had
+    // deactivated and wiped its tags and metadata. Check-then-write, not a
+    // constraint: two creates racing for one new key can both pass, and the
+    // later one wins as before.
+    if store
+        .get_job_definition(&req.job_key)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some()
+    {
+        return Err(JobError::Exists {
+            job_key: req.job_key,
+        });
+    }
+
     let now = Utc::now();
     // Normalize tags: trim, drop empties, dedupe while preserving order.
     // Mirrors the PUT /v1/jobs/{key} handler so a round-trip create-then-update
@@ -819,13 +850,28 @@ pub struct RegisterJobResponse {
 ///
 /// Collision policy:
 /// - DSL-managed (Croniqfile) → skip (Croniqfile has precedence)
-/// - `managed_by: "runner"/"api"` exists → update
+/// - exists → patch: the fields the request carries replace the stored ones,
+///   everything else stays (see below)
 /// - Not found → create
+///
+/// Register is what an SDK runner sends at every boot, so on an existing job
+/// it is a patch, not an upsert (review 2026-10-24, P-4). It used to write a
+/// fresh row each time: `is_active: true`, no tags, no metadata, a new
+/// `created_at`, and an enabled trigger without its window. An operator who
+/// tagged a job and deactivated it from the dashboard found it tagged with
+/// nothing and firing again after the runner's next restart. Now the
+/// operator-owned state survives: `is_active`, `tags`, `metadata` and
+/// `created_at` on the job, `enabled`, `window`, `not_before`/`not_after` and
+/// `created_at` on the trigger. A field the request omits (`null`) keeps its
+/// stored value; `schedule` is required and always applied.
+///
+/// A deactivated job, or a disabled trigger, is updated but not pushed to the
+/// scheduler, and the response says `registered_inactive`.
 pub async fn handle_register(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<RegisterJobRequest>,
-) -> Result<(StatusCode, Json<RegisterJobResponse>), StatusCode> {
+) -> Result<(StatusCode, Json<RegisterJobResponse>), JobError> {
     require_scope(&ctx, Scope::JOBS_REGISTER)?;
     let store = state
         .store
@@ -845,8 +891,13 @@ pub async fn handle_register(
             reason = %e,
             "job registration rejected: invalid timezone"
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into());
     }
+
+    // `POST /v1/jobs` and `PUT /v1/jobs/{key}` have refused a malformed
+    // `timeout` since #559; register stored it, and the job's every fire ran
+    // under a bound the runner could not parse (P-4).
+    let timeout = validated_timeout(req.timeout.as_deref())?;
 
     // DSL precedence — check the in-memory Croniqfile map, not the store,
     // since DSL entries are not persisted.
@@ -861,57 +912,100 @@ pub async fn handle_register(
         ));
     }
 
+    let existing_job = store
+        .get_job_definition(&req.job_key)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let existing_triggers = store
         .list_triggers(Some(&req.job_key))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Create or update job definition. `RegisterJobRequest` carries no
+    // Create or patch the job definition. `RegisterJobRequest` carries no
     // metadata field on purpose: registration must not be able to seed the
     // reserved `__` namespace (see `handle_create`).
-    let job_def = JobDefinition {
-        job_key: req.job_key.clone(),
-        description: req.description.clone(),
-        assigned_runner_id: req.runner_id.clone(),
-        is_active: true,
-        metadata: std::collections::HashMap::new(),
-        created_at: now,
-        updated_at: now,
-        timeout: req.timeout.clone(),
-        max_retries: req.max_retries,
-        dead_letter_enabled: req.dead_letter_enabled,
-        dead_letter_retention: req.dead_letter_retention.clone(),
-        dead_letter_operator_hint: req.dead_letter_operator_hint.clone(),
-        dead_letter_replay_max_age: req.dead_letter_replay_max_age.clone(),
-        tags: Vec::new(),
+    let job_def = match existing_job {
+        Some(mut job) => {
+            if req.description.is_some() {
+                job.description = req.description.clone();
+            }
+            if req.runner_id.is_some() {
+                job.assigned_runner_id = req.runner_id.clone();
+            }
+            if timeout.is_some() {
+                job.timeout = timeout;
+            }
+            if req.max_retries.is_some() {
+                job.max_retries = req.max_retries;
+            }
+            if req.dead_letter_enabled.is_some() {
+                job.dead_letter_enabled = req.dead_letter_enabled;
+            }
+            if req.dead_letter_retention.is_some() {
+                job.dead_letter_retention = req.dead_letter_retention.clone();
+            }
+            if req.dead_letter_operator_hint.is_some() {
+                job.dead_letter_operator_hint = req.dead_letter_operator_hint.clone();
+            }
+            if req.dead_letter_replay_max_age.is_some() {
+                job.dead_letter_replay_max_age = req.dead_letter_replay_max_age.clone();
+            }
+            job.updated_at = now;
+            job
+        }
+        None => JobDefinition {
+            job_key: req.job_key.clone(),
+            description: req.description.clone(),
+            assigned_runner_id: req.runner_id.clone(),
+            is_active: true,
+            metadata: std::collections::HashMap::new(),
+            created_at: now,
+            updated_at: now,
+            timeout,
+            max_retries: req.max_retries,
+            dead_letter_enabled: req.dead_letter_enabled,
+            dead_letter_retention: req.dead_letter_retention.clone(),
+            dead_letter_operator_hint: req.dead_letter_operator_hint.clone(),
+            dead_letter_replay_max_age: req.dead_letter_replay_max_age.clone(),
+            tags: Vec::new(),
+        },
     };
     store
         .create_job_definition(&job_def)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Create or update trigger definition
-    let trigger_id = existing_triggers
-        .first()
-        .map(|t| t.trigger_id.clone())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-    let trigger_def = TriggerDefinition {
-        trigger_id: trigger_id.clone(),
-        job_key: req.job_key.clone(),
-        cron_expression: Some(req.schedule.clone()),
-        timezone: req.timezone.clone(),
-        calendar: req.calendar.clone(),
-        window: None,
-        not_before: None,
-        not_after: None,
-        enabled: true,
-        // "api" so the schedule is editable via PUT /v1/schedules — the
-        // register endpoint is just an upsert convenience and the result
-        // should look identical to a POST /v1/schedules row, not a
-        // separate read-only kind.
-        managed_by: "api".into(),
-        created_at: now,
-        updated_at: now,
+    // Create or patch the trigger definition, by the same rule.
+    let trigger_def = match existing_triggers.first() {
+        Some(existing) => {
+            let mut t = existing.clone();
+            t.cron_expression = Some(req.schedule.clone());
+            if req.timezone.is_some() {
+                t.timezone = req.timezone.clone();
+            }
+            if req.calendar.is_some() {
+                t.calendar = req.calendar.clone();
+            }
+            t.updated_at = now;
+            t
+        }
+        None => TriggerDefinition {
+            trigger_id: Uuid::new_v4().to_string(),
+            job_key: req.job_key.clone(),
+            cron_expression: Some(req.schedule.clone()),
+            timezone: req.timezone.clone(),
+            calendar: req.calendar.clone(),
+            window: None,
+            not_before: None,
+            not_after: None,
+            enabled: true,
+            // "api" so the schedule is editable via PUT /v1/schedules — the
+            // register endpoint is just an upsert convenience and the result
+            // should look identical to a POST /v1/schedules row, not a
+            // separate read-only kind.
+            managed_by: "api".into(),
+            created_at: now,
+            updated_at: now,
+        },
     };
+    let trigger_id = trigger_def.trigger_id.clone();
     store
         .create_trigger(&trigger_def)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -922,22 +1016,30 @@ pub async fn handle_register(
     // lenient (no 400): it's a runner-bootstrap upsert where the referenced
     // calendar may be created moments later — the fault surfaces the gap.
     let status = if let Some(ref tx) = state.scheduler_tx {
-        let resolved = state.resolved_calendars().await;
-        if let Some(built) = trigger_from_definition(&trigger_def, &resolved, now) {
-            let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
-            let _ = tx.send(SchedulerCommand::AddJob {
-                job: Box::new(job_config),
-                trigger: Box::new(built.trigger),
-            });
-            let faulted = built.config_fault.is_some();
-            state.set_config_fault(&trigger_def.job_key, built.config_fault);
-            if faulted {
-                "registered_calendar_fault"
-            } else {
-                "registered"
-            }
+        if !job_def.is_active || !trigger_def.enabled {
+            // Switched off by an operator: the registration lands in the
+            // store and the job stays out of the scheduler (P-4).
+            crate::api::job_sync::remove_job(&state, &trigger_def.job_key);
+            state.set_config_fault(&trigger_def.job_key, None);
+            "registered_inactive"
         } else {
-            "registered_no_schedule"
+            let resolved = state.resolved_calendars().await;
+            if let Some(built) = trigger_from_definition(&trigger_def, &resolved, now) {
+                let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
+                let _ = tx.send(SchedulerCommand::AddJob {
+                    job: Box::new(job_config),
+                    trigger: Box::new(built.trigger),
+                });
+                let faulted = built.config_fault.is_some();
+                state.set_config_fault(&trigger_def.job_key, built.config_fault);
+                if faulted {
+                    "registered_calendar_fault"
+                } else {
+                    "registered"
+                }
+            } else {
+                "registered_no_schedule"
+            }
         }
     } else {
         "registered_no_scheduler"
@@ -2402,5 +2504,159 @@ mod tests {
             body_json(server_router(state), "POST", "/v1/jobs/missing:job/adopt").await;
         assert_eq!(status, 404);
         assert_eq!(body["error"], "not_found");
+    }
+
+    /// Register is what an SDK runner sends at every boot. It wrote a fresh
+    /// row each time, so a job an operator had tagged and deactivated came
+    /// back untagged and firing after the runner restarted (review
+    /// 2026-10-24, P-4).
+    #[tokio::test]
+    async fn register_on_an_existing_job_keeps_what_the_operator_set() {
+        let store = make_store();
+        let created_at = Utc::now() - chrono::Duration::days(3);
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("team".to_string(), "billing".to_string());
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: "sdk:job".into(),
+                description: Some("old".into()),
+                assigned_runner_id: None,
+                is_active: false,
+                metadata,
+                created_at,
+                updated_at: created_at,
+                timeout: Some("2h".into()),
+                max_retries: Some(4),
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: vec!["env=prod".into()],
+            })
+            .unwrap();
+        store
+            .create_trigger(&TriggerDefinition {
+                trigger_id: "t-sdk".into(),
+                job_key: "sdk:job".into(),
+                cron_expression: Some("5m".into()),
+                timezone: None,
+                calendar: None,
+                window: Some("02:00..06:00".into()),
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at,
+                updated_at: created_at,
+            })
+            .unwrap();
+        let (state, mut sched_rx) = make_state_keep_rx(vec![], Arc::clone(&store), false);
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/jobs/register",
+            serde_json::json!({
+                "job_key": "sdk:job",
+                "schedule": "10m",
+                "description": "new",
+            }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["status"], "registered_inactive");
+        assert_eq!(body["trigger_id"], "t-sdk");
+
+        let job = store.get_job_definition("sdk:job").unwrap().unwrap();
+        assert!(!job.is_active, "a deactivated job stays deactivated");
+        assert_eq!(job.tags, vec!["env=prod".to_string()]);
+        assert_eq!(
+            job.metadata.get("team").map(String::as_str),
+            Some("billing")
+        );
+        assert_eq!(job.created_at, created_at);
+        assert_eq!(job.description.as_deref(), Some("new"), "sent fields apply");
+        assert_eq!(job.timeout.as_deref(), Some("2h"), "omitted fields stay");
+        assert_eq!(job.max_retries, Some(4));
+
+        let trigger = store.get_trigger("t-sdk").unwrap().unwrap();
+        assert_eq!(trigger.cron_expression.as_deref(), Some("10m"));
+        assert_eq!(trigger.window.as_deref(), Some("02:00..06:00"));
+        assert_eq!(trigger.created_at, created_at);
+
+        match sched_rx.try_recv() {
+            Ok(crate::scheduler::SchedulerCommand::RemoveJob { job_key }) => {
+                assert_eq!(job_key, "sdk:job")
+            }
+            other => panic!("a deactivated job must stay out of the scheduler, got {other:?}"),
+        }
+    }
+
+    /// A first registration still creates an active job and schedules it.
+    #[tokio::test]
+    async fn register_creates_an_active_job() {
+        let store = make_store();
+        let (state, mut sched_rx) = make_state_keep_rx(vec![], Arc::clone(&store), false);
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/jobs/register",
+            serde_json::json!({ "job_key": "sdk:new", "schedule": "5m" }),
+        )
+        .await;
+        assert_eq!(status, 201);
+        assert_eq!(body["status"], "registered");
+        assert!(
+            store
+                .get_job_definition("sdk:new")
+                .unwrap()
+                .unwrap()
+                .is_active
+        );
+        assert!(matches!(
+            sched_rx.try_recv(),
+            Ok(crate::scheduler::SchedulerCommand::AddJob { .. })
+        ));
+    }
+
+    /// `handle_create` and `handle_update` refuse a malformed `timeout` since
+    /// #559; register stored it (P-4).
+    #[tokio::test]
+    async fn register_with_malformed_timeout_returns_400() {
+        let store = make_store();
+        let (state, _rx) = make_state_keep_rx(vec![], Arc::clone(&store), false);
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/jobs/register",
+            serde_json::json!({ "job_key": "sdk:bad", "schedule": "5m", "timeout": "5min" }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "invalid_duration");
+        assert!(store.get_job_definition("sdk:bad").unwrap().is_none());
+    }
+
+    /// `POST /v1/jobs` on an existing key was an upsert that re-activated a
+    /// deactivated job and dropped its tags (P-4). It is a `409` now.
+    #[tokio::test]
+    async fn create_on_an_existing_key_returns_409_and_changes_nothing() {
+        let store = make_store();
+        seed_scheduled_job(&store, "api:dup", None);
+        let mut job = store.get_job_definition("api:dup").unwrap().unwrap();
+        job.is_active = false;
+        job.tags = vec!["keep".into()];
+        store.create_job_definition(&job).unwrap();
+        let state = make_state(vec![], Arc::clone(&store));
+
+        let (status, body) = post_json(
+            server_router(state),
+            "/v1/jobs",
+            serde_json::json!({ "job_key": "api:dup", "description": "again" }),
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], "job_exists");
+        let job = store.get_job_definition("api:dup").unwrap().unwrap();
+        assert!(!job.is_active);
+        assert_eq!(job.tags, vec!["keep".to_string()]);
+        assert_eq!(job.description, None);
     }
 }

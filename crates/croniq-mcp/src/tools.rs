@@ -1896,6 +1896,22 @@ impl CroniqMcp {
             ));
         }
 
+        // Create does not overwrite, as `POST /v1/jobs` (review 2026-10-24,
+        // P-4): the upsert re-activated a deactivated job and dropped its tags.
+        if store
+            .get_job_definition(&p.job_key)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .is_some()
+        {
+            return Err(McpError::invalid_params(
+                format!(
+                    "job_exists: job '{}' already exists; change it with update_job, or delete it first",
+                    p.job_key
+                ),
+                None,
+            ));
+        }
+
         // Refuse a malformed `timeout` rather than persisting it (issue #559).
         let timeout = croniq_execution::retry::validate_optional_duration(p.timeout.as_deref())
             .map_err(|msg| McpError::invalid_params(msg, None))?;
@@ -4199,6 +4215,33 @@ mod tests {
         assert!(!stored.metadata.contains_key(RUNNER_EXEC_METADATA_KEY));
         assert!(!stored.metadata.contains_key("__max_concurrent"));
         assert_eq!(stored.metadata["env"], "staging");
+    }
+
+    /// `create_job` on an existing key was an upsert that re-activated a
+    /// deactivated job (review 2026-10-24, P-4).
+    #[tokio::test]
+    async fn create_job_refuses_an_existing_key() {
+        let server = make_server_with_mutations();
+        seed_job(&server, "etl:nightly");
+        server
+            .deactivate_job(Parameters(JobKeyParams {
+                job_key: "etl:nightly".into(),
+            }))
+            .await
+            .unwrap();
+
+        let params: CreateJobParams =
+            serde_json::from_value(serde_json::json!({ "job_key": "etl:nightly" })).unwrap();
+        let err = server.create_job(Parameters(params)).await.unwrap_err();
+        assert!(err.message.starts_with("job_exists"), "{}", err.message);
+        let job = server
+            .store
+            .as_ref()
+            .unwrap()
+            .get_job_definition("etl:nightly")
+            .unwrap()
+            .unwrap();
+        assert!(!job.is_active);
     }
 
     #[tokio::test]
