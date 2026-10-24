@@ -162,6 +162,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keeps the run queued if that fails. Restarts handled a failed cancel under
   `catch_up none` / `latest` the same way; they now log it and leave it out
   of the count.
+- **A result the store could not record no longer starts a second retry
+  chain** (review 2026-10-24, D-14). When writing a finished run's outcome
+  failed, the completion processor still reported a success, or still created
+  the next retry, although the run stayed `claimed` and the stale-claim reaper
+  later ran it again. Now nothing is decided from such a completion; the
+  reaper's re-run is the only follow-up.
 
 ### Security
 

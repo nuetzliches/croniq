@@ -60,6 +60,11 @@ pub enum ProcessedOutcome {
     Ephemeral,
     /// Execution ID not found in store (race or already handled).
     NotFound,
+    /// The store refused the attempt's terminal write. The row stays
+    /// `claimed`, so the stale-claim reaper runs the execution again; nothing
+    /// was decided from this completion — no retry spawned, no success
+    /// recorded (review 2026-10-24, D-14).
+    Unrecorded,
     /// Late completion ignored (issue #374): the watchdog requeued the
     /// claim before this completion arrived — the row is `queued` again
     /// or already re-claimed by another runner — so the store's
@@ -405,8 +410,12 @@ impl CompletionProcessor {
                         ProcessedOutcome::Stale
                     }
                     Err(e) => {
-                        tracing::error!(id = %exec_uuid, error = %e, "store write error");
-                        ProcessedOutcome::Completed
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "store write error — success not recorded; the stale-claim reaper will run the execution again"
+                        );
+                        ProcessedOutcome::Unrecorded
                     }
                 }
             }
@@ -438,8 +447,17 @@ impl CompletionProcessor {
                         self.runner.work_notify.notify_waiters();
                         return ProcessedOutcome::Stale;
                     }
+                    // The attempt is still `claimed` in the store, so the
+                    // reaper will run it again. A retry spawned on top of that
+                    // was a second chain of attempts for one fire (review
+                    // 2026-10-24, D-14).
                     Err(e) => {
-                        tracing::error!(id = %exec_uuid, error = %e, "store write error")
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "store write error — failure not recorded, no retry spawned; the stale-claim reaper will run the execution again"
+                        );
+                        return ProcessedOutcome::Unrecorded;
                     }
                 }
 
@@ -955,6 +973,34 @@ mod tests {
         let failing = crate::fault_store::FaultStore::wrap(make_store());
         let store: DynStore = failing.clone();
         (failing, store)
+    }
+
+    // Review 2026-10-24, D-14: a failed terminal write still reported
+    // `Completed`, and on the retry path still spawned a retry — while the row
+    // stayed `claimed` for the reaper to run again, a second chain of attempts.
+    #[tokio::test]
+    async fn a_failed_terminal_write_records_nothing_and_spawns_no_retry() {
+        for status in [CompletionStatus::Success, CompletionStatus::Failure] {
+            let (failing, store) = make_failing_store();
+            let runner = make_runner();
+            let exec_id = seed_execution(&store, "test:job");
+            failing.arm_complete();
+            let processor = CompletionProcessor::new(
+                vec![make_job("test:job", 3)],
+                Arc::clone(&store),
+                Arc::clone(&runner),
+            );
+
+            let outcome = processor.process(event(exec_id, status, 1)).await;
+
+            assert_eq!(outcome, ProcessedOutcome::Unrecorded, "{status:?}");
+            assert_eq!(runner.queue.read().await.len(), 0, "{status:?}");
+            assert_eq!(
+                store.get_execution(exec_id).unwrap().unwrap().state,
+                ExecutionState::Claimed,
+                "{status:?}: left for the reaper"
+            );
+        }
     }
 
     #[tokio::test]

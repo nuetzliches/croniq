@@ -45,6 +45,9 @@ pub struct FaultStore {
     /// `cancel_execution` returns a database error while set (review
     /// 2026-10-24, D-12).
     pub fail_cancel: AtomicBool,
+    /// `complete_execution` returns a database error while set (review
+    /// 2026-10-24, D-14).
+    pub fail_complete: AtomicBool,
     /// Called just before every `create_execution_and_advance_job_state`
     /// delegates — the scheduler's per-fire write. Lets a test look at what
     /// the rest of the system can see while a tick is mid-wave (issue #841).
@@ -62,6 +65,7 @@ impl FaultStore {
             fail_job_count: AtomicBool::new(false),
             fail_get_job_definition: AtomicBool::new(false),
             fail_cancel: AtomicBool::new(false),
+            fail_complete: AtomicBool::new(false),
             on_fire_persist: std::sync::Mutex::new(None),
         })
     }
@@ -88,6 +92,10 @@ impl FaultStore {
 
     pub fn arm_cancel(&self, armed: bool) {
         self.fail_cancel.store(armed, Ordering::SeqCst);
+    }
+
+    pub fn arm_complete(&self) {
+        self.fail_complete.store(true, Ordering::SeqCst);
     }
 }
 
@@ -134,6 +142,25 @@ impl ExecutionStore for FaultStore {
             ));
         }
         self.inner.claim_execution(id, runner_id, now)
+    }
+
+    fn complete_execution(
+        &self,
+        id: Uuid,
+        runner_id: Option<&str>,
+        state: ExecutionState,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+        dead_reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
+        if self.fail_complete.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected complete_execution failure".into(),
+            ));
+        }
+        self.inner
+            .complete_execution(id, runner_id, state, duration_ms, error, dead_reason, now)
     }
 
     fn cancel_execution(&self, id: Uuid, now: DateTime<Utc>) -> Result<(), StoreError> {
@@ -184,7 +211,6 @@ impl ExecutionStore for FaultStore {
     }
     delegate! {
         get_execution(id: Uuid) -> Option<Execution>;
-        complete_execution(id: Uuid, runner_id: Option<&str>, state: ExecutionState, duration_ms: Option<i64>, error: Option<&str>, dead_reason: Option<&str>, now: DateTime<Utc>) -> bool;
         find_queued_executions(limit: u32) -> Vec<Execution>;
         list_executions(filter: &ExecutionFilter) -> Vec<Execution>;
         list_claimed_older_than(cutoff: DateTime<Utc>, limit: u32) -> Vec<Execution>;
