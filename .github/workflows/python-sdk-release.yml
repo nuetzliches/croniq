@@ -99,6 +99,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build twine
+      - name: Install package with test extras
+        run: pip install -e ".[dev,otel]" pytest-timeout
+      - name: Unit + conformance tests
+        # The tag's own tree is tested before anything reaches PyPI, as the
+        # .NET, TypeScript, Go and Java releases already do: the PR-CI run
+        # for the tagged commit may have been skipped by its paths filter
+        # (review 2026-10-24, K-8). Same invocation as python-sdk-ci.yml.
+        run: pytest --timeout=30
       - name: Build
         run: python -m build
       - name: Twine check
