@@ -175,17 +175,23 @@ enum Commands {
         password: Option<String>,
 
         /// Seed a default API client bound to this key. Must start with
-        /// "croniq_". Without this flag no API client/key is created —
-        /// use the UI (Settings → API Keys) for production setups. Prefer
-        /// the `CRONIQ_INIT_API_KEY` environment variable over the flag.
-        #[arg(long, env = "CRONIQ_INIT_API_KEY", hide_env_values = true)]
+        /// "croniq_". Without it no API client/key is created — use the UI
+        /// (Settings → API Keys) for production setups. Prefer the
+        /// `CRONIQ_INIT_API_KEY` environment variable over the flag;
+        /// `CRONIQ_API_KEY` is never used here.
+        ///
+        /// Same clap id as the global `--api-key`, which this shadows: a
+        /// distinct id would register `--api-key` twice on this subcommand.
+        /// The value is therefore only taken when it was typed on the
+        /// command line — see `init_api_key`.
+        #[arg(long)]
         api_key: Option<String>,
 
-        /// Comma-separated scopes for the seeded client when `--api-key` is
-        /// passed. Defaults to `admin`. Examples:
+        /// Comma-separated scopes for the seeded client when an API key is
+        /// seeded. Defaults to `admin`. Examples:
         ///   `--scopes work:poll,work:ack,work:renew,work:events` (runner)
         ///   `--scopes jobs:read,executions:read,dead-letters:read` (read-only dashboard)
-        #[arg(long, value_delimiter = ',', requires = "api_key")]
+        #[arg(long, value_delimiter = ',')]
         scopes: Option<Vec<String>>,
 
         /// Demo-only: pre-enable TOTP for the seeded admin and bake the
@@ -325,8 +331,31 @@ enum ApiKeyAction {
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+/// Environment variable `croniq init` seeds its API key from.
+const INIT_API_KEY_ENV: &str = "CRONIQ_INIT_API_KEY";
+
+/// The key `croniq init` seeds, if any: `--api-key` typed on the command
+/// line, else `CRONIQ_INIT_API_KEY`.
+///
+/// `Init.api_key` shares its clap id with the global `--api-key`, whose
+/// value — including one from `CRONIQ_API_KEY` — clap propagates into the
+/// subcommand. `CRONIQ_API_KEY` is what the CLI and SDKs read to *present* a
+/// credential, often a narrow runner key, so taking it here seeded it as a
+/// new admin-scoped client on any host that happened to export it (review
+/// 2026-10-24, follow-up to R-6). Only a value whose source is the command
+/// line is the operator asking for a seed.
+fn init_api_key(init: &clap::ArgMatches, init_env: Option<String>) -> Option<String> {
+    let typed = init.value_source("api_key") == Some(clap::parser::ValueSource::CommandLine);
+    if typed {
+        return init.get_one::<String>("api_key").cloned();
+    }
+    init_env.filter(|v| !v.is_empty())
+}
+
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    use clap::{CommandFactory, FromArgMatches};
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     // Built once, used by every command that reaches the server. Cheap for
     // the ones that do not (`validate`, `fmt`, …) — it opens no connection.
     let remote = commands::remote::Remote::new(&cli.url, cli.api_key.clone());
@@ -408,18 +437,28 @@ fn main() -> Result<()> {
             data_dir,
             username,
             password,
-            api_key,
+            api_key: _,
             scopes,
             demo_mfa,
             print_secrets: _,
-        } => commands::init::init(
-            &data_dir,
-            &username,
-            password.as_deref(),
-            api_key.as_deref(),
-            scopes,
-            demo_mfa,
-        ),
+        } => {
+            let api_key = matches
+                .subcommand_matches("init")
+                .and_then(|m| init_api_key(m, std::env::var(INIT_API_KEY_ENV).ok()));
+            if scopes.is_some() && api_key.is_none() {
+                return Err(miette::miette!(
+                    "--scopes needs a key to seed: pass --api-key or set {INIT_API_KEY_ENV}"
+                ));
+            }
+            commands::init::init(
+                &data_dir,
+                &username,
+                password.as_deref(),
+                api_key.as_deref(),
+                scopes,
+                demo_mfa,
+            )
+        }
         Commands::Quickstart {
             data_dir,
             config,
@@ -431,5 +470,56 @@ fn main() -> Result<()> {
         Commands::Migrate { crontab, output } => {
             commands::migrate::migrate(&crontab, output.as_deref())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_passes_clap_debug_asserts() {
+        // Duplicate long flags between global and subcommand args, among
+        // others, only surface here.
+        Cli::command().debug_assert();
+    }
+
+    fn init_key(args: &[&str], init_env: Option<&str>) -> Option<String> {
+        let m = Cli::command().try_get_matches_from(args).unwrap();
+        init_api_key(
+            m.subcommand_matches("init").unwrap(),
+            init_env.map(str::to_string),
+        )
+    }
+
+    /// Review 2026-10-24, follow-up to R-6: `CRONIQ_API_KEY` (the global
+    /// `--api-key`) must never become the key `init` seeds as an admin
+    /// client. Set for this process only; no other test reads it.
+    #[test]
+    fn init_never_seeds_from_the_global_api_key() {
+        // SAFETY: test-only; nothing else in this crate's unit tests reads
+        // or writes CRONIQ_API_KEY.
+        unsafe { std::env::set_var("CRONIQ_API_KEY", "croniq_runner_key_from_env") };
+        assert_eq!(init_key(&["croniq", "init"], None), None);
+        assert_eq!(
+            init_key(&["croniq", "init"], Some("croniq_init_env")),
+            Some("croniq_init_env".into())
+        );
+        assert_eq!(
+            init_key(&["croniq", "init", "--api-key", "croniq_typed"], None),
+            Some("croniq_typed".into()),
+            "the subcommand's own flag still seeds"
+        );
+        assert_eq!(
+            init_key(
+                &["croniq", "init", "--api-key", "croniq_typed"],
+                Some("croniq_init_env")
+            ),
+            Some("croniq_typed".into()),
+            "the flag wins over the env var"
+        );
+        assert_eq!(init_key(&["croniq", "init"], Some("")), None);
+        unsafe { std::env::remove_var("CRONIQ_API_KEY") };
     }
 }
