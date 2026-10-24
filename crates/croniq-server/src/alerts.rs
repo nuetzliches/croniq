@@ -837,7 +837,13 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..s.floor_char_boundary(max)])
+        // Hand-rolled `floor_char_boundary`: that method is only stable from
+        // Rust 1.91, and the release image still builds with rust:1.88.
+        let mut cut = max;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", &s[..cut])
     }
 }
 
