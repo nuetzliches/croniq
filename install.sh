@@ -15,6 +15,13 @@
 #     environments where the SHA256SUMS file is unreachable or no sha256
 #     tool exists; the downloaded binaries are NOT integrity-checked.
 
+# Everything runs inside main(), called on the last line. Piped from curl, the
+# shell executes the script as it arrives, so a connection that drops halfway
+# would otherwise run whatever prefix made it through. A truncated main() is a
+# syntax error and runs nothing (review 2026-10-24, R-10). The body is left at
+# column 0 to keep its history readable.
+main() {
+
 set -e
 
 REPO="nuetzliches/croniq"
@@ -167,7 +174,18 @@ else
   # the GNU long option outright ("unrecognized option: check"). The short form
   # is understood by busybox, GNU coreutils and `shasum -a 256` alike.
   # Run the check in a subshell so the working directory change is scoped
-  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD -c -)
+  #
+  # The line is selected by exact filename, not `grep "$ARCHIVE"`: that was an
+  # unanchored regex (`.` matches anything) and, piped into the check, a
+  # missing entry fed it empty input — which GNU rejects but busybox accepts
+  # as nothing to verify (review 2026-10-24, R-10). An archive SHA256SUMS does
+  # not list is refused here. `*name` is the binary-mode marker.
+  awk -v f="$ARCHIVE" '$2 == f || $2 == "*" f' "$TMP/SHA256SUMS" > "$TMP/expected.sha256"
+  if [ "$(awk 'END { print NR }' "$TMP/expected.sha256")" != "1" ]; then
+    echo "Error: SHA256SUMS does not list ${ARCHIVE} exactly once — refusing to install an unverified binary." >&2
+    exit 1
+  fi
+  (cd "$TMP" && $SHA256_CMD -c expected.sha256)
   echo "Checksum verified."
 fi
 
@@ -209,3 +227,7 @@ echo "  croniq-server --help"
 echo "  croniq --help"
 echo ""
 echo "Full documentation: https://github.com/${REPO}"
+
+}
+
+main "$@"

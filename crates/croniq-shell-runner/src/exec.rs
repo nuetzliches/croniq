@@ -128,8 +128,8 @@ pub enum RunError {
     #[error(
         "`user {0}` is not a numeric uid: the shell runner cannot resolve user names, and running \
          the job as the runner's own user would grant more privilege than the job asked for. Set a \
-         numeric uid (e.g. `user 1000`), or drop the directive and run the runner process itself as \
-         the desired user."
+         numeric uid or uid:gid (e.g. `user 1000` or `user \"1000:1000\"`), or drop the directive \
+         and run the runner process itself as the desired user."
     )]
     NonNumericUser(String),
 
@@ -260,6 +260,39 @@ fn inherits(name: &str, wildcard: bool, extra: &[String]) -> bool {
     wildcard || INHERITED_ENV_ALLOWLIST.iter().any(|a| env_name_eq(a, name))
 }
 
+/// Parse a `user` directive into a uid and an optional gid.
+///
+/// Accepts `1000` and `1000:1000`. Only numbers: resolving names would mean
+/// linking nss/libc, which the runner image deliberately avoids.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn parse_user(raw: &str) -> Result<(u32, Option<u32>), RunError> {
+    let bad = || RunError::NonNumericUser(raw.to_string());
+    match raw.split_once(':') {
+        Some((uid, gid)) => Ok((
+            uid.parse().map_err(|_| bad())?,
+            Some(gid.parse().map_err(|_| bad())?),
+        )),
+        None => Ok((raw.parse().map_err(|_| bad())?, None)),
+    }
+}
+
+/// The primary gid `/etc/passwd` records for `uid`, if it has an entry.
+///
+/// Read as a file rather than through `getpwuid` for the reason [`parse_user`]
+/// takes numbers only. A uid without an entry — common in containers, where
+/// `user 1000` names a host account — gets gid = uid from the caller, never
+/// the runner's own group.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn primary_gid_from_passwd(passwd: &str, uid: u32) -> Option<u32> {
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        let (_name, _pw) = (fields.next()?, fields.next()?);
+        let entry_uid: u32 = fields.next()?.parse().ok()?;
+        let gid: u32 = fields.next()?.parse().ok()?;
+        (entry_uid == uid).then_some(gid)
+    })
+}
+
 /// Decode the `__runner_exec` payload out of the work-assignment metadata.
 pub fn decode(metadata: &serde_json::Value) -> Result<RunnerExec, RunError> {
     let raw = metadata
@@ -332,9 +365,20 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
         // which the runner image deliberately avoids.
         #[cfg(unix)]
         {
-            let uid = u
-                .parse::<u32>()
-                .map_err(|_| RunError::NonNumericUser(u.clone()))?;
+            let (uid, gid) = parse_user(u)?;
+            // The gid has to be set explicitly: `Command::uid` alone performs
+            // `setuid` and nothing else, so a runner running as root started
+            // the job as uid 1000 with gid 0 — files it created were
+            // group-root, and everything group-0-readable stayed readable
+            // (review 2026-10-24, R-2). std drops the supplementary groups
+            // itself when a root parent sets a uid.
+            let gid = gid.unwrap_or_else(|| {
+                std::fs::read_to_string("/etc/passwd")
+                    .ok()
+                    .and_then(|passwd| primary_gid_from_passwd(&passwd, uid))
+                    .unwrap_or(uid)
+            });
+            cmd.gid(gid);
             cmd.uid(uid);
         }
         #[cfg(not(unix))]
@@ -1062,6 +1106,66 @@ mod tests {
             env: HashMap::new(),
         };
         assert!(build_command(&exec).is_ok());
+    }
+
+    // ─── Group of a privilege-dropped job (review 2026-10-24, R-2) ──────────
+
+    #[test]
+    fn user_directive_parses_uid_and_optional_gid() {
+        assert_eq!(parse_user("1000").unwrap(), (1000, None));
+        assert_eq!(parse_user("1000:1001").unwrap(), (1000, Some(1001)));
+        for bad in ["nobody", "1000:", ":1000", "1000:staff", "1000:1:2"] {
+            assert!(
+                matches!(parse_user(bad), Err(RunError::NonNumericUser(_))),
+                "{bad:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn primary_gid_comes_from_the_passwd_entry() {
+        let passwd = "root:x:0:0:root:/root:/bin/sh\n\
+                      # comment\n\
+                      app:x:1000:2000:App:/home/app:/bin/sh\n";
+        assert_eq!(primary_gid_from_passwd(passwd, 1000), Some(2000));
+        assert_eq!(primary_gid_from_passwd(passwd, 0), Some(0));
+        assert_eq!(primary_gid_from_passwd(passwd, 4242), None);
+    }
+
+    /// Runs only where the test process is root — the case the finding is
+    /// about, and the only one in which `setgid` is permitted. CI runs the
+    /// workspace tests unprivileged; the `rust` container image runs as root.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_user_directive_under_root_also_drops_the_group() {
+        // SAFETY: plain syscall wrapper, no memory contract.
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: needs root to change uid/gid");
+            return;
+        }
+        for (user, expected) in [("4242", "4242 4242"), ("4242:4343", "4242 4343")] {
+            let exec = RunnerExec::Shell {
+                command: "echo \"$(id -u) $(id -g)\"; id -G".into(),
+                workdir: Some("/".into()),
+                user: Some(user.into()),
+                env: HashMap::new(),
+            };
+            let outcome = run(&exec, &LogWriter::null(), None)
+                .await
+                .expect("spawn ok");
+            assert!(outcome.status.success(), "{:?}", outcome.stderr_tail);
+            assert_eq!(
+                outcome.stdout_tail.front().map(String::as_str),
+                Some(expected),
+                "user {user}"
+            );
+            // No supplementary group of the root parent may survive either.
+            let groups = outcome.stdout_tail.get(1).expect("id -G printed");
+            assert!(
+                groups.split_whitespace().all(|g| g != "0"),
+                "user {user} kept group 0: {groups}"
+            );
+        }
     }
 
     #[cfg(not(unix))]

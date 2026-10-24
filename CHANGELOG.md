@@ -384,6 +384,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   invitations they sent (a pending invitation from a removed account is no
   longer redeemable); other per-user data already followed. A delete that
   fails is now a `500`.
+- **The image runs as the unprivileged `croniq` user (uid 100, gid 101)**
+  (review 2026-10-24, R-1). The privilege drop lived only in the entrypoint,
+  and both documented shell-runner deployments replace the entrypoint, so the
+  shell runner and every `runner shell { … }` command ran as root with the
+  host's bind mounts. `USER` now holds for every binary in the image. The
+  entrypoint still accepts a root start (`--user 0`, compose `user: "0"`),
+  fixes the data dir's ownership and drops to `croniq` as before. **Upgrade
+  note:** a bind mount for `/var/lib/croniq` that uid 100 cannot write, or a
+  volume from the root-based images of v0.4.0 and earlier, needs a `chown
+  100:101` or one root start; the entrypoint stops with that advice instead of
+  failing on the database file. `/var/lib/croniq-runner` now exists in the
+  image and belongs to `croniq`, so a runner's persisted `runner_id` keeps
+  working. The README's Alpine example for the shell runner adds a user, and
+  the shell runner warns at startup when it runs as root.
+- **A shell-runner `user` directive switches the group too** (review
+  2026-10-24, R-2). Only the uid changed, so a root runner started the job with
+  gid 0: its files were group-root and everything group-0-readable stayed
+  readable. The job now gets the primary group from `/etc/passwd`, gid = uid
+  when the uid has no entry, or the group named in `user "1000:2000"`.
+- **`install.sh` refuses an archive SHA256SUMS does not list** (review
+  2026-10-24, R-10). The checksum line was picked with an unanchored `grep`,
+  and a missing entry handed the check empty input, which busybox's
+  `sha256sum -c` accepts. The line is now matched by exact filename and must
+  exist exactly once. The script also runs inside a `main` function, so a
+  download cut off mid-script under `curl | sh` runs nothing.
 
 ## [0.49.0] - 2026-10-22
 

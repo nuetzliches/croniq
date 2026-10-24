@@ -455,6 +455,15 @@ the job ran with *more* privilege than it asked for, possibly root. Set a
 numeric uid, or drop the directive and run the runner process itself as the
 desired user.
 
+`user` switches the group as well. `user 1000` runs the job with the primary
+group `/etc/passwd` records for uid 1000, or gid 1000 when the uid has no entry
+there; `user "1000:2000"` names the group explicitly. Before that, only the uid
+changed, and a root runner started the job with gid 0. Switching accounts needs
+a runner running as root, and the published image no longer starts as root:
+under the default `croniq` user a job with a `user` directive fails to spawn
+with `Operation not permitted`. Run such a pool with `user: "0"` and keep jobs
+without a `user` directive out of it, because those run as root.
+
 ### Shell-runner cancel and timeout behaviour
 
 Since issue #576 a shell/exec job's subprocess is bound to the execution that

@@ -24,6 +24,20 @@ if [ "$(id -u)" = "0" ]; then
   exec su-exec croniq:croniq "$0" "$@"
 fi
 
+# The image starts as croniq rather than root (review 2026-10-24, R-1), so the
+# chown above only runs when the operator asks for a root start. Without it, a
+# data dir owned by someone else surfaced as `Permission denied` on the SQLite
+# file or jwt.secret, deep inside `croniq init` or the server — say what is
+# wrong and how to fix it before either of them starts.
+if ! mkdir -p "$DATA_DIR" 2>/dev/null || [ ! -w "$DATA_DIR" ]; then
+  echo "ERROR: the data directory $DATA_DIR is not writable by uid $(id -u)." >&2
+  echo "       The image runs as the unprivileged croniq user (uid 100, gid 101)." >&2
+  echo "       Either chown the volume or bind mount to 100:101, or start the" >&2
+  echo "       container as root once (docker run --user 0, compose: user: \"0\")" >&2
+  echo "       and the entrypoint fixes the ownership and drops to croniq itself." >&2
+  exit 1
+fi
+
 # Resolve credential env vars from their `<VAR>_FILE` sibling when the
 # direct var is unset/empty (Docker/Compose/Swarm secrets, K8s mounted
 # Secret volumes, external secret managers). The value never enters the
