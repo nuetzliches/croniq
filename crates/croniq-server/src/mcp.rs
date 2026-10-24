@@ -35,8 +35,7 @@ use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use std::collections::HashMap;
 
-use croniq_config::compile::JobConfig;
-use croniq_mcp::streamable_http_service;
+use croniq_mcp::{SharedJobs, streamable_http_service};
 use croniq_runner::AppState;
 use croniq_scheduler::trigger::Trigger;
 
@@ -55,11 +54,16 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 /// `extra_allowed_hosts` is forwarded to rmcp's `Host`-header allowlist on
 /// top of the loopback defaults (see [`croniq_mcp::streamable_http_service`]
 /// and issue #114). `None` keeps loopback-only behaviour.
+///
+/// `jobs` must be the list the Croniqfile reload rewrites (`dsl_jobs_shared`
+/// in `main.rs`), not a copy of it: the tools read it on every call to decide
+/// what the Croniqfile owns and what a fired execution inherits (review
+/// 2026-10-24, P-1).
 pub fn mcp_router(
     state: Arc<ServerState>,
     runner: Arc<AppState>,
     store: Option<DynStore>,
-    jobs: Vec<JobConfig>,
+    jobs: SharedJobs,
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
     extra_allowed_hosts: Option<Vec<String>>,
 ) -> Router {

@@ -107,6 +107,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completion behind it and held a runtime worker. The script now runs
   asynchronously and is killed after 30 seconds; the delivery is recorded as
   failed.
+- **A Croniqfile reload now reaches the completion processor, the watchdog
+  and the MCP tools** (review 2026-10-24, D-2, D-3, P-1). All three worked
+  from the jobs the server had booted with; only the scheduler saw a reload
+  (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`). A job a reload added
+  fired, but its result was dropped as unknown and the run was later cancelled
+  as stranded, with no retry, dead letter or alert. A reload that changed
+  `retry`, `dead_letter`, `keep_last` or `queue_ttl` was reported as applied
+  and was not. Over `/mcp`, `job_trigger` and `enqueue_job` stamped the
+  `runner shell` command the file had before the reload, so the shell runner
+  ran the old command, and `create_job` accepted a key the file had declared
+  since boot, letting a store row shadow the Croniqfile's definition
+  (ADR-0006). All three now read the Croniqfile's current jobs on every use.
+- **The watchdog leaves adopted jobs to the store and forgets settled
+  alerts** (review 2026-10-24, D-13). It applied the Croniqfile's `keep_last`
+  and `queue_ttl` to jobs adopted through the API, which ADR-0006 gives to the
+  store. The sets that keep `job_sla_missed` and `job_missed_fire` alerts from
+  repeating only grew, by one entry per alert, for as long as the process
+  ran. Now each sweep drops the entries that can no longer match.
 
 ### Security
 

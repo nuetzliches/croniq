@@ -646,7 +646,9 @@ async fn main() -> Result<()> {
     let mcp_state = Arc::clone(&server_state);
     let mcp_runner = Arc::clone(&runner_state);
     let mcp_store = Arc::clone(&store);
-    let mcp_jobs = dsl_jobs_initial.clone();
+    // The live list, not a copy: a reload must reach the MCP tools too
+    // (review 2026-10-24, P-1).
+    let mcp_jobs = Arc::clone(&dsl_jobs_shared);
     let mcp_triggers = Arc::clone(&trigger_snapshot);
 
     // Load the persisted maintenance switch into the shared in-memory cache
@@ -658,12 +660,8 @@ async fn main() -> Result<()> {
         *guard = m;
     }
 
-    let mut scheduler_loop = SchedulerLoop::new(
-        triggers,
-        jobs.clone(),
-        scheduler_store,
-        Arc::clone(&runner_state),
-    );
+    let mut scheduler_loop =
+        SchedulerLoop::new(triggers, jobs, scheduler_store, Arc::clone(&runner_state));
     scheduler_loop.set_maintenance_handle(Arc::clone(&server_state.maintenance));
 
     let scheduler_reload_store = Arc::clone(&store);
@@ -851,7 +849,6 @@ async fn main() -> Result<()> {
 
     // ── Completion processor task ─────────────────────────────────────────────
     let proc_store = Arc::clone(&store);
-    let proc_jobs = jobs;
 
     // Failure-alert config (issue #140): DSL `alerts {}` block plus the
     // back-compat synthesis from `CRONIQ_ON_FAILURE_CMD` for installs
@@ -888,14 +885,20 @@ async fn main() -> Result<()> {
     let alerts_cfg_for_watchdog = alerts_cfg.clone();
     let alert_throttle_for_watchdog = Arc::clone(&alert_throttle);
 
-    let processor = Arc::new(CompletionProcessor::with_alerts(
-        proc_jobs,
-        proc_store,
-        Arc::clone(&runner_state),
-        alerts_cfg,
-        alert_throttle,
-        Arc::clone(&server_state.email_sender),
-    ));
+    // The Croniqfile's jobs come from the list every reload rewrites, so a
+    // job a reload added or changed completes under its current definition;
+    // API jobs resolve from the store (review 2026-10-24, D-2, D-3).
+    let processor = Arc::new(
+        CompletionProcessor::with_alerts(
+            Vec::new(),
+            proc_store,
+            Arc::clone(&runner_state),
+            alerts_cfg,
+            alert_throttle,
+            Arc::clone(&server_state.email_sender),
+        )
+        .with_jobs(Arc::clone(&dsl_jobs_shared)),
+    );
 
     let completion_task = tokio::spawn(async move {
         while let Some(event) = completion_rx.recv().await {
@@ -918,8 +921,12 @@ async fn main() -> Result<()> {
     // same `evaluate_failure` pipeline as `job_failed`, so a rule
     // with `throttle 10m` correctly suppresses both kinds of fires
     // in the same window.
+    // The adoption-filtered list, read live: an adopted job belongs to the
+    // store (ADR-0006), so the file's `keep_last` / `queue_ttl` must not
+    // apply to it, and a reload must reach the watchdog (review 2026-10-24,
+    // D-2, D-13).
     let mut watchdog = WatchdogLoop::with_alerts(
-        loaded.runtime.jobs.clone(),
+        dsl_jobs_initial.clone(),
         Arc::clone(&store),
         Arc::clone(&runner_state),
         alerts_cfg_for_watchdog,
@@ -932,6 +939,7 @@ async fn main() -> Result<()> {
     // metrics exporter filters on, kept in step with the scheduler's map by
     // `apply_command_synced` (issue #505).
     watchdog.set_trigger_snapshot(Arc::clone(&trigger_snapshot));
+    watchdog.set_live_jobs(Arc::clone(&dsl_jobs_shared));
     // So the liveness sweeps stand down during maintenance and
     // `maintenance_active` rules can fire (issue #786).
     watchdog.set_maintenance_handle(Arc::clone(&server_state.maintenance));
