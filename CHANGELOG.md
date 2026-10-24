@@ -74,6 +74,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions don't know, so an older devstack asks to be updated before it
   starts the stack. Apart from the `CRONIQ_REFRESH_COOKIE` line above, the
   stack itself is unchanged.
+- **Release binaries can send mail** (review 2026-10-24, C-7). The tarballs
+  and the Homebrew formula were built without the `smtp` feature, so
+  `CRONIQ_SMTP_*` worked in the Docker image and silently did nothing with
+  the binaries (boot diagnostics did flag `email.smtp_feature_missing`). They
+  are now built with `otlp,smtp,postgres` like the image, and every PR
+  compiles, tests and lints the `smtp`-gated code instead of leaving it to the
+  image build after the merge.
 
 ### Fixed
 
@@ -467,6 +474,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   path of the authenticated log-events POST unchanged, where `..` steered it
   onto another path of the same origin. The id is now one encoded path
   segment, and dot-segments are refused.
+- **Release artefacts carry signed build provenance** (review 2026-10-24,
+  C-8). `SHA256SUMS` sits in the same release as the archives it lists, so it
+  proved integrity but not origin. Every release archive, `SHA256SUMS` and
+  each published image now get a Sigstore-signed GitHub attestation, checked
+  with `gh attestation verify <file|oci://image:tag> --repo
+  nuetzliches/croniq`; the images additionally embed BuildKit's full SLSA
+  provenance and an SPDX SBOM.
+- **No unpinned installer in the build pipeline** (review 2026-10-24, C-5,
+  C-13). CI and the site deploy installed wasm-pack by piping the upstream
+  `init.sh` into a shell, in the deploy job next to the token that publishes
+  the site; they now use the same version- and SHA-256-pinned tarball as the
+  image build, via `scripts/install-wasm-pack.sh`. The image's dashboard stage
+  no longer falls back to an unpinned `npm install` when the lockfile does not
+  match; the build fails instead.
 
 ## [0.49.0] - 2026-10-22
 

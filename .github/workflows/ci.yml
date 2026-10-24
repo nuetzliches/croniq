@@ -51,14 +51,16 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       - name: Format check
         run: cargo fmt --all -- --check
-      - name: Build (with otlp — matches shipped artefacts)
-        # Default Cargo feature stays off so a plain `cargo build` from a
-        # checkout doesn't pull the opentelemetry stack. But the official
-        # image + release binaries are built with `--features
-        # croniq-server/otlp` (see Dockerfile and release.yml), so CI must
-        # exercise that path on every push to catch breakage in the
-        # otlp-gated code before a release.
-        run: cargo build --workspace --features croniq-server/otlp
+      - name: Build (with otlp + smtp — matches shipped artefacts)
+        # Default Cargo features stay off so a plain `cargo build` from a
+        # checkout doesn't pull the opentelemetry or lettre stacks. But the
+        # official image + release binaries are built with `--features
+        # croniq-server/otlp,croniq-server/smtp` (see Dockerfile and
+        # release.yml), so CI must exercise that path on every push to catch
+        # breakage in the gated code before a release. `smtp` used to be
+        # compiled only by the Docker build on main, after the merge (review
+        # 2026-10-24, C-7). `postgres` has its own jobs below.
+        run: cargo build --workspace --features croniq-server/otlp,croniq-server/smtp
       - name: Build (no-default-features — guards off-path)
         # Counterpart to the otlp build above. The off-path has
         # `#[cfg(not(feature = "otlp"))]` branches in
@@ -66,8 +68,8 @@ jobs:
         # if only the otlp build is exercised. Server crate only — the
         # workspace's other crates don't gate on this feature.
         run: cargo build -p croniq-server
-      - name: Test (with otlp)
-        run: cargo test --workspace --features croniq-server/otlp
+      - name: Test (with otlp + smtp)
+        run: cargo test --workspace --features croniq-server/otlp,croniq-server/smtp
       - name: Test (no-default-features, server only)
         # telemetry.rs has #[cfg(not(feature = "otlp"))]-only tests
         # (e.g. decide_stderr_only_when_feature_off_even_if_endpoint_set)
@@ -78,7 +80,7 @@ jobs:
         # `--all-targets` covers tests + benches too. Without it, latent
         # `unused_must_use` and similar lints accumulate quietly in
         # test-only code (we hit ~25 of them on first sweep).
-        run: cargo clippy --workspace --all-targets --features croniq-server/otlp -- -D warnings
+        run: cargo clippy --workspace --all-targets --features croniq-server/otlp,croniq-server/smtp -- -D warnings
 
   deny:
     # Dependency advisory + license scanning (#430). CodeQL analyses
@@ -483,6 +485,44 @@ jobs:
           print(f"openapi.yaml OK — {len(spec['paths'])} paths, "
                 f"{len(spec.get('components', {}).get('schemas', {}))} schemas")
           EOF
+
+  required:
+    # Aggregator for branch protection, same pattern as `.NET SDK CI
+    # required` in dotnet-sdk-ci.yml. Listing this ONE check as required
+    # gates every job below transitively, so adding or renaming a job here no
+    # longer needs a matching edit to the protection rule (incident #98).
+    #
+    # Until it exists only `Rust (build + test + clippy)` and `UI (build +
+    # typecheck)` blocked a merge. The Postgres jobs exist because PgStore
+    # rotted unnoticed (#298), the e2e smoke suite is ADR-0004's acceptance
+    # gate, the spec job guards the five generated SDKs, and cargo-deny
+    # enforces AGENTS.md's licence rule; none of them could stop a red PR
+    # (review 2026-10-24, C-6). Whether this check replaces the two
+    # existing required ones is a branch-protection decision, made outside
+    # this file.
+    #
+    # `skipped` counts as success: deny skips its scan on non-Rust PRs, and
+    # a job skipped for any other reason must not wedge every merge.
+    name: CI required
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [rust, deny, postgres, server-postgres, ui, e2e, spec]
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error::A required job did not succeed:"
+          echo "  rust:            ${{ needs.rust.result }}"
+          echo "  deny:            ${{ needs.deny.result }}"
+          echo "  postgres:        ${{ needs.postgres.result }}"
+          echo "  server-postgres: ${{ needs.server-postgres.result }}"
+          echo "  ui:              ${{ needs.ui.result }}"
+          echo "  e2e:             ${{ needs.e2e.result }}"
+          echo "  spec:            ${{ needs.spec.result }}"
+          exit 1
+      - name: All required jobs passed
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        run: echo "Aggregator OK - all dependent jobs succeeded or were skipped"
 
   docker:
     # Build each architecture on a native runner instead of QEMU-emulating
