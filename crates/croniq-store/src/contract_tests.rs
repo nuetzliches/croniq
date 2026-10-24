@@ -2377,6 +2377,33 @@ fn invitations_mark_accepted_persists() {
     assert_eq!(loaded.accepted_at, Some(when));
 }
 
+/// Review 2026-10-24, A-6: redeeming one invitation twice must create one
+/// account, so the claim is a conditional update.
+#[test]
+fn invitations_claim_succeeds_once_and_never_on_revoked() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "x@e.org", Role::Viewer);
+    store.invitations_create(&inv).unwrap();
+
+    let when = utc(2026, 5, 23, 14, 0);
+    assert!(store.invitations_claim(&inv.invitation_id, when).unwrap());
+    assert!(!store.invitations_claim(&inv.invitation_id, when).unwrap());
+    let loaded = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    assert_eq!(loaded.accepted_at, Some(when));
+
+    let revoked = make_invitation(&admin.user_id, "y@e.org", Role::Viewer);
+    store.invitations_create(&revoked).unwrap();
+    store
+        .invitations_revoke(&revoked.invitation_id, when)
+        .unwrap();
+    assert!(
+        !store
+            .invitations_claim(&revoked.invitation_id, when)
+            .unwrap()
+    );
+}
+
 #[test]
 fn invitations_revoke_persists() {
     let store = create_memory_store().unwrap();
@@ -2443,6 +2470,43 @@ fn password_resets_mark_used_persists() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.used_at, Some(when));
+}
+
+/// Review 2026-10-24, A-5: issuing or redeeming a reset retires the user's
+/// other open tokens, and only that user's.
+#[test]
+fn password_resets_invalidate_for_user_retires_only_that_users_tokens() {
+    let store = create_memory_store().unwrap();
+    let alex = make_user("alex", Role::Operator);
+    let sam = make_user("sam", Role::Operator);
+    store.users_create(&alex).unwrap();
+    store.users_create(&sam).unwrap();
+    let reset = |user: &User, hash: &str| PasswordReset {
+        reset_id: Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        token_hash: hash.into(),
+        expires_at: utc(2026, 5, 24, 0, 0),
+        used_at: None,
+        created_at: now(),
+    };
+    store.password_resets_create(&reset(&alex, "a1")).unwrap();
+    store.password_resets_create(&reset(&alex, "a2")).unwrap();
+    store.password_resets_create(&reset(&sam, "s1")).unwrap();
+
+    let when = utc(2026, 5, 23, 16, 0);
+    store
+        .password_resets_invalidate_for_user(&alex.user_id, when)
+        .unwrap();
+    let used = |hash: &str| {
+        store
+            .password_resets_get_by_token_hash(hash)
+            .unwrap()
+            .unwrap()
+            .used_at
+    };
+    assert_eq!(used("a1"), Some(when));
+    assert_eq!(used("a2"), Some(when));
+    assert_eq!(used("s1"), None);
 }
 
 #[test]

@@ -34,7 +34,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::ServerState;
-use super::auth_endpoints::password_disabled_response;
+use super::auth_endpoints::{password_disabled_response, rate_limited_response};
+use super::login_throttle::ClientIp;
 
 const RESET_TOKEN_TTL: Duration = Duration::from_secs(60 * 60); // 1 hour
 const RESET_PREFIX: &str = "croniq_pwr";
@@ -53,11 +54,17 @@ pub struct ConfirmResetRequest {
 /// `POST /v1/auth/password-reset/request` — always 202, never leaks.
 pub async fn handle_request(
     State(state): State<Arc<ServerState>>,
+    ClientIp(peer_ip): ClientIp,
     headers: HeaderMap,
     Json(req): Json<RequestResetRequest>,
 ) -> Response {
     if !state.password_login_enabled {
         return password_disabled_response();
+    }
+    // Every request may send a mail and writes a row, so it goes through the
+    // same per-address window as a login attempt (review 2026-10-24, A-5).
+    if !state.login_throttle.allow_login(peer_ip, &req.username) {
+        return rate_limited_response();
     }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -72,9 +79,23 @@ pub async fn handle_request(
     if !user.is_active {
         return StatusCode::ACCEPTED.into_response();
     }
+    // One reset mail per account per cooldown, whatever the source address:
+    // otherwise anyone who knows a username can fill that user's inbox and
+    // the `password_resets` table. Answered like every other case.
+    if !state.login_throttle.allow_reset_mail(&user.user_id) {
+        return StatusCode::ACCEPTED.into_response();
+    }
 
-    let (raw_token, token_hash) = generate_token(RESET_PREFIX);
     let now = Utc::now();
+    // One live token per account: a new request retires the older ones, so a
+    // link that leaked from an earlier mail stops working.
+    if store
+        .password_resets_invalidate_for_user(&user.user_id, now)
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let (raw_token, token_hash) = generate_token(RESET_PREFIX);
     let expires_at = now + chrono::Duration::from_std(RESET_TOKEN_TTL).unwrap();
     let reset_id = Uuid::new_v4().to_string();
 
@@ -173,6 +194,11 @@ pub async fn handle_confirm(
     let Some(user) = store.users_get_by_id(&reset.user_id).ok().flatten() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A deactivated account must not get a fresh password through a link
+    // issued before it was deactivated (review 2026-10-24, A-5).
+    if !user.is_active {
+        return StatusCode::GONE.into_response();
+    }
 
     let pw_hash = match hash_password(&req.new_password) {
         Ok(h) => h,
@@ -195,7 +221,135 @@ pub async fn handle_confirm(
     if store.users_bump_token_generation(&user.user_id).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    let _ = store.password_resets_mark_used(&reset.reset_id, Utc::now());
+    // Retires this token and any sibling still open (review 2026-10-24, A-5).
+    let _ = store.password_resets_invalidate_for_user(&user.user_id, Utc::now());
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{DynStore, sqlite_store};
+    use croniq_store::models::{Role, User};
+    use croniq_store::sqlite::SqliteStore;
+
+    fn setup() -> (Arc<ServerState>, DynStore) {
+        let store = sqlite_store(SqliteStore::in_memory().unwrap());
+        let now = Utc::now();
+        store
+            .users_create(&User {
+                user_id: "u1".into(),
+                username: "alex".into(),
+                email: Some("alex@example.com".into()),
+                display_name: None,
+                role: Role::Viewer,
+                is_active: true,
+                created_at: now,
+                updated_at: now,
+                last_login_at: None,
+            })
+            .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = ServerState::with_auth(
+            croniq_runner::AppState::new(),
+            tx,
+            None,
+            Some(Arc::clone(&store)),
+        );
+        (state, store)
+    }
+
+    fn seed_token(store: &DynStore, raw: &str) {
+        store
+            .password_resets_create(&PasswordReset {
+                reset_id: Uuid::new_v4().to_string(),
+                user_id: "u1".into(),
+                token_hash: hash_token(raw),
+                expires_at: Utc::now() + chrono::Duration::hours(1),
+                used_at: None,
+                created_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    fn is_used(store: &DynStore, raw: &str) -> bool {
+        store
+            .password_resets_get_by_token_hash(&hash_token(raw))
+            .unwrap()
+            .unwrap()
+            .used_at
+            .is_some()
+    }
+
+    async fn request(state: &Arc<ServerState>) -> StatusCode {
+        handle_request(
+            State(Arc::clone(state)),
+            ClientIp(None),
+            HeaderMap::new(),
+            Json(RequestResetRequest {
+                username: "alex".into(),
+            }),
+        )
+        .await
+        .status()
+    }
+
+    /// Review 2026-10-24, A-5: a new request retires the older link, and a
+    /// second request inside the cooldown issues nothing (same 202).
+    #[tokio::test]
+    async fn one_live_token_per_account_and_a_mail_cooldown() {
+        let (state, store) = setup();
+        seed_token(&store, "croniq_pwr_old");
+        assert_eq!(request(&state).await, StatusCode::ACCEPTED);
+        assert!(is_used(&store, "croniq_pwr_old"), "older token retired");
+
+        seed_token(&store, "croniq_pwr_between");
+        assert_eq!(request(&state).await, StatusCode::ACCEPTED);
+        assert!(
+            !is_used(&store, "croniq_pwr_between"),
+            "inside the cooldown nothing is issued, so nothing is retired"
+        );
+    }
+
+    /// Review 2026-10-24, A-5: a deactivated account cannot be reactivated
+    /// through a link issued earlier, and redeeming retires every sibling.
+    #[tokio::test]
+    async fn confirm_refuses_inactive_users_and_retires_siblings() {
+        let (state, store) = setup();
+        seed_token(&store, "croniq_pwr_a");
+        seed_token(&store, "croniq_pwr_b");
+        store
+            .upsert_credentials(&PasswordCredential {
+                user_id: "u1".into(),
+                username: "alex".into(),
+                password_hash: "x".into(),
+                failed_attempts: 0,
+                locked_until: None,
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        let confirm = |token: &str| {
+            handle_confirm(
+                State(Arc::clone(&state)),
+                Json(ConfirmResetRequest {
+                    token: token.into(),
+                    new_password: "a-long-enough-password-1".into(),
+                }),
+            )
+        };
+
+        assert_eq!(
+            confirm("croniq_pwr_a").await.status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(is_used(&store, "croniq_pwr_b"), "sibling retired");
+        assert_eq!(confirm("croniq_pwr_b").await.status(), StatusCode::GONE);
+
+        seed_token(&store, "croniq_pwr_c");
+        let mut user = store.users_get_by_id("u1").unwrap().unwrap();
+        user.is_active = false;
+        store.users_update(&user).unwrap();
+        assert_eq!(confirm("croniq_pwr_c").await.status(), StatusCode::GONE);
+    }
 }
