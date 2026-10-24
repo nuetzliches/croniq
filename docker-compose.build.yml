@@ -1,0 +1,20 @@
+# Build override for docker-compose.yml: runs the image built from this
+# checkout instead of the published one.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+#
+# Not named docker-compose.override.yml on purpose. Compose applies that name
+# automatically, which would bring back the 10-20 minute source build for
+# everyone who only wants to try the demo (review 2026-10-24, C-12).
+#
+# Both services name the same tag and the same build, as docker-compose.yml
+# did before the split; the second build is a full cache hit.
+
+services:
+  server:
+    image: ${CRONIQ_IMAGE:-croniq:local}
+    build: .
+
+  runner:
+    image: ${CRONIQ_IMAGE:-croniq:local}
+    build: .
