@@ -20,15 +20,15 @@
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Secret, Totp};
 
 const TOTP_ALGO: Algorithm = Algorithm::SHA1;
-const TOTP_DIGITS: usize = 6;
+const TOTP_DIGITS: u8 = 6;
 const TOTP_STEP_SECS: u64 = 30;
 /// Number of steps before/after to accept for clock skew. 1 means the
 /// previous and next 30-second windows count as valid — total window
 /// ~60-90 s depending on the call moment.
-const TOTP_SKEW: u8 = 1;
+const TOTP_SKEW: u16 = 1;
 /// Issuer + account label rendered in the `otpauth://` URL. Most
 /// authenticator apps display "Croniq · alex".
 const TOTP_ISSUER: &str = "Croniq";
@@ -67,17 +67,10 @@ pub struct TotpEnrolment {
 /// returned struct must be delivered to the user immediately and
 /// dropped.
 pub fn enroll_user(account: &str) -> Result<TotpEnrolment, TotpError> {
-    let secret = Secret::generate_secret();
-    let secret_b32 = secret.to_encoded().to_string();
+    let secret = Secret::generate();
+    let secret_b32 = secret.to_base32();
 
-    let totp = TOTP::new(
-        TOTP_ALGO,
-        TOTP_DIGITS,
-        TOTP_SKEW,
-        TOTP_STEP_SECS,
-        secret.to_bytes().map_err(|_| TotpError::InvalidSecret)?,
-    )
-    .map_err(|e| TotpError::Construct(e.to_string()))?;
+    let totp = build_totp(secret)?;
 
     // Manual otpauth URL — totp-rs has a builder but it requires
     // issuer/account in the constructor, which forces us to recreate
@@ -104,6 +97,19 @@ pub fn enroll_user(account: &str) -> Result<TotpEnrolment, TotpError> {
     })
 }
 
+/// Build the RFC 6238 checker with the workspace's fixed parameters.
+/// `Builder::build` validates them (digit count, secret length, step).
+fn build_totp(secret: Secret) -> Result<Totp, TotpError> {
+    Builder::new()
+        .with_algorithm(TOTP_ALGO)
+        .with_digits(TOTP_DIGITS)
+        .with_skew(TOTP_SKEW)
+        .with_step_duration(TOTP_STEP_SECS)
+        .with_secret(secret)
+        .build()
+        .map_err(|e| TotpError::Construct(e.to_string()))
+}
+
 /// Verify a 6-digit TOTP code against the user's stored seed
 /// (base32-encoded after AES-GCM unwrap).
 pub fn verify_code(secret_b32: &str, code: &str) -> Result<bool, TotpError> {
@@ -116,25 +122,23 @@ pub fn verify_code(secret_b32: &str, code: &str) -> Result<bool, TotpError> {
 /// observed in transit cannot be replayed within its ±[`TOTP_SKEW`]
 /// validity window (issue #428).
 pub fn verify_code_with_step(secret_b32: &str, code: &str) -> Result<Option<u64>, TotpError> {
-    if code.len() != TOTP_DIGITS || !code.chars().all(|c| c.is_ascii_digit()) {
+    if code.len() != usize::from(TOTP_DIGITS) || !code.chars().all(|c| c.is_ascii_digit()) {
         return Ok(None);
     }
-    let secret = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .map_err(|_| TotpError::InvalidSecret)?;
-    let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret)
-        .map_err(|e| TotpError::Construct(e.to_string()))?;
+    let secret = Secret::try_from_base32(secret_b32).map_err(|_| TotpError::InvalidSecret)?;
+    let totp = build_totp(secret)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| TotpError::Construct(e.to_string()))?
         .as_secs();
     let current_step = now / TOTP_STEP_SECS;
-    // Same acceptance window as `check_current` (± TOTP_SKEW steps), but
-    // generating each candidate explicitly so the matched step is known.
+    // Same acceptance window as `Totp::check` (± TOTP_SKEW steps), but
+    // `check` stops at the first match; walking the whole window keeps the
+    // timing independent of which step (if any) matched.
     let first = current_step.saturating_sub(TOTP_SKEW as u64);
     let mut matched: Option<u64> = None;
     for step in first..=current_step + TOTP_SKEW as u64 {
-        let candidate = totp.generate(step * TOTP_STEP_SECS);
+        let candidate = totp.generate(step * TOTP_STEP_SECS).to_string();
         // Constant-time comparison; every candidate in the window is
         // checked even after a match, so timing does not reveal which
         // step (if any) the submitted code hit.
@@ -214,6 +218,24 @@ mod tests {
     }
 
     #[test]
+    fn codes_match_the_rfc_6238_sha1_vectors() {
+        // RFC 6238 appendix B, SHA-1 seed, truncated to our 6 digits. Pins
+        // the generated codes across totp-rs majors: enrolled seeds stay
+        // valid only if the same seed and time still yield the same code.
+        let totp = build_totp(Secret::from(b"12345678901234567890".to_vec())).unwrap();
+        assert_eq!(totp.generate(59).to_string(), "287082");
+        assert_eq!(totp.generate(1_111_111_109).to_string(), "081804");
+        assert_eq!(totp.generate(2_000_000_000).to_string(), "279037");
+        // A base32 seed decodes to the same bytes it was encoded from.
+        let b32 = Secret::from(b"12345678901234567890".to_vec()).to_base32();
+        assert_eq!(b32, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        assert_eq!(
+            Secret::try_from_base32(&b32).unwrap().as_bytes(),
+            b"12345678901234567890"
+        );
+    }
+
+    #[test]
     fn verify_rejects_wrong_format() {
         let e = enroll_user("a").unwrap();
         assert!(!verify_code(&e.secret_b32, "12345").unwrap()); // too short
@@ -227,17 +249,15 @@ mod tests {
         // then verify it. Round-trip without exposing the internal
         // clock.
         let e = enroll_user("a").unwrap();
-        let secret = Secret::Encoded(e.secret_b32.clone()).to_bytes().unwrap();
-        let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret).unwrap();
-        let code = totp.generate_current().unwrap();
+        let totp = build_totp(Secret::try_from_base32(&e.secret_b32).unwrap()).unwrap();
+        let code = totp.generate_current().to_string();
         assert!(verify_code(&e.secret_b32, &code).unwrap());
     }
 
     #[test]
     fn verify_with_step_reports_the_matched_time_step() {
         let e = enroll_user("a").unwrap();
-        let secret = Secret::Encoded(e.secret_b32.clone()).to_bytes().unwrap();
-        let totp = TOTP::new(TOTP_ALGO, TOTP_DIGITS, TOTP_SKEW, TOTP_STEP_SECS, secret).unwrap();
+        let totp = build_totp(Secret::try_from_base32(&e.secret_b32).unwrap()).unwrap();
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -247,7 +267,7 @@ mod tests {
 
         // The current code maps to the current step (allow one step of
         // drift in case the test straddles a 30 s boundary).
-        let code = totp.generate(current_step * TOTP_STEP_SECS);
+        let code = totp.generate(current_step * TOTP_STEP_SECS).to_string();
         let matched = verify_code_with_step(&e.secret_b32, &code)
             .unwrap()
             .expect("current code must verify");
@@ -255,7 +275,9 @@ mod tests {
 
         // The previous step's code is inside the skew window and maps to
         // exactly that earlier step.
-        let prev = totp.generate((current_step - 1) * TOTP_STEP_SECS);
+        let prev = totp
+            .generate((current_step - 1) * TOTP_STEP_SECS)
+            .to_string();
         if prev != code {
             let matched_prev = verify_code_with_step(&e.secret_b32, &prev)
                 .unwrap()
@@ -264,7 +286,9 @@ mod tests {
         }
 
         // A code from far outside the window does not verify.
-        let stale = totp.generate((current_step - 10) * TOTP_STEP_SECS);
+        let stale = totp
+            .generate((current_step - 10) * TOTP_STEP_SECS)
+            .to_string();
         if stale != code && stale != prev {
             assert_eq!(verify_code_with_step(&e.secret_b32, &stale).unwrap(), None);
         }

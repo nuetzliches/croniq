@@ -133,28 +133,26 @@ async fn post(
 
 /// The currently valid 6-digit code for [`SEED_B32`].
 fn current_code() -> String {
-    let secret = totp_rs::Secret::Encoded(SEED_B32.to_string())
-        .to_bytes()
-        .unwrap();
-    totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 1, 30, secret)
+    let secret = totp_rs::Secret::try_from_base32(SEED_B32).unwrap();
+    totp_rs::Builder::new()
+        .with_secret(secret)
+        .build()
         .unwrap()
         .generate_current()
-        .unwrap()
+        .to_string()
 }
 
 /// A 6-digit code guaranteed to be rejected — a hardcoded "000000" would
 /// collide with a genuinely valid code in ~3e-6 of runs and flake.
 fn wrong_code() -> String {
-    let secret = totp_rs::Secret::Encoded(SEED_B32.to_string())
-        .to_bytes()
-        .unwrap();
-    let totp = totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 1, 30, secret).unwrap();
+    let secret = totp_rs::Secret::try_from_base32(SEED_B32).unwrap();
+    let totp = totp_rs::Builder::new().with_secret(secret).build().unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let valid: Vec<String> = (0..=5u64)
-        .map(|i| totp.generate(now - 30 + i * 30))
+        .map(|i| totp.generate(now - 30 + i * 30).to_string())
         .collect();
     let mut candidate: u64 = valid[1].parse().unwrap();
     loop {
