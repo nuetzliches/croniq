@@ -48,6 +48,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The Go SDK's OpenTelemetry adapter needs Go 1.26** (#911). It moves to
+  OpenTelemetry Go 1.47 (`otel`, `otel/sdk`, `otel/trace`), which requires Go
+  1.26; Go 1.25 left upstream support when 1.27 shipped. The stdlib-only core
+  module `github.com/nuetzliches/croniq/sdks/go` keeps its Go 1.25 floor. CI
+  and the release workflow now build with Go 1.26, and staticcheck moves to
+  2026.2.2, the first release that understands it.
 - **The Python SDK release runs the unit and conformance tests on the tag**
   (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
   did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI

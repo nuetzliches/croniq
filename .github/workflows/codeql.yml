@@ -112,11 +112,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Go is the only language the default setup built (autobuild); every
-      # other one runs build-mode none, as before.
+      # other one runs build-mode none, as before. The version comes from
+      # go.work, the highest floor of the three modules (the otel adapter
+      # needs a newer Go than the core module's go.mod declares).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: matrix.language == 'go'
         with:
-          go-version-file: sdks/go/go.mod
+          go-version-file: go.work
           cache: false
 
       - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
