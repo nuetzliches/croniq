@@ -125,6 +125,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   store. The sets that keep `job_sla_missed` and `job_missed_fire` alerts from
   repeating only grew, by one entry per alert, for as long as the process
   ran. Now each sweep drops the entries that can no longer match.
+- **A monthly schedule with its days out of order fires on every one of
+  them** (review 2026-10-24, D-6). The next fire was the first listed day
+  still ahead, not the earliest: with `every 15th, 1st of month`, the 15th of
+  the next month came before its 1st, so the 1st never fired. The dashboard
+  forecast had the same gap.
 
 ### Security
 
