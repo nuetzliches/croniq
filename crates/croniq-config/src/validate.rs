@@ -2764,6 +2764,43 @@ job a:b { every 5 minutes }",
         assert!(errors(&diags).is_empty(), "README Croniqfile: {diags:?}");
     }
 
+    /// The README's "Croniqfile reference" names these spellings; each must
+    /// parse and validate clean.
+    #[test]
+    fn readme_reference_spellings_validate() {
+        for schedule in [
+            "every 15 minutes",
+            "every 1 hour",
+            "every 15m",
+            "every 30s",
+            "every 2h",
+            "every day at 02:00",
+            "every monday wednesday at 09:00",
+            "every weekday at 09:00",
+            "every weekend at 10:00",
+            "every Mon..Fri at 08:30",
+            "every 1st 15th of month at 03:00",
+            "every last of month at 23:00",
+            "once at 2026-12-31T23:00:00Z",
+            "disabled",
+            "ephemeral every 5 seconds",
+            "every day at 02:00 { timezone Europe/Vienna; not_before 2026-01-01T00:00:00Z; not_after 2026-12-31T23:59:59Z }",
+        ] {
+            let src = format!("job a:b {{ {schedule}\n timezone UTC }}");
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{schedule}: {e:?}"));
+            let diags = validate(&ast);
+            assert!(errors(&diags).is_empty(), "{schedule}: {diags:?}");
+        }
+        let diags = validate_src(
+            r#"calendar c { timezone UTC
+                 include weekly monday friday; include weekly Mon; include weekly weekday
+                 include weekly "Mon".."Fri"; include monthly 1 15
+                 exclude annual 12-25; exclude annual 2026-04-06
+                 include window "08:00".."18:00" }"#,
+        );
+        assert!(errors(&diags).is_empty(), "{diags:?}");
+    }
+
     #[test]
     fn bare_timezone_is_an_error_everywhere() {
         // Review 2026-10-24, F-4: a bare `timezone` reset an inherited zone to
