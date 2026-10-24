@@ -589,7 +589,13 @@ async fn main() -> Result<()> {
                 // settings, which `job_config_from_definition` fills from the
                 // system defaults when handed `None`: every API-registered job
                 // silently reverted to a 5m timeout and 3 retries on restart.
-                let job_def = store.get_job_definition(&def.job_key).unwrap_or_default();
+                //
+                // A store error stops the boot rather than reading as "no
+                // row", which skipped the `is_active` check and reset the
+                // settings above (review 2026-10-24, D-9). A restart retries.
+                let job_def = store
+                    .get_job_definition(&def.job_key)
+                    .with_context(|| format!("reading the job definition of `{}`", def.job_key))?;
                 if job_def.as_ref().is_some_and(|j| !j.is_active) {
                     inactive_count += 1;
                     continue;

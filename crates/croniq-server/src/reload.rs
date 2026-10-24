@@ -433,7 +433,14 @@ pub async fn build_plan(
         // `job_config_from_definition` fills from the system defaults when
         // handed `None`: a reload silently reset every API-registered job to a
         // 5m timeout and 3 retries.
-        let job_def = store.get_job_definition(&def.job_key).unwrap_or_default();
+        //
+        // A store error aborts the reload rather than reading as "no row":
+        // that dropped the `is_active` check, so a deactivated job fired
+        // again, and reset the job to the defaults above (review 2026-10-24,
+        // D-9). The running state stays as it was.
+        let job_def = store
+            .get_job_definition(&def.job_key)
+            .map_err(|e| ReloadError::Store(format!("{e}")))?;
         if job_def.as_ref().is_some_and(|j| !j.is_active) {
             continue;
         }
@@ -737,6 +744,28 @@ mod tests {
             .expect("the job is in the plan");
         assert_eq!(job.timeout.as_deref(), Some("90s"));
         assert_eq!(job.retry.max_attempts, 7);
+    }
+
+    /// Review 2026-10-24, D-9: a store error reading the job's row read as
+    /// "no row", which skipped the `is_active` check — a deactivated job came
+    /// back — and reset its timeout and retries to the defaults.
+    #[tokio::test]
+    async fn a_store_error_reading_a_job_definition_aborts_the_reload() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "job dsl:one { every 1 hours }").unwrap();
+        let (cur_tr, cur_dsl) = state_from("job dsl:one { every 1 hours }").await;
+
+        let inner = empty_store();
+        seed_api_job(&inner, "api:stopped", false, None);
+        let faulty = crate::fault_store::FaultStore::wrap(inner);
+        faulty.arm_get_job_definition();
+        let store: DynStore = faulty;
+
+        let err = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .err()
+            .expect("the reload must fail, not plan without the row");
+        assert!(matches!(err, ReloadError::Store(_)), "{err:?}");
     }
 
     // ── Boot-only settings (issue #406) ─────────────────────────────────

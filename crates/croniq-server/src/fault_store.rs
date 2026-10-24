@@ -39,6 +39,9 @@ pub struct FaultStore {
     /// deliberate asymmetry: the per-job guard dispatches on a store error,
     /// the group guard does not.
     pub fail_job_count: AtomicBool,
+    /// `get_job_definition` returns a database error while set (review
+    /// 2026-10-24, D-9: a reload must not read the error as "no row").
+    pub fail_get_job_definition: AtomicBool,
     /// Called just before every `create_execution_and_advance_job_state`
     /// delegates — the scheduler's per-fire write. Lets a test look at what
     /// the rest of the system can see while a tick is mid-wave (issue #841).
@@ -54,6 +57,7 @@ impl FaultStore {
             fail_claim: AtomicBool::new(false),
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
+            fail_get_job_definition: AtomicBool::new(false),
             on_fire_persist: std::sync::Mutex::new(None),
         })
     }
@@ -72,6 +76,10 @@ impl FaultStore {
 
     pub fn arm_job_count(&self) {
         self.fail_job_count.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_get_job_definition(&self) {
+        self.fail_get_job_definition.store(true, Ordering::SeqCst);
     }
 }
 
@@ -267,9 +275,17 @@ impl AuthStore for FaultStore {
 impl JobDefinitionStore for FaultStore {
     delegate! {
         create_job_definition(job: &JobDefinition) -> ();
-        get_job_definition(job_key: &str) -> Option<JobDefinition>;
         list_job_definitions() -> Vec<JobDefinition>;
         delete_job_definition(job_key: &str) -> ();
+    }
+
+    fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError> {
+        if self.fail_get_job_definition.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected get_job_definition failure".into(),
+            ));
+        }
+        self.inner.get_job_definition(job_key)
     }
 }
 

@@ -139,6 +139,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and under `catch_up all` it replayed the skipped fires into the queue the
   overflow guard had just capped. Skips now persist the advance and leave
   `fire_count` and `last_fired_at` alone.
+- **A store error while reading an API job no longer brings a deactivated job
+  back** (review 2026-10-24, D-9). Boot and reload read a failed lookup of the
+  job's own row as "no row". That skipped the deactivation check, so a job
+  stopped through the API fired again, and it reset the job's timeout and
+  retries to the defaults. A reload now fails with the store error and leaves
+  the running state as it was; at boot, the server stops and its restart
+  retries.
 
 ### Security
 
