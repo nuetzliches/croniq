@@ -670,6 +670,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its value. The Croniqfile parser also caps block nesting at 64 levels, so
   deeply nested input is an error rather than a stack overflow.
 
+- **`users:admin` no longer reaches the `admin` role** (review 2026-10-24,
+  A-1). A caller holding `users:admin` without the `admin` scope could create
+  a user with role `admin`, promote an existing user to it, or invite one, and
+  so obtain the `admin` wildcard through an account it controlled. Assigning
+  the `admin` role — on `POST /v1/users`, `PATCH /v1/users/{id}` and
+  `POST /v1/invitations` — now requires the `admin` scope, and so does
+  editing, deactivating or deleting a user whose role is `admin`. Callers
+  with `admin` are unaffected.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
