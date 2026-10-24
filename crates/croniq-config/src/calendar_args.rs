@@ -85,6 +85,19 @@ pub fn parse_annual_arg(s: &str) -> Result<AnnualArg, String> {
     }
 }
 
+/// Whether `args` would compile as a `rule_type` rule, using the same parsers
+/// as the scheduler's `compile_rule`. Unknown rule types count as valid here:
+/// their error does not quote an argument.
+pub fn rule_args_valid(rule_type: &str, args: &[String]) -> bool {
+    match rule_type {
+        "weekly" => args.iter().all(|a| parse_weekly_arg(a).is_ok()),
+        "window" => parse_window_args(args).is_ok(),
+        "monthly" => args.iter().all(|a| parse_monthly_arg(a).is_ok()),
+        "annual" | "yearly" => args.iter().all(|a| parse_annual_arg(a).is_ok()),
+        _ => true,
+    }
+}
+
 pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, String> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {

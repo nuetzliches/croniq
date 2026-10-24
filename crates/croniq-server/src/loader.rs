@@ -869,15 +869,18 @@ pub async fn restore_queued_executions(
 /// Parse a store-persisted `CalendarDefinition` (whose `rules` field holds
 /// line-separated Croniqfile calendar-body DSL) into a compiled
 /// `CalendarConfig`. Mirrors `api::calendars::validate_rules`: the rules are
-/// wrapped in a synthetic calendar block and run through the real parser and
+/// parsed as a calendar body (`Parser::parse_calendar_rules`) and run through
 /// semantic validation, so stored rows compile exactly like Croniqfile
 /// calendars. Rows predating the #356 validation gate may legitimately fail
 /// here — callers treat that as a compile error, not a panic.
 pub fn calendar_config_from_definition(
     def: &croniq_store::models::CalendarDefinition,
 ) -> Result<croniq_config::compile::CalendarConfig, String> {
-    let source = format!("calendar \"__store__\" {{\n{}\n}}\n", def.rules);
-    let ast = Parser::parse(&source).map_err(|e| e.to_string())?;
+    // Placeholders are refused here, not resolved: a stored calendar has no
+    // Croniqfile context, and resolving `{env.X}`/`{file.X}` against the
+    // server process would hand its secrets to anyone with `calendars:write`
+    // (review 2026-10-24, F-2). Rows stored before that gate fail to compile.
+    let ast = Parser::parse_calendar_rules("__store__", &def.rules).map_err(|e| e.to_string())?;
     let errors: Vec<String> = croniq_config::validate::validate(&ast)
         .into_iter()
         .filter(|d| d.severity == croniq_config::validate::Severity::Error)
@@ -2578,6 +2581,24 @@ mod tests {
                 "{src}: rebuilt trigger has no next fire time"
             );
         }
+    }
+
+    #[test]
+    fn stored_calendar_placeholders_are_not_resolved() {
+        // Review 2026-10-24, F-2: a row stored before the API refused
+        // placeholders must not read the server's environment or files, and
+        // its error must not carry what such a read would have returned.
+        let err = calendar_config_from_definition(&cal_def(
+            "leaky",
+            "include weekly {file./etc/hostname}",
+        ))
+        .unwrap_err();
+        assert!(err.contains("placeholder"), "got: {err}");
+        let err = calendar_config_from_definition(&cal_def("leaky", "include weekly {$PATH}"))
+            .unwrap_err();
+        assert!(err.contains("placeholder"), "got: {err}");
+        let path_value = std::env::var("PATH").unwrap_or_default();
+        assert!(path_value.is_empty() || !err.contains(&path_value));
     }
 
     #[test]

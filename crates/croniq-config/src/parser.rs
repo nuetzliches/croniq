@@ -51,10 +51,20 @@ pub enum ParseError {
     Lex(#[from] LexError),
 }
 
+/// How deep generic `name { … }` blocks may nest.
+///
+/// The block grammar is mutually recursive (`parse_directive_or_block` →
+/// `parse_directives_or_blocks_until_rbrace`), so without a bound a long run
+/// of `a {` exhausts the stack of whatever thread parses it — a Tokio worker
+/// for API-supplied text, which aborts the whole process (review 2026-10-24,
+/// F-11). Real Croniqfiles nest three or four levels.
+pub const MAX_BLOCK_DEPTH: usize = 64;
+
 /// Recursive-descent parser for Croniqfile.
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    depth: usize,
 }
 
 /// Parse a bare schedule expression — the DSL text that would follow a job's
@@ -62,8 +72,7 @@ pub struct Parser {
 /// 09:00`, `once at "…"`, `disabled`) — into its AST [`ScheduleKind`].
 ///
 /// Wraps the expression in a synthetic job block and runs it through the real
-/// parser, so it accepts exactly the Croniqfile schedule grammar (same wrapping
-/// trick as `calendar_config_from_definition` in croniq-server). Used to
+/// parser, so it accepts exactly the Croniqfile schedule grammar. Used to
 /// reconstruct a runtime schedule from a persisted `cron_expression` that holds
 /// a canonical DSL line rather than interval shorthand — see
 /// [`crate::schedule::CompiledSchedule::to_dsl`].
@@ -86,8 +95,87 @@ impl Parser {
     /// Parse a Croniqfile source string into an AST.
     pub fn parse(source: &str) -> Result<Croniqfile, ParseError> {
         let tokens = Lexer::tokenize(source)?;
-        let mut parser = Parser { tokens, pos: 0 };
+        let mut parser = Parser {
+            tokens,
+            pos: 0,
+            depth: 0,
+        };
         parser.parse_croniqfile()
+    }
+
+    /// Parse the body of a calendar held outside any Croniqfile — the `rules`
+    /// text of a store calendar (`POST /v1/calendars`, the MCP calendar
+    /// tools) — into a one-calendar AST named `name`.
+    ///
+    /// This used to be done by splicing the text into
+    /// `calendar "__store__" { … }` and parsing the result, which let a `}` in
+    /// the rules close the block and reach the whole grammar. It is now parsed
+    /// as a rule list directly, and two token kinds are refused outright
+    /// (review 2026-10-24, F-2/F-11):
+    ///
+    /// - braces: no calendar rule uses one, so any brace is an escape attempt;
+    /// - placeholders (`{env.X}`, `{file./p}`, `{$X}`, `{vars.X}`): a stored
+    ///   calendar has no Croniqfile context, and compiling it would resolve
+    ///   them against the server's own environment and filesystem — written
+    ///   by anyone with `calendars:write`, and echoed back through
+    ///   `config_error` when the resolved value is not a valid argument.
+    pub fn parse_calendar_rules(name: &str, rules: &str) -> Result<Croniqfile, ParseError> {
+        let tokens = Lexer::tokenize(rules)?;
+        for tok in &tokens {
+            match &tok.kind {
+                TokenKind::Placeholder(p) => {
+                    return Err(ParseError::General {
+                        message: format!(
+                            "placeholder '{{{p}}}' is not allowed in calendar rules stored \
+                             outside a Croniqfile"
+                        ),
+                        span: tok.span.into(),
+                    });
+                }
+                TokenKind::LBrace | TokenKind::RBrace => {
+                    return Err(ParseError::General {
+                        message: "braces are not allowed in calendar rules".into(),
+                        span: tok.span.into(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        let mut parser = Parser {
+            tokens,
+            pos: 0,
+            depth: 0,
+        };
+        let start = parser.peek().span;
+        let mut parsed = Vec::new();
+        loop {
+            parser.skip_newlines();
+            if parser.at_end() {
+                break;
+            }
+            if matches!(
+                parser.peek().kind,
+                TokenKind::Comment(_) | TokenKind::Semicolon
+            ) {
+                parser.advance();
+                continue;
+            }
+            parsed.push(parser.parse_calendar_rule()?);
+        }
+        let span = start.merge(parser.peek().span);
+        Ok(Croniqfile {
+            items: vec![Item::Calendar(CalendarBlock {
+                name: StringValue {
+                    value: name.to_string(),
+                    quoted: true,
+                    is_placeholder: false,
+                    span: Span::empty(0),
+                },
+                rules: parsed,
+                span,
+            })],
+            span,
+        })
     }
 
     fn peek(&self) -> &Token {
@@ -1121,15 +1209,28 @@ impl Parser {
     fn parse_directives_or_blocks_until_rbrace(
         &mut self,
     ) -> Result<Vec<DirectiveOrBlock>, ParseError> {
+        // Every nested block passes through here, so this is the one place
+        // the recursion can be bounded (see `MAX_BLOCK_DEPTH`).
+        if self.depth >= MAX_BLOCK_DEPTH {
+            return Err(ParseError::General {
+                message: format!("blocks nest deeper than {MAX_BLOCK_DEPTH} levels"),
+                span: self.peek().span.into(),
+            });
+        }
+        self.depth += 1;
         let mut items = Vec::new();
-        loop {
+        let result = loop {
             self.skip_newlines();
             if self.peek().kind == TokenKind::RBrace || self.at_end() {
-                break;
+                break Ok(());
             }
-            items.push(self.parse_directive_or_block()?);
-        }
-        Ok(items)
+            match self.parse_directive_or_block() {
+                Ok(item) => items.push(item),
+                Err(e) => break Err(e),
+            }
+        };
+        self.depth -= 1;
+        result.map(|()| items)
     }
 
     fn parse_directive_or_block(&mut self) -> Result<DirectiveOrBlock, ParseError> {
@@ -1871,5 +1972,68 @@ job etl:sync {
                 if d.key.value == "concurrency_group" && d.args[0].value == "api-x")
         });
         assert!(has_group, "job must carry the concurrency_group directive");
+    }
+
+    #[test]
+    fn deep_block_nesting_is_an_error_not_a_stack_overflow() {
+        // Review 2026-10-24, F-11: unbounded recursion on `a { a { …` used to
+        // overflow the parsing thread's stack and abort the process.
+        let depth = 50_000;
+        let source = format!(
+            "job a:b {{\n{}{}}}",
+            "x {\n".repeat(depth),
+            "}\n".repeat(depth)
+        );
+        let err = Parser::parse(&source).unwrap_err();
+        assert!(err.to_string().contains("nest deeper"), "{err}");
+
+        // Nesting inside the limit still parses.
+        let ok = format!("job a:b {{\n{}{}}}", "x {\n".repeat(10), "}\n".repeat(10));
+        Parser::parse(&ok).unwrap();
+    }
+
+    #[test]
+    fn calendar_rules_parse_without_a_wrapper() {
+        let ast = Parser::parse_calendar_rules(
+            "office",
+            "# business days\ninclude weekly Mon..Fri\nexclude annual 12-25; timezone Europe/Berlin",
+        )
+        .unwrap();
+        assert_eq!(ast.items.len(), 1);
+        let Item::Calendar(ref cal) = ast.items[0] else {
+            panic!("expected a calendar");
+        };
+        assert_eq!(cal.name.value, "office");
+        assert_eq!(cal.rules.len(), 3);
+        assert_eq!(cal.rules[0].args.len(), 5);
+    }
+
+    #[test]
+    fn calendar_rules_refuse_placeholders() {
+        // Review 2026-10-24, F-2: a stored calendar's placeholders would be
+        // resolved against the server's environment and files.
+        for rules in [
+            "include weekly {env.CRONIQ_JWT_SECRET}",
+            "include weekly {file./etc/passwd}",
+            "include weekly {$HOME}",
+            "include weekly {vars.x}",
+        ] {
+            let err = Parser::parse_calendar_rules("c", rules).unwrap_err();
+            assert!(err.to_string().contains("placeholder"), "{rules}: {err}");
+        }
+        // Inside quotes it is a literal string, not a placeholder.
+        Parser::parse_calendar_rules("c", "include weekly \"{env.X}\"").unwrap();
+    }
+
+    #[test]
+    fn calendar_rules_refuse_braces() {
+        // Review 2026-10-24, F-11: a `}` used to close the synthetic
+        // calendar block and open the full Croniqfile grammar.
+        let err = Parser::parse_calendar_rules(
+            "c",
+            "include weekly Mon\n}\nserver { listen \"0.0.0.0:1\" }\ncalendar x {",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("braces"), "{err}");
     }
 }

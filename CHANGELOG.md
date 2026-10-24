@@ -655,6 +655,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no longer falls back to an unpinned `npm install` when the lockfile does not
   match; the build fails instead.
 
+- **Calendar rules stored through the API or MCP no longer resolve
+  placeholders, and are parsed as a rule list** (review 2026-10-24, F-2,
+  F-11). A calendar stored in the database has no Croniqfile around it, yet
+  its rules were compiled with full placeholder resolution, so `{env.…}`,
+  `{$…}` and `{file.…}` read the server's own environment and files, and an
+  invalid result could be echoed in a job's `config_error`. `POST`/`PUT
+  /v1/calendars` and the MCP calendar tools now refuse placeholders and
+  braces in `rules`, and stored rows that contain them fail to compile
+  instead of being resolved. The rules are parsed by a dedicated
+  calendar-body entry point instead of being spliced into a synthetic
+  `calendar { … }` block. In a Croniqfile, a calendar rule whose placeholder
+  resolves to an invalid argument is now reported with the placeholder, not
+  its value. The Croniqfile parser also caps block nesting at 64 levels, so
+  deeply nested input is an error rather than a stack overflow.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

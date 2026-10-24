@@ -825,6 +825,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_rules_refuses_placeholders_and_braces() {
+        // Review 2026-10-24, F-2/F-11: a stored calendar must not resolve
+        // server-side placeholders, nor escape its block with a `}`.
+        let err = validate_rules("include weekly {env.CRONIQ_JWT_SECRET}").unwrap_err();
+        assert!(err.contains("placeholder"), "got: {err}");
+        let err = validate_rules("include weekly {file./etc/hostname}").unwrap_err();
+        assert!(err.contains("placeholder"), "got: {err}");
+        let err = validate_rules("include weekly Mon\n}\nserver { }").unwrap_err();
+        assert!(err.contains("braces"), "got: {err}");
+    }
+
+    #[test]
     fn dsl_rules_text_is_canonical_and_reparses() {
         let rule = |kind: &str, rule_type: &str, args: &[&str]| CalendarRuleConfig {
             kind: kind.into(),
