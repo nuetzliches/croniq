@@ -43,7 +43,7 @@ notify = "8"
 # tight integration with ServerState + the JIT-provisioning logic.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 url = "2"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 base64 = "0.22"
 rand = "0.9"
 

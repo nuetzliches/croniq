@@ -545,6 +545,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **Dependency batch of 2026-10-25** (supersedes Dependabot #884, #885, #899,
+  #900, #901, #904–#908, #910, #912, #916, #918, #920–#922). happy-dom 21.0.4
+  in `ui/` fixes GHSA-834v-8h66-3h79 (host code execution through an
+  unsanitised import alias, high), which reached the dashboard's test
+  environment only; nothing of it ships. The release image builds with
+  `rust:1.98` instead of `rust:1.88`, `node:26` for the dashboard and
+  `nginx-unprivileged:1.31` for the `croniq-ui` target. jsonwebtoken 11 still
+  reaches `crypto-bigint` 0.5 through `elliptic-curve` 0.13, so the
+  RUSTSEC-2026-0387 ignore in `deny.toml` stays. Also: the cargo minor/patch
+  group, the `ui/` minor/patch group, `@vueuse/core` 15, `@types/node` 26,
+  js-yaml 5 in the TypeScript conformance binding, the .NET SDK's test and
+  runtime packages (including TimeProvider.Testing 10 and coverlet 10),
+  Spotless 8 in the Java SDK (no reformatting), and the `rust-cache`,
+  `setup-python`, `codeql-action` and `pypi-publish` actions.
 - **undici 8.12.3 in the dashboard's build tree; RUSTSEC-2026-0387 assessed.**
   `npm audit` flagged three undici advisories (GHSA-4qv8-2p9j-2685,
   GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c) in a build-time dependency of

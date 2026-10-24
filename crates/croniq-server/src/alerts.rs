@@ -838,7 +838,9 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         // Hand-rolled `floor_char_boundary`: that method is only stable from
-        // Rust 1.91, and the release image still builds with rust:1.88.
+        // Rust 1.91. The release image builds with rust:1.98 now, but the
+        // workspace declares no MSRV, so this keeps it from acquiring one
+        // implicitly.
         let mut cut = max;
         while !s.is_char_boundary(cut) {
             cut -= 1;
