@@ -685,10 +685,20 @@ async fn main() -> Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // A single tick should finish in microseconds; a tick that runs this
-        // long means a hung store call or a wedged queue lock (issue #248).
-        // Bound it so one stuck tick is logged + skipped instead of wedging
-        // the whole loop forever — and leave the heartbeat stale so the
-        // liveness metric reflects the stall.
+        // long means a wedged queue lock (issue #248). Bound it so one stuck
+        // tick is logged + skipped instead of wedging the whole loop forever —
+        // and leave the heartbeat stale so the liveness metric reflects the
+        // stall.
+        //
+        // The timeout can only fire at an `.await`. The tick's store calls are
+        // synchronous (SQLite behind a std `Mutex`, the Postgres actor behind a
+        // blocking channel), so a store call that hangs never yields: this
+        // timeout does not cover it, and the tick keeps the worker thread
+        // until the call returns. What still reports that stall is the
+        // heartbeat, which is only stamped after a tick completes — a stale
+        // `croniq_scheduler_last_tick_timestamp` is the signal (review
+        // 2026-10-24, D-4). Moving the store writes off the runtime needs the
+        // tick split around them; it is not done here.
         const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
         // ~5 minutes at the 1 s tick cadence. A positive "scheduler is alive"
         // signal at INFO, independent of whether any job fired.
