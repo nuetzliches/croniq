@@ -168,6 +168,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the next retry, although the run stayed `claimed` and the stale-claim reaper
   later ran it again. Now nothing is decided from such a completion; the
   reaper's re-run is the only follow-up.
+- **A job whose `not_after` passed during downtime finishes at restart**
+  (review 2026-10-24, D-15). The restart took over its last pending fire,
+  which could never run past `not_after`. The job then showed as overdue for
+  good (`croniq_job_overdue`, `job_missed_fire`) instead of finished. It is
+  now marked exhausted at restart.
 
 ### Security
 

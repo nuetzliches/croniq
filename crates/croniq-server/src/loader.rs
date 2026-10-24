@@ -475,6 +475,24 @@ pub fn restore_trigger_states(
                     );
                 }
             }
+            JobStatus::Active if trigger.not_after.is_some_and(|na| now > na) => {
+                // The job's end date passed while the server was down. The
+                // stored fire can never run — `evaluate` refuses anything past
+                // `not_after` — and adopting it left the trigger armed for
+                // good, so the job read as overdue (`croniq_job_overdue`,
+                // `job_missed_fire`) instead of finished (review 2026-10-24,
+                // D-15). The live path exhausts it in `mark_fired`; the
+                // restore has to do the same.
+                trigger.fire_count = job_state.fire_count;
+                trigger.state = TriggerState::Exhausted;
+                trigger.next_fire_at = None;
+                tracing::info!(
+                    job_key = %job_state.job_key,
+                    not_after = ?trigger.not_after,
+                    "trigger restore: not_after passed while the server was down — exhausted"
+                );
+                persist_healed_state(store, trigger, &job_state, now);
+            }
             JobStatus::Active => {
                 // Restore the stored next_fire_at so the trigger doesn't skip
                 // or double-fire due to restart timing differences — unless it
@@ -1779,6 +1797,35 @@ mod tests {
                 updated_at: Utc::now(),
             })
             .unwrap();
+    }
+
+    // Review 2026-10-24, D-15: `not_after` passed between the last fire and
+    // the restart. The restore adopted the stored fire, which `evaluate` never
+    // returns past `not_after`, so the trigger stayed armed and overdue.
+    #[test]
+    fn restore_exhausts_a_trigger_whose_not_after_passed_while_down() {
+        let mut cfg = load_str("job etl:sync { every 1 hours }").unwrap();
+        let now = Utc::now();
+        cfg.triggers.get_mut("etl:sync").unwrap().not_after =
+            Some(now - chrono::Duration::hours(1));
+        let store = make_store();
+        seed_job_state(
+            &store,
+            "etl:sync",
+            croniq_store::models::JobStatus::Active,
+            Some(now - chrono::Duration::hours(2)),
+            4,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, now);
+
+        let trigger = &cfg.triggers["etl:sync"];
+        assert_eq!(trigger.state, TriggerState::Exhausted);
+        assert!(trigger.next_fire_at.is_none());
+        let row = store.get_job_state("etl:sync").unwrap().unwrap();
+        assert_eq!(row.status, croniq_store::models::JobStatus::Exhausted);
+        assert_eq!(row.next_fire_at, None);
+        assert_eq!(row.fire_count, 4);
     }
 
     #[test]
