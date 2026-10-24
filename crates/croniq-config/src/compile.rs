@@ -21,6 +21,54 @@ fn resolve_str(val: &StringValue, vars: &HashMap<String, String>) -> String {
     }
 }
 
+/// Every placeholder in `ast` that does not resolve right now, as the
+/// resolver's message (`unresolved placeholder 'env.PGPASSWORD'`, `cannot
+/// read file …`), in source order.
+///
+/// [`resolve_str`] keeps the raw text for such a placeholder so the file still
+/// compiles, which made it a silent literal: `env { PGPASSWORD
+/// {env.PGPASSWORD} }` with the variable unset handed the child process the
+/// string `env.PGPASSWORD`, and `sign hmac {env.X}` signed with `env.X`
+/// (review 2026-10-24, F-14). The server's loader reports this list at load
+/// time. Messages name the placeholder, never a resolved value.
+///
+/// Walks the AST through its serde form so that every `StringValue`, in
+/// every block, is covered without a per-block visitor to keep in sync.
+pub fn unresolved_placeholders(ast: &Croniqfile) -> Vec<String> {
+    fn walk(v: &serde_json::Value, vars: &HashMap<String, String>, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(map) => {
+                if map.get("is_placeholder") == Some(&serde_json::Value::Bool(true))
+                    && let Some(serde_json::Value::String(raw)) = map.get("value")
+                {
+                    if let Err(e) = placeholders::resolve(raw, vars) {
+                        let msg = e.to_string();
+                        if !out.contains(&msg) {
+                            out.push(msg);
+                        }
+                    }
+                    return;
+                }
+                for child in map.values() {
+                    walk(child, vars, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    walk(child, vars, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let vars = collect_vars(ast);
+    let mut out = Vec::new();
+    if let Ok(tree) = serde_json::to_value(ast) {
+        walk(&tree, &vars, &mut out);
+    }
+    out
+}
+
 /// Resolve the first arg of a directive into an owned `String`, applying
 /// placeholder substitution if present.
 fn first_arg(d: &Directive, vars: &HashMap<String, String>) -> Option<String> {
@@ -2531,14 +2579,20 @@ mod tests {
 
     #[test]
     fn compile_server_app_url() {
-        // URLs must be quoted — an unquoted `//` would start a line comment.
-        let ast = Parser::parse(r#"server { listen :4000; app_url "https://cron.example.com" }"#)
-            .unwrap();
-        let cfg = compile(&ast);
-        assert_eq!(
-            cfg.server.app_url.as_deref(),
-            Some("https://cron.example.com")
-        );
+        // Only `#` starts a comment, so a URL reads the same quoted or bare
+        // (review 2026-10-24, F-16: this comment and the shipped example
+        // claimed an unquoted `//` started one).
+        for src in [
+            r#"server { listen :4000; app_url "https://cron.example.com" }"#,
+            r#"server { listen :4000; app_url https://cron.example.com }"#,
+        ] {
+            let cfg = compile(&Parser::parse(src).unwrap());
+            assert_eq!(
+                cfg.server.app_url.as_deref(),
+                Some("https://cron.example.com"),
+                "{src}"
+            );
+        }
     }
 
     #[test]
@@ -2664,6 +2718,28 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn unresolved_placeholders_are_listed_once_each() {
+        // Review 2026-10-24, F-14.
+        let ast = Parser::parse(
+            r#"vars { region eu; broken {env.CRONIQ_TEST_F14_UNSET_A} }
+               job a:b { every 5 minutes
+                 runner shell { command "x"; env { PGPASSWORD {env.CRONIQ_TEST_F14_UNSET_B} } }
+                 runner { require {vars.region}; prefer {vars.nope} } }
+               alerts { channel "w" { webhook "https://h"; sign hmac {env.CRONIQ_TEST_F14_UNSET_B} } }
+               job a:c { every 5 minutes; description "{env.NOT_A_PLACEHOLDER_IN_QUOTES}" }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unresolved_placeholders(&ast),
+            vec![
+                "unresolved placeholder 'env.CRONIQ_TEST_F14_UNSET_A'".to_string(),
+                "unresolved placeholder 'env.CRONIQ_TEST_F14_UNSET_B'".to_string(),
+                "unresolved placeholder 'vars.nope'".to_string(),
+            ]
+        );
     }
 
     #[test]

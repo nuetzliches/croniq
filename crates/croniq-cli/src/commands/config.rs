@@ -19,10 +19,15 @@ pub fn validate(path: &Path) -> Result<()> {
         .iter()
         .filter(|d| d.severity == validate::Severity::Error)
         .count();
+    // Placeholders resolve against *this* shell's environment and files, which
+    // need not be the server's — so a warning, not an error (review
+    // 2026-10-24, F-14).
+    let unresolved = compile::unresolved_placeholders(&ast);
     let warnings = diags
         .iter()
         .filter(|d| d.severity == validate::Severity::Warning)
-        .count();
+        .count()
+        + unresolved.len();
 
     for diag in &diags {
         let prefix = match diag.severity {
@@ -30,6 +35,12 @@ pub fn validate(path: &Path) -> Result<()> {
             validate::Severity::Warning => "warning",
         };
         eprintln!("{prefix}: {}", diag.message);
+    }
+    for msg in &unresolved {
+        eprintln!(
+            "warning: {msg} in this environment — the server would use the placeholder's \
+             literal text"
+        );
     }
 
     if errors > 0 {

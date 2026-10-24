@@ -131,11 +131,32 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     // before the block does not inherit it, so the UTC warning below must not
     // consider it covered (issue #427).
     let mut default_timezone = false;
+    // Jobs, calendars and imports seen so far — what a later `defaults { }`
+    // does not reach (review 2026-10-24, F-15).
+    let mut declared_before_defaults = 0usize;
 
     // Second pass: validate everything
     for item in &ast.items {
+        if matches!(item, Item::Job(_) | Item::Calendar(_) | Item::Import(_)) {
+            declared_before_defaults += 1;
+        }
         match item {
             Item::Defaults(def) => {
+                // `defaults { }` applies to what is declared *after* it, while
+                // `vars { }` and `concurrency_group` are file-wide. An
+                // `import ./calendars.croniq` above `defaults { timezone … }`
+                // left the imported calendars on UTC with nothing said.
+                if declared_before_defaults > 0 {
+                    diags.push(Diagnostic {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "`defaults {{ }}` applies only to jobs, calendars and imports declared \
+                             after it; {declared_before_defaults} above it do not inherit it — \
+                             move it to the top of the file"
+                        ),
+                        span: def.span.into(),
+                    });
+                }
                 validate_duration_directives(&def.directives, &mut diags);
                 validate_priority_directives(&def.directives, &mut diags);
                 for dob in &def.directives {
@@ -160,6 +181,24 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                     diags.push(Diagnostic {
                         severity: Severity::Error,
                         message: format!("duplicate job key '{}'", job.key.raw),
+                        span: job.key.span.into(),
+                    });
+                }
+
+                // Every key segment must be non-empty: the parser splits on
+                // `:` and accepted `job :x` / `job a::b` (review 2026-10-24,
+                // F-16).
+                if job.key.namespace.is_empty()
+                    || job.key.name.is_empty()
+                    || job.key.variant.as_deref() == Some("")
+                {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "job key '{}' has an empty segment — write `namespace:name` or \
+                             `namespace:name:variant`",
+                            job.key.raw
+                        ),
                         span: job.key.span.into(),
                     });
                 }
@@ -2562,6 +2601,46 @@ job a:b { every 5 minutes }",
         // timezone, so suggesting a `timezone` here would be a false promise.
         let diags = validate_src(r#"job migration:v2 { once at 2026-04-01T03:00:00Z }"#);
         assert!(utc_warnings(&diags).is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn job_key_with_an_empty_segment_is_an_error() {
+        for key in [":x", "a:", "a:b:", "\"a::b\""] {
+            let diags = validate_src(&format!("job {key} {{ every 5 minutes }}"));
+            assert!(
+                errors(&diags)
+                    .iter()
+                    .any(|d| d.message.contains("empty segment")),
+                "{key}: {diags:?}"
+            );
+        }
+        assert!(errors(&validate_src("job a:b:c { every 5 minutes }")).is_empty());
+    }
+
+    #[test]
+    fn defaults_after_jobs_or_imports_warns() {
+        // Review 2026-10-24, F-15.
+        for src in [
+            "import ./calendars.croniq\ndefaults { timezone Europe/Vienna }",
+            "job a:b { every 5 minutes }\ndefaults { timeout 5m }",
+        ] {
+            let diags = validate_src(src);
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.severity == Severity::Warning
+                        && d.message.contains("declared after it")),
+                "{src}: {diags:?}"
+            );
+        }
+        let diags =
+            validate_src("vars { x 1 }\ndefaults { timeout 5m }\njob a:b { every 5 minutes }");
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("declared after it")),
+            "{diags:?}"
+        );
     }
 
     // ── alerts { } (review 2026-10-24, F-12) ─────────────────────────────────

@@ -11,8 +11,8 @@
 //! - `format_calendar_rules(structured)` — emit the canonical rule *lines*
 //! - `format_calendar_block(structured, name)` — emit a full, paste-ready
 //!   `calendar <name> { … }` block
-//! - `next_fires(dsl, now_iso, count)` — preview upcoming firing times
-//! - `evaluate_calendar_day(dsl, day_iso)` — is this day active?
+//! - `next_fires(dsl, now_iso, count)` — preview upcoming firing times, in
+//!   UTC only (no `timezone`, no calendar gate; see `next_fire_utc`)
 //!
 //! The `format_*` emitters build a loose, unambiguous fragment from the
 //! form shape, parse it, and re-emit through `croniq_config::format` so
@@ -1030,10 +1030,26 @@ fn parse_calendar_rules_inner(dsl: &str) -> ParseCalendarResult {
             let rules = cal
                 .map(|c| c.rules.iter().map(rule_to_payload).collect())
                 .unwrap_or_default();
+            // Run the semantic checks too: a syntactically fine rule such as
+            // `include weekly funday` or `include monthly 32` used to come
+            // back `ok` with no diagnostics (review 2026-10-24, F-16).
+            let mut ok = true;
+            let mut diagnostics = Vec::new();
+            for d in croniq_config::validate::validate(&ast) {
+                match d.severity {
+                    croniq_config::validate::Severity::Error => {
+                        ok = false;
+                        diagnostics.push(d.message);
+                    }
+                    croniq_config::validate::Severity::Warning => {
+                        diagnostics.push(format!("warning: {}", d.message));
+                    }
+                }
+            }
             ParseCalendarResult {
-                ok: true,
+                ok,
                 rules,
-                diagnostics: vec![],
+                diagnostics,
             }
         }
         Err(e) => ParseCalendarResult {
@@ -1333,6 +1349,20 @@ mod tests {
         let r = parse_calendar_rules_inner("");
         assert!(r.ok);
         assert!(r.rules.is_empty());
+    }
+
+    #[test]
+    fn parse_calendar_rules_reports_semantic_errors() {
+        // Review 2026-10-24, F-16: the parser accepts `funday`; validate does not.
+        let r = parse_calendar_rules_inner("timezone UTC\ninclude weekly funday");
+        assert!(!r.ok, "{r:?}");
+        assert!(
+            r.diagnostics.iter().any(|d| d.contains("funday")),
+            "{:?}",
+            r.diagnostics
+        );
+        let r = parse_calendar_rules_inner("timezone UTC\ninclude weekly monday");
+        assert!(r.ok && r.diagnostics.is_empty(), "{r:?}");
     }
 
     #[test]

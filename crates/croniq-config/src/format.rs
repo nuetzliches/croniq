@@ -160,7 +160,16 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
 }
 
 fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
-    out.push_str(&format!("job {} {{\n", job.key.raw));
+    // A key the lexer would not read back as one bare token (`"a b:c"`) is
+    // written quoted; it used to be written bare, which re-parsed as a
+    // different key or not at all (review 2026-10-24, F-16).
+    let raw = &job.key.raw;
+    let key = if raw.bytes().all(crate::lexer::Lexer::is_ident_char) {
+        raw.clone()
+    } else {
+        quote_string(raw)
+    };
+    out.push_str(&format!("job {key} {{\n"));
 
     // Description first if present. Written through the generic directive
     // emitter: the parser accepts a bare `description`, and indexing
@@ -1039,6 +1048,19 @@ job etl:sync {
         let out = format(&Parser::parse(src).unwrap());
         assert!(out.contains("  description\n"), "{out}");
         assert_eq!(out, format(&Parser::parse(&out).unwrap()));
+    }
+
+    #[test]
+    fn a_job_key_that_needs_quotes_keeps_them() {
+        // Review 2026-10-24, F-16.
+        let out = format(&Parser::parse(r#"job "a b:c" { every 5 minutes }"#).unwrap());
+        assert!(out.starts_with("job \"a b:c\" {"), "{out}");
+        let Item::Job(job) = &Parser::parse(&out).unwrap().items[0] else {
+            panic!("job expected")
+        };
+        assert_eq!(job.key.raw, "a b:c");
+        let out = format(&Parser::parse("job ops:health:eu-west { every 5 minutes }").unwrap());
+        assert!(out.starts_with("job ops:health:eu-west {"), "{out}");
     }
 
     #[test]

@@ -238,6 +238,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   croniq stamps itself; written by hand they passed through, and a
   `metadata { __runner_exec … }` after a `runner shell { }` block replaced its
   payload. `croniq validate` now reports them and the compiler drops them.
+- **A placeholder that does not resolve is reported** (review 2026-10-24,
+  F-14). An unset `{env.PGPASSWORD}` or an unreadable `{file.…}` compiled to
+  its own text, so a child process got the password `env.PGPASSWORD` and a
+  webhook was signed with the string `env.X`, without a word. The server now
+  logs each such placeholder at error level on every load, and `croniq
+  validate` lists them as warnings (they resolve against the shell running
+  it, which need not be the server's). The literal fallback itself is
+  unchanged.
+- **`defaults { }` after a job, calendar or `import` warns** (review
+  2026-10-24, F-15). `defaults` applies only to what is declared after it,
+  while `vars` and `concurrency_group` are file-wide, so an `import` of
+  calendars above `defaults { timezone … }` left them on UTC silently.
+- **Smaller DSL fixes** (review 2026-10-24, F-16). `croniq fmt` quotes a job
+  key that is not one bare token (`"a b:c"`) instead of writing it back
+  unparseable; a key with an empty segment (`job :x`) is a `validate` error;
+  the generator's `parseCalendarRules` returns the validator's diagnostics,
+  not only parse errors; and `Croniqfile.example` no longer claims that an
+  unquoted `//` starts a comment (only `#` does).
 - **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
   A Croniqfile schedule has no month field, and `croniq convert` / `croniq
   migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.

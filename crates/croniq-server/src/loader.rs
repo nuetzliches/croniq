@@ -246,6 +246,18 @@ fn validate_ast(ast: &Croniqfile) -> Result<(), LoadError> {
 fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<LoadedConfig, LoadError> {
     validate_ast(ast)?;
 
+    // A placeholder that does not resolve compiles to its own text (an unset
+    // `{env.PGPASSWORD}` becomes the password `env.PGPASSWORD`). Said once per
+    // load, at error level, so it is not a silent literal (review 2026-10-24,
+    // F-14). Not fatal: a placeholder in a field the deployment never reaches
+    // must not stop the boot, and the messages name the placeholder only.
+    for msg in croniq_config::compile::unresolved_placeholders(ast) {
+        tracing::error!(
+            placeholder = %msg,
+            "Croniqfile placeholder did not resolve; its literal text is used"
+        );
+    }
+
     let now = Utc::now();
 
     let strict_calendars = runtime.policy.strict_calendars;
