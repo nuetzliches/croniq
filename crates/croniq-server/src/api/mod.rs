@@ -6570,6 +6570,27 @@ mod tests {
         assert_eq!(store.read_logs(exec, 100).unwrap().len(), 1);
     }
 
+    /// A store failure while appending logs answered `200 {accepted: 0}`, and
+    /// every SDK reads a 2xx as delivered and drops the batch (review
+    /// 2026-10-24, P-11). It is a retryable `503` now.
+    #[tokio::test]
+    async fn events_answer_503_when_the_store_cannot_take_them() {
+        let (state, faulty, store, _rx) = make_faulty_guard_state();
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+        faulty.arm_append_logs();
+        let admin = crate::api::test_auth::admin_bearer();
+        let token = admin.strip_prefix("Bearer ").unwrap();
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            &format!("/v1/work/{exec}/events"),
+            token,
+            serde_json::json!([{ "level": "info", "message": "a line" }]),
+        )
+        .await;
+        assert_eq!(status, 503);
+    }
+
     /// (d) A foreign credential must not renew another runner's lease —
     /// keeping a dead runner's lease alive suppresses the watchdog requeue of
     /// its abandoned executions.

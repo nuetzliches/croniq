@@ -111,6 +111,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now answer `404 {"error": "not_found"}`; the dashboard's own client-side
   routes are unchanged.
 
+- **`POST /v1/work/{id}/events` answers `503` when the store cannot take the
+  batch** (review 2026-10-24, P-11). It answered `200 {"accepted": 0}`, and
+  the SDKs treat any 2xx as delivered and drop the batch, so a store hiccup
+  lost the logs without anyone retrying. The status is now `503`, the
+  retryable answer `POST /v1/work/renew` already gives for a store failure.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`

@@ -39,6 +39,9 @@ pub struct FaultStore {
     /// deliberate asymmetry: the per-job guard dispatches on a store error,
     /// the group guard does not.
     pub fail_job_count: AtomicBool,
+    /// `append_logs_batch` returns a database error while set. Drives the
+    /// events endpoint's `503` (review 2026-10-24, P-11).
+    pub fail_append_logs: AtomicBool,
     /// Called just before every `create_execution_and_advance_job_state`
     /// delegates — the scheduler's per-fire write. Lets a test look at what
     /// the rest of the system can see while a tick is mid-wave (issue #841).
@@ -54,6 +57,7 @@ impl FaultStore {
             fail_claim: AtomicBool::new(false),
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
+            fail_append_logs: AtomicBool::new(false),
             on_fire_persist: std::sync::Mutex::new(None),
         })
     }
@@ -72,6 +76,10 @@ impl FaultStore {
 
     pub fn arm_job_count(&self) {
         self.fail_job_count.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_append_logs(&self) {
+        self.fail_append_logs.store(true, Ordering::SeqCst);
     }
 }
 
@@ -302,9 +310,17 @@ impl DslAdoptionStore for FaultStore {
 }
 
 impl ExecutionLogStore for FaultStore {
+    fn append_logs_batch(&self, entries: &[ExecutionLogEntry]) -> Result<(), StoreError> {
+        if self.fail_append_logs.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected append_logs_batch failure".into(),
+            ));
+        }
+        self.inner.append_logs_batch(entries)
+    }
+
     delegate! {
         append_log(entry: &ExecutionLogEntry) -> ();
-        append_logs_batch(entries: &[ExecutionLogEntry]) -> ();
         read_logs(execution_id: Uuid, limit: u32) -> Vec<ExecutionLogEntry>;
     }
 }

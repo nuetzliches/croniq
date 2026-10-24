@@ -181,9 +181,13 @@ pub async fn handle_events(
     let total = entries.len();
     match store.append_logs_batch(&entries) {
         Ok(()) => Ok((StatusCode::OK, Json(EventsResponse { accepted: total }))),
+        // A store failure is the server's, and retryable: `503`, as in
+        // `handle_renew`. It used to be `200 {accepted: 0}`, and every SDK
+        // reads a 2xx as delivered and drops the batch, so the logs were
+        // lost without anyone retrying (review 2026-10-24, P-11).
         Err(e) => {
             tracing::warn!(execution_id = %execution_id, error = %e, "failed to append log batch");
-            Ok((StatusCode::OK, Json(EventsResponse { accepted: 0 })))
+            Err(StatusCode::SERVICE_UNAVAILABLE)
         }
     }
 }
