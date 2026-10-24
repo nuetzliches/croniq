@@ -11,6 +11,7 @@ import { useRevealSelected } from '~/composables/useRevealSelected'
 import { useFavorites } from '~/composables/useFavorites'
 import { useTimeDisplay } from '~/composables/useTimeDisplay'
 import { FAILURE_STATES, nextFailureIndex } from '~/lib/next-failure'
+import { mergeRunPages, pagingState } from '~/lib/run-pages'
 import { parseJobKeySearch } from '~/lib/job-key-search'
 import { notesByExecution } from '~/lib/notes'
 import { DETAIL_PANE_DEFAULT_WIDTH, DETAIL_PANE_MIN_WIDTH, useUiStore } from '~/stores/ui'
@@ -168,22 +169,14 @@ const { data, isPending, isError, error, refetch } = useExecutions(() => ({
 }))
 
 /**
- * Everything on screen: the live page, then the older ones beneath it.
- *
- * The live page comes **first** so its copy of a row wins the de-duplication.
- * Both halves can hold the same run — the overlap is deliberate — and the live
- * one is the one that has been refetched.
+ * Everything on screen: the live page, then the older ones beneath it, each
+ * run once (`mergeRunPages` says why the live copy wins). Bounded by
+ * `MAX_OLDER_PAGES`, because this runs on every poll and nothing is
+ * virtualised (review 2026-10-24, U-4).
  */
 const rows = computed<Execution[]>(() => {
   if (jobKeyFilter.value.contradictory) return []
-  const seen = new Set<string>()
-  const out: Execution[] = []
-  for (const row of [...(data.value ?? []), ...pages.value.flat()]) {
-    if (seen.has(row.id)) continue
-    seen.add(row.id)
-    out.push(row)
-  }
-  return out
+  return mergeRunPages(data.value ?? [], pages.value)
 })
 
 /**
@@ -197,11 +190,10 @@ const { data: rowNotes } = useNotes(() => ({
 }))
 const notesByRun = computed(() => notesByExecution(rowNotes.value ?? []))
 
-/** A full page back means there is probably more behind it. */
-const mayHaveMore = computed(() => {
-  if (jobKeyFilter.value.contradictory) return false
-  const last = pages.value.at(-1) ?? data.value ?? []
-  return last.length >= PAGE_SIZE
+/** Whether "Load older" can add a page, has hit the cap, or found the end. */
+const paging = computed(() => {
+  if (jobKeyFilter.value.contradictory) return 'end'
+  return pagingState(data.value?.length ?? 0, pages.value, PAGE_SIZE)
 })
 
 /**
@@ -220,7 +212,7 @@ const mayHaveMore = computed(() => {
  */
 async function loadOlder() {
   const oldest = rows.value.at(-1)
-  if (!oldest || loadingOlder.value) return
+  if (!oldest || loadingOlder.value || paging.value !== 'more') return
   loadingOlder.value = true
   // Which filter set this page was asked for. The watcher below clears `pages`
   // on a filter change, but it runs separately from this request — so a page
@@ -654,14 +646,15 @@ function onKey(event: KeyboardEvent) {
           updating after paging, which it did not before.
 
           At the end it says so, rather than leaving a button that returns
-          nothing new.
+          nothing new. So it does at the page cap (MAX_OLDER_PAGES), which
+          keeps an unvirtualised list from growing without bound.
         -->
         <div
           v-if="rows.length > 0"
           class="flex items-center justify-center gap-3 border-t border-default px-3 py-3"
         >
           <UButton
-            v-if="mayHaveMore"
+            v-if="paging === 'more'"
             color="neutral"
             variant="subtle"
             size="xs"
@@ -671,6 +664,12 @@ function onKey(event: KeyboardEvent) {
           >
             Load older
           </UButton>
+          <span
+            v-else-if="paging === 'limit'"
+            class="text-xs text-muted"
+            data-testid="runs-page-limit"
+          >Showing the newest {{ rows.length }} runs. Narrow the filters or the
+            time window to look further back.</span>
           <span
             v-else
             class="text-xs text-muted"

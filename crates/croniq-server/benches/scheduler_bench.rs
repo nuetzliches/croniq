@@ -12,7 +12,7 @@ use croniq_config::compile::{
     CatchUpPolicy, DeadLetterConfig, ExecutionMode, JobConfig, RetryConfig, RunnerConfig,
 };
 use croniq_runner::AppState;
-use croniq_scheduler::{misfire::MisfirePolicy, schedule::Schedule, trigger::Trigger};
+use croniq_scheduler::{schedule::Schedule, trigger::Trigger};
 use croniq_server::{
     SchedulerLoop,
     store::{DynStore, sqlite_store},
@@ -62,7 +62,6 @@ fn make_trigger_due(key: &str) -> Trigger {
         chrono_tz::UTC,
         None,
         None,
-        MisfirePolicy::FireNow,
         now - ChronoDuration::seconds(60),
     );
     // Set next_fire_at to 5s ago so it fires immediately
@@ -72,15 +71,7 @@ fn make_trigger_due(key: &str) -> Trigger {
 
 fn make_trigger_future(key: &str) -> Trigger {
     let schedule = Schedule::Interval { seconds: 3600 };
-    Trigger::new(
-        key.into(),
-        schedule,
-        chrono_tz::UTC,
-        None,
-        None,
-        MisfirePolicy::FireNow,
-        Utc::now(),
-    )
+    Trigger::new(key.into(), schedule, chrono_tz::UTC, None, None, Utc::now())
 }
 
 struct BenchSetup {

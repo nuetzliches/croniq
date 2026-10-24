@@ -589,7 +589,13 @@ async fn main() -> Result<()> {
                 // settings, which `job_config_from_definition` fills from the
                 // system defaults when handed `None`: every API-registered job
                 // silently reverted to a 5m timeout and 3 retries on restart.
-                let job_def = store.get_job_definition(&def.job_key).unwrap_or_default();
+                //
+                // A store error stops the boot rather than reading as "no
+                // row", which skipped the `is_active` check and reset the
+                // settings above (review 2026-10-24, D-9). A restart retries.
+                let job_def = store
+                    .get_job_definition(&def.job_key)
+                    .with_context(|| format!("reading the job definition of `{}`", def.job_key))?;
                 if job_def.as_ref().is_some_and(|j| !j.is_active) {
                     inactive_count += 1;
                     continue;
@@ -646,7 +652,9 @@ async fn main() -> Result<()> {
     let mcp_state = Arc::clone(&server_state);
     let mcp_runner = Arc::clone(&runner_state);
     let mcp_store = Arc::clone(&store);
-    let mcp_jobs = dsl_jobs_initial.clone();
+    // The live list, not a copy: a reload must reach the MCP tools too
+    // (review 2026-10-24, P-1).
+    let mcp_jobs = Arc::clone(&dsl_jobs_shared);
     let mcp_triggers = Arc::clone(&trigger_snapshot);
 
     // Load the persisted maintenance switch into the shared in-memory cache
@@ -658,12 +666,8 @@ async fn main() -> Result<()> {
         *guard = m;
     }
 
-    let mut scheduler_loop = SchedulerLoop::new(
-        triggers,
-        jobs.clone(),
-        scheduler_store,
-        Arc::clone(&runner_state),
-    );
+    let mut scheduler_loop =
+        SchedulerLoop::new(triggers, jobs, scheduler_store, Arc::clone(&runner_state));
     scheduler_loop.set_maintenance_handle(Arc::clone(&server_state.maintenance));
 
     let scheduler_reload_store = Arc::clone(&store);
@@ -687,10 +691,20 @@ async fn main() -> Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // A single tick should finish in microseconds; a tick that runs this
-        // long means a hung store call or a wedged queue lock (issue #248).
-        // Bound it so one stuck tick is logged + skipped instead of wedging
-        // the whole loop forever — and leave the heartbeat stale so the
-        // liveness metric reflects the stall.
+        // long means a wedged queue lock (issue #248). Bound it so one stuck
+        // tick is logged + skipped instead of wedging the whole loop forever —
+        // and leave the heartbeat stale so the liveness metric reflects the
+        // stall.
+        //
+        // The timeout can only fire at an `.await`. The tick's store calls are
+        // synchronous (SQLite behind a std `Mutex`, the Postgres actor behind a
+        // blocking channel), so a store call that hangs never yields: this
+        // timeout does not cover it, and the tick keeps the worker thread
+        // until the call returns. What still reports that stall is the
+        // heartbeat, which is only stamped after a tick completes — a stale
+        // `croniq_scheduler_last_tick_timestamp` is the signal (review
+        // 2026-10-24, D-4). Moving the store writes off the runtime needs the
+        // tick split around them; it is not done here.
         const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
         // ~5 minutes at the 1 s tick cadence. A positive "scheduler is alive"
         // signal at INFO, independent of whether any job fired.
@@ -841,29 +855,16 @@ async fn main() -> Result<()> {
     // jobs simply stopped firing with no log and no restart. Now we watch the
     // handle and, on unexpected completion, log loudly and exit non-zero so
     // the container's `restart:` policy (or systemd) brings the process — and
-    // a fresh scheduler — back.
-    tokio::spawn(async move {
-        match scheduler_handle.await {
-            Ok(()) => tracing::error!(
-                "scheduler task exited unexpectedly (loop returned) — aborting process so it restarts"
-            ),
-            Err(e) if e.is_panic() => tracing::error!(
-                error = %e,
-                "scheduler task panicked — aborting process so it restarts"
-            ),
-            Err(e) => tracing::error!(
-                error = %e,
-                "scheduler task was cancelled — aborting process so it restarts"
-            ),
-        }
-        // Hard-exit (EX_SOFTWARE) so the supervisor/orchestrator restarts us
-        // rather than running on with a dead scheduler.
-        std::process::exit(70);
-    });
+    // a fresh scheduler — back. The completion and watchdog tasks below are
+    // supervised the same way (review 2026-10-24, D-1).
+    croniq_server::supervise::supervise(
+        "scheduler",
+        scheduler_handle,
+        croniq_server::supervise::OnReturn::Fatal,
+    );
 
     // ── Completion processor task ─────────────────────────────────────────────
     let proc_store = Arc::clone(&store);
-    let proc_jobs = jobs;
 
     // Failure-alert config (issue #140): DSL `alerts {}` block plus the
     // back-compat synthesis from `CRONIQ_ON_FAILURE_CMD` for installs
@@ -900,21 +901,34 @@ async fn main() -> Result<()> {
     let alerts_cfg_for_watchdog = alerts_cfg.clone();
     let alert_throttle_for_watchdog = Arc::clone(&alert_throttle);
 
-    let processor = Arc::new(CompletionProcessor::with_alerts(
-        proc_jobs,
-        proc_store,
-        Arc::clone(&runner_state),
-        alerts_cfg,
-        alert_throttle,
-        Arc::clone(&server_state.email_sender),
-    ));
+    // The Croniqfile's jobs come from the list every reload rewrites, so a
+    // job a reload added or changed completes under its current definition;
+    // API jobs resolve from the store (review 2026-10-24, D-2, D-3).
+    let processor = Arc::new(
+        CompletionProcessor::with_alerts(
+            Vec::new(),
+            proc_store,
+            Arc::clone(&runner_state),
+            alerts_cfg,
+            alert_throttle,
+            Arc::clone(&server_state.email_sender),
+        )
+        .with_jobs(Arc::clone(&dsl_jobs_shared)),
+    );
 
-    let _completion_task = tokio::spawn(async move {
+    let completion_task = tokio::spawn(async move {
         while let Some(event) = completion_rx.recv().await {
             let outcome = processor.process(event).await;
             tracing::debug!(?outcome, "completion processed");
         }
     });
+    // The loop ends on its own only when every sender is gone, i.e. on
+    // shutdown; a panic is what must not go unnoticed.
+    croniq_server::supervise::supervise(
+        "completion",
+        completion_task,
+        croniq_server::supervise::OnReturn::Expected,
+    );
 
     // ── Watchdog task ─────────────────────────────────────────────────────────
     //
@@ -923,8 +937,12 @@ async fn main() -> Result<()> {
     // same `evaluate_failure` pipeline as `job_failed`, so a rule
     // with `throttle 10m` correctly suppresses both kinds of fires
     // in the same window.
+    // The adoption-filtered list, read live: an adopted job belongs to the
+    // store (ADR-0006), so the file's `keep_last` / `queue_ttl` must not
+    // apply to it, and a reload must reach the watchdog (review 2026-10-24,
+    // D-2, D-13).
     let mut watchdog = WatchdogLoop::with_alerts(
-        loaded.runtime.jobs.clone(),
+        dsl_jobs_initial.clone(),
         Arc::clone(&store),
         Arc::clone(&runner_state),
         alerts_cfg_for_watchdog,
@@ -937,6 +955,7 @@ async fn main() -> Result<()> {
     // metrics exporter filters on, kept in step with the scheduler's map by
     // `apply_command_synced` (issue #505).
     watchdog.set_trigger_snapshot(Arc::clone(&trigger_snapshot));
+    watchdog.set_live_jobs(Arc::clone(&dsl_jobs_shared));
     // So the liveness sweeps stand down during maintenance and
     // `maintenance_active` rules can fire (issue #786).
     watchdog.set_maintenance_handle(Arc::clone(&server_state.maintenance));
@@ -976,7 +995,7 @@ async fn main() -> Result<()> {
     }
 
     let watchdog_counters = Arc::clone(&server_state.watchdog_counters);
-    let _watchdog_task = tokio::spawn(async move {
+    let watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -1027,6 +1046,11 @@ async fn main() -> Result<()> {
             }
         }
     });
+    croniq_server::supervise::supervise(
+        "watchdog",
+        watchdog_task,
+        croniq_server::supervise::OnReturn::Fatal,
+    );
 
     // ── Metrics server (from CLI --metrics or observability.metrics in Croniqfile)
     let metrics_listen = cli.metrics.clone().or_else(|| {

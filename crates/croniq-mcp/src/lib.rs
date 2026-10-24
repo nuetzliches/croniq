@@ -59,14 +59,13 @@
 
 pub mod tools;
 
-pub use tools::{CroniqMcp, DynStore, JobSync};
+pub use tools::{CroniqMcp, DynStore, JobSync, SharedJobs};
 
 // ─── HTTP transport (Streamable HTTP for in-process embedding) ────────────────
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use croniq_config::compile::JobConfig;
 use croniq_runner::AppState;
 use croniq_scheduler::trigger::Trigger;
 use rmcp::transport::streamable_http_server::{
@@ -151,8 +150,8 @@ pub fn tool_requires_write(name: &str) -> Option<bool> {
 /// at the factory level; per-call scope gating is enforced by the embedding
 /// server's auth middleware (see [`MUTATION_TOOL_NAMES`]).
 ///
-/// The `jobs` snapshot is captured at build time. Croniqfile reloads do not
-/// propagate to in-flight MCP sessions; restart `croniq-server` to refresh.
+/// `jobs` is read on every tool call, so a Croniqfile reload that rewrites it
+/// reaches open MCP sessions too (review 2026-10-24, P-1).
 ///
 /// `job_sync` is how a job mutated through a tool reaches the embedder's
 /// scheduler. Leave it `None` and the tools still write the store — they just
@@ -166,7 +165,7 @@ pub fn tool_requires_write(name: &str) -> Option<bool> {
 pub fn streamable_http_service(
     state: Arc<AppState>,
     store: Option<DynStore>,
-    jobs: Vec<JobConfig>,
+    jobs: SharedJobs,
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
     job_sync: Option<Arc<dyn JobSync>>,
     extra_allowed_hosts: Option<Vec<String>>,
@@ -174,7 +173,8 @@ pub fn streamable_http_service(
     let factory = move || {
         let mut server = match store.as_ref() {
             Some(s) => {
-                CroniqMcp::new_with_store(Arc::clone(&state), Arc::clone(s), jobs.clone(), true)
+                CroniqMcp::new_with_store(Arc::clone(&state), Arc::clone(s), Vec::new(), true)
+                    .with_jobs(Arc::clone(&jobs))
             }
             None => CroniqMcp::new_mutations_only(Arc::clone(&state)),
         };

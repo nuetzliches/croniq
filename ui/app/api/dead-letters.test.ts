@@ -18,8 +18,8 @@ const fetchImpl = vi.fn()
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({ token: 'access-token', isAuthenticated: true }),
 }))
-vi.mock('~/api/session', () => ({ refreshAccessToken: vi.fn() }))
-vi.mock('./session', () => ({ refreshAccessToken: vi.fn() }))
+vi.mock('~/api/session', () => ({ refreshSession: vi.fn() }))
+vi.mock('./session', () => ({ refreshSession: vi.fn() }))
 /** Captures the options each `useQuery` was built with, so a test can run its
  * `queryFn` and see the request that results. */
 const queries: Array<{ queryFn: () => Promise<unknown> }> = []

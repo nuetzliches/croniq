@@ -100,7 +100,13 @@ test.describe('live surfaces', () => {
   })
 
   test('hovering the card holds it only while the hand is on', async ({ app }) => {
+    // A run of our own gives the card a lane to hover now, instead of waiting
+    // on the demo schedule — run alone, the window was often empty.
+    await app.goto('/jobs')
+    await app.locator('tbody tr').first().click()
+    await app.getByRole('button', { name: 'Run now' }).click()
     await app.goto('/')
+    await expect(app.getByTestId('live-lanes').locator('li').first()).toBeVisible({ timeout: 20_000 })
     const state = app.getByTestId('live-state')
     await expect(state).toHaveText(/live/i, { timeout: 20_000 })
     const track = app.getByTestId('live-track')
@@ -119,17 +125,34 @@ test.describe('live surfaces', () => {
     // Held means everything, not only the bars' motion: a run that starts
     // while the pointer is on the track waits until it leaves. Started from a
     // second tab, so this one's pointer stays where it is.
+    //
+    // "Waits" is asserted against a signal, not a sleep: `data-held-back`
+    // counts runs the stream delivered that the held picture leaves out. Once
+    // it is non-zero a frame with a new run has demonstrably arrived, and the
+    // bars must not have moved. A fixed wait was vacuously true on a slow
+    // machine and raced a demo job firing on a fast one (review 2026-10-24,
+    // U-5).
+    const card = app.getByTestId('live-card')
     const bars = track.locator('a[data-route^="/executions/"]')
     await track.hover()
     await expect(state).toHaveText('Live · held')
     const before = await bars.count()
     const other = await app.context().newPage()
-    await other.goto('/jobs')
-    await other.locator('tbody tr').first().click()
-    await other.getByRole('button', { name: 'Run now' }).click()
-    await other.waitForTimeout(1_000)
-    await other.close()
-    await app.waitForTimeout(2_000)
+    try {
+      await other.goto('/jobs')
+      await other.locator('tbody tr').first().click()
+      const [triggered] = await Promise.all([
+        other.waitForResponse(
+          (r) => r.url().endsWith('/v1/trigger') && r.request().method() === 'POST',
+        ),
+        other.getByRole('button', { name: 'Run now' }).click(),
+      ])
+      expect(triggered.ok(), 'Run now must be accepted').toBe(true)
+    } finally {
+      await other.close()
+    }
+    await expect(card).toHaveAttribute('data-held-back', /^[1-9]\d*$/, { timeout: 20_000 })
+    await expect(state).toHaveText('Live · held')
     expect(await bars.count()).toBe(before)
     await app.mouse.move(0, 0)
     await expect(state).toHaveText('Live')
@@ -208,11 +231,7 @@ test.describe('preferences survive a reload', () => {
     await app.reload()
     await expect(app.getByTestId('live-order')).toHaveText(/next fire/i, { timeout: 20_000 })
     await expect(app.getByText('1m 5s back · 10s ahead')).toBeVisible()
-
-    // Restore the defaults for later tests.
-    await app.getByTestId('live-order').click()
-    await app.getByTestId('live-range-start').focus()
-    await app.keyboard.press('ArrowRight')
+    // No restore here: the `app` fixture puts the preferences back.
   })
 
   test('the theme choice persists', async ({ app }) => {
@@ -221,9 +240,6 @@ test.describe('preferences survive a reload', () => {
 
     await app.reload()
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light')
-
-    // Restore, so a later test does not inherit a non-default theme.
-    await pickTheme(app, 'dark')
   })
 
   test('the collapsed sidebar persists', async ({ app }) => {
@@ -235,8 +251,5 @@ test.describe('preferences survive a reload', () => {
 
     await app.reload()
     await expect(app.locator('.app')).toHaveAttribute('data-sidebar', 'collapsed')
-
-    await app.getByRole('button', { name: 'Toggle sidebar' }).click()
-    await expect(app.locator('.app')).not.toHaveAttribute('data-sidebar', 'collapsed')
   })
 })

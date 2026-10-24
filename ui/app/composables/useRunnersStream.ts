@@ -1,6 +1,6 @@
 import { onScopeDispose, ref, shallowRef } from 'vue'
 import { createSseStream } from '~/lib/sse'
-import { refreshAccessToken } from '~/api/session'
+import { refreshSession } from '~/api/session'
 import type { RunnerSummary } from '~/api/types'
 import { useAuthStore } from '~/stores/auth'
 
@@ -27,7 +27,7 @@ export function useRunnersStream() {
   const stop = createSseStream({
     url: () => '/v1/runners/stream',
     getToken: () => auth.token,
-    refresh: async () => (await refreshAccessToken()) !== null,
+    refresh: async () => (await refreshSession()).kind,
     onOpen: () => (connected.value = true),
     onClose: () => (connected.value = false),
     onData: (payload) => {

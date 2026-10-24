@@ -1,6 +1,6 @@
 import { ofetch, type FetchOptions } from 'ofetch'
 import { useAuthStore } from '~/stores/auth'
-import { refreshAccessToken } from './session'
+import { refreshSession } from './session'
 
 /**
  * The one HTTP client.
@@ -88,6 +88,9 @@ function isAuthEndpoint(path: string): boolean {
  * looping against an answer that will not change.
  */
 export async function api<T>(path: string, options: FetchOptions = {}): Promise<T> {
+  // The token this request goes out with — `onRequest` reads the store the same
+  // way, synchronously, before anything here can await.
+  const sentWith = useAuthStore().token
   try {
     return (await base<T>(path, options as never)) as T
   } catch (error) {
@@ -101,10 +104,25 @@ export async function api<T>(path: string, options: FetchOptions = {}): Promise<
     }
 
     // 401: the access token lives an hour and the app outlives it. Refresh and
-    // repeat once. `refreshAccessToken` is single-flight, so a page full of
+    // repeat once. `refreshSession` is single-flight, so a page full of
     // simultaneous 401s produces one refresh.
-    const token = await refreshAccessToken()
-    if (!token) throw new ApiError(401, 'Session expired')
+    //
+    // Unless the token has changed since this request went out: a 401 that
+    // arrives after the single-flight refresh has already finished belongs to
+    // the old token, and refreshing again would rotate the refresh token a
+    // second time for nothing (review 2026-10-24, U-3).
+    const current = useAuthStore().token
+    if (!current || current === sentWith) {
+      const outcome = await refreshSession()
+      if (outcome.kind === 'ended') throw new ApiError(401, 'Session expired')
+      // No verdict on the session — a network error or a 5xx during a
+      // restart. The store still says signed in, so saying "Session expired"
+      // here was wrong: status 0 is what an unreachable server reads as
+      // everywhere else in this client (U-3).
+      if (outcome.kind === 'unreachable') {
+        throw new ApiError(0, 'Could not reach the server to renew the session.')
+      }
+    }
     try {
       return (await base<T>(path, options as never)) as T
     } catch (retryError) {

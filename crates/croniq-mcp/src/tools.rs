@@ -71,6 +71,10 @@ use uuid::Uuid;
 /// A type-erased, thread-safe store.
 pub type DynStore = Arc<dyn Store + Send + Sync>;
 
+/// A job list shared with whatever keeps it current — in `croniq-server`, the
+/// Croniqfile reload path.
+pub type SharedJobs = Arc<tokio::sync::RwLock<Vec<JobConfig>>>;
+
 // ─── Server struct ────────────────────────────────────────────────────────────
 
 /// What [`CroniqMcp::inherit_job_dispatch`] resolves for a fire: the row
@@ -131,8 +135,14 @@ pub struct CroniqMcp {
     /// Persistent store for job/execution/DLQ operations. `None` when running
     /// without `--data-dir`.
     pub store: Option<DynStore>,
-    /// Job configs for capability/timeout lookups (e.g. dlq_retry).
-    pub jobs: HashMap<String, JobConfig>,
+    /// The Croniqfile's jobs: capability/timeout lookups (e.g. dlq_retry) and
+    /// the ADR-0006 "is this key DSL-owned" checks. Read on every use, never
+    /// copied: an embedding server hands in the list its reloads rewrite, so a
+    /// tool sees the Croniqfile as it is now. A boot-time copy made
+    /// `job_trigger` stamp the `__runner_exec` of a command the operator had
+    /// since replaced, and `create_job` accept a key the file had since
+    /// declared (review 2026-10-24, P-1).
+    pub jobs: SharedJobs,
     /// Live trigger snapshot shared with the scheduler — used by
     /// `dashboard_forecast`. `None` when the embedding host doesn't expose
     /// scheduler state (e.g. the stdio binary).
@@ -601,7 +611,7 @@ impl CroniqMcp {
         Self {
             state,
             store: None,
-            jobs: HashMap::new(),
+            jobs: SharedJobs::default(),
             triggers: None,
             mutations_enabled: false,
             job_sync: None,
@@ -616,11 +626,10 @@ impl CroniqMcp {
         jobs: Vec<JobConfig>,
         mutations_enabled: bool,
     ) -> Self {
-        let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
             state,
             store: Some(store),
-            jobs,
+            jobs: Arc::new(tokio::sync::RwLock::new(jobs)),
             triggers: None,
             mutations_enabled,
             job_sync: None,
@@ -635,7 +644,7 @@ impl CroniqMcp {
         Self {
             state,
             store: None,
-            jobs: HashMap::new(),
+            jobs: SharedJobs::default(),
             triggers: None,
             mutations_enabled: true,
             job_sync: None,
@@ -653,6 +662,13 @@ impl CroniqMcp {
         self
     }
 
+    /// Read DSL jobs from `jobs` — the list the embedding server's reloads
+    /// keep current — instead of the copy given to the constructor.
+    pub fn with_jobs(mut self, jobs: SharedJobs) -> Self {
+        self.jobs = jobs;
+        self
+    }
+
     /// Attach the hook that reports job mutations to the embedding host's
     /// scheduler (issue #653). Without it the tools still write the store, and
     /// the change reaches the scheduler at the next reload.
@@ -662,6 +678,21 @@ impl CroniqMcp {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// The Croniqfile's definition of `job_key`, as the file stands now.
+    async fn dsl_job(&self, job_key: &str) -> Option<JobConfig> {
+        self.jobs
+            .read()
+            .await
+            .iter()
+            .find(|j| j.key == job_key)
+            .cloned()
+    }
+
+    /// Whether the Croniqfile declares `job_key` (ADR-0006).
+    async fn is_dsl_job(&self, job_key: &str) -> bool {
+        self.jobs.read().await.iter().any(|j| j.key == job_key)
+    }
 
     /// Report a written job to the host so it can update its scheduler.
     ///
@@ -746,7 +777,7 @@ impl CroniqMcp {
     /// the job config; an unknown `job_key` (or a server built without
     /// `self.jobs`) leaves the capabilities empty and the timeout at
     /// [`DEFAULT_FIRE_TIMEOUT`], exactly as before.
-    fn inherit_job_dispatch(
+    async fn inherit_job_dispatch(
         &self,
         tool: &str,
         job_key: &str,
@@ -755,7 +786,8 @@ impl CroniqMcp {
         caller_prefer: Vec<String>,
         caller_timeout: Option<String>,
     ) -> Result<InheritedDispatch, McpError> {
-        let job = self.jobs.get(job_key);
+        let job = self.dsl_job(job_key).await;
+        let job = job.as_ref();
 
         let mut metadata: HashMap<String, String> =
             job.map(|j| j.metadata.clone()).unwrap_or_default();
@@ -1114,14 +1146,16 @@ impl CroniqMcp {
 
         let now = Utc::now();
 
-        let (metadata, require, prefer, timeout) = self.inherit_job_dispatch(
-            "enqueue_job",
-            &p.job_key,
-            p.metadata,
-            p.require,
-            p.prefer,
-            p.timeout,
-        )?;
+        let (metadata, require, prefer, timeout) = self
+            .inherit_job_dispatch(
+                "enqueue_job",
+                &p.job_key,
+                p.metadata,
+                p.require,
+                p.prefer,
+                p.timeout,
+            )
+            .await?;
 
         // Persist to store if available.
         if let Some(store) = &self.store {
@@ -1284,18 +1318,20 @@ impl CroniqMcp {
             p.timeout.as_deref(),
         );
         let job_coalesces = self
-            .jobs
-            .get(&p.job_key)
+            .dsl_job(&p.job_key)
+            .await
             .is_some_and(|j| croniq_config::compile::job_declares_coalesce(&j.metadata));
 
-        let (mut metadata, require, prefer, timeout) = self.inherit_job_dispatch(
-            "job_trigger",
-            &p.job_key,
-            p.metadata,
-            p.require,
-            p.prefer,
-            p.timeout,
-        )?;
+        let (mut metadata, require, prefer, timeout) = self
+            .inherit_job_dispatch(
+                "job_trigger",
+                &p.job_key,
+                p.metadata,
+                p.require,
+                p.prefer,
+                p.timeout,
+            )
+            .await?;
 
         // The payload invariant, enforced on the item rather than only on the
         // call: a trigger that says something specific about *this* run must
@@ -1410,7 +1446,7 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        if self.jobs.contains_key(&p.job_key) {
+        if self.is_dsl_job(&p.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_job_refusal_msg(&p.job_key),
                 None,
@@ -1489,7 +1525,7 @@ impl CroniqMcp {
         // mirroring the HTTP replay endpoint. Anchored on the dead letter's
         // original scheduled_for — the drift that breaks time-coupled jobs.
         if !p.force
-            && let Some(job) = self.jobs.get(&dl.job_key)
+            && let Some(job) = self.dsl_job(&dl.job_key).await
             && let Some(max_age_str) = job.dead_letter.replay_max_age.as_ref()
             && let Some(max_age) = croniq_execution::retry::parse_duration(max_age_str)
         {
@@ -1556,7 +1592,8 @@ impl CroniqMcp {
             })?;
 
         // Look up job config for require/prefer/timeout
-        let job = self.jobs.get(&dl.job_key);
+        let job = self.dsl_job(&dl.job_key).await;
+        let job = job.as_ref();
 
         // Enqueue to the in-memory dispatch queue.
         let item = WorkItem {
@@ -1872,7 +1909,7 @@ impl CroniqMcp {
         {
             return serde_json::to_string_pretty(&job).map_err(internal_error);
         }
-        if let Some(cfg) = self.jobs.get(&p.job_key) {
+        if let Some(cfg) = self.dsl_job(&p.job_key).await {
             // Synthesize a JobDefinition view of the DSL job — same fields the
             // HTTP handler would emit, just inlined here to avoid pulling in
             // croniq-server's loader helper.
@@ -1913,7 +1950,7 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        if self.jobs.contains_key(&p.job_key) {
+        if self.is_dsl_job(&p.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_job_refusal_msg(&p.job_key),
                 None,
@@ -1979,7 +2016,7 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        if self.jobs.contains_key(&p.job_key) {
+        if self.is_dsl_job(&p.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_job_refusal_msg(&p.job_key),
                 None,
@@ -2080,7 +2117,7 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        if self.jobs.contains_key(&p.job_key) {
+        if self.is_dsl_job(&p.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_schedule_refusal_msg(&format!("dsl:{}", p.job_key), &p.job_key),
                 None,
@@ -2145,7 +2182,7 @@ impl CroniqMcp {
 
         // A row whose job the Croniqfile has taken over since it was written
         // is the file's to schedule (P-2), like a `managed_by: dsl` row.
-        if existing.managed_by == "dsl" || self.jobs.contains_key(&existing.job_key) {
+        if existing.managed_by == "dsl" || self.is_dsl_job(&existing.job_key).await {
             return Err(McpError::invalid_params(
                 dsl_schedule_refusal_msg(&p.trigger_id, &existing.job_key),
                 None,
@@ -2217,7 +2254,7 @@ impl CroniqMcp {
             .map(|t| t.job_key);
         // A leftover API row for a job the Croniqfile now declares (P-2).
         if let Some(ref key) = job_key
-            && self.jobs.contains_key(key)
+            && self.is_dsl_job(key).await
         {
             return Err(McpError::invalid_params(
                 dsl_schedule_refusal_msg(&p.trigger_id, key),
@@ -2305,7 +2342,7 @@ impl CroniqMcp {
     async fn set_job_active(&self, job_key: &str, active: bool) -> Result<String, McpError> {
         let store = self.require_store()?;
 
-        if self.jobs.contains_key(job_key) {
+        if self.is_dsl_job(job_key).await {
             return Err(McpError::invalid_params(dsl_job_refusal_msg(job_key), None));
         }
 
@@ -2542,7 +2579,6 @@ mod tests {
                 "UTC".parse().unwrap(),
                 None,
                 None,
-                croniq_scheduler::misfire::MisfirePolicy::default(),
                 now,
             ),
         );
@@ -2603,7 +2639,7 @@ mod tests {
     }
 
     /// A server whose host declares `dsl` in its Croniqfile: the calendars in
-    /// `dsl_calendars`, the jobs in `self.jobs`.
+    /// `dsl_calendars`, the jobs in the live job view.
     fn make_server_with_croniqfile(dsl: &str) -> (CroniqMcp, Arc<RecordingSync>) {
         let ast = croniq_config::parser::Parser::parse(dsl).unwrap();
         let compiled = croniq_config::compile::compile(&ast);
@@ -3649,7 +3685,7 @@ mod tests {
         // scheduler queued is a fold target here too — the same cross-path
         // agreement that was missing before #769.
         let server = make_server_with_jobs(COALESCING_JOB);
-        let job = server.jobs.get("inbox:sync").unwrap().clone();
+        let job = server.dsl_job("inbox:sync").await.unwrap();
 
         let scheduled_id = Uuid::new_v4();
         let now = Utc::now();
@@ -3728,7 +3764,7 @@ mod tests {
         let server = CroniqMcp {
             state: AppState::new(),
             store: None,
-            jobs: HashMap::new(),
+            jobs: SharedJobs::default(),
             triggers: None,
             mutations_enabled: true,
             job_sync: None,
@@ -3941,6 +3977,71 @@ mod tests {
             executions[0].metadata.get("__require").map(String::as_str),
             Some(r#"["shell-runner"]"#),
             "persisted execution must record the capabilities it requires"
+        );
+    }
+
+    fn compile_jobs(dsl: &str) -> Vec<JobConfig> {
+        let ast = croniq_config::parser::Parser::parse(dsl).unwrap();
+        croniq_config::compile::compile(&ast).jobs
+    }
+
+    // Review 2026-10-24, P-1: the server held a boot copy of the DSL jobs, so
+    // after a reload changed a shell job's command `job_trigger` stamped the
+    // old `__runner_exec` and the shell runner ran the old command.
+    #[tokio::test]
+    async fn job_trigger_after_reload_stamps_the_new_runner_exec() {
+        let shared: SharedJobs = Arc::new(tokio::sync::RwLock::new(compile_jobs(PINNED_JOB_DSL)));
+        let server = make_server_with_mutations().with_jobs(Arc::clone(&shared));
+
+        // What the server's reload does with the edited Croniqfile.
+        *shared.write().await = compile_jobs(&PINNED_JOB_DSL.replace("echo hi", "echo bye"));
+
+        server
+            .job_trigger(Parameters(JobTriggerParams {
+                job_key: "billing:invoice".into(),
+                require: vec![],
+                prefer: vec![],
+                metadata: serde_json::Value::Null,
+                timeout: None,
+            }))
+            .await
+            .unwrap();
+
+        let item = sole_queued_item(&server).await;
+        let exec = item
+            .metadata
+            .get(RUNNER_EXEC_METADATA_KEY)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(exec.contains("echo bye"), "{exec}");
+        assert!(!exec.contains("echo hi"), "{exec}");
+    }
+
+    // Review 2026-10-24, P-1: a key the Croniqfile declared only after boot was
+    // not recognised as DSL-owned, so `create_job` wrote a store row that
+    // shadowed the file's definition (ADR-0006).
+    #[tokio::test]
+    async fn create_job_refuses_a_key_a_reload_added_to_the_croniqfile() {
+        let shared: SharedJobs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let server = make_server_with_mutations().with_jobs(Arc::clone(&shared));
+
+        *shared.write().await = compile_jobs(PINNED_JOB_DSL);
+
+        let err = server
+            .create_job(Parameters(
+                serde_json::from_value(serde_json::json!({ "job_key": "billing:invoice" }))
+                    .unwrap(),
+            ))
+            .await;
+        assert!(err.is_err(), "{err:?}");
+        assert!(
+            server
+                .store
+                .as_ref()
+                .unwrap()
+                .get_job_definition("billing:invoice")
+                .unwrap()
+                .is_none()
         );
     }
 

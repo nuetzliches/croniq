@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useConsoleStream, type LogEvent } from '~/composables/useConsoleStream'
+import { createConsoleRows } from '~/lib/console-rows'
 import { formatClockTime, localTimeZone } from '~/lib/format'
 
 /**
@@ -33,6 +34,8 @@ const LEVELS = ['debug', 'info', 'warn', 'error'] as const
 const activeLevels = ref(new Set<string>(['info', 'warn', 'error']))
 const search = ref('')
 const timeZone = localTimeZone()
+/** Rows are computed once per event, not once per frame (review 2026-10-24, U-4). */
+const consoleRows = createConsoleRows()
 
 /**
  * The rows on screen, with everything they need already computed.
@@ -61,30 +64,7 @@ const visibleRows = computed(() =>
 )
 
 function toRows(list: LogEvent[]) {
-  const needle = search.value.trim().toLowerCase()
-  const rows = []
-  for (const event of list) {
-    if (!activeLevels.value.has(event.level)) continue
-    if (
-      needle &&
-      !event.message.toLowerCase().includes(needle) &&
-      !event.target.toLowerCase().includes(needle)
-    ) {
-      continue
-    }
-    rows.push({
-      event,
-      time: formatClockTime(event.ts),
-      fields: fieldText(event),
-      gutter:
-        event.level === 'error'
-          ? 'border-error'
-          : event.level === 'warn'
-            ? 'border-warning'
-            : 'border-transparent',
-    })
-  }
-  return rows
+  return consoleRows.filter(list, activeLevels.value, search.value)
 }
 
 function toggleLevel(level: string) {
@@ -190,11 +170,6 @@ function downloadNdjson() {
   anchor.click()
   URL.revokeObjectURL(url)
 }
-
-const fieldText = (event: LogEvent): string =>
-  Object.entries(event.fields ?? {})
-    .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
-    .join(' ')
 </script>
 
 <template>

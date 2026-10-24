@@ -22,10 +22,10 @@
 //!     start with a letter per the DSL identifier rules).
 
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use tokio::process::Command;
 
 use chrono::{DateTime, Utc};
 use croniq_config::compile::{AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger};
@@ -672,7 +672,9 @@ async fn dispatch(
     email_sender: &Arc<dyn crate::email::EmailSender>,
 ) -> AlertDelivery {
     match &channel.kind {
-        ChannelKind::Shell { command } => deliver_shell(channel, command, rule_name, ctx, now),
+        ChannelKind::Shell { command } => {
+            deliver_shell(channel, command, rule_name, ctx, now).await
+        }
         ChannelKind::Webhook {
             url,
             signing_key,
@@ -716,13 +718,41 @@ async fn dispatch(
     }
 }
 
-fn deliver_shell(
+/// How long a shell alert channel may run before it is killed and the
+/// delivery recorded as failed.
+///
+/// The completion processor dispatches alerts inline and handles one
+/// completion at a time, so an alert script that hangs — a `curl` without
+/// `--max-time` against an endpoint that never answers — used to stop every
+/// completion behind it and pin a runtime worker, with nothing to end it
+/// (review 2026-10-24, D-7). Generous next to the webhook channel's 5 s
+/// default, because a script may do more than one request.
+const SHELL_CHANNEL_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn deliver_shell(
     channel: &ChannelConfig,
     command: &str,
     rule_name: &str,
     ctx: &FailureContext,
     now: DateTime<Utc>,
 ) -> AlertDelivery {
+    deliver_shell_within(channel, command, rule_name, ctx, now, SHELL_CHANNEL_TIMEOUT).await
+}
+
+/// [`deliver_shell`] with the time limit as a parameter, so tests need not
+/// wait out [`SHELL_CHANNEL_TIMEOUT`].
+async fn deliver_shell_within(
+    channel: &ChannelConfig,
+    command: &str,
+    rule_name: &str,
+    ctx: &FailureContext,
+    now: DateTime<Utc>,
+    limit: Duration,
+) -> AlertDelivery {
+    // `kill_on_drop`: when the timeout below drops the wait future, the child
+    // goes with it — `sh` is killed and its pipes are closed. A grandchild the
+    // script started in the background is not in reach without a process
+    // group; it is orphaned, but it no longer holds anything of ours.
     let result = Command::new("sh")
         .arg("-c")
         .arg(command)
@@ -734,19 +764,33 @@ fn deliver_shell(
         .env("CRONIQ_EVENT", event_name(ctx))
         .env("CRONIQ_RULE", rule_name)
         .env("CRONIQ_CHANNEL", &channel.name)
-        .output();
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn();
 
     let (state, error) = match result {
-        Ok(output) if output.status.success() => (AlertDeliveryState::Delivered, None),
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            let code = output.status.code().unwrap_or(-1);
-            (
-                AlertDeliveryState::Failed,
-                Some(format!("shell exited {code}: {}", truncate(&stderr, 500))),
-            )
-        }
         Err(e) => (AlertDeliveryState::Failed, Some(e.to_string())),
+        Ok(child) => match tokio::time::timeout(limit, child.wait_with_output()).await {
+            Ok(Ok(output)) if output.status.success() => (AlertDeliveryState::Delivered, None),
+            Ok(Ok(output)) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                let code = output.status.code().unwrap_or(-1);
+                (
+                    AlertDeliveryState::Failed,
+                    Some(format!("shell exited {code}: {}", truncate(&stderr, 500))),
+                )
+            }
+            Ok(Err(e)) => (AlertDeliveryState::Failed, Some(e.to_string())),
+            Err(_elapsed) => (
+                AlertDeliveryState::Failed,
+                Some(format!(
+                    "shell timed out after {}s and was killed",
+                    limit.as_secs_f64()
+                )),
+            ),
+        },
     };
 
     match (&state, &error) {
@@ -782,11 +826,18 @@ fn deliver_shell(
     }
 }
 
+/// Cap `s` at `max` bytes, cutting back to the nearest char boundary.
+///
+/// `max` is a byte budget, but the cut must not land inside a multibyte
+/// character: slicing there panics, and both the completion task and the
+/// watchdog reach this through `dispatch_rule` — one umlaut at byte 500 of an
+/// alert script's stderr took completion processing down until the next
+/// restart (review 2026-10-24, D-1).
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max])
+        format!("{}…", &s[..s.floor_char_boundary(max)])
     }
 }
 
@@ -1300,6 +1351,55 @@ mod tests {
         assert_eq!(parse_throttle_secs("90"), Some(90));
         assert_eq!(parse_throttle_secs(""), None);
         assert_eq!(parse_throttle_secs("garbage"), None);
+    }
+
+    // Review 2026-10-24, D-1: a byte budget that ends inside a multibyte
+    // character panicked the slice, and with it the completion task.
+    #[test]
+    fn truncate_cuts_back_to_a_char_boundary() {
+        // "ä" is two bytes; byte 5 falls between them.
+        let s = "abcdäfg";
+        assert!(!s.is_char_boundary(5));
+        assert_eq!(truncate(s, 5), "abcd…");
+        assert_eq!(truncate(s, 6), "abcdä…");
+        assert_eq!(truncate(s, 100), s);
+        // A budget inside the very first character keeps nothing of it.
+        assert_eq!(truncate("€uro", 2), "…");
+    }
+
+    // Review 2026-10-24, D-7: a hanging alert script stalled completion
+    // processing with no limit. It is killed at the deadline instead and the
+    // delivery recorded as failed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_channel_is_killed_at_its_timeout() {
+        let channel = ChannelConfig {
+            name: "ops".into(),
+            kind: ChannelKind::Shell {
+                command: "sleep 30".into(),
+            },
+        };
+        let started = std::time::Instant::now();
+        let delivery = deliver_shell_within(
+            &channel,
+            "sleep 30",
+            "r",
+            &make_ctx("billing:invoice"),
+            Utc::now(),
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(delivery.state, AlertDeliveryState::Failed);
+        assert!(
+            delivery
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("timed out"),
+            "{:?}",
+            delivery.error
+        );
     }
 
     // Tests that assert a `Delivered` state through a Shell channel are

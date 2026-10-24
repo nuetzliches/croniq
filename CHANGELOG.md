@@ -96,6 +96,213 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `until` plus `until_id` (the `event_id` / `delivery_id` of the last row
   seen), the keyset cursor `GET /v1/executions` has had since #654; without
   `until_id`, `until` keeps its inclusive meaning.
+- **A dead completion processor or watchdog now restarts the server** (review
+  2026-10-24, D-1). Only the scheduler task was supervised; a panic in either
+  of the other two ended it without a word. Runners then got
+  `200 {received: true}` for results nothing would process, and every claim
+  stayed `claimed` until the reaper ran it again. All three tasks now exit the
+  process with code 70 when they stop, so the orchestrator's restart policy
+  brings back a whole server. `POST /v1/work/ack` answers `503` when the
+  completion processor is not running, so the runner keeps the result and
+  retries. A panic source is gone too: alert error texts were cut at a byte
+  count, which panicked when the cut fell inside a multibyte character, such
+  as an umlaut in an alert script's stderr.
+- **A hanging `shell` alert channel no longer stalls completion processing**
+  (review 2026-10-24, D-7). The script ran synchronously inside the completion
+  processor, which handles one completion at a time, so a `curl` without
+  `--max-time` against an endpoint that never answered stopped every
+  completion behind it and held a runtime worker. The script now runs
+  asynchronously and is killed after 30 seconds; the delivery is recorded as
+  failed.
+- **A Croniqfile reload now reaches the completion processor, the watchdog
+  and the MCP tools** (review 2026-10-24, D-2, D-3, P-1). All three worked
+  from the jobs the server had booted with; only the scheduler saw a reload
+  (`--watch`, `SIGHUP`, `POST /v1/admin/reload-config`). A job a reload added
+  fired, but its result was dropped as unknown and the run was later cancelled
+  as stranded, with no retry, dead letter or alert. A reload that changed
+  `retry`, `dead_letter`, `keep_last` or `queue_ttl` was reported as applied
+  and was not. Over `/mcp`, `job_trigger` and `enqueue_job` stamped the
+  `runner shell` command the file had before the reload, so the shell runner
+  ran the old command, and `create_job` accepted a key the file had declared
+  since boot, letting a store row shadow the Croniqfile's definition
+  (ADR-0006). All three now read the Croniqfile's current jobs on every use.
+- **The watchdog leaves adopted jobs to the store and forgets settled
+  alerts** (review 2026-10-24, D-13). It applied the Croniqfile's `keep_last`
+  and `queue_ttl` to jobs adopted through the API, which ADR-0006 gives to the
+  store. The sets that keep `job_sla_missed` and `job_missed_fire` alerts from
+  repeating only grew, by one entry per alert, for as long as the process
+  ran. Now each sweep drops the entries that can no longer match.
+- **A monthly schedule with its days out of order fires on every one of
+  them** (review 2026-10-24, D-6). The next fire was the first listed day
+  still ahead, not the earliest: with `every 15th, 1st of month`, the 15th of
+  the next month came before its 1st, so the 1st never fired. The dashboard
+  forecast had the same gap.
+- **A fire skipped for a full queue or the rate limit no longer reads as
+  missed** (review 2026-10-24, D-5). Only a fire skipped for maintenance wrote
+  the advance to `job_states`. The other skips moved the schedule on in
+  memory alone and counted the skip as a fire. The stored next fire stayed at
+  the skipped one, so `job_missed_fire` and `croniq_job_overdue` reported a
+  healthy scheduler as stalled. A restart rebuilt the trigger from that time,
+  and under `catch_up all` it replayed the skipped fires into the queue the
+  overflow guard had just capped. Skips now persist the advance and leave
+  `fire_count` and `last_fired_at` alone.
+- **A store error while reading an API job no longer brings a deactivated job
+  back** (review 2026-10-24, D-9). Boot and reload read a failed lookup of the
+  job's own row as "no row". That skipped the deactivation check, so a job
+  stopped through the API fired again, and it reset the job's timeout and
+  retries to the defaults. A reload now fails with the store error and leaves
+  the running state as it was; at boot, the server stops and its restart
+  retries.
+- **Interval jobs keep their phase** (review 2026-10-24, D-10). After a
+  reload, the dashboard forecast and `gate_closed_reason` showed every
+  `every …` job as anchored at the reload, while the scheduler kept firing on
+  its old phase. The next interval fire was also computed from the tick that
+  made the fire, so the tick latency added up: `every 10 seconds` drifted
+  later with every run. A fire made within one interval of its instant now
+  advances from the instant itself. A fire caught up after downtime still
+  restarts the cadence from the moment it ran, as `catch_up` describes.
+- **A failed cancel no longer counts as done** (review 2026-10-24, D-12). When
+  the `queue_ttl` sweep could not cancel an expired run in the store, it took
+  the run off the queue anyway and counted it as expired. The run stayed
+  `queued` in the store, so the reconcile sweep put it back and the next pass
+  expired it again. The `queue_ttl` sweep now cancels in the store first and
+  keeps the run queued if that fails. Restarts handled a failed cancel under
+  `catch_up none` / `latest` the same way; they now log it and leave it out
+  of the count.
+- **A result the store could not record no longer starts a second retry
+  chain** (review 2026-10-24, D-14). When writing a finished run's outcome
+  failed, the completion processor still reported a success, or still created
+  the next retry, although the run stayed `claimed` and the stale-claim reaper
+  later ran it again. Now nothing is decided from such a completion; the
+  reaper's re-run is the only follow-up.
+- **A job whose `not_after` passed during downtime finishes at restart**
+  (review 2026-10-24, D-15). The restart took over its last pending fire,
+  which could never run past `not_after`. The job then showed as overdue for
+  good (`croniq_job_overdue`, `job_missed_fire`) instead of finished. It is
+  now marked exhausted at restart.
+- **`run_on_register` no longer re-fires on a restart of a job with a runner
+  `env { }`** (review 2026-10-24, F-1). The compiled `runner shell|exec`
+  block is stamped on the job as a JSON string, and its `env` map was written
+  in a per-process random order, so with two or more variables the job's
+  fingerprint changed on about every other restart and the job ran although
+  nothing had changed. The map is now written in key order, and the
+  fingerprint re-renders the embedded document instead of hashing it
+  verbatim. Jobs with at most one env variable keep their stored fingerprint.
+- **A `window`, `not_before` or `not_after` that does not parse no longer
+  lifts the constraint** (review 2026-10-24, D-8 / F-5). The loader read all
+  three with `.ok()`, so `not_after "2026-12-31"` (no time, no offset) ran
+  forever and `window 8:00-18:00` ran around the clock, with a green
+  `croniq validate`. `croniq validate` now reports each, and the server loads
+  the job paused with a `config_error` on `GET /v1/jobs/states`, like an
+  unresolved calendar. An impossible `once at` date (`2026-04-31`) now does the
+  same instead of aborting the boot for every job. A stored API trigger whose
+  `window` does not parse is paused the same way.
+- **A bare `timezone` no longer resets a job to UTC** (review 2026-10-24,
+  F-4). `timezone` with its argument forgotten compiled to "no zone" and
+  overrode a `defaults { timezone … }`, so the job ran in UTC, and the
+  validator stayed silent. It is now an error in `croniq validate`, in a job,
+  a schedule option and `defaults { }` alike, and the compiler keeps the
+  inherited zone.
+- **`croniq validate` checks the values of `catch_up`, `execution_mode`,
+  `max_queue_depth`, `keep_last` and `retry`** (review 2026-10-24, F-3). A
+  typo compiled to some value nobody wrote: `catch_up non` became an explicit
+  `all` and replayed every fire missed during a downtime, `execution_mode
+  ephemral` ran queued, an unknown `retry` strategy became exponential, and a
+  non-numeric queue depth or `max_attempts` vanished. Each is now an error
+  with a did-you-mean, and the compiler keeps the inherited setting instead.
+- **A bare `runner { require }` no longer parks a job's executions forever**
+  (review 2026-10-24, F-10). It stamped the capability `""`, which no runner
+  advertises. `require`, `prefer` and `exclude` now take exactly one
+  capability in `croniq validate`, and an empty one is never stamped.
+- **`croniq fmt` no longer panics on a bare `description` or breaks strings
+  with escapes** (review 2026-10-24, F-6 / F-8). A `description` without a
+  value crashed the formatter (and the generator's wasm), and a quoted
+  `"line 1\nline 2"` was written back with a real newline, so the output of
+  `croniq fmt --write` no longer parsed. The formatter now escapes `\n`, `\r`
+  and `\t`, keeps a second `description`, and `validate` reports the bare one.
+  The generator on the website escapes a multi-line description the same way.
+- **`croniq fmt --write` no longer deletes comments** (review 2026-10-24,
+  F-7). The formatter keeps comments only at the top level, in job bodies and
+  in `defaults { }`; everything inside `server { }`, `calendar { }`,
+  `alerts { }` and the other blocks was dropped when the file was
+  overwritten — about twenty lines of `Croniqfile.example`. `--write` now
+  refuses and lists the comments it would lose; without `--write` the output
+  is printed with the same warning.
+- **`croniq validate` checks `alerts { }`** (review 2026-10-24, F-12). There
+  was no check at all: `when job_faild`, a `job_sla_missed` /
+  `job_missed_fire` / `job_blocked` / `maintenance_active` rule without
+  `expected_within`, `channels "oncal"` naming no declared channel, or a
+  channel written `webhok …` each compiled to a rule that never fires. These
+  are now errors, as are unknown directives, non-numeric `min_attempts` /
+  `min_consecutive`, unreadable `throttle` / `expected_within`, a channel with
+  no or several kinds, and `sign` / `timeout` outside a webhook channel. A
+  rule without `channels` is a warning. Since the server validates at boot,
+  a Croniqfile with one of these mistakes now fails to load instead of
+  running without the alert. The README's annotated Croniqfile, which was
+  missing a closing brace, is now tested to validate.
+- **`metadata { }` rejects the reserved `__` keys** (review 2026-10-24, F-13).
+  Keys such as `__runner_exec`, `__max_concurrent` or `__timeout` are what
+  croniq stamps itself; written by hand they passed through, and a
+  `metadata { __runner_exec … }` after a `runner shell { }` block replaced its
+  payload. `croniq validate` now reports them and the compiler drops them.
+- **A placeholder that does not resolve is reported** (review 2026-10-24,
+  F-14). An unset `{env.PGPASSWORD}` or an unreadable `{file.…}` compiled to
+  its own text, so a child process got the password `env.PGPASSWORD` and a
+  webhook was signed with the string `env.X`, without a word. The server now
+  logs each such placeholder at error level on every load, and `croniq
+  validate` lists them as warnings (they resolve against the shell running
+  it, which need not be the server's). The literal fallback itself is
+  unchanged.
+- **`defaults { }` after a job, calendar or `import` warns** (review
+  2026-10-24, F-15). `defaults` applies only to what is declared after it,
+  while `vars` and `concurrency_group` are file-wide, so an `import` of
+  calendars above `defaults { timezone … }` left them on UTC silently.
+- **Smaller DSL fixes** (review 2026-10-24, F-16). `croniq fmt` quotes a job
+  key that is not one bare token (`"a b:c"`) instead of writing it back
+  unparseable; a key with an empty segment (`job :x`) is a `validate` error;
+  the generator's `parseCalendarRules` returns the validator's diagnostics,
+  not only parse errors; and `Croniqfile.example` no longer claims that an
+  unquoted `//` starts a comment (only `#` does).
+- **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
+  A Croniqfile schedule has no month field, and `croniq convert` / `croniq
+  migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.
+  Both now warn; `croniq migrate` writes every conversion warning into the
+  file as a comment above the job's schedule instead of discarding it.
+- **`croniq migrate` quotes the crontab command correctly** (review
+  2026-10-24, R-11). The command was pasted into `original_command "…"`
+  verbatim, so a `"` or a backslash in it produced a Croniqfile that did not
+  parse.
+- **Dashboard live views survive a server restart behind an expired token**
+  (review 2026-10-24, U-1). When the access token ran out while the server
+  was restarting, the stream's refresh met a network error or a 502 from the
+  proxy, and the runners view, the live timeline and the console ended for
+  good while the page stayed signed in. A refresh now tells "renewed",
+  "session ended" and "server unreachable" apart; only the server rejecting
+  the session ends a stream, everything else backs off and tries again.
+- **A refresh answered with HTML no longer leaves a blank page** (review
+  2026-10-24, U-2). A proxy that serves `index.html` for `/v1/auth/refresh`, or
+  a captive portal, answered 200 with something that was not JSON; the
+  dashboard threw during start-up and waited forever behind a white page. JSON
+  without an `access_token` marked the session signed in with no token. Both
+  now count as "could not ask", start-up always settles, and while it waits
+  the page says it is connecting, with a hint about the proxy after ten
+  seconds.
+- **"Session expired" only when it has** (review 2026-10-24, U-3). A request
+  whose token refresh failed for a network error or a 5xx reported "Session
+  expired" while the user stayed signed in; it now reports that the server
+  could not be reached. A 401 for a token that was already renewed by another
+  request repeats with the new token instead of rotating the refresh token a
+  second time.
+- **The dashboard type check covers the e2e suite** (review 2026-10-24, U-6).
+  `playwright.config.ts`, `vitest.config.ts` and `ui/e2e/*.ts` belonged to no
+  TypeScript project, so `vue-tsc --build` never checked them; a new
+  `tsconfig.e2e.json` brings them in.
+- **Long dashboard sessions stay responsive** (review 2026-10-24, U-4). "Load
+  older" on the Runs page added pages without limit to a list that is not
+  virtualised and is re-merged on every poll; it now stops at ten older pages
+  (2 200 runs) and points to the filters and the time window instead. The
+  console formatted every buffered event again for each new line; each row is
+  now computed once, when its event arrives.
 
 - **A schedule the server cannot run is refused when it is written** (review
   2026-10-24, P-6). `POST /v1/schedules {"cron_expression": "jeden Tag"}`
@@ -210,6 +417,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OIDC ID tokens against the IdP's public key, so no secret value is involved.
   It is ignored in `deny.toml` with that reasoning.
 
+- **The dashboard carries its Content-Security-Policy as a meta tag too**
+  (review 2026-10-24, U-7). The policy came only as a response header from
+  croniq-server or the `croniq-ui` container, so a `dist/` served by another
+  web server ran with no CSP at all. `index.html` now holds the same policy,
+  minus `frame-ancestors`, which a meta tag cannot express. Where the header
+  is sent it still applies; the two are identical, and a unit test fails when
+  they drift.
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
   crates use for constant-time comparisons, generated masks and compared
   `u128` values in non-constant time (RUSTSEC-2026-0385); in Croniq it sits

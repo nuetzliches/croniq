@@ -253,6 +253,7 @@ calendar business-days {
 # webhook, and email channels all ship today.
 alerts {
   channel "ops-paging" {
+    # Killed after 30 s; the delivery is then recorded as failed.
     shell "/usr/local/bin/page-oncall.sh"
   }
   channel "slack" {
@@ -448,6 +449,7 @@ job integration:credential-sync {
 
   singleton
   runner { require credentials }
+}
 
 # A budget shared by a *set* of jobs, for a limit that belongs to something
 # external — a third-party API's rate limit, a connection pool — rather than
@@ -473,6 +475,81 @@ job infra:heartbeat {
   ephemeral every 5 seconds
 }
 ```
+
+#### Croniqfile reference
+
+`croniq validate` checks everything below; the server runs the same checks at
+boot. `#` starts a comment, `;` separates directives on one line.
+
+**Top-level blocks.** `server`, `pull_api`, `mcp`, `policy`, `oidc`, `smtp`,
+`auth { password { enabled … } totp { required … } }`,
+`observability { log { level; format; output } metrics { listen; path } }`,
+`vars`, `defaults`, `calendar <name>`, `concurrency_group <name>`, `alerts`,
+`job <namespace:name[:variant]>`, and `import ./other.croniq` (paths relative
+to the importing file).
+
+**Order.** `defaults { }` applies to the jobs, calendars and imports declared
+*after* it; put it at the top (`validate` warns otherwise). `vars { }` and
+`concurrency_group` apply file-wide wherever they appear.
+
+**Placeholders**, written unquoted as a whole value: `{vars.NAME}` (from
+`vars { NAME value }`), `{env.NAME}` and `{$NAME}` / `{$NAME:default}` (the
+server's environment), `{file./path}` (file content, trimmed). Inside `"…"` a
+placeholder is literal text. A placeholder that does not resolve compiles to
+its own text (`env.NAME`); the server logs it at error level and `croniq
+validate` warns about it.
+
+**Schedules** (one per job):
+
+| Form | Example |
+|---|---|
+| Interval | `every 15 minutes`, `every 1 hour`, compact `every 15m` / `30s` / `2h` |
+| Daily | `every day at 02:00` |
+| Weekdays | `every monday wednesday at 09:00`, `every weekday at 09:00`, `every weekend at 10:00`, `every Mon..Fri at 08:30` |
+| Monthly | `every 1st 15th of month at 03:00`, `every last of month at 23:00` |
+| Once | `once at 2026-12-31T23:00:00Z` (no offset means UTC) |
+| Off | `disabled` |
+
+Prefix `ephemeral` or `queued` to set the execution mode (`ephemeral every 5
+seconds`). Recurring schedules take options in braces: `every day at 02:00 {
+timezone Europe/Vienna; calendar business-days; not_before
+2026-01-01T00:00:00Z; not_after 2026-12-31T23:59:59Z }`. `not_before` /
+`not_after` are RFC 3339 timestamps with an offset. A value that does not parse
+is a `validate` error, and the server loads that job paused with a
+`config_error` instead of running it unbounded.
+
+**Job directives.** `description "…"`, `timezone <IANA zone>`, `timeout 15m`,
+`window 08:00..18:00` (a daily gate in the job's zone; a start after the end
+wraps past midnight), `execution_mode queued|ephemeral`, `catch_up
+all|latest|none`, `queue_ttl 1h|none`, `max_queue_depth N`, `keep_last N`,
+`singleton`, `max_concurrent N`, `concurrency_group <name>`, `coalesce
+[schedule]`, `priority low|normal|high`, `tags a b c`, `run_on_register`.
+Blocks: `retry exponential|linear|fixed|none { max_attempts; base; cap; step;
+delay; jitter 0..1 }`, `dead_letter { enabled; retention; operator_hint;
+replay_max_age }`, `metadata { key value }` (keys starting with `__` are
+reserved), `runner { require cap; prefer cap; exclude cap; sticky }` (one
+capability per line), and the payload for the generic shell runner,
+`runner shell { command "…"; workdir; user; env { K v } }` or `runner exec {
+args …; workdir; user; env { … } }`.
+
+**Calendar rules.** `include` / `exclude` followed by `weekly monday friday`
+(also `Mon`, `weekday`, `weekend`, `"Mon".."Fri"`), `monthly 1 15`, `annual
+12-25` or `annual 2026-04-06`, `window "08:00".."18:00"`; plus `timezone
+<zone>` for the calendar itself.
+
+**Alerts.** A `channel "name"` holds exactly one of `shell "…"`, `webhook
+URL` (with optional `sign hmac <secret>` and `timeout 5s`) or `email "a@x"
+…`. A `rule "name"` takes `when` (`job_failed`, `job_recovered`,
+`job_sla_missed`, `job_missed_fire`, `job_blocked`, `maintenance_active`),
+`job_key "glob"`, `min_attempts N`, `min_consecutive N`, `dead_letter true`
+(fire only for dead-lettered failures, `job_failed` only), `throttle 10m`,
+`expected_within 15m` (required for the SLA, missed-fire, blocked and
+maintenance triggers) and `channels "a" "b"`, which must name declared
+channels.
+
+**Formatting.** `croniq fmt` keeps comments at the top level, in job bodies
+and in `defaults { }`. `croniq fmt --write` refuses to rewrite a file whose
+other comments it would drop and lists them.
 
 ### REST API
 

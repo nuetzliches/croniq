@@ -19,10 +19,15 @@ pub fn validate(path: &Path) -> Result<()> {
         .iter()
         .filter(|d| d.severity == validate::Severity::Error)
         .count();
+    // Placeholders resolve against *this* shell's environment and files, which
+    // need not be the server's — so a warning, not an error (review
+    // 2026-10-24, F-14).
+    let unresolved = compile::unresolved_placeholders(&ast);
     let warnings = diags
         .iter()
         .filter(|d| d.severity == validate::Severity::Warning)
-        .count();
+        .count()
+        + unresolved.len();
 
     for diag in &diags {
         let prefix = match diag.severity {
@@ -30,6 +35,12 @@ pub fn validate(path: &Path) -> Result<()> {
             validate::Severity::Warning => "warning",
         };
         eprintln!("{prefix}: {}", diag.message);
+    }
+    for msg in &unresolved {
+        eprintln!(
+            "warning: {msg} in this environment — the server would use the placeholder's \
+             literal text"
+        );
     }
 
     if errors > 0 {
@@ -62,6 +73,34 @@ pub fn fmt(path: &Path, write: bool) -> Result<()> {
     })?;
 
     let formatted = format::format(&ast);
+
+    // The formatter keeps comments only where the AST does (top level, job
+    // bodies, `defaults { }`). Overwriting the file would delete the rest, so
+    // `--write` refuses instead (review 2026-10-24, F-7); printing to stdout
+    // stays allowed, with the same warning.
+    let lost = format::lost_comments(&source, &formatted);
+    if !lost.is_empty() {
+        let shown: Vec<String> = lost.iter().take(5).map(|c| format!("  # {c}")).collect();
+        let more = if lost.len() > 5 {
+            format!("\n  … and {} more", lost.len() - 5)
+        } else {
+            String::new()
+        };
+        let msg = format!(
+            "formatting {} would drop {} comment(s) the formatter cannot keep \
+             (comments inside blocks other than jobs and `defaults {{ }}`):\n{}{more}",
+            path.display(),
+            lost.len(),
+            shown.join("\n")
+        );
+        if write {
+            return Err(miette::miette!(
+                "{msg}\nnot written — move those comments above their block, or run \
+                 `croniq fmt` without --write and apply the output by hand"
+            ));
+        }
+        eprintln!("warning: {msg}");
+    }
 
     if write {
         std::fs::write(path, &formatted)
@@ -152,5 +191,46 @@ pub fn convert_cron(expr: &str) -> Result<()> {
             Ok(())
         }
         Err(msg) => Err(miette::miette!("{msg}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str, contents: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("croniq-fmt-{}-{name}.croniq", std::process::id()));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn fmt_write_refuses_to_drop_comments() {
+        // Review 2026-10-24, F-7: comments inside `server { }` are not in the
+        // AST, and `--write` used to delete them.
+        let src = "server {\n  # keep me\n  listen :4000\n}\n";
+        let path = scratch("lossy", src);
+        let err = fmt(&path, true).expect_err("must refuse");
+        assert!(err.to_string().contains("keep me"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            src,
+            "file untouched"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn fmt_write_proceeds_when_every_comment_survives() {
+        let src = "# top\njob a:b {\n  # in job\n  every 5 minutes\n}\n";
+        let path = scratch("lossless", src);
+        fmt(&path, true).expect("nothing to lose");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("# top") && written.contains("# in job"),
+            "{written}"
+        );
+        std::fs::remove_file(&path).ok();
     }
 }

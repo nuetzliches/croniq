@@ -160,7 +160,6 @@ mod tests {
 
     #[test]
     fn seconds_buckets_place_each_fire_in_its_slice() {
-        use crate::misfire::MisfirePolicy;
         use crate::schedule::Schedule;
         // On the grid, so the slices are the ones the offsets name.
         let now = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
@@ -170,7 +169,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         trigger.next_fire_at = Some(now + Duration::seconds(7));
@@ -189,7 +187,6 @@ mod tests {
     /// must land in the same buckets, not be regrouped around the new `now`.
     #[test]
     fn buckets_stay_put_as_now_moves() {
-        use crate::misfire::MisfirePolicy;
         use crate::schedule::Schedule;
         let t0 = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
         let mut trigger = Trigger::new(
@@ -198,7 +195,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             t0,
         );
         trigger.next_fire_at = Some(t0 + Duration::seconds(20));
@@ -229,7 +225,6 @@ mod tests {
 
     #[test]
     fn the_first_bucket_counts_only_what_is_still_ahead() {
-        use crate::misfire::MisfirePolicy;
         use crate::schedule::Schedule;
         let grid = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
         let now = grid + Duration::seconds(3);
@@ -239,7 +234,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             grid,
         );
         trigger.next_fire_at = Some(grid + Duration::seconds(1));

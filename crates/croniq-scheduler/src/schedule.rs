@@ -161,18 +161,24 @@ impl Schedule {
                 for month_offset in 0..3 {
                     let (year, month) = add_months(today.year(), today.month(), month_offset);
 
-                    for ordinal in ordinals {
-                        let day = match ordinal {
-                            MonthDay::Day(d) => *d as u32,
-                            MonthDay::Last => last_day_of_month(year, month),
-                        };
-
-                        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day)
-                            && let Some(candidate) = resolve_local(tz, date.and_time(*time))
-                            && candidate > after
-                        {
-                            return Some(candidate);
-                        }
+                    // The earliest ordinal of the month, not the first one
+                    // declared: the parser keeps declaration order, so
+                    // `every 15th, 1st of month` returned the 15th of the next
+                    // month and the 1st never fired (review 2026-10-24, D-6).
+                    let earliest = ordinals
+                        .iter()
+                        .filter_map(|ordinal| {
+                            let day = match ordinal {
+                                MonthDay::Day(d) => *d as u32,
+                                MonthDay::Last => last_day_of_month(year, month),
+                            };
+                            let date = NaiveDate::from_ymd_opt(year, month, day)?;
+                            resolve_local(tz, date.and_time(*time))
+                        })
+                        .filter(|candidate| *candidate > after)
+                        .min();
+                    if earliest.is_some() {
+                        return earliest;
                     }
                 }
                 None
@@ -610,6 +616,27 @@ mod tests {
         let after = utc(2026, 3, 29, 0, 0);
         let next = sched.next_fire_after(after, &tz_utc()).unwrap();
         assert_eq!(next, utc(2026, 3, 31, 23, 59));
+    }
+
+    // Review 2026-10-24, D-6: ordinals in declaration order, not sorted. The
+    // first one declared that was still ahead won, so after the 15th of
+    // December January's 15th came back and the 1st never fired.
+    #[test]
+    fn monthly_unsorted_ordinals_fire_in_date_order() {
+        let sched = Schedule::Monthly {
+            ordinals: vec![MonthDay::Day(15), MonthDay::Last, MonthDay::Day(1)],
+            time: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        };
+        let fires = sched.next_n_fires(utc(2026, 12, 15, 6, 0), &tz_utc(), 4);
+        assert_eq!(
+            fires,
+            vec![
+                utc(2026, 12, 31, 6, 0),
+                utc(2027, 1, 1, 6, 0),
+                utc(2027, 1, 15, 6, 0),
+                utc(2027, 1, 31, 6, 0),
+            ]
+        );
     }
 
     #[test]

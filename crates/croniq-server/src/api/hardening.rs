@@ -74,6 +74,14 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// Note: this header only covers what *this* server serves. A browser app on
 /// another origin is served by that origin's web server, whose CSP — not this
 /// one — applies to it.
+///
+/// `ui/index.html` carries a `<meta http-equiv="Content-Security-Policy">`
+/// copy of this policy (minus `frame-ancestors`, which a meta policy cannot
+/// express) as a fallback for a `dist/` served by a web server that sends no
+/// CSP (review 2026-10-24, U-7). This header is the policy that counts: a
+/// browser enforces the header and the meta tag together, so the meta copy can
+/// only restrict, never relax, what is set here. Change both together;
+/// `ui/app/lib/meta-csp.test.ts` fails when they drift.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      script-src 'self' 'wasm-unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; \

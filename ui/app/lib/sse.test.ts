@@ -145,7 +145,7 @@ describe('createSseStream', () => {
       getToken: () => token,
       refresh: async () => {
         token = 'fresh'
-        return true
+        return 'renewed'
       },
       onData: (payload) => data.push(payload),
     })
@@ -163,7 +163,7 @@ describe('createSseStream', () => {
     createSseStream({
       url: () => '/v1/stream',
       getToken: () => 'stale',
-      refresh: async () => false,
+      refresh: async () => 'ended',
       onData: () => {},
       onClose,
     })
@@ -173,13 +173,53 @@ describe('createSseStream', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('backs off and comes back when the refresh could not reach the server', async () => {
+    // Review 2026-10-24, U-1: the access token expires while the server
+    // restarts, the reconnect gets a 401, and the refresh meets a 502 from the
+    // proxy. That is not a dead session — the stream used to end for good
+    // here, with the page still signed in behind its last frame.
+    let serverUp = false
+    let token = 'stale'
+    const fetchMock = vi.fn(async () =>
+      token === 'fresh' ? stream('data: back\n\n') : status(401),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const refresh = vi.fn(async () => {
+      if (!serverUp) return 'unreachable' as const
+      token = 'fresh'
+      return 'renewed' as const
+    })
+    const data: string[] = []
+    const stop = createSseStream({
+      url: () => '/v1/stream',
+      getToken: () => token,
+      refresh,
+      onData: (payload) => data.push(payload),
+    })
+
+    // Attempts at 0, 1 s and 3 s, all answered 401 with the refresh failing.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(refresh).toHaveBeenCalledTimes(3)
+    expect(data).toEqual([])
+
+    // The next attempt is 4 s later (backoff doubled), and finds the server up.
+    serverUp = true
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(refresh).toHaveBeenCalledTimes(4)
+    // 8 s after that: the renewed token opens the stream.
+    await vi.advanceTimersByTimeAsync(8000)
+    expect(data).toEqual(['back'])
+    stop()
+  })
+
   it('backs off instead of hammering a server that keeps answering 401', async () => {
     const fetchMock = vi.fn(async () => status(401))
     vi.stubGlobal('fetch', fetchMock)
     const stop = createSseStream({
       url: () => '/v1/stream',
       getToken: () => 'token',
-      refresh: async () => true,
+      refresh: async () => 'renewed',
       onData: () => {},
     })
 
@@ -202,7 +242,7 @@ describe('createSseStream', () => {
     createSseStream({
       url: () => '/v1/stream',
       getToken: () => 'token',
-      refresh: async () => true,
+      refresh: async () => 'renewed',
       fatalStatuses: [403],
       onFatal,
       onData: () => {},
@@ -226,7 +266,7 @@ describe('createSseStream', () => {
         return '/v1/stream'
       },
       getToken: () => 'token',
-      refresh: async () => true,
+      refresh: async () => 'renewed',
       onData: (payload) => data.push(payload),
     })
 

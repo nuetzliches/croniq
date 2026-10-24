@@ -15,7 +15,8 @@ server {
   # Public base URL for invite / password-reset / OIDC login links.
   # Optional: if omitted, falls back to the CRONIQ_APP_URL env var, then to
   # the request's forwarded/Host headers. Set it to pin links on a
-  # directly-exposed server. Quote the value — an unquoted // starts a comment.
+  # directly-exposed server. (Only `#` starts a comment, so a URL may be
+  # written bare; quoting it is fine too.)
   # app_url "https://cron.example.com"
   # Age-based retention for terminal executions (completed/failed/cancelled).
   # The watchdog prunes finished executions — and their logs — older than this,

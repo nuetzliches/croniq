@@ -1,7 +1,49 @@
-//! Round-trip safe formatter for Croniqfile AST.
-//! Preserves comments, blank lines, and quoting style.
+//! Formatter for the Croniqfile AST.
+//!
+//! Preserves quoting style, and comments where the AST keeps them: at the top
+//! level, in job bodies and in `defaults { }`. Comments inside other blocks
+//! (`server { }`, `calendar { }`, `alerts { }`, schedule options, …) are not
+//! in the AST and are lost, and blank lines are normalised everywhere — so
+//! callers that write the result back must check [`lost_comments`] first
+//! (review 2026-10-24, F-7).
 
 use crate::ast::*;
+
+/// The comments of `source` that `formatted` no longer contains, in source
+/// order (compared as a multiset of comment texts).
+///
+/// `croniq fmt --write` refuses to overwrite a file when this is non-empty:
+/// the formatter used to describe itself as comment-preserving while it
+/// dropped every comment outside job bodies and `defaults { }` — about twenty
+/// lines of the shipped `Croniqfile.example` (review 2026-10-24, F-7). Source
+/// that does not lex has no comments to lose and yields an empty list.
+pub fn lost_comments(source: &str, formatted: &str) -> Vec<String> {
+    use crate::lexer::{Lexer, TokenKind};
+    let comments = |src: &str| -> Vec<String> {
+        Lexer::tokenize(src)
+            .map(|tokens| {
+                tokens
+                    .into_iter()
+                    .filter_map(|t| match t.kind {
+                        TokenKind::Comment(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut kept = comments(formatted);
+    let mut lost = Vec::new();
+    for c in comments(source) {
+        match kept.iter().position(|k| *k == c) {
+            Some(i) => {
+                kept.swap_remove(i);
+            }
+            None => lost.push(c),
+        }
+    }
+    lost
+}
 
 /// Format a Croniqfile AST back to source text.
 pub fn format(ast: &Croniqfile) -> String {
@@ -118,20 +160,26 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
 }
 
 fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
-    out.push_str(&format!("job {} {{\n", job.key.raw));
+    // A key the lexer would not read back as one bare token (`"a b:c"`) is
+    // written quoted; it used to be written bare, which re-parsed as a
+    // different key or not at all (review 2026-10-24, F-16).
+    let raw = &job.key.raw;
+    let key = if raw.bytes().all(crate::lexer::Lexer::is_ident_char) {
+        raw.clone()
+    } else {
+        quote_string(raw)
+    };
+    out.push_str(&format!("job {key} {{\n"));
 
-    // Description first if present
-    for dob in &job.directives {
-        if let DirectiveOrBlock::Directive(d) = dob
-            && d.key.value == "description"
-        {
-            write_indent(out, indent + 1);
-            out.push_str("description ");
-            out.push_str(&format_string_value(&d.args[0]));
-            out.push('\n');
-            out.push('\n');
-            break;
-        }
+    // Description first if present. Written through the generic directive
+    // emitter: the parser accepts a bare `description`, and indexing
+    // `args[0]` made `croniq fmt` panic on it (review 2026-10-24, F-6).
+    let description = job.directives.iter().position(
+        |dob| matches!(dob, DirectiveOrBlock::Directive(d) if d.key.value == "description"),
+    );
+    if let Some(i) = description {
+        format_directive_or_block(out, &job.directives[i], indent + 1);
+        out.push('\n');
     }
 
     // Schedule
@@ -139,11 +187,11 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
         format_schedule(out, sched, indent + 1);
     }
 
-    // Other directives
-    for dob in &job.directives {
-        match dob {
-            DirectiveOrBlock::Directive(d) if d.key.value == "description" => continue,
-            _ => format_directive_or_block(out, dob, indent + 1),
+    // Other directives. Only the description hoisted above is skipped; a
+    // second one stays where it was rather than being dropped.
+    for (i, dob) in job.directives.iter().enumerate() {
+        if Some(i) != description {
+            format_directive_or_block(out, dob, indent + 1);
         }
     }
 
@@ -561,13 +609,34 @@ fn format_string_value(val: &StringValue) -> String {
     if val.is_placeholder {
         format!("{{{}}}", val.value)
     } else if val.quoted {
-        format!(
-            "\"{}\"",
-            val.value.replace('\\', "\\\\").replace('"', "\\\"")
-        )
+        quote_string(&val.value)
     } else {
         val.value.clone()
     }
+}
+
+/// `value` as a quoted Croniqfile string that lexes back to exactly `value`.
+///
+/// Escapes every character the lexer unescapes (`\\`, `"`, `\n`, `\r`, `\t`).
+/// Escaping only `\\` and `"` wrote a `"line 1\nline 2"` back with a real
+/// newline, which the lexer rejects as an unterminated string — so
+/// `croniq fmt --write` broke the file (review 2026-10-24, F-8). Public for
+/// every other emitter of Croniqfile text (`croniq migrate`, R-11).
+pub fn quote_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn write_indent(out: &mut String, level: usize) {
@@ -579,6 +648,7 @@ fn write_indent(out: &mut String, level: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexer::{Lexer, TokenKind};
     use crate::parser::Parser;
 
     #[test]
@@ -913,5 +983,128 @@ job etl:sync {
         // Idempotent: formatting the formatted output changes nothing.
         let again = format(&crate::parser::Parser::parse(&out).unwrap());
         assert_eq!(out, again);
+    }
+
+    /// Review 2026-10-24, F-7: formatting the shipped examples must parse,
+    /// be idempotent, compile to the same jobs, and report exactly the
+    /// comments it drops — the contract `croniq fmt --write` relies on.
+    #[test]
+    fn example_croniqfiles_round_trip() {
+        for (name, src) in [
+            (
+                "Croniqfile.example",
+                include_str!("../../../Croniqfile.example"),
+            ),
+            ("Croniqfile.demo", include_str!("../../../Croniqfile.demo")),
+            ("Croniqfile.busy", include_str!("../../../Croniqfile.busy")),
+        ] {
+            let src = src.replace("\r\n", "\n");
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let once = format(&ast);
+            let reparsed =
+                Parser::parse(&once).unwrap_or_else(|e| panic!("{name} formatted: {e:?}"));
+            let twice = format(&reparsed);
+            assert_eq!(once, twice, "{name}: fmt is not idempotent");
+
+            let hashes = |ast: &Croniqfile| -> Vec<(String, String)> {
+                crate::compile::compile(ast)
+                    .jobs
+                    .iter()
+                    .map(|j| (j.key.clone(), j.config_hash()))
+                    .collect()
+            };
+            assert_eq!(hashes(&ast), hashes(&reparsed), "{name}: jobs changed");
+
+            // Whatever the formatter drops, `lost_comments` names: nothing
+            // is lost between the first and second pass, and every comment
+            // of the source is either in the output or in the lost list.
+            assert!(lost_comments(&once, &twice).is_empty(), "{name}");
+            let lost = lost_comments(&src, &once);
+            let in_source = Lexer::tokenize(&src)
+                .unwrap()
+                .iter()
+                .filter(|t| matches!(t.kind, TokenKind::Comment(_)))
+                .count();
+            let in_output = Lexer::tokenize(&once)
+                .unwrap()
+                .iter()
+                .filter(|t| matches!(t.kind, TokenKind::Comment(_)))
+                .count();
+            assert_eq!(in_source, in_output + lost.len(), "{name}");
+        }
+    }
+
+    #[test]
+    fn lost_comments_names_what_the_formatter_drops() {
+        let src = "server {\n  # in server\n  listen :4000\n}\n# top\njob a:b {\n  # in job\n  every 5 minutes\n}\n";
+        let out = format(&Parser::parse(src).unwrap());
+        assert_eq!(lost_comments(src, &out), vec!["in server".to_string()]);
+    }
+
+    #[test]
+    fn bare_description_formats_without_panicking() {
+        // Review 2026-10-24, F-6: `d.args[0]` on an argument-less directive.
+        let src = "job a:b { every 5 minutes; description }";
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains("  description\n"), "{out}");
+        assert_eq!(out, format(&Parser::parse(&out).unwrap()));
+    }
+
+    #[test]
+    fn a_job_key_that_needs_quotes_keeps_them() {
+        // Review 2026-10-24, F-16.
+        let out = format(&Parser::parse(r#"job "a b:c" { every 5 minutes }"#).unwrap());
+        assert!(out.starts_with("job \"a b:c\" {"), "{out}");
+        let Item::Job(job) = &Parser::parse(&out).unwrap().items[0] else {
+            panic!("job expected")
+        };
+        assert_eq!(job.key.raw, "a b:c");
+        let out = format(&Parser::parse("job ops:health:eu-west { every 5 minutes }").unwrap());
+        assert!(out.starts_with("job ops:health:eu-west {"), "{out}");
+    }
+
+    #[test]
+    fn a_second_description_is_kept() {
+        let src = "job a:b { description one\n every 5 minutes\n description two }";
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains("description one"), "{out}");
+        assert!(out.contains("description two"), "{out}");
+    }
+
+    #[test]
+    fn every_escape_round_trips() {
+        // Review 2026-10-24, F-8: `\n` was written back as a real newline,
+        // which does not lex.
+        let src = r#"job a:b { every 5 minutes; description "l1\nl2\r\tq\"b\\s" }"#;
+        let out = format(&Parser::parse(src).unwrap());
+        assert!(out.contains(r#""l1\nl2\r\tq\"b\\s""#), "{out}");
+        let reparsed = Parser::parse(&out).expect("formatted output must parse");
+        assert_eq!(format(&reparsed), out);
+        let Item::Job(job) = &reparsed.items[0] else {
+            panic!("job expected")
+        };
+        let DirectiveOrBlock::Directive(d) = &job.directives[0] else {
+            panic!("directive expected")
+        };
+        assert_eq!(d.args[0].value, "l1\nl2\r\tq\"b\\s");
+    }
+
+    #[test]
+    fn quote_string_lexes_back_to_its_input() {
+        for s in [
+            "",
+            "plain",
+            "a \"b\"",
+            "back\\slash",
+            "multi\nline\r\n",
+            "tab\tbed",
+        ] {
+            let src = format!("vars {{ x {} }}", quote_string(s));
+            let ast = Parser::parse(&src).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+            let Item::Vars(v) = &ast.items[0] else {
+                panic!("vars expected")
+            };
+            assert_eq!(v.entries[0].args[0].value, s);
+        }
     }
 }

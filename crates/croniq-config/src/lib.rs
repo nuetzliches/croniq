@@ -7,6 +7,7 @@ pub mod diff;
 pub mod fingerprint;
 pub mod format;
 pub mod import;
+pub mod job_bounds;
 pub mod lexer;
 pub mod parser;
 pub mod placeholders;

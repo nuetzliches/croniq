@@ -17,7 +17,6 @@
 //!      └── Dropped        → mark Failed (no dead-letter)
 //! ```
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,6 +60,11 @@ pub enum ProcessedOutcome {
     Ephemeral,
     /// Execution ID not found in store (race or already handled).
     NotFound,
+    /// The store refused the attempt's terminal write. The row stays
+    /// `claimed`, so the stale-claim reaper runs the execution again; nothing
+    /// was decided from this completion — no retry spawned, no success
+    /// recorded (review 2026-10-24, D-14).
+    Unrecorded,
     /// Late completion ignored (issue #374): the watchdog requeued the
     /// claim before this completion arrived — the row is `queued` again
     /// or already re-claimed by another runner — so the store's
@@ -71,7 +75,13 @@ pub enum ProcessedOutcome {
 
 /// Processes completion events and updates the persistence layer.
 pub struct CompletionProcessor {
-    jobs: HashMap<String, JobConfig>,
+    /// The Croniqfile's jobs, read per completion. `main.rs` hands in the list
+    /// the reload path rewrites; a boot-time copy left a job added by reload
+    /// without a config here — its result was dropped as `NotFound` and the
+    /// row later cancelled as stranded — and kept the old `retry` /
+    /// `dead_letter` of a job a reload had changed (review 2026-10-24, D-2,
+    /// D-3). Jobs the store owns are resolved from the store.
+    jobs: Arc<tokio::sync::RwLock<Vec<JobConfig>>>,
     store: DynStore,
     runner: Arc<AppState>,
     /// Failure-alert configuration (issue #140). Empty default means no
@@ -116,9 +126,8 @@ impl CompletionProcessor {
         alert_throttle: crate::alerts::ThrottleMap,
         email_sender: Arc<dyn crate::email::EmailSender>,
     ) -> Self {
-        let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
-            jobs,
+            jobs: Arc::new(tokio::sync::RwLock::new(jobs)),
             store,
             runner,
             alerts,
@@ -127,11 +136,13 @@ impl CompletionProcessor {
         }
     }
 
-    /// Resolve the `JobConfig` for a job key.
-    ///
-    /// Fast path: DSL jobs loaded at startup. Slow path: store lookup for jobs
-    /// registered via the API at runtime. Returns `None` only if the job truly
-    /// does not exist anywhere.
+    /// Read DSL jobs from `jobs` — the list the Croniqfile reload keeps
+    /// current — instead of the copy given to the constructor.
+    pub fn with_jobs(mut self, jobs: Arc<tokio::sync::RwLock<Vec<JobConfig>>>) -> Self {
+        self.jobs = jobs;
+        self
+    }
+
     /// Dispatch the configured alert rules against a permanent
     /// failure event. Replaces the old single-shot
     /// `notify::notify_failure()` env-var hook — back-compat for that
@@ -248,8 +259,13 @@ impl CompletionProcessor {
         .await;
     }
 
-    fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
-        if let Some(c) = self.jobs.get(job_key) {
+    /// Resolve the `JobConfig` for a job key.
+    ///
+    /// The Croniqfile's current definition first, then the store for jobs
+    /// registered through the API. Returns `None` only if the job truly does
+    /// not exist anywhere.
+    async fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
+        if let Some(c) = self.jobs.read().await.iter().find(|j| j.key == job_key) {
             return Some(c.clone());
         }
         match self.store.get_job_definition(job_key) {
@@ -314,8 +330,9 @@ impl CompletionProcessor {
         };
 
         // Find the job config to look up the execution policy.
-        // DSL jobs are found in the in-memory map; API jobs fall back to the store.
-        let job = match self.resolve_job_config(&execution.job_key) {
+        // DSL jobs are found in the live Croniqfile list; API jobs fall back
+        // to the store.
+        let job = match self.resolve_job_config(&execution.job_key).await {
             Some(c) => c,
             None => {
                 tracing::warn!(job_key = %execution.job_key, "no job config for completion — job not in DSL or store");
@@ -393,8 +410,12 @@ impl CompletionProcessor {
                         ProcessedOutcome::Stale
                     }
                     Err(e) => {
-                        tracing::error!(id = %exec_uuid, error = %e, "store write error");
-                        ProcessedOutcome::Completed
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "store write error — success not recorded; the stale-claim reaper will run the execution again"
+                        );
+                        ProcessedOutcome::Unrecorded
                     }
                 }
             }
@@ -426,8 +447,17 @@ impl CompletionProcessor {
                         self.runner.work_notify.notify_waiters();
                         return ProcessedOutcome::Stale;
                     }
+                    // The attempt is still `claimed` in the store, so the
+                    // reaper will run it again. A retry spawned on top of that
+                    // was a second chain of attempts for one fire (review
+                    // 2026-10-24, D-14).
                     Err(e) => {
-                        tracing::error!(id = %exec_uuid, error = %e, "store write error")
+                        tracing::error!(
+                            id = %exec_uuid,
+                            error = %e,
+                            "store write error — failure not recorded, no retry spawned; the stale-claim reaper will run the execution again"
+                        );
+                        return ProcessedOutcome::Unrecorded;
                     }
                 }
 
@@ -891,10 +921,86 @@ mod tests {
     /// The shared fault-injecting double ([`crate::fault_store`]), armed by
     /// the caller. Returns both handles: the concrete one to arm faults on,
     /// and the type-erased one to hand to production code.
+    // Review 2026-10-24, D-2: the processor kept a boot copy of the DSL jobs,
+    // so a job a reload added had no config here — its result was dropped as
+    // `NotFound` and the claimed row later cancelled as stranded.
+    #[tokio::test]
+    async fn a_job_added_by_reload_has_its_completion_processed() {
+        let store = make_store();
+        let shared = Arc::new(tokio::sync::RwLock::new(vec![make_job("test:old", 3)]));
+        let processor = CompletionProcessor::new(Vec::new(), Arc::clone(&store), make_runner())
+            .with_jobs(Arc::clone(&shared));
+
+        // What `reload::apply_plan` does with the new Croniqfile's jobs.
+        *shared.write().await = vec![make_job("test:old", 3), make_job("test:new", 3)];
+
+        let exec_id = seed_execution(&store, "test:new");
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Success, 1))
+            .await;
+        assert_eq!(outcome, ProcessedOutcome::Completed);
+        assert_eq!(
+            store.get_execution(exec_id).unwrap().unwrap().state,
+            ExecutionState::Completed
+        );
+    }
+
+    // Review 2026-10-24, D-3: `job_changed` reports `retry.max_attempts` as
+    // applied by a reload, but the processor dead-lettered by the boot value.
+    #[tokio::test]
+    async fn a_reload_that_raises_retries_is_honoured_by_completion() {
+        let store = make_store();
+        let runner = make_runner();
+        let shared = Arc::new(tokio::sync::RwLock::new(vec![make_job("test:job", 1)]));
+        let processor =
+            CompletionProcessor::new(Vec::new(), Arc::clone(&store), Arc::clone(&runner))
+                .with_jobs(Arc::clone(&shared));
+
+        *shared.write().await = vec![make_job("test:job", 5)];
+
+        let exec_id = seed_execution(&store, "test:job");
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+        assert!(
+            matches!(outcome, ProcessedOutcome::Retrying { attempt: 2 }),
+            "{outcome:?}"
+        );
+        assert_eq!(runner.queue.read().await.len(), 1);
+    }
+
     fn make_failing_store() -> (Arc<crate::fault_store::FaultStore>, DynStore) {
         let failing = crate::fault_store::FaultStore::wrap(make_store());
         let store: DynStore = failing.clone();
         (failing, store)
+    }
+
+    // Review 2026-10-24, D-14: a failed terminal write still reported
+    // `Completed`, and on the retry path still spawned a retry — while the row
+    // stayed `claimed` for the reaper to run again, a second chain of attempts.
+    #[tokio::test]
+    async fn a_failed_terminal_write_records_nothing_and_spawns_no_retry() {
+        for status in [CompletionStatus::Success, CompletionStatus::Failure] {
+            let (failing, store) = make_failing_store();
+            let runner = make_runner();
+            let exec_id = seed_execution(&store, "test:job");
+            failing.arm_complete();
+            let processor = CompletionProcessor::new(
+                vec![make_job("test:job", 3)],
+                Arc::clone(&store),
+                Arc::clone(&runner),
+            );
+
+            let outcome = processor.process(event(exec_id, status, 1)).await;
+
+            assert_eq!(outcome, ProcessedOutcome::Unrecorded, "{status:?}");
+            assert_eq!(runner.queue.read().await.len(), 0, "{status:?}");
+            assert_eq!(
+                store.get_execution(exec_id).unwrap().unwrap().state,
+                ExecutionState::Claimed,
+                "{status:?}: left for the reaper"
+            );
+        }
     }
 
     #[tokio::test]

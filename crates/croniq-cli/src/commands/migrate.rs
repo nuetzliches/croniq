@@ -36,18 +36,7 @@ pub fn migrate(crontab_path: &Path, output: Option<&Path>) -> Result<()> {
         let job_key = derive_job_key(command, job_index);
 
         // Convert cron to DSL using the convert module
-        let dsl_schedule = match croniq_config::convert::convert(&cron_expr) {
-            Ok(result) => result.schedule,
-            Err(_) => format!("# Could not convert: {cron_expr}\n  every day at 00:00"),
-        };
-
-        jobs.push(format!(
-            r#"job {job_key} {{
-  {dsl_schedule}
-  timeout 5m
-  metadata {{ original_command "{command}" }}
-}}"#
-        ));
+        jobs.push(job_block(&job_key, &schedule_lines(&cron_expr), command));
     }
 
     if jobs.is_empty() {
@@ -92,6 +81,41 @@ defaults {{
     Ok(())
 }
 
+/// The schedule line for one crontab expression, preceded by a comment per
+/// conversion warning. The warnings (a dropped month field, dom + dow) used to
+/// be discarded, so a yearly entry became a monthly job without a word (review
+/// 2026-10-24, F-9).
+fn schedule_lines(cron_expr: &str) -> String {
+    match croniq_config::convert::convert(cron_expr) {
+        Ok(result) => {
+            let mut lines: Vec<String> = result
+                .warnings
+                .iter()
+                .map(|w| format!("# WARNING ({cron_expr}): {w}"))
+                .collect();
+            lines.push(result.schedule);
+            lines.join("\n  ")
+        }
+        Err(_) => format!("# Could not convert: {cron_expr}\n  every day at 00:00"),
+    }
+}
+
+/// One migrated `job { }` block.
+///
+/// The crontab command goes through the formatter's string quoting: pasted in
+/// verbatim, a `"` or a backslash in it produced a Croniqfile that does not
+/// parse (review 2026-10-24, R-11).
+fn job_block(job_key: &str, dsl_schedule: &str, command: &str) -> String {
+    let command = croniq_config::format::quote_string(command);
+    format!(
+        r#"job {job_key} {{
+  {dsl_schedule}
+  timeout 5m
+  metadata {{ original_command {command} }}
+}}"#
+    )
+}
+
 fn derive_job_key(command: &str, index: usize) -> String {
     // Try to extract a meaningful name from the command
     let cmd = command
@@ -125,4 +149,39 @@ fn derive_job_key(command: &str, index: usize) -> String {
     };
 
     format!("migrated:{name}-{index}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_with_quotes_and_backslashes_survives_as_metadata() {
+        // Review 2026-10-24, R-11.
+        for command in [
+            r#"echo "hi""#,
+            r#"printf 'a\tb\n' > /tmp/out"#,
+            r#"sh -c "grep \"x\" /var/log/y""#,
+        ] {
+            let block = job_block("migrated:echo-1", "every 5 minutes", command);
+            let ast = croniq_config::parser::Parser::parse(&block)
+                .unwrap_or_else(|e| panic!("{command}: {e:?}\n{block}"));
+            let cfg = croniq_config::compile::compile(&ast);
+            assert_eq!(cfg.jobs[0].metadata["original_command"], command);
+        }
+    }
+
+    #[test]
+    fn conversion_warnings_land_in_the_file_as_comments() {
+        // Review 2026-10-24, F-9: a yearly crontab line must not turn into a
+        // monthly job silently.
+        let block = job_block("migrated:x-1", &schedule_lines("0 0 1 1 *"), "x");
+        assert!(
+            block.contains("# WARNING (0 0 1 1 *): the month field"),
+            "{block}"
+        );
+        let ast = croniq_config::parser::Parser::parse(&block).expect("still parses");
+        let cfg = croniq_config::compile::compile(&ast);
+        assert!(cfg.jobs[0].schedule_summary.contains("of month at 00:00"));
+    }
 }

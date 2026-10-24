@@ -85,6 +85,13 @@ attributes), `img-src 'self' data:`, `connect-src 'self'`,
 `form-action 'self'`. The exact value and per-directive rationale live in
 [`hardening.rs`](../crates/croniq-server/src/api/hardening.rs).
 
+The dashboard's `index.html` carries the same policy as a
+`<meta http-equiv="Content-Security-Policy">` tag, without `frame-ancestors`
+(which a meta tag cannot express), so a `dist/` served by a web server of your
+own still runs under a CSP. The header is the one that counts: browsers apply
+both, and the two are kept identical. If you serve `dist/` yourself, send
+`frame-ancestors 'none'` (or `X-Frame-Options: DENY`) as a header there.
+
 `Strict-Transport-Security` is **not** set by croniq-server: it does not
 terminate TLS itself, and HSTS sent over plain HTTP is ignored by browsers
 anyway. If you terminate TLS in front of Croniq (reverse proxy, ingress,
@@ -1232,6 +1239,11 @@ Two things are deliberately *not* boot failures:
   `calendar` reference that resolves to nothing, fail per job: the job loads
   **paused** with a `config_error`, under `policy { strict_calendars }`
   (issue #361). One broken calendar must not take the whole scheduler down.
+- **Job time values** — a `window`, `not_before` or `not_after` that does not
+  parse, or an impossible `once at` date, also pauses just that job with a
+  `config_error` (regardless of `strict_calendars`). `croniq validate` reports
+  them as errors. Before, the first three were dropped and the job ran
+  unbounded, and a bad `once at` date stopped the boot.
 - **Warnings** — e.g. an interval shorter than the runner poll cycle. They are
   logged at `WARN` and the config loads.
 
@@ -1399,10 +1411,10 @@ writes the corrected instant back to `job_states` immediately.
 
 It only ever moves a pending fire *earlier*, so nothing due can be lost this
 way. A pending fire that is already **overdue** is untouched — that is a missed
-fire, and `misfire_policy` decides what happens to it. Lengthening an interval
-needs no heal: the pending fire is sooner than the new interval would produce,
-it runs as the old schedule promised, and the new cadence takes over from
-there.
+fire, and the job's `catch_up` decides what happens to it. Lengthening an
+interval needs no heal: the pending fire is sooner than the new interval would
+produce, it runs as the old schedule promised, and the new cadence takes over
+from there.
 
 The effective instant is readable per job as `next_fire_at` in
 `GET /v1/jobs` / `GET /v1/jobs/{job_key}`, and exported as
