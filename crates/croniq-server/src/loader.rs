@@ -780,7 +780,7 @@ pub async fn restore_queued_executions(
                 // Sort by fire_at desc, keep only the most recent one.
                 execs.sort_by_key(|b| std::cmp::Reverse(b.fire_at));
                 // Restore the latest, cancel the rest.
-                let item = work_item_from_execution(&execs[0], job);
+                let item = work_item_from_execution(execs[0], job);
                 runner_state.queue.write().await.enqueue(item);
                 restored += 1;
                 if execs.len() > 1 {
