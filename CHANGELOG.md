@@ -19,7 +19,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   main tree's out. See
   [Where the dashboard keeps its tokens](docs/operations.md#where-the-dashboard-keeps-its-tokens).
 
+- **Runner conformance cases 23–27 pin ack retry, the ack after a drain
+  timeout, and duplicate delivery** (review 2026-10-24, K-1, K-4, K-11). Where
+  the suite had no case, the six SDKs had six answers. The new cases fix one
+  for all five bindings: an ack answered with a transport error or 5xx is
+  retried, three attempts at most (23, 24); a 4xx ack is not (25); a handler
+  hard-cancelled by the drain timeout still gets its failure ack, retry
+  included (26); a re-delivered `execution_id` still in flight runs once (27).
+  The Go, Python, TypeScript, .NET and Java SDKs implement all of it; their
+  own CHANGELOGs have the details. The suite's README now lists all five
+  bindings, and case 04 no longer claims that a single-slot runner cannot
+  receive a cancel (case 04a shows it can).
+
+- **`docs/operations.md` documents where each SDK keeps its `runner_id`**
+  (review 2026-10-24, K-6). The default state directories differ between
+  SDKs and stay that way, since moving one would give every deployed runner a
+  new identity; the new section says so and recommends
+  `CRONIQ_RUNNER_DATA_DIR` on a volume. See
+  [Where runners keep their `runner_id`](docs/operations.md#where-runners-keep-their-runner_id).
+
 ### Changed
+
+- **The Python SDK release runs the unit and conformance tests on the tag**
+  (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
+  did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI
+  untested.
 
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
@@ -296,6 +320,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (2 200 runs) and points to the filters and the time window instead. The
   console formatted every buffered event again for each new line; each row is
   now computed once, when its event arrives.
+
+- **Go SDK: a failed ack is retried instead of costing a second run**
+  (review 2026-10-24, K-1). A handler that had succeeded lost its ack to a
+  connection reset or a request timeout; the runner logged "failed to ack",
+  dropped the execution from its in-flight set, the next poll reported it
+  missing, and the stale-claim reaper requeued a job that had already run. The
+  ack is idempotent on the server, so the runner now makes up to three
+  attempts, about 1 s and then 2 s apart, on a transport error (timeouts
+  included) or a 5xx, never on a 4xx. The execution stays in flight until the
+  ack is settled, and the retries also run after a drain timeout, so the final
+  failure ack of a hard-cancelled handler still arrives (K-4, now covered by a
+  test). Conformance cases 23–26 pin it for every SDK binding.
+
+- **Go SDK: a re-delivered `execution_id` is not dispatched twice**
+  (review 2026-10-24, K-11). An assignment whose `execution_id` was still in
+  flight ran its handler a second time, acked twice, and overwrote the first
+  run's cancel handle, so a later server cancel could not reach it. The runner
+  now ignores it with a warning, as the Python, TypeScript and .NET SDKs
+  already did. Conformance case 27.
+
+- **Go SDK: the poll retry delay carries ±20 % jitter** (review 2026-10-24,
+  K-9). After a server restart every runner's poll failed at the same moment,
+  and a fixed `PollRetryDelay` brought them all back in the same instant. Each
+  wait is now drawn from 0.8–1.2 × the configured delay.
+
+- **Go SDK: the OpenTelemetry module requires the current core**
+  (review 2026-10-24, K-10). `sdks/go/otel/go.mod` still pinned core
+  `v0.5.0`; it now requires `v0.6.2`, the latest release.
 
 ### Security
 
