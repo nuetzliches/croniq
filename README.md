@@ -526,7 +526,9 @@ to the same credential.
 The credential is the owning API client (`client_id`), not the individual API
 key, so rotating a key does not disturb an existing binding. Handing a
 `runner_id` to a *different* credential is an explicit operator action:
-`DELETE /v1/runners/{id}` releases the binding, and the next poll re-binds.
+`DELETE /v1/runners/{id}` (or the MCP `delete_runner` tool) releases the
+binding, and the next poll re-binds. Deregistering also returns the executions
+the runner still held to the queue, so do it for a runner that has stopped.
 
 Binding is inert when it could not tell callers apart or record a decision —
 that is, when auth is not configured or no store is configured — and can be

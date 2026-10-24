@@ -1863,16 +1863,25 @@ impl CroniqMcp {
     /// been decommissioned and won't reconnect — the cleanup releases the
     /// runner_id slot for reuse and silences stale-runner noise.
     #[tool(
-        description = "Remove a runner from the in-memory registry. Intended for cleanup of decommissioned runners. Requires --mutations."
+        description = "Deregister a runner, as DELETE /v1/runners/{id} does: removes it from the registry, frees its runner_id for another credential, and requeues the executions it still held. Intended for cleanup of decommissioned runners. Requires --mutations."
     )]
     async fn delete_runner(
         &self,
         Parameters(p): Parameters<DeleteRunnerParams>,
     ) -> Result<String, McpError> {
         self.require_mutations()?;
-        let mut reg = self.state.registry.write().await;
-        match reg.remove(&p.runner_id) {
-            Some(_) => Ok(format!("Runner '{}' removed.", p.runner_id)),
+        let removed = self.state.registry.write().await.remove(&p.runner_id);
+        match removed {
+            Some(_) => {
+                // The registry entry is the half this crate owns. The host
+                // releases the credential binding and requeues the runner's
+                // claims, as `DELETE /v1/runners/{id}` does (review
+                // 2026-10-24, P-15).
+                if let Some(ref sync) = self.job_sync {
+                    sync.runner_removed(&p.runner_id);
+                }
+                Ok(format!("Runner '{}' removed.", p.runner_id))
+            }
             None => Err(McpError::invalid_params(
                 format!("Runner '{}' not found.", p.runner_id),
                 None,
@@ -3106,6 +3115,28 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["runner_id"], "runner-1");
         assert_eq!(arr[0]["status"], "online");
+    }
+
+    /// The tool removed the registry entry and nothing else, leaving the
+    /// ADR-0008 binding behind (review 2026-10-24, P-15). It now hands the
+    /// rest to the host.
+    #[tokio::test]
+    async fn delete_runner_reports_the_removal_to_the_host() {
+        let (server, sync) = make_server_recording();
+        {
+            let mut reg = server.state.registry.write().await;
+            let _ = reg.register_or_update("runner-1", vec![], 3, vec![], None, vec![]);
+        }
+        server
+            .delete_runner(Parameters(DeleteRunnerParams {
+                runner_id: "runner-1".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            sync.calls(),
+            vec![("runner_removed".to_string(), "runner-1".to_string())]
+        );
     }
 
     #[tokio::test]

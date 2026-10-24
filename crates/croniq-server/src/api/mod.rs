@@ -1348,6 +1348,9 @@ async fn try_dequeue_for(
     // queued for a runner that fits, they are not lost.
     let mut ephemeral_dispatched: HashMap<String, u64> = HashMap::new();
     let mut ephemeral_dropped: HashMap<String, u64> = HashMap::new();
+    // Items the registry refused although the store already records them as
+    // claimed by this runner — see below.
+    let mut refused: Vec<WorkItem> = Vec::new();
     let assignments: Vec<WorkAssignment> = {
         let mut reg = state.runner.registry.write().await;
         items
@@ -1361,11 +1364,50 @@ async fn try_dequeue_for(
                         &mut ephemeral_dropped
                     };
                     *tally.entry(item.job_key.clone()).or_insert(0) += 1;
+                } else if !claimed {
+                    refused.push(item);
+                    return None;
                 }
                 claimed.then(|| WorkAssignment::from(item))
             })
             .collect()
     };
+    // The registry refuses a claim for a runner it no longer holds — removed
+    // by `DELETE /v1/runners/{id}` between this poll's registration and here.
+    // The store claim above has already been written, so the item was out of
+    // the queue, its row `claimed`, and no runner would ever get it: it hung
+    // until the stale-claim reaper's `timeout + grace` (review 2026-10-24,
+    // P-13). Hand it back instead.
+    if !refused.is_empty() {
+        let now = Utc::now();
+        let mut q = state.runner.queue.write().await;
+        for item in refused {
+            let back = match (&state.store, uuid::Uuid::parse_str(&item.execution_id)) {
+                (Some(store), Ok(id)) => match store.requeue_if_claimed(id, now) {
+                    Ok(requeued) => requeued,
+                    Err(e) => {
+                        tracing::warn!(
+                            execution_id = %item.execution_id,
+                            error = %e,
+                            "could not hand back a refused claim; the stale-claim reaper will"
+                        );
+                        false
+                    }
+                },
+                _ => true,
+            };
+            if back {
+                tracing::info!(
+                    execution_id = %item.execution_id,
+                    runner_id = %runner_id,
+                    "runner left the registry mid-dispatch; execution returned to the queue"
+                );
+                q.enqueue(item);
+            }
+        }
+        drop(q);
+        state.runner.work_notify.notify_waiters();
+    }
     for (job_key, count) in ephemeral_dispatched {
         state
             .runner
@@ -1636,14 +1678,59 @@ async fn handle_delete_runner(
     if let Err(s) = require_scope(&ctx, Scope::RUNNERS_WRITE) {
         return s;
     }
+    deregister_runner(&state, &runner_id).await;
+    StatusCode::NO_CONTENT
+}
+
+/// Remove a runner and release what the server ties to its id. Shared by
+/// `DELETE /v1/runners/{id}` and the MCP `delete_runner` tool, which only
+/// emptied the registry entry (review 2026-10-24, P-15).
+///
+/// - The credential binding (ADR-0008): deregistering is the operator-driven
+///   handover, so a different credential can claim the id on its next poll.
+///   The MCP tool left the binding in place, and that next poll got `403`.
+/// - The executions the runner still holds go back to the queue now rather
+///   than after the stale-claim reaper's `timeout + grace` (P-13). A removed
+///   runner is not going to report them, and a `singleton` job's later fires
+///   wait on its claim.
+pub(crate) async fn deregister_runner(state: &Arc<ServerState>, runner_id: &str) {
     {
         let mut reg = state.runner.registry.write().await;
-        reg.remove(&runner_id);
+        reg.remove(runner_id);
     }
-    // Deregistering is the operator-driven handover: it frees the id so a
-    // different credential can claim it on its next poll.
-    runner_identity::release_runner(&state, &runner_id);
-    StatusCode::NO_CONTENT
+    runner_identity::release_runner(state, runner_id);
+
+    let Some(store) = state.store.clone() else {
+        return;
+    };
+    let dsl_jobs = state.dsl_jobs.clone();
+    let lookup_store = Arc::clone(&store);
+    let requeued = crate::watchdog::requeue_abandoned_for_runner(
+        &store,
+        &state.runner,
+        runner_id,
+        Utc::now(),
+        |job_key| {
+            if let Some(jobs) = dsl_jobs.as_ref()
+                && let Ok(jobs) = jobs.try_read()
+                && let Some(c) = jobs.iter().find(|j| j.key == job_key)
+            {
+                return Some(c.clone());
+            }
+            match lookup_store.get_job_definition(job_key) {
+                Ok(Some(def)) => Some(crate::loader::job_config_from_job_def(&def)),
+                _ => None,
+            }
+        },
+    )
+    .await;
+    if !requeued.is_empty() {
+        tracing::info!(
+            runner_id = %runner_id,
+            count = requeued.len(),
+            "deregistered runner: requeued the executions it held"
+        );
+    }
 }
 
 /// `POST /v1/trigger` — immediately enqueue a job execution.
@@ -6421,6 +6508,119 @@ mod tests {
             .unwrap();
         store.claim_execution(id, runner_id, now).unwrap();
         id
+    }
+
+    /// The MCP `delete_runner` tool emptied the registry entry and left the
+    /// ADR-0008 binding, so the next poll under that id with another
+    /// credential got `403`; `DELETE /v1/runners/{id}` releases it (review
+    /// 2026-10-24, P-15). Both now go through `deregister_runner`, which also
+    /// hands the runner's claims back to the queue (P-13).
+    #[tokio::test]
+    async fn mcp_runner_removal_releases_the_binding_and_the_claims() {
+        use croniq_mcp::JobSync as _;
+        let (state, store, _rx) = make_bound_state();
+        let old = runner_token(&state, "client-a");
+        let new = runner_token(&state, "client-b");
+        post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &old,
+            poll_body("worker-1", "iid-old"),
+        )
+        .await;
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "billing:invoice".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("10m".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+        let exec = seed_claimed_execution(&store, "billing:invoice", "worker-1");
+
+        // What the MCP tool does: the registry entry, then the host hook.
+        state.runner.registry.write().await.remove("worker-1");
+        crate::api::job_sync::SchedulerJobSync::new(Arc::clone(&state)).runner_removed("worker-1");
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while store.get_execution(exec).unwrap().unwrap().state != ExecutionState::Queued {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the claim was never handed back"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(state.runner.queue.read().await.len(), 1);
+
+        let (status, _) = post_as(
+            server_router(Arc::clone(&state)),
+            "/v1/poll",
+            &new,
+            poll_body("worker-1", "iid-new"),
+        )
+        .await;
+        assert_eq!(status, 200, "the id is free for another credential");
+    }
+
+    /// The store claim is written before the registry claim. When the
+    /// registry refuses (the runner was deregistered mid-poll), the item was
+    /// out of the queue with its row `claimed`, and nobody got it until the
+    /// stale-claim reaper (review 2026-10-24, P-13).
+    #[tokio::test]
+    async fn a_claim_the_registry_refuses_goes_back_to_the_queue() {
+        let (state, store, _rx) = make_guard_state();
+        let now = Utc::now();
+        let id = uuid::Uuid::new_v4();
+        store
+            .create_execution(&Execution {
+                id,
+                job_key: "test:queued-1m".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+        state.runner.queue.write().await.enqueue(WorkItem {
+            execution_id: id.to_string(),
+            job_key: "test:queued-1m".into(),
+            fire_at: now,
+            scheduled_for: now,
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::json!({}),
+            timeout: "1m".into(),
+            is_ephemeral: false,
+        });
+
+        let assignments = try_dequeue_for(&state, "never-registered", &[], 5).await;
+        assert!(assignments.is_empty());
+        assert_eq!(
+            store.get_execution(id).unwrap().unwrap().state,
+            ExecutionState::Queued
+        );
+        assert_eq!(state.runner.queue.read().await.len(), 1);
     }
 
     /// (a) A foreign credential must not poll under someone else's

@@ -294,6 +294,18 @@ impl croniq_mcp::JobSync for SchedulerJobSync {
         });
     }
 
+    fn runner_removed(&self, runner_id: &str) {
+        // What `DELETE /v1/runners/{id}` does after the registry entry goes:
+        // release the ADR-0008 binding and requeue the runner's claims
+        // (review 2026-10-24, P-13, P-15). The tool removed the entry only, so
+        // the next poll with another credential got `403`.
+        let state = Arc::clone(&self.state);
+        let runner_id = runner_id.to_string();
+        tokio::spawn(async move {
+            crate::api::deregister_runner(&state, &runner_id).await;
+        });
+    }
+
     fn dsl_calendars(
         &self,
     ) -> Option<Arc<tokio::sync::RwLock<Vec<croniq_config::compile::CalendarConfig>>>> {

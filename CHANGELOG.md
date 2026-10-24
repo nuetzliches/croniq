@@ -117,6 +117,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lost the logs without anyone retrying. The status is now `503`, the
   retryable answer `POST /v1/work/renew` already gives for a store failure.
 
+- **Deregistering a runner hands its work back and frees its id on every
+  path** (review 2026-10-24, P-13 and P-15). `DELETE /v1/runners/{id}` left
+  the executions the runner held `claimed` until the stale-claim reaper's
+  `timeout + grace`, and a poll that raced the delete took an execution off
+  the queue, marked it claimed, and gave it to nobody. The MCP `delete_runner`
+  tool removed the registry entry only, so the runner id stayed bound to the
+  old credential and the next poll with another one got `403`. Both paths now
+  release the binding and requeue the runner's claims, and a claim the
+  registry refuses mid-poll goes back to the queue.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
