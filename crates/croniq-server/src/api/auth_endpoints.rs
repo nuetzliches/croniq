@@ -23,7 +23,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
 use croniq_auth::crypto::{WrappedUnder, unwrap_totp_secret_with_previous};
@@ -946,6 +946,56 @@ fn verify_second_factor(
 /// equivalence the cookie would buy nothing — an XSS could POST here, have the
 /// browser attach the `HttpOnly` cookie for it, and read the fresh 7-day token
 /// out of the response.
+/// How long after its revocation a refresh token may still be presented
+/// without counting as reuse. Rotation races between tabs (issue #656) land
+/// within a second or two; anything later is a copy of a token that has
+/// already been exchanged or logged out.
+pub const REFRESH_REUSE_GRACE: chrono::Duration = chrono::Duration::seconds(60);
+
+/// Whether presenting this revoked row is a replay rather than a rotation
+/// race. A token past its own expiry is left alone: it is worthless anyway.
+fn refresh_reuse_detected(row: &RefreshToken, now: DateTime<Utc>) -> bool {
+    match row.revoked_at {
+        Some(revoked) => now > revoked + REFRESH_REUSE_GRACE && now <= row.expires_at,
+        None => false,
+    }
+}
+
+/// A refresh token that was already exchanged (or logged out) came back. One
+/// of the two holders is not the user, and the server cannot tell which, so
+/// every session of the account ends: all refresh tokens are revoked and the
+/// token generation is bumped, which also invalidates live access tokens
+/// (review 2026-10-24, A-9). Machine-client tokens have no account to end;
+/// they are audited only.
+fn end_sessions_after_reuse(store: &crate::store::DynStore, row: &RefreshToken) {
+    let actor = row.user_id.as_deref().unwrap_or(&row.client_id);
+    tracing::warn!(
+        actor,
+        "a refresh token was presented again after it had been rotated or revoked — \
+         ending every session of this account"
+    );
+    if let Some(user_id) = row.user_id.as_deref() {
+        let _ = store.revoke_refresh_tokens_for_user(user_id, Utc::now());
+        let _ = store.users_bump_token_generation(user_id);
+    }
+    audit::record_event(
+        store,
+        if row.user_id.is_some() {
+            "user"
+        } else {
+            "api_client"
+        },
+        Some(actor),
+        "auth.refresh_reuse_detected",
+        if row.user_id.is_some() {
+            "user"
+        } else {
+            "api_client"
+        },
+        Some(actor),
+    );
+}
+
 pub async fn handle_refresh(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -998,13 +1048,16 @@ pub async fn handle_refresh(
         // them nothing they did not already know, and a stolen one is a
         // compromise either way.
         None => {
-            let known = store
-                .refresh_token_is_known(&token_hash)
+            let row = store
+                .refresh_token_get(&token_hash)
                 .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
-            return Err(if known {
-                status_err(StatusCode::UNAUTHORIZED)
-            } else {
-                no_session_response()
+            return Err(match row {
+                Some(row) if refresh_reuse_detected(&row, Utc::now()) => {
+                    end_sessions_after_reuse(store, &row);
+                    no_session_response()
+                }
+                Some(_) => status_err(StatusCode::UNAUTHORIZED),
+                None => no_session_response(),
             });
         }
     };
@@ -1885,6 +1938,76 @@ mod tests {
             body_json(response).await["error"],
             "no_session",
             "a rotated token is not the same as no token — the retry needs it"
+        );
+    }
+
+    /// Review 2026-10-24, A-9: a token rotated away well before it comes back
+    /// is a replay, not a tab race. Every session of the account ends — the
+    /// sibling refresh token included — and the event is audited.
+    #[tokio::test]
+    async fn replaying_a_long_rotated_token_ends_every_session() {
+        let store = make_store();
+        let now = Utc::now();
+        let user = croniq_store::models::User {
+            user_id: "u-1".into(),
+            username: "alex".into(),
+            email: None,
+            display_name: None,
+            role: croniq_store::models::Role::Viewer,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        };
+        store.users_create(&user).unwrap();
+        let old = hash_api_key("stolen-and-replayed");
+        let live = hash_api_key("the-users-current-token");
+        for hash in [&old, &live] {
+            store
+                .create_refresh_token(&RefreshToken {
+                    token_hash: hash.clone(),
+                    client_id: "dashboard".into(),
+                    user_id: Some("u-1".into()),
+                    expires_at: now + chrono::Duration::days(7),
+                    revoked_at: None,
+                    created_at: now - chrono::Duration::hours(1),
+                })
+                .unwrap();
+        }
+        store
+            .revoke_refresh_token(&old, now - chrono::Duration::minutes(10))
+            .unwrap();
+        let generation = store.users_token_generation("u-1").unwrap();
+        let state = state_with(&store);
+
+        let response = match handle_refresh(
+            State(state),
+            HeaderMap::new(),
+            Json(RefreshRequest {
+                refresh_token: Some("stolen-and-replayed".into()),
+            }),
+        )
+        .await
+        {
+            Ok(_) => panic!("a replayed token must fail"),
+            Err(response) => response,
+        };
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            store.validate_refresh_token(&live).unwrap().is_none(),
+            "the account's other refresh token is revoked too"
+        );
+        assert_ne!(
+            store.users_token_generation("u-1").unwrap(),
+            generation,
+            "live access tokens are invalidated"
+        );
+        let audit = store.audit_list(&Default::default()).unwrap();
+        assert!(
+            audit
+                .iter()
+                .any(|e| e.action == "auth.refresh_reuse_detected"),
+            "the replay is audited"
         );
     }
 

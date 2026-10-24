@@ -1930,6 +1930,38 @@ impl AuthStore for PgStore {
         Ok(())
     }
 
+    fn refresh_token_get(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError> {
+        let mut db = self.lock();
+        let rows = db
+            .query(
+                "SELECT token_hash, client_id, user_id, expires_at, revoked_at, created_at FROM refresh_tokens WHERE token_hash = $1",
+                &[&token_hash],
+            )
+            .map_err(map_err)?;
+        Ok(rows.first().map(|row| RefreshToken {
+            token_hash: row.get(0),
+            client_id: row.get(1),
+            user_id: row.get(2),
+            expires_at: row.get(3),
+            revoked_at: row.get(4),
+            created_at: row.get(5),
+        }))
+    }
+
+    fn revoke_refresh_tokens_for_user(
+        &self,
+        user_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut db = self.lock();
+        db.execute(
+            "UPDATE refresh_tokens SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL",
+            &[&now, &user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
     fn users_create(&self, user: &User) -> Result<(), StoreError> {
         let mut db = self.lock();
         let role = user.role.as_str();
@@ -2128,7 +2160,7 @@ impl AuthStore for PgStore {
         invitation_id: &str,
         at: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         let n = db
             .execute(
                 "UPDATE invitations SET accepted_at = $1 \
@@ -2207,7 +2239,7 @@ impl AuthStore for PgStore {
         user_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut db = self.client.lock().unwrap();
+        let mut db = self.lock();
         db.execute(
             "UPDATE password_resets SET used_at = $1 WHERE user_id = $2 AND used_at IS NULL",
             &[&at, &user_id],

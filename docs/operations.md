@@ -914,13 +914,22 @@ reasonable operator expectation and it did not hold.
 
 Each user row now carries a `token_generation` counter (migration `025`). It is
 stamped into every access token as a claim and compared against the row on
-every JWT-authenticated request, and it is incremented on exactly three events:
+every JWT-authenticated request, and it is incremented on exactly four events:
 
 | Event | Endpoint |
 |---|---|
 | Password change | `POST /v1/users/me/change-password` |
 | Password reset completed | `POST /v1/auth/password-reset/confirm` |
 | User deactivated | `PATCH /v1/users/{id}` with `is_active: false` |
+| Refresh token replayed | `POST /v1/auth/refresh` with a token rotated or logged out more than 60 s earlier |
+
+**Refresh-token replay.** A refresh token is single-use: every refresh revokes
+it and issues a new one. When a revoked token comes back more than 60 seconds
+after it was revoked — longer than any race between two tabs refreshing at
+once — two parties hold the session and the server cannot tell which is the
+user. It ends all of them: every refresh token of the account is revoked, the
+counter is bumped, and `auth.refresh_reuse_detected` is audited. The user signs
+in again.
 
 Everything else — profile edits, role changes, `PATCH /v1/users/me` — leaves the
 counter alone. Signing someone out is a real cost, so it is spent only where the
