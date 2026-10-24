@@ -1056,7 +1056,7 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use croniq_config::compile::{DeadLetterConfig, RetryConfig, RunnerConfig};
     use croniq_runner::AppState;
-    use croniq_scheduler::{misfire::MisfirePolicy, schedule::Schedule, trigger::TriggerState};
+    use croniq_scheduler::{schedule::Schedule, trigger::TriggerState};
     use croniq_store::sqlite::SqliteStore;
     use pretty_assertions::assert_eq;
 
@@ -1105,7 +1105,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             Utc::now() - ChronoDuration::seconds(60),
         );
         trigger.next_fire_at = Some(Utc::now() - ChronoDuration::seconds(5));
@@ -1121,7 +1120,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            MisfirePolicy::FireNow,
             Utc::now(),
         )
     }
@@ -2056,7 +2054,6 @@ mod tests {
                 chrono_tz::UTC,
                 None,
                 None,
-                MisfirePolicy::FireNow,
                 Utc::now(),
             ),
         );
@@ -2107,7 +2104,6 @@ mod tests {
                 chrono_tz::UTC,
                 None,
                 None,
-                MisfirePolicy::FireNow,
                 Utc::now(),
             )
         };

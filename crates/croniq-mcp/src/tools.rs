@@ -2413,7 +2413,6 @@ mod tests {
                 "UTC".parse().unwrap(),
                 None,
                 None,
-                croniq_scheduler::misfire::MisfirePolicy::default(),
                 now,
             ),
         );

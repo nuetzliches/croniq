@@ -1399,10 +1399,10 @@ writes the corrected instant back to `job_states` immediately.
 
 It only ever moves a pending fire *earlier*, so nothing due can be lost this
 way. A pending fire that is already **overdue** is untouched — that is a missed
-fire, and `misfire_policy` decides what happens to it. Lengthening an interval
-needs no heal: the pending fire is sooner than the new interval would produce,
-it runs as the old schedule promised, and the new cadence takes over from
-there.
+fire, and the job's `catch_up` decides what happens to it. Lengthening an
+interval needs no heal: the pending fire is sooner than the new interval would
+produce, it runs as the old schedule promised, and the new cadence takes over
+from there.
 
 The effective instant is readable per job as `next_fire_at` in
 `GET /v1/jobs` / `GET /v1/jobs/{job_key}`, and exported as

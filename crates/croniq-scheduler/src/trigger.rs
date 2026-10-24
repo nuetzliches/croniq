@@ -7,7 +7,6 @@ use chrono::{DateTime, Duration, NaiveTime, Utc};
 use chrono_tz::Tz;
 
 use crate::calendar::Calendar;
-use crate::misfire::MisfirePolicy;
 use crate::schedule::Schedule;
 
 /// Trigger state.
@@ -33,7 +32,6 @@ pub struct Trigger {
     pub timezone: Tz,
     pub calendar: Option<Calendar>,
     pub window: Option<TimeWindow>,
-    pub misfire_policy: MisfirePolicy,
 
     /// Job must not fire before this time.
     pub not_before: Option<DateTime<Utc>>,
@@ -148,19 +146,10 @@ impl Trigger {
         timezone: Tz,
         calendar: Option<Calendar>,
         window: Option<TimeWindow>,
-        misfire_policy: MisfirePolicy,
         now: DateTime<Utc>,
     ) -> Self {
         Self::with_bounds(
-            job_key,
-            schedule,
-            timezone,
-            calendar,
-            window,
-            misfire_policy,
-            None,
-            None,
-            now,
+            job_key, schedule, timezone, calendar, window, None, None, now,
         )
     }
 
@@ -171,7 +160,6 @@ impl Trigger {
         timezone: Tz,
         calendar: Option<Calendar>,
         window: Option<TimeWindow>,
-        misfire_policy: MisfirePolicy,
         not_before: Option<DateTime<Utc>>,
         not_after: Option<DateTime<Utc>>,
         now: DateTime<Utc>,
@@ -182,7 +170,6 @@ impl Trigger {
             timezone,
             calendar,
             window,
-            misfire_policy,
             not_before,
             not_after,
             state: TriggerState::Armed,
@@ -323,8 +310,8 @@ impl Trigger {
     ///   with it the permanent "overdue" the stale instant otherwise reports
     ///   for a job that is doing exactly what it was told.
     /// - otherwise adopted as-is, past instants included: a gate-allowed
-    ///   overdue fire is a missed fire, and `MisfirePolicy::FireNow` catches
-    ///   it up once.
+    ///   overdue fire is a missed fire, which `evaluate` returns at once and
+    ///   [`Self::plan_missed_fires`] handles per the job's `catch_up`.
     ///
     /// The staleness heal only ever moves the pending fire *earlier* (it
     /// replaces `stored` with a strictly smaller instant), so no pending fire
@@ -633,15 +620,7 @@ mod tests {
     }
 
     fn make_trigger(schedule: Schedule, now: DateTime<Utc>) -> Trigger {
-        Trigger::new(
-            "test:job".into(),
-            schedule,
-            tz_utc(),
-            None,
-            None,
-            MisfirePolicy::FireNow,
-            now,
-        )
+        Trigger::new("test:job".into(), schedule, tz_utc(), None, None, now)
     }
 
     // Review 2026-10-24, D-10: the next interval fire was computed from the
@@ -779,7 +758,6 @@ mod tests {
             tz_utc(),
             Some(calendar),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
 
@@ -804,7 +782,6 @@ mod tests {
             tz_utc(),
             None,
             Some(window),
-            MisfirePolicy::FireNow,
             now,
         );
 
@@ -828,7 +805,6 @@ mod tests {
             tz_utc(),
             None,
             Some(window),
-            MisfirePolicy::FireNow,
             now,
         );
 
@@ -873,7 +849,6 @@ mod tests {
             tz_utc(),
             Some(business_hours_calendar()),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         // Still inside the window: plain interval advancement.
@@ -909,7 +884,6 @@ mod tests {
             tz_utc(),
             Some(calendar),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         assert_eq!(trigger.state, TriggerState::Armed);
@@ -926,7 +900,6 @@ mod tests {
             tz_utc(),
             Some(business_hours_calendar()),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         assert_eq!(trigger.state, TriggerState::Armed);
@@ -959,7 +932,6 @@ mod tests {
             tz_utc(),
             Some(calendar),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 4, 6, 9, 0)));
@@ -981,7 +953,6 @@ mod tests {
             tz_utc(),
             None,
             Some(window),
-            MisfirePolicy::FireNow,
             utc(2026, 3, 29, 0, 0),
         );
         assert!(trigger.next_fire_at.is_none());
@@ -1012,7 +983,6 @@ mod tests {
             tz_utc(),
             Some(calendar),
             Some(window),
-            MisfirePolicy::FireNow,
             now,
         );
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 12, 0)));
@@ -1035,7 +1005,6 @@ mod tests {
             tz,
             None,
             Some(window),
-            MisfirePolicy::FireNow,
             now,
         );
         assert_eq!(trigger.state, TriggerState::Armed);
@@ -1059,7 +1028,6 @@ mod tests {
                 start: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
                 end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
             }),
-            MisfirePolicy::FireNow,
             now,
         );
         // Saturday noon: calendar closed (weekday rule), trigger window open.
@@ -1098,7 +1066,7 @@ mod tests {
     #[test]
     fn overdue_pending_fire_is_adopted_not_recomputed() {
         // A gate-allowed instant in the past is a *missed* fire, which
-        // MisfirePolicy::FireNow catches up. Recomputing would swallow it.
+        // `catch_up` handles. Recomputing would swallow it.
         let now = utc(2026, 3, 29, 12, 4);
         let mut trigger = make_trigger(Schedule::Interval { seconds: 300 }, now);
         let missed = utc(2026, 3, 29, 11, 50);
@@ -1191,7 +1159,6 @@ mod tests {
             tz_utc(),
             Some(business_hours_calendar()),
             None,
-            MisfirePolicy::FireNow,
             now,
         );
         let saturday_pending = utc(2026, 3, 28, 13, 0);
@@ -1296,7 +1263,6 @@ mod tests {
             new_york(),
             Some(cal_in(vienna(), vec![weekdays()])),
             None,
-            MisfirePolicy::FireNow,
             None,
             None,
             utc(2026, 6, 5, 12, 0),
@@ -1321,7 +1287,6 @@ mod tests {
             new_york(),
             Some(cal_in(vienna(), vec![window_rule(8, 18)])),
             None,
-            MisfirePolicy::FireNow,
             utc(2026, 6, 10, 3, 0), // 05:00 Vienna — before the window
         );
 
@@ -1348,7 +1313,6 @@ mod tests {
             new_york(),
             Some(cal_in(vienna(), vec![window_rule(8, 9)])),
             None,
-            MisfirePolicy::FireNow,
             utc(2026, 3, 9, 12, 0),
         );
 
@@ -1374,7 +1338,6 @@ mod tests {
                 start: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
                 end: NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
             }),
-            MisfirePolicy::FireNow,
             utc(2026, 6, 10, 3, 0),
         );
 
@@ -1427,7 +1390,6 @@ mod tests {
             new_york(),
             Some(cal),
             None,
-            MisfirePolicy::FireNow,
             utc(2026, 10, 25, 1, 0),
         );
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 10, 25, 1, 15)));
@@ -1443,7 +1405,6 @@ mod tests {
             vienna(),
             Some(cal_in(vienna(), vec![weekdays(), window_rule(8, 18)])),
             None,
-            MisfirePolicy::FireNow,
             utc(2026, 6, 8, 3, 0), // Monday 05:00 Vienna
         );
         // 06:00 UTC = 08:00 Vienna.

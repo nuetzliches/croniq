@@ -15,7 +15,6 @@ use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
 use croniq_scheduler::{
     calendar::Calendar,
-    misfire::MisfirePolicy,
     schedule::Schedule,
     trigger::{MissedFires, MissedPlan, PendingFire, TimeWindow, Trigger, TriggerState},
 };
@@ -298,9 +297,6 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             None => chrono_tz::UTC,
         };
 
-        // Misfire policy: default FireNow (never skip a billing run)
-        let misfire = MisfirePolicy::FireNow;
-
         // Resolve calendar reference. A reference that does not resolve (the
         // calendar failed to compile, or is not defined) is a fault: under the
         // default `strict_calendars` policy the job is failed closed (paused)
@@ -329,7 +325,6 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
             tz,
             calendar,
             window,
-            misfire,
             not_before,
             not_after,
             now,
@@ -1042,7 +1037,6 @@ pub fn trigger_from_definition(
         tz,
         calendar,
         window,
-        MisfirePolicy::FireNow,
         not_before,
         not_after,
         now,
@@ -2132,7 +2126,7 @@ mod tests {
     #[test]
     fn restore_active_gate_allowed_past_instant_is_kept() {
         // A gate-ALLOWED instant in the past is a legitimately missed fire:
-        // MisfirePolicy::FireNow catches it up once. Restore must keep it
+        // `catch_up` decides what runs. Restore must keep it
         // verbatim and not touch the store.
         let mut cfg = load_str(GATED_JOB_SRC).unwrap();
         let store = make_store();

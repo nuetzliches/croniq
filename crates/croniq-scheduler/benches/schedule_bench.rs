@@ -3,7 +3,6 @@
 use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use croniq_scheduler::{
-    misfire::MisfirePolicy,
     schedule::{MonthDay, Schedule},
     trigger::Trigger,
 };
@@ -94,7 +93,6 @@ fn make_trigger(schedule: Schedule, now: chrono::DateTime<Utc>) -> Trigger {
         chrono_tz::UTC,
         None,
         None,
-        MisfirePolicy::FireNow,
         now,
     )
 }
@@ -165,7 +163,6 @@ fn bench_compute_next_fire_calendar(c: &mut Criterion) {
         chrono_tz::UTC,
         Some(calendar),
         None,
-        MisfirePolicy::FireNow,
         now,
     );
 

@@ -71,7 +71,6 @@ mod tests {
                         chrono_tz::UTC,
                         None,
                         None,
-                        crate::misfire::MisfirePolicy::default(),
                         chrono::Utc::now(),
                     ),
                 )

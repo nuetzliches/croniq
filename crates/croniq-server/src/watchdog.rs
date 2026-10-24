@@ -3350,7 +3350,6 @@ mod tests {
             chrono_tz::UTC,
             None,
             None,
-            croniq_scheduler::misfire::MisfirePolicy::default(),
             Utc::now(),
         )
     }
