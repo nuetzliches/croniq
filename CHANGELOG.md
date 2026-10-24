@@ -774,6 +774,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   README's `<VAR>_FILE` paragraph now says which variables the server reads
   from a file itself and which only the entrypoint does.
 
+- **"sslmode" in a Postgres password no longer weakens TLS** (review
+  2026-10-24, S-7). Whether the connection string set its own `sslmode` was
+  decided by a substring match, so a password, user or database name
+  containing "sslmode" counted as an explicit setting: the remote default
+  `require` and `CRONIQ_PG_SSLMODE` were ignored and the driver's `prefer`
+  applied, which falls back to cleartext against a server without TLS. Only a
+  real `sslmode` parameter — a query key in a URL, or a key in a key=value
+  string — counts now.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

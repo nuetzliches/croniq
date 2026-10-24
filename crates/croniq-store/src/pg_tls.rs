@@ -73,8 +73,74 @@ impl SslMode {
 /// Whether `spec` names an sslmode itself. `postgres::Config::get_ssl_mode`
 /// cannot answer this — it returns the driver default when the setting is
 /// absent, which is indistinguishable from an explicit `sslmode=prefer`.
+///
+/// Only an actual `sslmode` *parameter* counts: a key in the query string of
+/// a URL, or a key in a key=value string. A substring match also fired on a
+/// password, user or database name that merely contained "sslmode", which
+/// silently replaced the remote default `Require` and `CRONIQ_PG_SSLMODE` with
+/// the driver's `Prefer` — a cleartext fallback (review 2026-10-24, S-7).
 fn spec_sets_sslmode(spec: &str) -> bool {
-    spec.to_ascii_lowercase().contains("sslmode")
+    let spec = spec.trim();
+    let is_url = ["postgres://", "postgresql://"]
+        .iter()
+        .any(|p| spec.len() >= p.len() && spec[..p.len()].eq_ignore_ascii_case(p));
+    if is_url {
+        // The query starts at the first `?` after the userinfo, which ends at
+        // the last `@` (a literal `@` in a password must be percent-encoded,
+        // but be lenient about it).
+        let after_userinfo = spec.rfind('@').map_or(spec, |i| &spec[i + 1..]);
+        let Some((_, query)) = after_userinfo.split_once('?') else {
+            return false;
+        };
+        let query = query.split('#').next().unwrap_or("");
+        return query.split('&').any(|pair| {
+            pair.split('=')
+                .next()
+                .unwrap_or("")
+                .eq_ignore_ascii_case("sslmode")
+        });
+    }
+    keyword_value_keys(spec)
+        .iter()
+        .any(|k| k.eq_ignore_ascii_case("sslmode"))
+}
+
+/// The keys of a libpq key=value connection string, skipping values —
+/// including single-quoted ones that contain spaces or `=`.
+fn keyword_value_keys(spec: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut chars = spec.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.peek().is_none() {
+            break;
+        }
+        let mut key = String::new();
+        while let Some(c) = chars.next_if(|c| *c != '=' && !c.is_whitespace()) {
+            key.push(c);
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next_if_eq(&'=').is_none() {
+            // Not key=value; the driver will reject the string anyway.
+            break;
+        }
+        keys.push(key);
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next_if_eq(&'\'').is_some() {
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => {
+                        chars.next();
+                    }
+                    '\'' => break,
+                    _ => {}
+                }
+            }
+        } else {
+            while chars.next_if(|c| !c.is_whitespace()).is_some() {}
+        }
+    }
+    keys
 }
 
 /// True when every host in the connection is loopback or a unix socket, i.e.
@@ -268,6 +334,35 @@ mod tests {
             resolve_ssl_mode(spec, &cfg(spec)).unwrap(),
             SslMode::Require
         );
+    }
+
+    /// Review 2026-10-24, S-7: "sslmode" inside a password, user or database
+    /// name is not a setting, and must not switch a remote connection from
+    /// `Require` to the driver's `Prefer`.
+    #[test]
+    fn sslmode_in_a_value_is_not_a_setting() {
+        for spec in [
+            "postgres://croniq:x-sslmode-y@db.internal/croniq",
+            "postgres://sslmode:pw@db.internal/sslmode",
+            "postgres://croniq:pw@db.internal/croniq?application_name=sslmode",
+            "host=db.internal user=croniq password='a sslmode=disable b' dbname=croniq",
+            "host=db.internal user=sslmode dbname=croniq",
+        ] {
+            assert!(!spec_sets_sslmode(spec), "{spec}");
+            assert_eq!(
+                resolve_ssl_mode(spec, &cfg(spec)).unwrap(),
+                SslMode::Require,
+                "{spec} is remote and sets no sslmode"
+            );
+        }
+        for spec in [
+            "postgres://croniq:pw@db.internal/croniq?sslmode=prefer",
+            "postgresql://croniq:pw@db.internal/croniq?connect_timeout=5&SSLMODE=disable",
+            "host=db.internal sslmode = prefer",
+            "sslmode=require host=db.internal",
+        ] {
+            assert!(spec_sets_sslmode(spec), "{spec}");
+        }
     }
 
     #[test]
