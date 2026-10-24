@@ -1,7 +1,7 @@
 import { onScopeDispose, ref, shallowRef } from 'vue'
 import { createSseStream } from '~/lib/sse'
 import { ClockOffset, type LiveFrame, type LiveRun } from '~/lib/live-timeline'
-import { refreshAccessToken } from '~/api/session'
+import { refreshSession } from '~/api/session'
 import { useAuthStore } from '~/stores/auth'
 
 /**
@@ -30,7 +30,7 @@ export function useExecutionsStream() {
   const stop = createSseStream({
     url: () => '/v1/executions/stream',
     getToken: () => auth.token,
-    refresh: async () => (await refreshAccessToken()) !== null,
+    refresh: async () => (await refreshSession()).kind,
     onOpen: () => (connected.value = true),
     onClose: () => (connected.value = false),
     // 403: the session lacks `executions:read`. 404: a server older than the

@@ -14,29 +14,41 @@ import { useAuthStore } from '~/stores/auth'
  * `localStorage` fallback is gone rather than carried along unused.
  */
 
-interface TokenReply {
-  access_token: string
-}
+/**
+ * What a refresh attempt established.
+ *
+ * Three answers, not two (review 2026-10-24, U-1/U-3). `null` used to stand for
+ * both "the session is over" and "the server could not be asked" — a network
+ * error, a 502 from the proxy during a restart, a 200 that was not JSON. The
+ * SSE streams took the second for the first and ended for good, leaving the
+ * page signed in behind stale data; every list said "Session expired" to a
+ * user who was still signed in. Only `ended` clears the store.
+ */
+export type RefreshOutcome =
+  | { kind: 'renewed'; token: string }
+  /** The server rejected the session; the store has been cleared. */
+  | { kind: 'ended' }
+  /** No verdict: the server could not be reached or answered nonsense. */
+  | { kind: 'unreachable' }
 
-let inFlight: Promise<string | null> | null = null
+let inFlight: Promise<RefreshOutcome> | null = null
 
 /**
- * Exchange the refresh cookie for a new access token, or `null` when there is
- * no usable session.
+ * Exchange the refresh cookie for a new access token.
  *
  * Single-flight: a page full of queries hitting 401 at once must produce one
  * refresh, not one per request. Beyond the wasted round-trips, the refresh
  * token **rotates** — parallel calls would each revoke the previous one's
  * successor, and the last one standing would sign the user out.
  */
-export function refreshAccessToken(): Promise<string | null> {
+export function refreshSession(): Promise<RefreshOutcome> {
   inFlight ??= runRefresh(true).finally(() => {
     inFlight = null
   })
   return inFlight
 }
 
-async function runRefresh(allowRetry: boolean): Promise<string | null> {
+async function runRefresh(allowRetry: boolean): Promise<RefreshOutcome> {
   let response: Response
   try {
     response = await fetch('/v1/auth/refresh', {
@@ -46,9 +58,10 @@ async function runRefresh(allowRetry: boolean): Promise<string | null> {
     })
   } catch {
     // A network failure is not an auth failure, so it does not decide that the
-    // session is over. It reports "no token" and leaves the verdict to the
-    // caller — which, with no access token in hand, means signing in again.
-    return null
+    // session is over. The caller decides what "no answer" means for it: the
+    // bootstrap has no token and signs in again, a stream backs off and asks
+    // later.
+    return { kind: 'unreachable' }
   }
 
   if (response.status === 401) {
@@ -65,13 +78,30 @@ async function runRefresh(allowRetry: boolean): Promise<string | null> {
     // succeed.
     if (allowRetry && !(await isNoSession(response))) return runRefresh(false)
     useAuthStore().clear()
+    return { kind: 'ended' }
+  }
+  // A 5xx is the proxy or a restarting server, not a verdict on the session.
+  if (!response.ok) return { kind: 'unreachable' }
+
+  // A 200 is only an answer if it carries a token. A proxy that falls back to
+  // `index.html` for unknown paths, or a captive portal, answers 200 with HTML:
+  // an unguarded `json()` threw out of the bootstrap and left the app on a
+  // blank page, and JSON without `access_token` marked the store
+  // `authenticated` with no token in it (review 2026-10-24, U-2).
+  const token = await readAccessToken(response)
+  if (token === null) return { kind: 'unreachable' }
+  useAuthStore().setToken(token)
+  return { kind: 'renewed', token }
+}
+
+async function readAccessToken(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { access_token?: unknown } | null
+    const token = body?.access_token
+    return typeof token === 'string' && token !== '' ? token : null
+  } catch {
     return null
   }
-  if (!response.ok) return null
-
-  const reply = (await response.json()) as TokenReply
-  useAuthStore().setToken(reply.access_token)
-  return reply.access_token
 }
 
 /**
@@ -92,12 +122,6 @@ async function isNoSession(response: Response): Promise<boolean> {
   }
 }
 
-/**
- * Establish session state at app start.
- *
- * Resolves once the store has left `'unknown'`. A first-ever visit gets a 401
- * here — the expected answer, not an error.
- */
 /**
  * Keys the React dashboard kept tokens under, before #454.
  *
@@ -123,9 +147,23 @@ export function forgetLegacyTokens() {
   }
 }
 
+/**
+ * Establish session state at app start.
+ *
+ * Resolves once the store has left `'unknown'`. A first-ever visit gets a 401
+ * here — the expected answer, not an error.
+ */
 export async function bootstrap(): Promise<void> {
-  const token = await refreshAccessToken()
-  if (!token) useAuthStore().clear()
+  // Never rejects, and never leaves the store `unknown`: the router guard waits
+  // for it to leave that state, so anything else is a blank page with no
+  // diagnosis (review 2026-10-24, U-2). With no token in hand, "the server
+  // could not be asked" means the same as "no session" here — sign in.
+  try {
+    const outcome = await refreshSession()
+    if (outcome.kind !== 'renewed') useAuthStore().clear()
+  } catch {
+    useAuthStore().clear()
+  }
 }
 
 /**

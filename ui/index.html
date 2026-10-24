@@ -2,6 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Fallback for a dist/ served by a web server that sends no CSP of its own
+      (ADR-0005, point 2; review 2026-10-24, U-7). croniq-server and the
+      croniq-ui container send the real policy as a header; a browser enforces
+      both, so this copy must never be looser or stricter than
+      CONTENT_SECURITY_POLICY in crates/croniq-server/src/api/hardening.rs.
+      It is that policy without `frame-ancestors`, which browsers ignore in a
+      meta tag. `app/lib/meta-csp.test.ts` holds the two together. First in
+      <head> because a meta policy covers only what comes after it.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Croniq</title>
     <!-- Croniq favicon + PWA wiring. -->

@@ -46,6 +46,20 @@ export async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
 }
 
+/** This origin's `localStorage`, or `null` where the page has none to read. */
+async function readStorage(page: Page): Promise<Record<string, string> | null> {
+  try {
+    return await page.evaluate(() => {
+      // Sorted, so two reads of the same contents compare equal as JSON.
+      const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).sort()
+      return Object.fromEntries(keys.map((key) => [key, localStorage.getItem(key)!]))
+    })
+  } catch {
+    // `about:blank`, a closed page, a navigation in progress: nothing to keep.
+    return null
+  }
+}
+
 /**
  * One signed-in page, shared by every spec in the worker.
  *
@@ -63,16 +77,11 @@ export async function login(page: Page) {
  * browser tab does, and costs one login per run instead of one per test —
  * which also keeps the suite clear of the per-IP login throttle (30 attempts
  * per five minutes, #428) as it grows.
- *
- * Tests share this page, so anything a test toggles it must toggle back.
  */
-// The first slot is Playwright's per-test fixtures, of which this file adds
-// none. It has to be an empty object type rather than `Record<string, never>`:
-// the latter's index signature forces every fixture — `app` included — to
-// `never`, and the extend call stops type checking.
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export const test = base.extend<{}, { app: Page }>({
-  app: [
+// The first slot is the per-test fixtures (`app`), the second the per-worker
+// ones (`signedIn`).
+export const test = base.extend<{ app: Page }, { signedIn: Page }>({
+  signedIn: [
     async ({ browser }, use) => {
       const context = await browser.newContext()
       const page = await context.newPage()
@@ -82,6 +91,42 @@ export const test = base.extend<{}, { app: Page }>({
     },
     { scope: 'worker' },
   ],
+
+  /**
+   * The shared page, put back the way the test found it.
+   *
+   * Tests share one page, so a preference one of them changes — theme,
+   * sidebar, the timeline's lane order or hover hold, all per-browser and kept
+   * in `localStorage` — reaches every test after it. Each spec used to toggle
+   * its changes back by hand at the end, which a failing assertion skipped:
+   * the next test inherited the state and failed for a reason of someone
+   * else's, and the CI retry hid it (review 2026-10-24, U-5).
+   *
+   * Restored here, after every test whether it passed or not. Only when
+   * something changed is the page reloaded, so the app re-reads what it keeps
+   * in memory; tests that change nothing pay nothing. A second tab a test
+   * opened is closed, and the pointer leaves whatever it was hovering.
+   *
+   * Server-side state (favorites, notes) is not covered: a spec that creates
+   * it still removes it in a `finally` or an `afterAll`.
+   */
+  app: async ({ signedIn: page }, use) => {
+    const saved = await readStorage(page)
+    await use(page)
+
+    for (const other of page.context().pages()) {
+      if (other !== page) await other.close()
+    }
+    if (page.isClosed() || saved === null) return
+    await page.mouse.move(0, 0)
+    const now = await readStorage(page)
+    if (now === null || JSON.stringify(now) === JSON.stringify(saved)) return
+    await page.evaluate((entries) => {
+      localStorage.clear()
+      for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value)
+    }, saved)
+    await page.reload()
+  },
 })
 
 export { expect }

@@ -85,6 +85,13 @@ attributes), `img-src 'self' data:`, `connect-src 'self'`,
 `form-action 'self'`. The exact value and per-directive rationale live in
 [`hardening.rs`](../crates/croniq-server/src/api/hardening.rs).
 
+The dashboard's `index.html` carries the same policy as a
+`<meta http-equiv="Content-Security-Policy">` tag, without `frame-ancestors`
+(which a meta tag cannot express), so a `dist/` served by a web server of your
+own still runs under a CSP. The header is the one that counts: browsers apply
+both, and the two are kept identical. If you serve `dist/` yourself, send
+`frame-ancestors 'none'` (or `X-Frame-Options: DENY`) as a header there.
+
 `Strict-Transport-Security` is **not** set by croniq-server: it does not
 terminate TLS itself, and HSTS sent over plain HTTP is ignored by browsers
 anyway. If you terminate TLS in front of Croniq (reverse proxy, ingress,

@@ -23,8 +23,8 @@ const queries: Array<{
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({ token: 'access-token', isAuthenticated: true }),
 }))
-vi.mock('~/api/session', () => ({ refreshAccessToken: vi.fn() }))
-vi.mock('./session', () => ({ refreshAccessToken: vi.fn() }))
+vi.mock('~/api/session', () => ({ refreshSession: vi.fn() }))
+vi.mock('./session', () => ({ refreshSession: vi.fn() }))
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: (options: { enabled?: { value: boolean }; refetchInterval?: unknown }) => {
     queries.push(options)
