@@ -116,6 +116,23 @@ impl IntoResponse for JobError {
     }
 }
 
+/// The `500` an adopt/unadopt store failure answers with.
+///
+/// The store's own error text (rusqlite / tokio-postgres: table and column
+/// names, at worst DSN fragments) went into the response body here, where
+/// every other handler answers a bare `500` (review 2026-10-24, P-10). It goes
+/// to the log instead, and the caller learns which step failed.
+fn store_failure(what: &str, e: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    tracing::warn!(error = %e, "{what}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": "store_error",
+            "message": what,
+        })),
+    )
+}
+
 /// Validate a caller-supplied `timeout` on a job write path.
 ///
 /// DSL-defined jobs get this at compile time; jobs created or updated through
@@ -1131,15 +1148,9 @@ pub async fn handle_adopt(
 
     let now = Utc::now();
     let job_def = synth_job_def_from_dsl(&cfg, now);
-    store.create_job_definition(&job_def).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "store_error",
-                "message": format!("failed to persist adopted job: {e}"),
-            })),
-        )
-    })?;
+    store
+        .create_job_definition(&job_def)
+        .map_err(|e| store_failure("failed to persist adopted job", e))?;
 
     // Trigger gets a real UUID and managed_by="api"; everything else mirrors
     // the synthetic trigger the loader builds from the same JobConfig.
@@ -1171,15 +1182,9 @@ pub async fn handle_adopt(
         created_at: now,
         updated_at: now,
     };
-    store.create_trigger(&trigger_def).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "store_error",
-                "message": format!("failed to persist adopted trigger: {e}"),
-            })),
-        )
-    })?;
+    store
+        .create_trigger(&trigger_def)
+        .map_err(|e| store_failure("failed to persist adopted trigger", e))?;
 
     store
         .insert_adoption(&DslAdoption {
@@ -1188,15 +1193,7 @@ pub async fn handle_adopt(
             adopted_at: now,
             adopted_by: Some(ctx.caller_id.clone()),
         })
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "store_error",
-                    "message": format!("failed to record adoption: {e}"),
-                })),
-            )
-        })?;
+        .map_err(|e| store_failure("failed to record adoption", e))?;
 
     // Drop the DSL entry from the in-memory snapshot so the API list stops
     // double-counting until the next reload re-emits a filtered set.
@@ -1255,15 +1252,9 @@ pub async fn handle_unadopt(
         Json(serde_json::json!({"error": "no_store", "message": "store unavailable"})),
     ))?;
 
-    let was_adopted = store.is_adopted("job", &job_key).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "store_error",
-                "message": format!("adoption lookup failed: {e}"),
-            })),
-        )
-    })?;
+    let was_adopted = store
+        .is_adopted("job", &job_key)
+        .map_err(|e| store_failure("adoption lookup failed", e))?;
     if !was_adopted {
         return Err((
             StatusCode::CONFLICT,
@@ -1279,40 +1270,22 @@ pub async fn handle_unadopt(
     // Delete any API-managed triggers belonging to this job. There may be
     // more than one if the user added schedules after adoption — drop them
     // all so the DSL trigger gets a clean slate on next reload.
-    let triggers = store.list_triggers(Some(&job_key)).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "store_error",
-                "message": format!("failed to list triggers: {e}"),
-            })),
-        )
-    })?;
+    let triggers = store
+        .list_triggers(Some(&job_key))
+        .map_err(|e| store_failure("failed to list triggers", e))?;
     for t in &triggers {
         if t.managed_by == "api" {
             store.delete_trigger(&t.trigger_id).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": "store_error",
-                        "message": format!("failed to delete trigger {}: {e}", t.trigger_id),
-                    })),
-                )
+                store_failure(&format!("failed to delete trigger {}", t.trigger_id), e)
             })?;
         }
     }
     // Also drop the API job definition so the DSL one isn't shadowed.
     let _ = store.delete_job_definition(&job_key);
 
-    store.delete_adoption("job", &job_key).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "store_error",
-                "message": format!("failed to clear adoption: {e}"),
-            })),
-        )
-    })?;
+    store
+        .delete_adoption("job", &job_key)
+        .map_err(|e| store_failure("failed to clear adoption", e))?;
 
     // Tell the live scheduler to drop the job now — the DSL trigger comes
     // back on next reload (file change or admin endpoint).
@@ -2197,6 +2170,29 @@ mod tests {
         .await;
         assert_eq!(status, 409);
         assert_eq!(body["error"], "adoption_disabled");
+    }
+
+    /// The adopt handler put the store's own error text into the response
+    /// body, table names and all; every other handler answers a bare `500`
+    /// (review 2026-10-24, P-10).
+    #[tokio::test]
+    async fn adopt_store_failure_does_not_echo_the_store_error() {
+        let faulty = crate::fault_store::FaultStore::wrap(make_store());
+        faulty.arm_job_definition_write();
+        let store: DynStore = faulty;
+        let state = make_state_with_policy(vec![dsl_job("billing:invoice")], store, true);
+
+        let (status, body) = body_json(
+            server_router(state),
+            "POST",
+            "/v1/jobs/billing:invoice/adopt",
+        )
+        .await;
+        assert_eq!(status, 500);
+        assert_eq!(body["error"], "store_error");
+        let text = body.to_string();
+        assert!(!text.contains("job_definitions"), "{text}");
+        assert!(!text.contains("injected"), "{text}");
     }
 
     #[tokio::test]

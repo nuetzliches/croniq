@@ -42,6 +42,9 @@ pub struct FaultStore {
     /// `append_logs_batch` returns a database error while set. Drives the
     /// events endpoint's `503` (review 2026-10-24, P-11).
     pub fail_append_logs: AtomicBool,
+    /// `create_job_definition` returns a database error while set. Drives the
+    /// adopt handler's store-failure body (review 2026-10-24, P-10).
+    pub fail_job_definition_write: AtomicBool,
     /// Called just before every `create_execution_and_advance_job_state`
     /// delegates — the scheduler's per-fire write. Lets a test look at what
     /// the rest of the system can see while a tick is mid-wave (issue #841).
@@ -58,6 +61,7 @@ impl FaultStore {
             fail_group_count: AtomicBool::new(false),
             fail_job_count: AtomicBool::new(false),
             fail_append_logs: AtomicBool::new(false),
+            fail_job_definition_write: AtomicBool::new(false),
             on_fire_persist: std::sync::Mutex::new(None),
         })
     }
@@ -80,6 +84,10 @@ impl FaultStore {
 
     pub fn arm_append_logs(&self) {
         self.fail_append_logs.store(true, Ordering::SeqCst);
+    }
+
+    pub fn arm_job_definition_write(&self) {
+        self.fail_job_definition_write.store(true, Ordering::SeqCst);
     }
 }
 
@@ -273,8 +281,16 @@ impl AuthStore for FaultStore {
 }
 
 impl JobDefinitionStore for FaultStore {
+    fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
+        if self.fail_job_definition_write.load(Ordering::SeqCst) {
+            return Err(StoreError::Database(
+                "injected failure: no such table: job_definitions".into(),
+            ));
+        }
+        self.inner.create_job_definition(job)
+    }
+
     delegate! {
-        create_job_definition(job: &JobDefinition) -> ();
         get_job_definition(job_key: &str) -> Option<JobDefinition>;
         list_job_definitions() -> Vec<JobDefinition>;
         delete_job_definition(job_key: &str) -> ();

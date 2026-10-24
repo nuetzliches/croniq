@@ -127,6 +127,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   release the binding and requeue the runner's claims, and a claim the
   registry refuses mid-poll goes back to the queue.
 
+- **Store errors no longer reach API and MCP callers verbatim** (review
+  2026-10-24, P-10). The job adopt/unadopt endpoints and every MCP tool put
+  the database driver's error text (table and column names, at worst parts of
+  the connection string) into their answer, which over `/mcp` lands in an LLM
+  agent's context. They now say which step failed and log the detail, as the
+  other endpoints do.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
