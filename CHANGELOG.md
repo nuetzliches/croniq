@@ -422,6 +422,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   UTF-8 is replaced instead of ending the stream. Job output mirrored into the
   runner's own log can be switched off with
   `RUST_LOG=info,shell_runner::pipe=off` (R-12).
+- **The README tells you to back up `jwt.secret`** (review 2026-10-24, C-4).
+  Its environment table gave the default of `CRONIQ_JWT_SECRET` as "random
+  per-start". The server actually creates `$CRONIQ_DATA_DIR/jwt.secret` on
+  first boot and keeps using it, and that file signs every token and derives
+  the key that encrypts stored TOTP secrets. An operator who believed the
+  table would not back it up, and losing it signs everyone out and makes
+  every enrolled second factor undecryptable. The table now says so and
+  lists the variables it was missing (`CRONIQ_DATA_DIR`, `CRONIQ_DB`,
+  `CRONIQ_PG_*`, `CRONIQ_OIDC_*`, `CRONIQ_PASSWORD_LOGIN_ENABLED`,
+  `CRONIQ_REQUIRE_TOTP`, `CRONIQ_RUNNER_ENV_PASSTHROUGH`, the demo flags).
+  `SECURITY.md` replaces a support table stuck at 0.10.x with the rule it
+  stated: only the latest minor line gets security fixes (C-11).
 
 ### Security
 
@@ -7659,3 +7671,65 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warnings (`unused must_use`, `unit_arg`, stale imports) that had
   accumulated under the old non-`--all-targets` clippy invocation are
   cleaned up.
+
+[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/nuetzliches/croniq/compare/v0.48.1...v0.49.0
+[0.48.1]: https://github.com/nuetzliches/croniq/compare/v0.48.0...v0.48.1
+[0.48.0]: https://github.com/nuetzliches/croniq/compare/v0.47.1...v0.48.0
+[0.47.1]: https://github.com/nuetzliches/croniq/compare/v0.47.0...v0.47.1
+[0.47.0]: https://github.com/nuetzliches/croniq/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/nuetzliches/croniq/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/nuetzliches/croniq/compare/v0.44.0...v0.45.0
+[0.44.0]: https://github.com/nuetzliches/croniq/compare/v0.43.0...v0.44.0
+[0.43.0]: https://github.com/nuetzliches/croniq/compare/v0.42.1...v0.43.0
+[0.42.1]: https://github.com/nuetzliches/croniq/compare/v0.42.0...v0.42.1
+[0.42.0]: https://github.com/nuetzliches/croniq/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/nuetzliches/croniq/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/nuetzliches/croniq/compare/v0.39.1...v0.40.0
+[0.39.1]: https://github.com/nuetzliches/croniq/compare/v0.39.0...v0.39.1
+[0.39.0]: https://github.com/nuetzliches/croniq/compare/v0.38.0...v0.39.0
+[0.38.0]: https://github.com/nuetzliches/croniq/compare/v0.37.0...v0.38.0
+[0.37.0]: https://github.com/nuetzliches/croniq/compare/v0.36.0...v0.37.0
+[0.36.0]: https://github.com/nuetzliches/croniq/compare/v0.35.2...v0.36.0
+[0.35.2]: https://github.com/nuetzliches/croniq/compare/v0.35.1...v0.35.2
+[0.35.1]: https://github.com/nuetzliches/croniq/compare/v0.35.0...v0.35.1
+[0.35.0]: https://github.com/nuetzliches/croniq/compare/v0.34.0...v0.35.0
+[0.34.0]: https://github.com/nuetzliches/croniq/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/nuetzliches/croniq/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/nuetzliches/croniq/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/nuetzliches/croniq/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/nuetzliches/croniq/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/nuetzliches/croniq/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/nuetzliches/croniq/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/nuetzliches/croniq/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/nuetzliches/croniq/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/nuetzliches/croniq/compare/v0.24.1...v0.25.0
+[0.24.1]: https://github.com/nuetzliches/croniq/compare/v0.24.0...v0.24.1
+[0.24.0]: https://github.com/nuetzliches/croniq/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/nuetzliches/croniq/compare/v0.22.3...v0.23.0
+[0.22.3]: https://github.com/nuetzliches/croniq/compare/v0.22.2...v0.22.3
+[0.22.2]: https://github.com/nuetzliches/croniq/compare/v0.22.1...v0.22.2
+[0.22.1]: https://github.com/nuetzliches/croniq/compare/v0.22.0...v0.22.1
+[0.22.0]: https://github.com/nuetzliches/croniq/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/nuetzliches/croniq/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/nuetzliches/croniq/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/nuetzliches/croniq/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/nuetzliches/croniq/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/nuetzliches/croniq/compare/v0.17.3...v0.18.0
+[0.17.3]: https://github.com/nuetzliches/croniq/compare/v0.17.2...v0.17.3
+[0.17.2]: https://github.com/nuetzliches/croniq/compare/v0.17.1...v0.17.2
+[0.17.1]: https://github.com/nuetzliches/croniq/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/nuetzliches/croniq/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/nuetzliches/croniq/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/nuetzliches/croniq/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/nuetzliches/croniq/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/nuetzliches/croniq/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/nuetzliches/croniq/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/nuetzliches/croniq/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/nuetzliches/croniq/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/nuetzliches/croniq/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/nuetzliches/croniq/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/nuetzliches/croniq/compare/v0.7.0...v0.9.0
+[0.7.0]: https://github.com/nuetzliches/croniq/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nuetzliches/croniq/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nuetzliches/croniq/releases/tag/v0.5.0

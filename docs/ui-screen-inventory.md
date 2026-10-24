@@ -1,3 +1,10 @@
+> **Reading note.** This document is maintained for the Vue 3 dashboard in
+> `ui/`. Where it says "the React tree", "the React version" or names
+> `ui/src/` or a `*.tsx` file, it means the React dashboard that was removed
+> in v0.39.0 ([ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md)); those
+> files no longer exist and serve only as the baseline the rebuild was
+> measured against.
+
 # Phase 0: screen inventory for the Vue rebuild
 
 As of 2026-09-10. Result of the design phase from

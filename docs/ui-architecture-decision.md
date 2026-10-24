@@ -1,3 +1,11 @@
+> **Decided and implemented (2026-09-14).** Both decisions weighed here were
+> taken: the dashboard ships as its own `croniq-ui` image beside
+> `croniq-server` and the combined image (#587, #598), and it was rebuilt in
+> Vue — see [ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md). Every
+> `ui/`, `ui/src/` and `*.tsx` path below describes the **React** tree that
+> was removed in v0.39.0; `ui/` now holds the Vue 3 dashboard. Kept as the
+> record of the trade-offs, not as a description of the current code.
+
 # Trade-offs: UI container split + Vue rebuild
 
 As of 2026-09-09. Basis: analysis of the current state of `ui/`, `Dockerfile`, `crates/croniq-server`,

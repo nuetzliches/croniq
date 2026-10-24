@@ -1,6 +1,6 @@
 > **Superseded (2026-09-14).** This brief plans the dashboard rebuild as a
 > series of PRs against the **React** tree that lived in `ui/src/`. That tree
-> was removed in v0.38.0 and `ui/` now holds the Vue 3 rebuild — see
+> was removed in v0.39.0 and `ui/` now holds the Vue 3 rebuild — see
 > [ADR-0004](adr/0004-vue-rebuild-for-the-dashboard.md). Every path, component
 > and file name below refers to code that no longer exists.
 >
