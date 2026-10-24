@@ -20,7 +20,7 @@
 //! | `list_executions`  | List recent executions, by state / job key / job-key search (requires --data-dir) |
 //! | `get_execution_logs` | Read captured logs for an execution (requires --data-dir) |
 //! | `enqueue_job`      | Schedule a new execution (requires --mutations) |
-//! | `cancel_execution` | Remove a pending execution (requires --mutations) |
+//! | `cancel_execution` | Cancel a queued or running execution (requires --mutations) |
 //! | `job_trigger`      | Fire a job immediately (requires --mutations) |
 //! | `list_schedules`   | List store-managed trigger definitions (requires --data-dir) |
 //! | `get_schedule`     | Fetch one schedule by trigger UUID (requires --data-dir) |

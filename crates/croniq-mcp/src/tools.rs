@@ -26,7 +26,7 @@
 //! | Tool                  | Description                                          |
 //! |-----------------------|------------------------------------------------------|
 //! | `enqueue_job`         | Add a work item to the dispatch queue                |
-//! | `cancel_execution`    | Remove a pending execution from queue                |
+//! | `cancel_execution`    | Cancel a queued or running execution                 |
 //! | `job_trigger`         | Fire a job immediately                               |
 //! | `create_job`          | Create a store-managed job (`--data-dir`)            |
 //! | `update_job`          | Patch mutable job metadata (`--data-dir`)            |
@@ -1186,10 +1186,17 @@ impl CroniqMcp {
         ))
     }
 
-    /// Cancel a pending execution before it is dispatched to a runner.
-    /// Has no effect if the execution has already been claimed.
+    /// Cancel an execution, queued or running, as
+    /// `POST /v1/executions/{id}/cancel` does.
+    ///
+    /// The description used to say "no effect if already dispatched", while
+    /// `store.cancel_execution` flipped a `claimed` row to `cancelled` too —
+    /// without telling the runner. The runner went on working, its ack failed
+    /// the CAS, and the history said "cancelled" about a run that finished
+    /// (review 2026-10-24, P-7). A claimed execution now has the cancel pushed
+    /// to its runner, which aborts it on its next poll.
     #[tool(
-        description = "Cancel a pending execution. Has no effect if already dispatched to a runner. Requires --mutations."
+        description = "Cancel an execution. A queued one is removed from the queue; one already running on a runner is cancelled there too (the runner aborts it on its next poll). A finished execution cannot be cancelled. Requires --mutations."
     )]
     async fn cancel_execution(
         &self,
@@ -1203,22 +1210,65 @@ impl CroniqMcp {
             queue.remove(&p.execution_id)
         };
 
-        // Also cancel in the persistent store (best-effort).
-        if let Some(store) = &self.store
-            && let Ok(id) = Uuid::parse_str(&p.execution_id)
-        {
-            let now = Utc::now();
-            let _ = store.cancel_execution(id, now);
-        }
+        let queue_only = || {
+            if removed {
+                format!("Execution '{}' removed from queue.", p.execution_id)
+            } else {
+                format!(
+                    "Execution '{}' was not in the queue (may already be dispatched or never existed).",
+                    p.execution_id
+                )
+            }
+        };
+        // No store, or an id that cannot name a store row: the queue is all
+        // there is.
+        let (Some(store), Ok(id)) = (&self.store, Uuid::parse_str(&p.execution_id)) else {
+            return Ok(queue_only());
+        };
+        let execution = store
+            .get_execution(id)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let Some(execution) = execution else {
+            return Ok(queue_only());
+        };
 
-        Ok(if removed {
-            format!("Execution '{}' removed from queue.", p.execution_id)
-        } else {
-            format!(
-                "Execution '{}' was not in the queue (may already be dispatched or never existed).",
+        let now = Utc::now();
+        match execution.state {
+            ExecutionState::Cancelled => Ok(format!(
+                "Execution '{}' was already cancelled.",
                 p.execution_id
-            )
-        })
+            )),
+            ExecutionState::Queued => {
+                store
+                    .cancel_execution(id, now)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                Ok(format!("Execution '{}' cancelled.", p.execution_id))
+            }
+            ExecutionState::Claimed => {
+                // Pushed before the store flip, in the HTTP handler's order.
+                if let Some(runner_id) = execution.runner_id.as_deref() {
+                    self.state.push_cancel(runner_id, &p.execution_id).await;
+                }
+                store
+                    .cancel_execution(id, now)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                Ok(format!(
+                    "Execution '{}' cancelled; runner '{}' aborts it on its next poll.",
+                    p.execution_id,
+                    execution.runner_id.as_deref().unwrap_or("unknown")
+                ))
+            }
+            ExecutionState::Completed | ExecutionState::Failed | ExecutionState::Dead => {
+                Err(McpError::invalid_params(
+                    format!(
+                        "Execution '{}' has already finished ({}); there is nothing to cancel.",
+                        p.execution_id,
+                        execution.state.as_str()
+                    ),
+                    None,
+                ))
+            }
+        }
     }
 
     /// Immediately fire a job by enqueuing a new execution.
@@ -3228,6 +3278,69 @@ mod tests {
             .unwrap();
 
         assert!(result.contains("not in the queue"));
+    }
+
+    /// A claimed execution was flipped to `cancelled` in the store with no
+    /// word to its runner: the run went on, its ack failed the CAS, and the
+    /// history called it cancelled (review 2026-10-24, P-7). The cancel now
+    /// reaches the runner, as `POST /v1/executions/{id}/cancel` does.
+    #[tokio::test]
+    async fn cancel_execution_on_a_claimed_run_tells_its_runner() {
+        let server = make_server_with_mutations();
+        let store = server.store.clone().unwrap();
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        store
+            .create_execution(&croniq_store::models::Execution {
+                id,
+                job_key: "etl:nightly".into(),
+                fire_at: now,
+                scheduled_for: now,
+                attempt: 1,
+                state: ExecutionState::Queued,
+                runner_id: None,
+                claimed_at: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                error: None,
+                dead_reason: None,
+                idempotency_key: None,
+                metadata: HashMap::new(),
+                created_at: now,
+            })
+            .unwrap();
+        store.claim_execution(id, "r1", now).unwrap();
+
+        let result = server
+            .cancel_execution(Parameters(CancelExecutionParams {
+                execution_id: id.to_string(),
+            }))
+            .await
+            .unwrap();
+        assert!(result.contains("aborts it"), "{result}");
+        assert_eq!(
+            store.get_execution(id).unwrap().unwrap().state,
+            ExecutionState::Cancelled
+        );
+        assert_eq!(server.state.drain_cancels("r1").await, vec![id.to_string()]);
+
+        // A finished run has nothing to cancel.
+        seed_execution(&store, "etl:done");
+        let done = store
+            .list_executions(&croniq_store::models::ExecutionFilter {
+                job_key: Some("etl:done".into()),
+                ..Default::default()
+            })
+            .unwrap()[0]
+            .id;
+        let err = server
+            .cancel_execution(Parameters(CancelExecutionParams {
+                execution_id: done.to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("already finished"), "{}", err.message);
     }
 
     #[tokio::test]

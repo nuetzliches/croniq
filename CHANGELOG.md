@@ -96,6 +96,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other request waited on the store. A larger `limit` is now clamped to 1000;
   page on with `until`/`until_id`.
 
+- **The MCP `cancel_execution` tool cancels a running execution on its
+  runner** (review 2026-10-24, P-7). The tool said it had "no effect if
+  already dispatched", but it marked a claimed execution `cancelled` in the
+  store without telling the runner: the run carried on, its ack was refused,
+  and the history called a finished run cancelled. It now pushes the cancel
+  to the runner, as `POST /v1/executions/{id}/cancel` does, and refuses a
+  finished execution.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
