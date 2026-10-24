@@ -783,6 +783,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   real `sslmode` parameter — a query key in a URL, or a key in a key=value
   string — counts now.
 
+- **A runner can no longer take over another runner's execution lease**
+  (review 2026-10-24, P-14). Every poll refreshed the lease of each execution
+  id the runner listed as in flight and recorded that runner as the holder,
+  without checking that it held the claim. Listing another runner's ids made
+  that runner's lease look absent to the stale-claim reaper, which could then
+  requeue live work. A poll now refreshes only leases the runner already holds,
+  or — after a restart emptied the lease map — those the store shows it has
+  claimed.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
