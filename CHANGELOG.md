@@ -792,6 +792,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or — after a restart emptied the lease map — those the store shows it has
   claimed.
 
+- **`croniq init` no longer seeds `CRONIQ_API_KEY` as an admin client**
+  (review 2026-10-24, follow-up to R-6). `init`'s `--api-key` shared its
+  name with the CLI's global `--api-key`, so a `CRONIQ_API_KEY` exported on
+  the host — typically a narrow runner or client key — was taken as the key
+  to seed and stored as a new `admin`-scoped client. `init` now seeds only
+  from its own `--api-key` typed on the command line or from
+  `CRONIQ_INIT_API_KEY`. `--scopes` without either is an error instead of
+  being ignored.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added
