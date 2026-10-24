@@ -45,7 +45,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware,
-    routing::{delete, get, post, put},
+    routing::{any, delete, get, post, put},
 };
 use chrono::{DateTime, Utc};
 use croniq_auth::CallerContext;
@@ -844,7 +844,14 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/auth/oidc/config", get(oidc::handle_config))
         // Combined sign-in-method probe (issue #138). Canonical replacement
         // for the OIDC-only `/v1/auth/oidc/config`; both are kept for now.
-        .route("/v1/auth/config", get(oidc::handle_auth_config));
+        .route("/v1/auth/config", get(oidc::handle_auth_config))
+        // Every other path under `/v1/` is an API path nobody registered.
+        // Without this it fell through to the dashboard's SPA fallback and
+        // answered `200 text/html` (review 2026-10-24, P-9): a typo in a
+        // client (`/v1/jobz`) looked like success with an unparseable body.
+        // The router prefers any registered route over this catch-all, so it
+        // only sees what nothing else matches.
+        .route("/v1/{*rest}", any(handle_unknown_api_path));
 
     // Explicit CORS allowlist (issue #429). The only browser origin that
     // legitimately calls this API cross-origin is a dashboard served from the
@@ -865,6 +872,18 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
+
+/// `404` for a path under `/v1/` that no route serves. JSON, like every other
+/// API error, rather than the dashboard's `index.html` (P-9).
+async fn handle_unknown_api_path(uri: axum::http::Uri) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "not_found",
+            "message": format!("no API endpoint at {}", uri.path()),
+        })),
+    )
+}
 
 /// `POST /v1/poll` — heartbeat + work dispatch with long-poll support.
 ///
@@ -3301,6 +3320,41 @@ mod tests {
                 "a blank timeout ({blank:?}) must inherit, not override"
             );
         }
+    }
+
+    /// An unknown path under `/v1/` fell through to the dashboard's SPA
+    /// fallback and answered `200 text/html` (review 2026-10-24, P-9).
+    #[tokio::test]
+    async fn an_unknown_api_path_is_a_json_404_not_the_dashboard() {
+        let ui = tempfile::tempdir().unwrap();
+        std::fs::write(ui.path().join("index.html"), "<!doctype html>").unwrap();
+        let (state, _rx) = make_state();
+        let app = crate::ui_assets::mount(server_router(state), ui.path());
+
+        let send = |uri: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let res = send("/v1/jobz").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert!(
+            res.headers()[axum::http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("application/json")
+        );
+        let res = send("/v1/jobs/some-key/nothing/here").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+        // Registered routes keep their own answer: auth first.
+        assert_eq!(send("/v1/jobs").await.status(), StatusCode::UNAUTHORIZED);
+        // And a client-side route outside `/v1/` is still the dashboard.
+        assert_eq!(send("/jobs/etl:nightly").await.status(), StatusCode::OK);
     }
 
     /// A job created through the API lives in the store, not in `dsl_jobs`.

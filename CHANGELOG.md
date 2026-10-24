@@ -104,6 +104,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to the runner, as `POST /v1/executions/{id}/cancel` does, and refuses a
   finished execution.
 
+- **An unknown path under `/v1/` answers `404` JSON** (review 2026-10-24,
+  P-9). With the dashboard served, `GET /v1/jobz` fell through to the SPA
+  fallback and answered `200 text/html`, so a client typo looked like success
+  with a body it could not parse. Paths under `/v1/` that no endpoint serves
+  now answer `404 {"error": "not_found"}`; the dashboard's own client-side
+  routes are unchanged.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
