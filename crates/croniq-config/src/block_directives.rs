@@ -333,6 +333,27 @@ fn check_job_body(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     }
                 }
                 check_retry_values(nb, diags);
+                // `metadata { }` keys are the operator's, except the reserved
+                // `__` namespace the compiler stamps into (AGENTS.md; review
+                // 2026-10-24, F-13).
+                if name == "metadata" {
+                    for inner in &nb.directives {
+                        if let DirectiveOrBlock::Directive(d) = inner
+                            && crate::compile::is_reserved_metadata_key(&d.key.value)
+                        {
+                            diags.push(Diagnostic {
+                                severity: Severity::Error,
+                                message: format!(
+                                    "metadata key '{}' in `{label} {{ }}` is reserved: keys \
+                                     starting with `__` are set by croniq itself — use the \
+                                     directive instead, or rename the key",
+                                    d.key.value
+                                ),
+                                span: d.key.span.into(),
+                            });
+                        }
+                    }
+                }
             }
             DirectiveOrBlock::Comment(_) => {}
         }
@@ -850,6 +871,16 @@ mod tests {
     fn metadata_keys_are_operator_chosen_and_not_checked() {
         let msgs = errors("job a:b { every 5 minutes\n metadata { anything goes } }");
         assert!(msgs.is_empty(), "unexpected errors: {msgs:?}");
+    }
+
+    #[test]
+    fn reserved_metadata_keys_are_errors() {
+        // Review 2026-10-24, F-13.
+        let msgs = errors(
+            "job a:b { every 5 minutes\n metadata { __max_concurrent 1; __runner_exec x; ok 1 } }",
+        );
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert!(msgs.iter().all(|m| m.contains("is reserved")), "{msgs:?}");
     }
 
     #[test]

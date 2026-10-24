@@ -233,6 +233,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a Croniqfile with one of these mistakes now fails to load instead of
   running without the alert. The README's annotated Croniqfile, which was
   missing a closing brace, is now tested to validate.
+- **`metadata { }` rejects the reserved `__` keys** (review 2026-10-24, F-13).
+  Keys such as `__runner_exec`, `__max_concurrent` or `__timeout` are what
+  croniq stamps itself; written by hand they passed through, and a
+  `metadata { __runner_exec … }` after a `runner shell { }` block replaced its
+  payload. `croniq validate` now reports them and the compiler drops them.
 - **Crontab import warns about a restricted month** (review 2026-10-24, F-9).
   A Croniqfile schedule has no month field, and `croniq convert` / `croniq
   migrate` dropped it silently: `0 0 1 1 *` (yearly) became a monthly job.

@@ -2047,9 +2047,15 @@ fn compile_job(
                 },
                 "retry" => retry = compile_retry_block(block, vars, retry),
                 "dead_letter" => dead_letter = compile_dead_letter_block(block, vars, dead_letter),
+                // Reserved `__` keys are the compiler's own stamps
+                // (`__runner_exec`, `__max_concurrent`, `__timeout`, …): a
+                // hand-written one used to pass straight through and, after
+                // a `runner shell { }` block, replace its payload. Dropped
+                // here; validate.rs rejects them (review 2026-10-24, F-13).
                 "metadata" => {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner
+                            && !is_reserved_metadata_key(&d.key.value)
                             && let Some(v) = first_arg(d, vars)
                         {
                             metadata.insert(d.key.value.clone(), v);
@@ -2658,6 +2664,22 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn reserved_metadata_keys_do_not_reach_the_compiled_job() {
+        // Review 2026-10-24, F-13: a hand-written `__runner_exec` after the
+        // runner block replaced the compiled payload.
+        let ast = Parser::parse(
+            r#"job a:b { every 5 minutes
+                 runner shell { command "real.sh" }
+                 metadata { __runner_exec "{}"; __timeout 1s; team ops } }"#,
+        )
+        .unwrap();
+        let job = &compile(&ast).jobs[0];
+        assert!(job.metadata[RUNNER_EXEC_METADATA_KEY].contains("real.sh"));
+        assert!(!job.metadata.contains_key("__timeout"));
+        assert_eq!(job.metadata["team"], "ops");
     }
 
     #[test]
