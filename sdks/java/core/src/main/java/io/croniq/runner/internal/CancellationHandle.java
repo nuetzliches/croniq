@@ -19,16 +19,29 @@ public final class CancellationHandle implements CroniqCancellation {
     }
 
     /** Bind the worker thread once it begins executing the handler. */
-    public void attach(Thread thread) {
+    public synchronized void attach(Thread thread) {
         this.worker = thread;
+    }
+
+    /**
+     * Unbind the worker thread: no later {@link #cancel()} interrupts it. Called
+     * once the handler has returned, before the ack. The interrupt happens under
+     * the same lock, so once this returns no cancel can still be about to
+     * interrupt the thread, and clearing the thread's interrupt flag afterwards
+     * is final (review 2026-10-24, K-5).
+     */
+    public synchronized void detach() {
+        this.worker = null;
     }
 
     /** Flip to cancelled and interrupt the worker if attached. Idempotent. */
     public void cancel() {
         if (requested.compareAndSet(false, true)) {
-            Thread t = worker;
-            if (t != null) {
-                t.interrupt();
+            synchronized (this) {
+                Thread t = worker;
+                if (t != null) {
+                    t.interrupt();
+                }
             }
         }
     }
