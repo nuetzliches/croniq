@@ -31,7 +31,7 @@ permissions:
   pull-requests: read
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
   # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
   # default switch, silencing the Node 20 deprecation warnings from
   # setup-go/checkout/upload-artifact/etc. Matches the env block in
@@ -132,7 +132,7 @@ jobs:
             sdks/go/conformance/go.sum
             sdks/go/otel/go.sum
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
       - name: Run staticcheck (core)
         working-directory: sdks/go
         run: staticcheck ./...
