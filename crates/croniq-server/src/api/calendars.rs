@@ -21,7 +21,6 @@ use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_config::compile::CalendarConfig;
 use croniq_config::format::format_calendar_rule_parts;
-use croniq_config::parser::Parser;
 use croniq_store::models::{CalendarDefinition, DslAdoption};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -97,6 +96,20 @@ pub struct ValidationError {
     pub message: String,
 }
 
+/// A refused value from `croniq_scheduler::input` as this API's `400` body.
+///
+/// The checks live there so the MCP tools run the same ones (review
+/// 2026-10-24, P-8); this is the HTTP end of them.
+pub fn bad_input(e: croniq_scheduler::input::InputError) -> (StatusCode, Json<ValidationError>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ValidationError {
+            error: e.code,
+            message: e.message,
+        }),
+    )
+}
+
 /// Reject a `timezone` that is not an IANA zone name, with the did-you-mean
 /// from `croniq_config::timezone` (issue #426's helper, applied to the one
 /// timezone-bearing column that never went through it).
@@ -107,44 +120,15 @@ pub struct ValidationError {
 /// before this check existed; new writes fail at the request that made them.
 /// An empty string means "unset", matching `handle_update`'s clear convention.
 fn check_timezone_valid(timezone: Option<&str>) -> Result<(), (StatusCode, Json<ValidationError>)> {
-    let Some(name) = timezone.filter(|t| !t.is_empty()) else {
-        return Ok(());
-    };
-    croniq_config::timezone::parse(name).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ValidationError {
-                error: "unknown_timezone",
-                message: e.to_string(),
-            }),
-        )
-    })?;
-    Ok(())
+    croniq_scheduler::input::check_timezone(timezone).map_err(bad_input)
 }
 
-/// Validate free-form calendar rules by wrapping them in a dummy calendar
-/// block and running the Croniqfile parser plus semantic validation.
-/// Returns a human-readable error message on failure.
-///
-/// Semantic validation uses the same `calendar_args` checks as the
-/// scheduler's compile step, so the API can no longer store rules the
-/// loader would reject (#356).
+/// Validate free-form calendar rules: the Croniqfile parser plus the same
+/// semantic `calendar_args` checks as the compile step, so the API can no
+/// longer store rules the loader would reject (#356). Shared with the MCP
+/// tools, which ran the parser only (P-8).
 fn validate_rules(rules: &str) -> Result<(), String> {
-    if rules.trim().is_empty() {
-        return Ok(());
-    }
-    let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
-    let ast = Parser::parse(&source).map_err(|e| e.to_string())?;
-    let errors: Vec<String> = croniq_config::validate::validate(&ast)
-        .into_iter()
-        .filter(|d| d.severity == croniq_config::validate::Severity::Error)
-        .map(|d| d.message)
-        .collect();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    croniq_scheduler::input::check_calendar_rules(rules).map_err(|e| e.message)
 }
 
 /// Re-attach calendar gates to every running API-managed trigger that

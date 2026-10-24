@@ -228,7 +228,7 @@ pub struct CreateJobRequest {
 
 /// Check whether `job_key` is DSL-managed. Returns `true` if the Croniqfile
 /// owns it; mutations must be refused.
-async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
+pub(crate) async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
     let Some(dsl) = state.dsl_jobs.as_ref() else {
         return false;
     };

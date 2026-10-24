@@ -110,6 +110,18 @@ pub async fn sync_job_with(state: &ServerState, job_key: &str, known: Known<'_>)
         return;
     };
 
+    // A key the Croniqfile declares is the reload's to schedule, whatever API
+    // rows still carry it (review 2026-10-24, P-2). A leftover API trigger for
+    // such a key, reached here through a calendar edit or an MCP tool, used to
+    // replace the file's trigger in the running scheduler — or remove it.
+    if crate::api::jobs::is_dsl_managed(state, job_key).await {
+        tracing::debug!(
+            job_key = %job_key,
+            "not syncing a Croniqfile-owned job from its API rows"
+        );
+        return;
+    }
+
     // The job's own row decides whether it may fire at all. A missing row is
     // not a reason to stop: `POST /v1/schedules` can create a trigger for a key
     // that has no `job_definitions` row, and that job fires today.

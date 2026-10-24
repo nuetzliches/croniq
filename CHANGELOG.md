@@ -35,6 +35,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name. `croniq-server doctor` reports an unusable name as a critical finding
   instead of calling a configuration healthy that the next start refuses.
 
+- **A schedule the server cannot run is refused when it is written** (review
+  2026-10-24, P-6). `POST /v1/schedules {"cron_expression": "jeden Tag"}`
+  answered `201`, and the job then left the scheduler without a word: the
+  loader could not build the expression, so the sync removed the job and
+  recorded no fault. A typo in `window` parsed as "no window", and the job
+  fired around the clock. `POST` and `PUT /v1/schedules` now answer
+  `400 invalid_schedule` or `400 invalid_window`, using the parser the loader
+  uses. `PUT` checks only the fields it is sent, so an older row with a bad
+  expression can still be disabled.
+- **An API schedule for a job the Croniqfile now declares is read-only**
+  (review 2026-10-24, P-2). `POST /v1/schedules` refused a Croniqfile job key
+  only at create time. Once the file took the job over, the old API row stayed
+  editable: `PUT` replaced the file's trigger in the running scheduler and
+  `DELETE` stopped the file's job until the next reload. Both now answer
+  `409 dsl_managed`, and the scheduler sync leaves a Croniqfile key alone
+  whatever API rows still carry it.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
