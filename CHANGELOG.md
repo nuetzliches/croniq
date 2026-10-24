@@ -18,6 +18,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sets `croniq_refresh{lane_suffix}`, so a lane's dashboard no longer logs the
   main tree's out. See
   [Where the dashboard keeps its tokens](docs/operations.md#where-the-dashboard-keeps-its-tokens).
+- **Rust runner SDK: `renew_interval`, `drain_timeout`, `bearer_token` and
+  `run_until` on the builder** (review 2026-10-24, K-3). The other five SDKs
+  had all of them. `renew_interval` (default 15 s) makes conformance case 05
+  drivable. `drain_timeout` (default 30 s) bounds a drain that used to wait
+  forever on a hung handler: what is still running is aborted and acked as
+  `failure`. `run_until(shutdown_signal())` runs until SIGTERM / Ctrl-C and
+  then drains. A `select!` that dropped `start()` and then called `drain()`,
+  as `examples/basic.rs` did, drained nothing.
 
 - **Runner conformance cases 23–27 pin ack retry, the ack after a drain
   timeout, and duplicate delivery** (review 2026-10-24, K-1, K-4, K-11). Where
@@ -44,6 +52,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (review 2026-10-24, K-8). The .NET, TypeScript, Go and Java releases already
   did; a tag on a commit whose PR CI the paths filter had skipped went to PyPI
   untested.
+- **The runners refuse a cleartext `http://` server URL to a non-loopback
+  host** (review 2026-10-24, K-3; issue #440 for the other SDKs). The API key
+  goes out on every request. `croniq-shell-runner`, `croniq-demo-runner` and
+  the Rust SDK (`CroniqRunner`, `TriggerClient`) now stop at startup with a
+  message unless the URL is `https://`, or `http://` to `localhost`,
+  `127.0.0.0/8` or `::1`. **Upgrade note:** a runner that reaches the server
+  as `http://server:4000` on a Compose network needs
+  `CRONIQ_ALLOW_INSECURE_HTTP=1` (SDK: `allow_insecure_http()`).
+  `docker-compose.yml` sets it for the demo runners. `max_inflight(0)`
+  (`RUNNER_MAX_INFLIGHT=0`), which made a runner poll forever without taking
+  work, is refused the same way (review 2026-10-24, R-12).
+- **Rust runner SDK: poll retries back off exponentially, with jitter**
+  (review 2026-10-24, R-8 / K-9). After a 5xx or a transport failure the wait
+  doubles per failure in a row, from `poll_retry_delay` up to 60 s. Every
+  retry wait is ±20 %, so a fleet no longer polls a restarting server in
+  lockstep. 401 and 409 keep the plain delay their budgets are counted in.
 
 - **`devstack.toml` needs devstack 0.20.0.** The stack file is now up to date
   with devstack 0.20.0 and says so (`reviewed = "0.20.0"`), a key older
@@ -348,6 +372,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Go SDK: the OpenTelemetry module requires the current core**
   (review 2026-10-24, K-10). `sdks/go/otel/go.mod` still pinned core
   `v0.5.0`; it now requires `v0.6.2`, the latest release.
+- **`docker stop` drains the shell and demo runners** (review 2026-10-24,
+  R-4). Neither binary handled SIGTERM, so the runtime died mid-job: no ack,
+  claims stuck until the reaper requeued them, and outside a container the
+  commands survived in their own process groups and then ran again. Running
+  jobs now get `RUNNER_DRAIN_TIMEOUT_SECS` (default 8, inside Docker's 10 s
+  stop grace) to finish; the rest are terminated and acked as failed.
+- **A lost lease stops the handler** (review 2026-10-24, R-3). The Rust SDK
+  read a `404`/`409` on lease renewal as a harmless race and let the handler
+  run on, while the server had already handed the execution to another
+  runner: two copies of one job, the later ack discarded, the side effect
+  done twice. The handler is now aborted (the shell runner terminates the
+  command's process group) and acked as failure ("lease lost"). A `403` on
+  renewal stops the renew loop instead of logging the same error every 15 s.
+- **A failed ack is retried** (review 2026-10-24, K-1, Rust SDK; the other
+  SDKs follow separately). On a transport error or a 5xx the ack is sent
+  again after 1 s and 2 s; a 4xx is never repeated. Before, a dropped
+  connection on the ack of a successful 20-minute job got the job requeued
+  by the reaper and run a second time.
+- **Shell-runner output lines are capped at 64 KiB, and `\r` ends a line**
+  (review 2026-10-24, R-5). A job writing without newlines (`base64 -w0`, a
+  curl/pv/rsync progress bar) accumulated its whole output as one line in the
+  runner's memory until it ran out, then shipped it as one log event. Invalid
+  UTF-8 is replaced instead of ending the stream. Job output mirrored into the
+  runner's own log can be switched off with
+  `RUST_LOG=info,shell_runner::pipe=off` (R-12).
 
 ### Security
 
@@ -409,6 +458,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `sha256sum -c` accepts. The line is now matched by exact filename and must
   exist exactly once. The script also runs inside a `main` function, so a
   download cut off mid-script under `curl | sh` runs nothing.
+- **The Rust runner SDK refuses hostile identifiers on ingest** (review
+  2026-10-24, R-7 / K-2; issue #441 for the other SDKs). A `job_key` with
+  control characters (CRLF, ANSI escapes) is acked as `failure` without
+  running, not even by a catch-all handler. An unsafe `execution_id` is
+  dropped without an ack. These are conformance cases 13 and 14. Both values
+  had reached `tracing`, the ack's error text and, for `execution_id`, the
+  path of the authenticated log-events POST unchanged, where `..` steered it
+  onto another path of the same origin. The id is now one encoded path
+  segment, and dot-segments are refused.
 
 ## [0.49.0] - 2026-10-22
 
