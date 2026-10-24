@@ -214,8 +214,31 @@ async fn mfa_token_is_invalidated_after_repeated_wrong_codes() {
         "a spent mfa_token must not accept even a valid code"
     );
 
-    // Redoing the password step mints a fresh token, which works — the
-    // budget is per token, not a lockout of the account.
+    // Five wrong codes also count toward the account lockout (review
+    // 2026-10-24, A-4): redoing the password step does not buy a fresh
+    // budget, it meets the locked account.
+    let (status, _) = post(
+        app,
+        "/v1/auth/login",
+        serde_json::json!({ "username": "admin", "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "account is locked");
+}
+
+#[tokio::test]
+async fn a_fresh_mfa_token_works_after_fewer_failures_than_the_lockout() {
+    let app = app_with(true, None);
+    let token = mfa_token(&app).await;
+    for _ in 0..2 {
+        let (status, _) = post(
+            app.clone(),
+            "/v1/auth/login/totp",
+            serde_json::json!({ "mfa_token": token, "code": wrong_code() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
     let fresh = mfa_token(&app).await;
     let (status, v) = post(
         app,
@@ -225,6 +248,31 @@ async fn mfa_token_is_invalidated_after_repeated_wrong_codes() {
     .await;
     assert_eq!(status, StatusCode::OK, "a fresh mfa_token still works: {v}");
     assert!(v["access_token"].is_string());
+}
+
+/// Review 2026-10-24, A-4: a wrong code sent inline with the password used
+/// to cost nothing — the correct password reset the failure counter on every
+/// request. Now five such failures lock the account like five wrong
+/// passwords, and the right code is refused afterwards.
+#[tokio::test]
+async fn inline_second_factor_failures_count_toward_the_lockout() {
+    let app = app_with(true, None);
+    for attempt in 1..=5 {
+        let (status, _) = post(
+            app.clone(),
+            "/v1/auth/login",
+            serde_json::json!({ "username": "admin", "password": PASSWORD, "code": wrong_code() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "attempt {attempt}");
+    }
+    let (status, _) = post(
+        app,
+        "/v1/auth/login",
+        serde_json::json!({ "username": "admin", "password": PASSWORD, "code": current_code() }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "account is locked");
 }
 
 #[tokio::test]

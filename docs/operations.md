@@ -386,7 +386,9 @@ memory, per client address, over a sliding five-minute window:
 Only failures count: an attempt that ends in a sign-in (or in the TOTP or
 enrolment step that follows a correct password) is given back. A refused
 attempt gets `429` with `"error": "rate_limited"`. The per-account lockout
-(five wrong passwords lock the account for 15 minutes) applies independently.
+applies independently: five failed attempts in a row — a wrong password, or a
+wrong TOTP or recovery code after the right password — lock the account for
+15 minutes. Each second-factor failure is audited as `auth.totp_failed`.
 
 The client address is the TCP peer. Behind a reverse proxy that peer is the
 proxy, so every user shares its budget unless Croniq is told to believe the

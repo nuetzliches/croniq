@@ -330,13 +330,7 @@ pub async fn handle_login(
         .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
 
     if !valid {
-        // Increment failed attempts
-        let mut updated = cred.clone();
-        updated.failed_attempts += 1;
-        if updated.failed_attempts >= 5 {
-            updated.locked_until = Some(Utc::now() + chrono::Duration::minutes(15));
-        }
-        let _ = store.upsert_credentials(&updated);
+        count_failed_attempt(store, &cred);
         audit::record_event(
             store,
             "user",
@@ -348,13 +342,10 @@ pub async fn handle_login(
         return Err(status_err(StatusCode::UNAUTHORIZED));
     }
 
-    // Reset failed attempts on success
-    if cred.failed_attempts > 0 {
-        let mut updated = cred.clone();
-        updated.failed_attempts = 0;
-        updated.locked_until = None;
-        let _ = store.upsert_credentials(&updated);
-    }
+    // The failure counter is reset only once the whole sign-in has succeeded
+    // — after the second factor, where there is one. Resetting it on the
+    // password alone let every wrong TOTP code be followed by a fresh
+    // password login that wiped the count (review 2026-10-24, A-4).
 
     // Look up the user row to pull role + active flag. Pre-PR-A1 deploys
     // backfill an admin user via migration 011, so this should always
@@ -407,7 +398,7 @@ pub async fn handle_login(
                 })),
             ));
         }
-        verify_second_factor(
+        if let Err(resp) = verify_second_factor(
             jwt_config,
             store,
             &state.login_throttle,
@@ -415,13 +406,19 @@ pub async fn handle_login(
             &secret_row,
             &req.code,
             &req.recovery_code,
-        )?;
+        ) {
+            if resp.status() == StatusCode::UNAUTHORIZED {
+                record_second_factor_failure(store, &cred, &user.user_id);
+            }
+            return Err(resp);
+        }
     } else if state.require_totp {
         // Enforced 2FA but this account has no confirmed secret. Instead of
         // locking the user out, hand back a short-lived enrolment token so they
         // can set up TOTP inline and finish login. Password is already verified.
         let (enroll_token, expires_in) = issue_totp_enroll_token(jwt_config, &user.user_id)
             .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
+        clear_failed_attempts(store, &cred);
         audit::record_event(
             store,
             "user",
@@ -443,6 +440,7 @@ pub async fn handle_login(
         ));
     }
 
+    clear_failed_attempts(store, &cred);
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     // Only failed attempts use the throttle budget (review 2026-10-24, A-3).
     state.login_throttle.refund_login(peer_ip, &req.username);
@@ -515,6 +513,16 @@ pub async fn handle_totp_login(
     if !user.is_active {
         return Err(status_err(StatusCode::FORBIDDEN));
     }
+    // Second-factor failures feed the same lockout as wrong passwords, so a
+    // locked account cannot keep guessing codes on a token it already holds.
+    let cred = store
+        .get_credentials(&user.username)
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
+    if let Some(locked_until) = cred.as_ref().and_then(|c| c.locked_until)
+        && Utc::now() < locked_until
+    {
+        return Err(status_err(StatusCode::UNAUTHORIZED));
+    }
 
     let secret_row = store
         .totp_get(&user_id)
@@ -538,6 +546,9 @@ pub async fn handle_totp_login(
         // Count only real second-factor rejections against the budget —
         // not malformed requests (400) or server errors (500).
         if resp.status() == StatusCode::UNAUTHORIZED {
+            if let Some(cred) = &cred {
+                record_second_factor_failure(store, cred, &user_id);
+            }
             let failures = state.login_throttle.record_mfa_failure(&mfa_key);
             if failures == MFA_MAX_FAILURES {
                 tracing::warn!(
@@ -558,6 +569,9 @@ pub async fn handle_totp_login(
     }
     state.login_throttle.clear_mfa(&mfa_key);
     state.login_throttle.refund_login(peer_ip, "");
+    if let Some(cred) = &cred {
+        clear_failed_attempts(store, cred);
+    }
 
     let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     let action = if req.recovery_code.is_some() {
@@ -786,6 +800,64 @@ fn rewrap_after_fallback(
 // Carries a full `Response` as its error, like the login handlers it backs;
 // the large Err is intentional, so boxing it would only churn the call sites.
 #[allow(clippy::result_large_err)]
+/// Count one failed sign-in step against the account: five in a row lock it
+/// for 15 minutes.
+fn count_failed_attempt(
+    store: &crate::store::DynStore,
+    cred: &croniq_store::models::PasswordCredential,
+) {
+    // Re-read so a two-step login counts on top of whatever happened since
+    // the credential row was loaded.
+    let mut updated = store
+        .get_credentials(&cred.username)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| cred.clone());
+    updated.failed_attempts += 1;
+    if updated.failed_attempts >= 5 {
+        updated.locked_until = Some(Utc::now() + chrono::Duration::minutes(15));
+    }
+    let _ = store.upsert_credentials(&updated);
+}
+
+/// A wrong TOTP or recovery code after a correct password: it counts toward
+/// the account lockout like a wrong password and leaves an audit event.
+/// Before, only the two-step path had a budget (per `mfa_token`, restartable
+/// by logging in again), and the single-request path had none at all
+/// (review 2026-10-24, A-4).
+fn record_second_factor_failure(
+    store: &crate::store::DynStore,
+    cred: &croniq_store::models::PasswordCredential,
+    user_id: &str,
+) {
+    count_failed_attempt(store, cred);
+    audit::record_event(
+        store,
+        "user",
+        Some(user_id),
+        "auth.totp_failed",
+        "user",
+        Some(user_id),
+    );
+}
+
+fn clear_failed_attempts(
+    store: &crate::store::DynStore,
+    cred: &croniq_store::models::PasswordCredential,
+) {
+    let current = store
+        .get_credentials(&cred.username)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| cred.clone());
+    if current.failed_attempts > 0 || current.locked_until.is_some() {
+        let mut updated = current;
+        updated.failed_attempts = 0;
+        updated.locked_until = None;
+        let _ = store.upsert_credentials(&updated);
+    }
+}
+
 fn verify_second_factor(
     jwt_config: &croniq_auth::jwt::JwtConfig,
     store: &crate::store::DynStore,
