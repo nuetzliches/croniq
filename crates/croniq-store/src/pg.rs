@@ -1034,7 +1034,7 @@ impl ExecutionStore for PgStore {
         }
 
         sql.push_str(" ORDER BY created_at DESC, id DESC");
-        let limit = filter.limit.unwrap_or(100);
+        let limit = filter.limit.unwrap_or(100).min(MAX_EXECUTIONS_LIMIT);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" LIMIT ${idx}"));
 
@@ -1610,7 +1610,8 @@ impl DeadLetterStore for PgStore {
         }
 
         sql.push_str(" ORDER BY created_at DESC");
-        let limit = filter.limit.unwrap_or(100);
+        // Clamped like on SQLite, which always did (review 2026-10-24, S-4).
+        let limit = filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" LIMIT ${idx}"));
 
@@ -2537,7 +2538,7 @@ impl AuthStore for PgStore {
             sql.push_str(&format!(" AND created_at <= ${idx}"));
             idx += 1;
         }
-        let limit = filter.limit.unwrap_or(200).min(1000);
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${idx}"));
 
@@ -3020,7 +3021,7 @@ impl AlertStore for PgStore {
             sql.push_str(&format!(" AND fired_at >= ${idx}"));
             idx += 1;
         }
-        let limit = filter.limit.unwrap_or(200);
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" ORDER BY fired_at DESC LIMIT ${idx}"));
 
@@ -3423,7 +3424,7 @@ impl NoteStore for PgStore {
             sql.push_str(&format!(" AND execution_id = ANY(${idx})"));
             idx += 1;
         }
-        let limit = filter.limit.unwrap_or(100);
+        let limit = filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT);
         params.push(Box::new(limit as i64));
         sql.push_str(&format!(" ORDER BY created_at DESC, id DESC LIMIT ${idx}"));
 

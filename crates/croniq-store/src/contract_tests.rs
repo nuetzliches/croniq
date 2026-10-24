@@ -4635,3 +4635,70 @@ fn list_executions_by_job_keys() {
     // No set is no filter.
     assert_eq!(keys_for(None).len(), 3);
 }
+
+// ─── Page limits (review 2026-10-24, S-4) ───
+
+/// A caller-supplied `limit` beyond [`MAX_PAGE_LIMIT`] is clamped by the
+/// store itself, whatever the handler in front of it checked.
+#[test]
+fn paged_listings_clamp_the_limit() {
+    let store = create_memory_store().unwrap();
+    let rows = MAX_PAGE_LIMIT as i64 + 1;
+    for n in 0..rows {
+        let at = now() - chrono::Duration::seconds(n);
+        store
+            .record_alert_delivery(&make_delivery(
+                "billing:invoice",
+                at,
+                AlertDeliveryState::Delivered,
+                AlertDeliveryKind::Alert,
+            ))
+            .unwrap();
+        store
+            .create_note(&make_note("billing:invoice", None, NoteKind::Note, at))
+            .unwrap();
+    }
+
+    let deliveries = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            limit: Some(u32::MAX),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(deliveries.len(), MAX_PAGE_LIMIT as usize);
+
+    let notes = store
+        .list_notes(&NoteFilter {
+            job_key: Some("billing:invoice".into()),
+            execution_ids: Vec::new(),
+            limit: Some(u32::MAX),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), MAX_PAGE_LIMIT as usize);
+
+    // Below the cap the caller's limit still holds.
+    let page = store
+        .list_alert_deliveries(&AlertDeliveryFilter {
+            limit: Some(7),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.len(), 7);
+}
+
+#[test]
+fn list_executions_accepts_an_absurd_limit() {
+    let store = create_memory_store().unwrap();
+    store
+        .create_execution(&make_execution("billing:invoice", now()))
+        .unwrap();
+    // `?limit=4000000000` used to reach the database unclamped; it is now
+    // clamped to MAX_EXECUTIONS_LIMIT and still returns what there is.
+    let rows = store
+        .list_executions(&ExecutionFilter {
+            limit: Some(u32::MAX),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}

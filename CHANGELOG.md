@@ -57,6 +57,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   history and no retention slowed every poll. Migration 036 adds a partial
   index over queued and claimed runs, on SQLite and Postgres, and the count
   now reads only that.
+- **The store clamps every listing's `limit`** (review 2026-10-24, S-4).
+  `list_executions` took any `limit` as-is on both backends, so
+  `?limit=4000000000` read the entire history in one call with the store lock
+  held; it is now clamped to 100 000, the most the stats endpoints aggregate
+  over. Dead letters, alert deliveries and notes are clamped to 1 000 on both
+  backends — dead letters had been clamped on SQLite only. This is a backstop
+  behind the HTTP handlers' own, lower limits.
 
 ### Security
 

@@ -6,6 +6,20 @@ use crate::models::*;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+/// Upper bound on `limit` for the paged listings: dead letters, alert
+/// deliveries, notes and the audit log. Both backends clamp to it whatever
+/// the caller asks for, so an unchecked query parameter cannot pull a whole
+/// table through the store lock in one call (review 2026-10-24, S-4).
+pub const MAX_PAGE_LIMIT: u32 = 1000;
+
+/// Upper bound on [`ExecutionFilter::limit`] in
+/// [`ExecutionStore::list_executions`]. Higher than [`MAX_PAGE_LIMIT`]
+/// because the stats endpoints aggregate over up to this many runs in one
+/// read; a page served to a client should stay at the HTTP layer's own,
+/// lower cap. Before the clamp `?limit=4000000000` reached the database
+/// as-is (review 2026-10-24, S-4).
+pub const MAX_EXECUTIONS_LIMIT: u32 = 100_000;
+
 /// Errors from store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -114,7 +128,8 @@ pub trait ExecutionStore {
         limit: u32,
     ) -> Result<Vec<Execution>, StoreError>;
 
-    /// List executions with optional filters.
+    /// List executions with optional filters. `limit` defaults to 100 and is
+    /// clamped to [`MAX_EXECUTIONS_LIMIT`].
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError>;
 
     /// List `claimed` executions whose `claimed_at` is at or before `cutoff`,
@@ -333,7 +348,8 @@ pub trait DeadLetterStore {
     /// Get a dead letter by ID.
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError>;
 
-    /// List dead letters.
+    /// List dead letters. `limit` defaults to 100 and is clamped to
+    /// [`MAX_PAGE_LIMIT`].
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError>;
     /// How many dead letters match, ignoring any page limit.
     ///
@@ -631,8 +647,9 @@ pub trait AlertStore {
     /// re-inserting with different payload is an error.
     fn record_alert_delivery(&self, delivery: &AlertDelivery) -> Result<(), StoreError>;
 
-    /// List recent deliveries, newest first. Used by the future Alerts
-    /// tab and an admin diagnostic endpoint.
+    /// List recent deliveries, newest first. Used by the Alerts tab and an
+    /// admin diagnostic endpoint. `limit` defaults to 200 and is clamped to
+    /// [`MAX_PAGE_LIMIT`].
     fn list_alert_deliveries(
         &self,
         filter: &AlertDeliveryFilter,
@@ -774,7 +791,8 @@ pub trait NoteStore {
 
     fn get_note(&self, id: Uuid) -> Result<Option<JobNote>, StoreError>;
 
-    /// Notes matching `filter`, newest first. `limit` defaults to 100.
+    /// Notes matching `filter`, newest first. `limit` defaults to 100 and is
+    /// clamped to [`MAX_PAGE_LIMIT`].
     fn list_notes(&self, filter: &NoteFilter) -> Result<Vec<JobNote>, StoreError>;
 
     /// Returns `Ok(true)` when a row was removed, `Ok(false)` when none existed.

@@ -433,7 +433,7 @@ impl ExecutionStore for SqliteStore {
         // to the other.
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
-        let limit = filter.limit.unwrap_or(100);
+        let limit = filter.limit.unwrap_or(100).min(MAX_EXECUTIONS_LIMIT);
         param_values.push(Box::new(limit));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
@@ -1032,7 +1032,7 @@ impl DeadLetterStore for SqliteStore {
         }
 
         sql.push_str(" ORDER BY created_at DESC");
-        let limit = filter.limit.unwrap_or(100).min(1000);
+        let limit = filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT);
         param_values.push(Box::new(limit));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
@@ -1983,7 +1983,7 @@ impl AuthStore for SqliteStore {
         } else {
             format!("WHERE {}", clauses.join(" AND "))
         };
-        let limit = filter.limit.unwrap_or(200).min(1000);
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         let sql = format!(
             "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at
              FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT {limit}"
@@ -2558,7 +2558,7 @@ impl AlertStore for SqliteStore {
             params.push(Box::new(dt_to_sql(&since)));
         }
         sql.push_str(" ORDER BY fired_at DESC");
-        let limit = filter.limit.unwrap_or(200);
+        let limit = filter.limit.unwrap_or(200).min(MAX_PAGE_LIMIT);
         sql.push_str(&format!(" LIMIT {limit}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
@@ -3014,7 +3014,7 @@ impl NoteStore for SqliteStore {
             sql.push_str(&format!(" AND execution_id IN ({})", marks.join(", ")));
         }
         sql.push_str(" ORDER BY created_at DESC, id DESC");
-        param_values.push(Box::new(filter.limit.unwrap_or(100)));
+        param_values.push(Box::new(filter.limit.unwrap_or(100).min(MAX_PAGE_LIMIT)));
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;

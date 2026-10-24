@@ -70,6 +70,38 @@ fn pg_backend_exercises_all_traits() {
     job_alert_acks(&store, &s);
     job_failure_streaks(&store, &s);
     notes_inbox(&store, &s);
+    dead_letter_page_limit(&store, &s);
+}
+
+/// `list_dead_letters` clamps `limit` on Postgres as it always did on SQLite
+/// (review 2026-10-24, S-4).
+fn dead_letter_page_limit(store: &PgStore, s: &str) {
+    let job_key = format!("page-{s}:dead");
+    for _ in 0..=MAX_PAGE_LIMIT {
+        store
+            .add_dead_letter(&DeadLetter {
+                id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                job_key: job_key.clone(),
+                fire_at: ts(),
+                scheduled_for: ts(),
+                attempt: 1,
+                error: "boom".into(),
+                dead_reason: "exhausted".into(),
+                metadata: HashMap::new(),
+                created_at: ts(),
+                expires_at: None,
+            })
+            .unwrap();
+    }
+    let page = store
+        .list_dead_letters(&DeadLetterFilter {
+            job_key: Some(job_key.clone()),
+            limit: Some(u32::MAX),
+        })
+        .unwrap();
+    assert_eq!(page.len(), MAX_PAGE_LIMIT as usize);
+    store.clear_dead_letters(Some(&job_key)).unwrap();
 }
 
 /// The notes inbox (migration 033): threads, the unread rule, the marker.
