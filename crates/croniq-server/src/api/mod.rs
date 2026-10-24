@@ -1747,6 +1747,27 @@ async fn handle_trigger(
     } else {
         None
     };
+    // A job created through `POST /v1/jobs` (or adopted) lives in the store,
+    // not in `dsl_jobs`. Without this fallback a manual trigger of such a job
+    // ran under the `5m` default instead of its own `timeout`, and the reaper
+    // killed a two-hour job after five minutes plus grace (review 2026-10-24,
+    // P-3; #551 fixed only the Croniqfile half). The dead-letter replay and
+    // the watchdog's requeue resolve a job the same way.
+    let dsl_job = match (dsl_job, state.store.as_ref()) {
+        (Some(job), _) => Some(job),
+        (None, Some(store)) => match store.get_job_definition(&req.job_key) {
+            Ok(def) => def.map(|d| crate::loader::job_config_from_job_def(&d)),
+            Err(e) => {
+                tracing::warn!(
+                    job_key = %req.job_key,
+                    error = %e,
+                    "trigger: could not read the job definition; using defaults"
+                );
+                None
+            }
+        },
+        (None, None) => None,
+    };
 
     // ── Trigger fold (`coalesce`, issue #759) ────────────────────────────────
     //
@@ -3267,6 +3288,56 @@ mod tests {
                 "a blank timeout ({blank:?}) must inherit, not override"
             );
         }
+    }
+
+    /// A job created through the API lives in the store, not in `dsl_jobs`.
+    /// The trigger handler looked only at the latter, so a `timeout: "2h"`
+    /// API job got the `5m` default stamped and the reaper killed it after
+    /// five minutes plus grace (review 2026-10-24, P-3).
+    #[tokio::test]
+    async fn trigger_inherits_a_store_jobs_timeout() {
+        use croniq_store::sqlite::SqliteStore;
+        let store: DynStore = crate::store::sqlite_store(SqliteStore::in_memory().unwrap());
+        let now = Utc::now();
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: "api:long".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: now,
+                updated_at: now,
+                timeout: Some("2h".into()),
+                max_retries: None,
+                dead_letter_enabled: None,
+                dead_letter_retention: None,
+                dead_letter_operator_hint: None,
+                dead_letter_replay_max_age: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+        let (mut state, _rx) = make_state_with_dsl_jobs(vec![]);
+        Arc::get_mut(&mut state).unwrap().store = Some(Arc::clone(&store));
+
+        let body = post_json(
+            server_router(Arc::clone(&state)),
+            "/v1/trigger",
+            serde_json::json!({ "job_key": "api:long" }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        assert_eq!(q.peek_n(1)[0].timeout, "2h");
+        let id = uuid::Uuid::parse_str(body["execution_id"].as_str().unwrap()).unwrap();
+        let row = store.get_execution(id).unwrap().unwrap();
+        assert_eq!(
+            row.metadata
+                .get(croniq_config::compile::TIMEOUT_METADATA_KEY)
+                .map(String::as_str),
+            Some("2h"),
+            "the reaper judges the row by this stamp"
+        );
     }
 
     #[tokio::test]

@@ -83,6 +83,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   malformed `timeout` is refused with `400 invalid_duration`, as on
   `POST /v1/jobs`.
 
+- **`POST /v1/trigger` uses an API job's own `timeout`** (review 2026-10-24,
+  P-3). The handler looked a job up in the Croniqfile only, so a job created
+  with `POST /v1/jobs {"timeout": "2h"}` and fired by hand ran under the
+  `5m` default, and the stale-claim reaper took it back after five minutes
+  plus grace. The handler now falls back to the stored job, as the
+  dead-letter replay and the watchdog's requeue already did.
+
 ### Security
 
 - **ctutils 0.4.5 and tokio 1.54.1.** ctutils, which the RustCrypto `digest`
