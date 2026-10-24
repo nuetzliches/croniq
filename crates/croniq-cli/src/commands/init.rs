@@ -4,6 +4,7 @@
 //! Operators who need keys should create scoped clients via the UI
 //! (Settings → API Keys) or `POST /v1/api-clients`.
 
+use std::io::IsTerminal;
 use std::path::Path;
 
 use chrono::Utc;
@@ -20,8 +21,6 @@ use croniq_store::traits::AuthStore;
 use miette::{IntoDiagnostic, Result, miette};
 use uuid::Uuid;
 
-use super::secret_output::CredentialSink;
-
 /// Recovery code baked into the demo seed so a marketing walkthrough
 /// can reach the MFA step at `admin/demo-admin` and complete it with a
 /// fixed code. Mirrored from issue #137 — never use outside the demo
@@ -35,7 +34,6 @@ pub fn init(
     api_key_override: Option<&str>,
     scopes: Option<Vec<String>>,
     demo_mfa: bool,
-    sink: &mut CredentialSink,
 ) -> Result<()> {
     // Validate `--api-key` and `--scopes` up front, before any disk/DB writes,
     // so a malformed key cannot leave behind a half-initialized DB (admin user
@@ -60,11 +58,16 @@ pub fn init(
 
     let password = match password {
         Some(p) => p.to_string(),
+        // At a terminal the prompt no longer echoes what is typed (review
+        // 2026-10-24, R-9). A piped stdin is read as one line, so
+        // `printf '%s\n' "$pw" | croniq init` keeps working.
+        None if std::io::stdin().is_terminal() => {
+            rpassword::prompt_password("Enter admin password: ").into_diagnostic()?
+        }
         None => {
-            eprintln!("Enter admin password: ");
             let mut buf = String::new();
             std::io::stdin().read_line(&mut buf).into_diagnostic()?;
-            buf.trim().to_string()
+            buf.trim_end_matches(['\r', '\n']).to_string()
         }
     };
     // The very first admin password is held to exactly the same policy as
@@ -157,7 +160,7 @@ pub fn init(
             "API client 'default' seeded with provided key (scopes: {}).",
             resolved_scopes.join(", ")
         );
-        Some(raw_key.to_string())
+        Some(raw_key.chars().take(12).collect::<String>())
     } else {
         None
     };
@@ -183,9 +186,14 @@ pub fn init(
     println!();
 
     match seeded_key {
-        Some(raw_key) => {
-            let usage = format!("Authorization: ApiKey {raw_key}");
-            sink.add_with_usage("API Key", raw_key, usage);
+        // The key was supplied by the caller, who therefore already has it.
+        // Echoing it — or, with stdout piped as in the Docker entrypoint,
+        // writing it to `$DATA_DIR/initial-credentials` on the data volume
+        // next to a database that only holds its hash — only adds a copy
+        // (review 2026-10-24, R-6). The prefix is enough to recognise it.
+        Some(prefix) => {
+            println!("API key: {prefix}… (the key you supplied; only its hash is stored)");
+            println!();
         }
         None => {
             println!("No API key was seeded. Create scoped clients and keys via:");
@@ -307,16 +315,8 @@ mod tests {
         // `croniq init` used to accept any non-empty password, so the very
         // first admin password could be weaker than any later one (#428).
         let dir = tempdir();
-        let err = init(
-            &dir,
-            "admin",
-            Some("short"),
-            None,
-            None,
-            false,
-            &mut CredentialSink::new(true),
-        )
-        .expect_err("a 5-character password must be refused");
+        let err = init(&dir, "admin", Some("short"), None, None, false)
+            .expect_err("a 5-character password must be refused");
         assert!(
             err.to_string().contains("at least 8"),
             "the error names the minimum: {err}"
@@ -330,35 +330,38 @@ mod tests {
     #[test]
     fn init_rejects_a_password_past_bcrypts_truncation_limit() {
         let dir = tempdir();
-        let err = init(
-            &dir,
-            "admin",
-            Some(&"x".repeat(73)),
-            None,
-            None,
-            false,
-            &mut CredentialSink::new(true),
-        )
-        .expect_err("73 bytes exceeds bcrypt's 72-byte limit");
+        let err = init(&dir, "admin", Some(&"x".repeat(73)), None, None, false)
+            .expect_err("73 bytes exceeds bcrypt's 72-byte limit");
         assert!(
             err.to_string().contains("72"),
             "the error names the limit: {err}"
         );
     }
 
+    /// Review 2026-10-24, R-6: a key the caller supplied is not written to
+    /// `$DATA_DIR/initial-credentials` (the Docker entrypoint runs init with
+    /// a piped stdout, which used to send it there), and it is still seeded.
+    #[test]
+    fn a_supplied_api_key_is_not_copied_to_the_data_dir() {
+        let dir = tempdir();
+        let key = "croniq_supplied_key_0123456789";
+        init(&dir, "admin", Some("demo-admin"), Some(key), None, false).unwrap();
+
+        assert!(!dir.join("initial-credentials").exists());
+        let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
+        assert!(
+            store
+                .find_api_key_by_hash(&hash_api_key(key))
+                .unwrap()
+                .is_some(),
+            "the key is seeded"
+        );
+    }
+
     #[test]
     fn default_init_does_not_seed_mfa() {
         let dir = tempdir();
-        init(
-            &dir,
-            "admin",
-            Some("demo-admin"),
-            None,
-            None,
-            false,
-            &mut CredentialSink::new(true),
-        )
-        .unwrap();
+        init(&dir, "admin", Some("demo-admin"), None, None, false).unwrap();
         let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
         let user_id = admin_user_id(&store, "admin");
 
@@ -371,16 +374,7 @@ mod tests {
     #[test]
     fn demo_mfa_seeds_enabled_totp_and_fixed_recovery_code() {
         let dir = tempdir();
-        init(
-            &dir,
-            "admin",
-            Some("demo-admin"),
-            None,
-            None,
-            true,
-            &mut CredentialSink::new(true),
-        )
-        .unwrap();
+        init(&dir, "admin", Some("demo-admin"), None, None, true).unwrap();
         let store = SqliteStore::open(&dir.join("croniq.db")).unwrap();
         let user_id = admin_user_id(&store, "admin");
 

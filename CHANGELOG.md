@@ -757,6 +757,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an access token issued to an API client stays valid until it expires after
   the client is deactivated.
 
+- **Seed credentials no longer outlive `croniq init` in the container**
+  (review 2026-10-24, C-3, R-9, R-6). The Docker entrypoint exported the
+  values of `CRONIQ_ADMIN_PASSWORD_FILE` and `CRONIQ_INIT_API_KEY_FILE` and
+  then started the server with them, so they stayed in the server's
+  environment and in that of every process it spawned; it passed the admin
+  password and API key to `croniq init` on the command line; and `croniq init`
+  wrote a key it had been given to `$DATA_DIR/initial-credentials` whenever
+  stdout was not a terminal. Now the entrypoint hands both values to
+  `croniq init` through its environment only and removes them — and
+  `CRONIQ_ADMIN_PASSWORD` in any case — before starting the server.
+  `croniq init` reads `--password` and `--api-key` from `CRONIQ_ADMIN_PASSWORD`
+  and `CRONIQ_INIT_API_KEY` as well, prompts for the password without echo,
+  and confirms a supplied API key by its prefix instead of copying it
+  anywhere; `--print-secrets` on `init` is accepted but has no effect. The
+  README's `<VAR>_FILE` paragraph now says which variables the server reads
+  from a file itself and which only the entrypoint does.
+
 ## [0.49.0] - 2026-10-22
 
 ### Added

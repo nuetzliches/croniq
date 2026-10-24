@@ -168,14 +168,17 @@ enum Commands {
         #[arg(long, default_value = "admin")]
         username: String,
 
-        /// Admin password (prompted if not given)
-        #[arg(long)]
+        /// Admin password (prompted without echo if not given). Prefer the
+        /// `CRONIQ_ADMIN_PASSWORD` environment variable: a value on the
+        /// command line is visible to every local user in the process list.
+        #[arg(long, env = "CRONIQ_ADMIN_PASSWORD", hide_env_values = true)]
         password: Option<String>,
 
         /// Seed a default API client bound to this key. Must start with
         /// "croniq_". Without this flag no API client/key is created —
-        /// use the UI (Settings → API Keys) for production setups.
-        #[arg(long)]
+        /// use the UI (Settings → API Keys) for production setups. Prefer
+        /// the `CRONIQ_INIT_API_KEY` environment variable over the flag.
+        #[arg(long, env = "CRONIQ_INIT_API_KEY", hide_env_values = true)]
         api_key: Option<String>,
 
         /// Comma-separated scopes for the seeded client when `--api-key` is
@@ -201,11 +204,10 @@ enum Commands {
         )]
         demo_mfa: bool,
 
-        /// Print the seeded API key to stdout even when it is not a
-        /// terminal. Without this, a redirected stdout gets the key written
-        /// to `$DATA_DIR/initial-credentials` (mode 0600) instead, so it
-        /// does not leak into logs.
-        #[arg(long)]
+        /// No effect; accepted so existing scripts keep working. `init`
+        /// generates no secret: the API key comes from `--api-key` and is
+        /// only confirmed by its prefix.
+        #[arg(long, hide = true)]
         print_secrets: bool,
     },
 
@@ -409,20 +411,15 @@ fn main() -> Result<()> {
             api_key,
             scopes,
             demo_mfa,
-            print_secrets,
-        } => {
-            let mut sink = commands::secret_output::CredentialSink::new(print_secrets);
-            commands::init::init(
-                &data_dir,
-                &username,
-                password.as_deref(),
-                api_key.as_deref(),
-                scopes,
-                demo_mfa,
-                &mut sink,
-            )?;
-            sink.flush(&data_dir)
-        }
+            print_secrets: _,
+        } => commands::init::init(
+            &data_dir,
+            &username,
+            password.as_deref(),
+            api_key.as_deref(),
+            scopes,
+            demo_mfa,
+        ),
         Commands::Quickstart {
             data_dir,
             config,
