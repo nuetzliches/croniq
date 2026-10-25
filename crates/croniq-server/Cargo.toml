@@ -65,11 +65,11 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 # OTEL_EXPORTER_OTLP_ENDPOINT is set at runtime, scheduler spans and
 # tracing events are exported to a configured collector (Aspire Dashboard,
 # OTel-Collector, …) in parallel with stderr.
-opentelemetry = { version = "0.32", optional = true }
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "http-proto", "trace", "logs"], optional = true }
-opentelemetry-appender-tracing = { version = "0.32", optional = true }
-tracing-opentelemetry = { version = "0.33", optional = true }
+opentelemetry = { version = "0.33", optional = true }
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["grpc-tonic", "http-proto", "trace", "logs"], optional = true }
+opentelemetry-appender-tracing = { version = "0.33", optional = true }
+tracing-opentelemetry = { version = "0.34", optional = true }
 
 [features]
 default = []
