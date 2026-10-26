@@ -79,7 +79,7 @@ The Go SDK ships idiomatic `context.Context` propagation, `log/slog` structured 
 
 The TypeScript / Node.js SDK is ESM-first, uses native `fetch` and `AbortController`, and ships the same streaming log writer (batch + drain-before-ack) and server-side cancellation semantics as the .NET SDK. See [`sdks/typescript/README.md`](sdks/typescript/README.md) for the quickstart.
 
-The Java SDK is JDK 21+, virtual-thread-first (Project Loom), with `java.net.http.HttpClient`, Jackson, and SLF4J as its only runtime deps. Ships in four modules: `croniq-runner` (core), `croniq-runner-spring-boot-starter` (Spring Boot 3 auto-config + `@CroniqJob` discovery + `croniq.runner.*` properties), `croniq-runner-kotlin-ext` (coroutine adapters + Kotlin DSL on top of the Java core), and `croniq-runner-opentelemetry` (opt-in observer with one span per execution). Published to Maven Central as of `v0.2.0`. See [`sdks/java/README.md`](sdks/java/README.md) for the quickstart.
+The Java SDK is JDK 21+, virtual-thread-first (Project Loom), with `java.net.http.HttpClient`, Jackson, and SLF4J as its only runtime deps. Ships in four modules: `croniq-runner` (core), `croniq-runner-spring-boot-starter` (Spring Boot 4 auto-config + `@CroniqJob` discovery + `croniq.runner.*` properties), `croniq-runner-kotlin-ext` (coroutine adapters + Kotlin DSL on top of the Java core), and `croniq-runner-opentelemetry` (opt-in observer with one span per execution). Published to Maven Central as of `v0.2.0`. See [`sdks/java/README.md`](sdks/java/README.md) for the quickstart.
 
 ### Triggering jobs on demand (producer)
 
