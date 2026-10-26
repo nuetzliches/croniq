@@ -15,7 +15,7 @@ npm install @nuetzliches/croniq-runner
 
 (The package name is org-scoped under `@nuetzliches` to align with the project's other npm artefacts. Import path: `import { createRunner } from '@nuetzliches/croniq-runner';`.)
 
-Requires Node.js ≥ 18 (ESM, native `fetch`, `AbortController`).
+Requires Node.js ≥ 22.12 (ESM, native `fetch`, `AbortController`).
 
 ## Quick start
 

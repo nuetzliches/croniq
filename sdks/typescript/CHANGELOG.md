@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Node.js 22.12 is the minimum.** `engines` moves from `>=20.0.0` to
+  `>=22.12.0`, and CI tests Node 22, 24 and 26 instead of 20, 22 and 24.
+  Node 20 reached end of life on 2026-04-30, and the test toolchain (vitest 5)
+  no longer runs on it, so a Node 20 install was about to become untested. No
+  runtime code changed; stay on 0.8.x while you are still on Node 20. The
+  README, which still said Node 18, now says 22.12. Dev dependencies: vitest
+  and `@vitest/coverage-v8` 5, `@types/node` 22 (the types follow the lowest
+  supported Node, so the SDK cannot start using APIs newer than its floor).
+
 ## 0.8.0 - 2026-10-26
 
 ### Changed
