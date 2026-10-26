@@ -98,8 +98,11 @@ impl JobConfig {
         let mut canonical = String::new();
         write_canonical(&value, &mut canonical);
 
-        let digest = Sha256::digest(canonical.as_bytes());
-        format!("{digest:x}")
+        // sha2 0.11's `Array` output no longer implements `LowerHex`.
+        Sha256::digest(canonical.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 

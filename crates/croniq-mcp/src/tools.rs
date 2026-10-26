@@ -2393,7 +2393,7 @@ fn invalid_input(e: input::InputError) -> McpError {
 
 #[tool_handler]
 impl ServerHandler for CroniqMcp {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mutation_note = if self.mutations_enabled {
             " Mutations are ENABLED."
         } else {
@@ -2410,7 +2410,7 @@ impl ServerHandler for CroniqMcp {
             mutation_note
         );
 
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("croniq", env!("CARGO_PKG_VERSION")))
             .with_instructions(instructions)
     }

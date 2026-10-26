@@ -14,7 +14,7 @@ repositories {
 // CI's dependency-versions job will fail loudly when they drift.
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
-    implementation("com.diffplug.spotless:spotless-plugin-gradle:6.25.0")
+    implementation("com.diffplug.spotless:spotless-plugin-gradle:8.10.4")
     // Sonatype Central Portal upload + GPG signing. See
     // gradle/libs.versions.toml for the rationale on choosing this over
     // io.github.gradle-nexus.publish-plugin.
