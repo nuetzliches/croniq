@@ -1,5 +1,5 @@
 # ── Stage 1: Build Rust binaries ──────────────────────────────────────────────
-FROM rust:1.98-bookworm AS rust-builder
+FROM rust:1.99-bookworm AS rust-builder
 
 # Statically linked against musl, because the runtime below is Alpine (#599).
 # Same target release.yml has published since #577, and the same reasoning:
@@ -64,7 +64,7 @@ RUN set -eux; \
 # WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
 # and reuse the artefacts across every TARGETPLATFORM. wasm-pack itself is
 # fetched as a pre-built binary (cargo install wasm-pack would add ~2 min).
-FROM --platform=$BUILDPLATFORM rust:1.98-bookworm AS wasm-builder
+FROM --platform=$BUILDPLATFORM rust:1.99-bookworm AS wasm-builder
 
 # Version and SHA-256 pins of the release tarballs live in the script, which
 # CI and the Pages deploy call too — one set of pins for every place that
@@ -155,7 +155,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # binary set here is the full one, `croniq-demo-runner` included: dropping it
 # here would drop it from the combined image too, and docker-compose.yml's demo
 # profile runs it. Which binaries belong where is #599.
-FROM alpine:3.22 AS server-runtime
+FROM alpine:3.24 AS server-runtime
 
 # `su-exec` is Alpine's `gosu`: same argv shape, 10 KB of C against 2 MB of
 # Go. The entrypoint calls it by name.
