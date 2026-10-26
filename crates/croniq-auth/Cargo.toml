@@ -16,7 +16,7 @@ sha2 = "0.11"
 hex = "0.4"
 bcrypt = "0.17"
 uuid = { version = "1", features = ["v4"] }
-rand = "0.9"
+rand = "0.10"
 thiserror = "2"
 
 # PR-A3: TOTP/2FA + recovery codes + AES-GCM-wrapped TOTP secrets.

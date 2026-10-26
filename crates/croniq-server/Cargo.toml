@@ -45,7 +45,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 url = "2"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 base64 = "0.22"
-rand = "0.9"
+rand = "0.10"
 
 # #140 PR-2: HMAC-SHA256 signing for outbound webhook alert channels.
 # Standard pairing (hmac 0.12 ⇄ sha2 0.10) and same versions as
