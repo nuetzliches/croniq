@@ -50,8 +50,8 @@ rand = "0.9"
 # #140 PR-2: HMAC-SHA256 signing for outbound webhook alert channels.
 # Standard pairing (hmac 0.12 ⇄ sha2 0.10) and same versions as
 # croniq-auth so the workspace resolves to a single copy of each crate.
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 
 # PR-A6: optional SMTP transport for invitations + password resets.
