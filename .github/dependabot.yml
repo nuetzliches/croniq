@@ -57,6 +57,15 @@ updates:
     groups:
       ui-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # TypeScript 7 is the Go-based compiler with a new API. typescript-eslint
+      # refuses it outright ("does not support TS 7.0", peer range
+      # `>=4.8.4 <6.1.0`, support tracked in typescript-eslint#10940 for
+      # TS >= 7.1), and vue-tsc 3.3 still drives the TS 6 JS API through
+      # Volar, so #909 failed at `npm run lint` before the type check ran.
+      # Lift this once typescript-eslint and vue-tsc support TypeScript 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directories:
