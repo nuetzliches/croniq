@@ -12,7 +12,7 @@ Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) 
 | Coordinates                                                | Purpose                                                                       |
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `io.github.nuetzliches:croniq-runner`                      | Core SDK. JDK 21 + Jackson + SLF4J. No Spring / Kotlin / OTel dependency.     |
-| `io.github.nuetzliches:croniq-runner-spring-boot-starter`  | Opt-in Spring Boot 3 auto-config, `@CroniqJob`, `croniq.runner.*` properties. |
+| `io.github.nuetzliches:croniq-runner-spring-boot-starter`  | Opt-in Spring Boot 4 auto-config, `@CroniqJob`, `croniq.runner.*` properties. |
 | `io.github.nuetzliches:croniq-runner-kotlin-ext`           | Coroutine adapters + Kotlin DSL on top of the Java core.                      |
 | `io.github.nuetzliches:croniq-runner-opentelemetry`        | Opt-in OpenTelemetry observer — one span per execution.                       |
 | `conformance-tests` (not published)                        | Runs `sdks/conformance/cases/*.yaml` against the SDK.                         |

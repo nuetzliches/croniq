@@ -4,6 +4,20 @@ All notable changes to the Croniq Runner SDK for Java are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The Spring Boot starter targets Spring Boot 4 (4.1.2).**
+  `croniq-runner-spring-boot-starter` declares `spring-boot-starter` as an
+  `api` dependency, so an application on Spring Boot 3 would get Boot 4 jars
+  on its classpath next to its own; stay on 0.8.x of the starter until the
+  application moves to Boot 4. Open-source support for the 3.x line has
+  ended. The starter needed no code change: the auto-configuration, the
+  `croniq.runner.*` properties and `@CroniqJob` behave as before. The core
+  module, `croniq-runner-kotlin-ext` and `croniq-runner-opentelemetry` do not
+  depend on Spring and are unaffected.
+
 ## [0.8.0] - 2026-10-26
 
 ### Changed
