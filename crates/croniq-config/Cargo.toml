@@ -15,7 +15,7 @@ serde_json = "1"
 # Digest for the compiled-job fingerprint (`fingerprint.rs`, issue #555).
 # Same version the rest of the workspace pins (croniq-auth, croniq-server).
 sha2 = "0.11"
-similar = "2"
+similar = "3"
 glob = "0.3"
 
 [dev-dependencies]
