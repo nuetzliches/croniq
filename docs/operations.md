@@ -41,8 +41,8 @@ alert payloads report, and it tells you which kind of build you are running:
 
 | `version` | Build |
 | --- | --- |
-| `0.49.0` | A release (tarball, Homebrew, image tag `:0.49.0` / `:latest`). |
-| `0.49.0+main.a1c20f2` | An image built from `main` (`:main`, `:<sha>`): the last release plus the commit. Anything after `+` is build metadata, so semver ranks it equal to `0.49.0`. |
+| `0.50.0` | A release (tarball, Homebrew, image tag `:0.50.0` / `:latest`). |
+| `0.50.0+main.a1c20f2` | An image built from `main` (`:main`, `:<sha>`): the last release plus the commit. Anything after `+` is build metadata, so semver ranks it equal to `0.50.0`. |
 | `0.0.0-dev` | Anything else built from source: `cargo build`, devstack, `cargo install --git`. `git_sha` names the commit. |
 
 Non-release builds from 0.49.0 and earlier reported `0.4.0`.
@@ -253,11 +253,11 @@ services:
     depends_on: [ui, server]
 
   ui:
-    image: ghcr.io/nuetzliches/croniq-ui:0.49.0   # same tag as the server
+    image: ghcr.io/nuetzliches/croniq-ui:0.50.0   # same tag as the server
     restart: unless-stopped
 
   server:
-    image: ghcr.io/nuetzliches/croniq-server:0.49.0
+    image: ghcr.io/nuetzliches/croniq-server:0.50.0
     restart: unless-stopped
     volumes:
       - croniq-data:/var/lib/croniq
@@ -308,7 +308,7 @@ when the server can tell the page is on HTTPS, which it reads from `Origin`,
 
 All three images are published together under the same tags by the same
 workflow run, and they are meant to be deployed that way. Pinning
-`croniq-ui:0.49.0` against `croniq-server:0.48.1` gives you a dashboard calling
+`croniq-ui:0.50.0` against `croniq-server:0.49.0` gives you a dashboard calling
 endpoints its server may not have; the failure is a scattering of 404s rather
 than a clear message.
 

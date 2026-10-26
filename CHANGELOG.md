@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-26
+
+Most of this release works off a whole-repository review (the entries cite
+"review 2026-10-24"), including security fixes; see the `### Security`
+section and the repository's security advisories.
+
+**Upgrading from 0.49**, the changes that can need action:
+
+- **The Croniqfile is validated more strictly.** Unknown values for
+  `catch_up`, `execution_mode` and `retry`, a bare `timezone`, an empty
+  `runner { require }`, `__`-prefixed `metadata` keys and typos in `alerts { }`
+  are now errors, and a server refuses to boot on them where it used to run
+  without the setting. Run `croniq validate` against the new version first.
+- **The image runs as uid 100:101 (`croniq`) instead of root.** A bind mount or
+  an old volume that this user cannot write needs `chown 100:101`, or one start
+  with `--user 0` so the entrypoint fixes the owner.
+- **`:latest` now moves only on a release.** Builds of `main` are published as
+  `:main` and `:<sha>`.
+- **Rust runners (shell runner, demo runner, the Rust SDK) refuse cleartext
+  `http://` to a host other than loopback.** Use https, or set
+  `CRONIQ_ALLOW_INSECURE_HTTP=1` (SDK: `allow_insecure_http()`) on a trusted
+  network such as a Compose network.
+- **Behind a reverse proxy, set `CRONIQ_TRUSTED_PROXIES`** so the login
+  throttle keys on the client address instead of the proxy's.
+- **Shell alert channels get an allowlisted environment.** A script that read
+  other server variables needs them named in `CRONIQ_ALERT_ENV_PASSTHROUGH`.
+- **`POST /v1/jobs` on an existing key answers `409 job_exists`**; change a job
+  with `PUT /v1/jobs/{key}`.
+- **Stored calendar rules may no longer contain `{…}` placeholders**, and
+  calendar names are unique: migration 037 renames existing duplicates to
+  `<name> (duplicate <calendar_id>)`.
+- **Managing admin accounts needs the `admin` scope**, and a personal access
+  token never grants more than its owner's current role.
+
 ### Added
 
 - **`CRONIQ_REFRESH_COOKIE` renames the dashboard's refresh cookie** (#880).
@@ -7954,7 +7988,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accumulated under the old non-`--all-targets` clippy invocation are
   cleaned up.
 
-[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/nuetzliches/croniq/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/nuetzliches/croniq/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/nuetzliches/croniq/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/nuetzliches/croniq/compare/v0.47.1...v0.48.0
