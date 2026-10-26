@@ -1,4 +1,4 @@
-# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.20.0/docs/stack-file.md
+# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.22.1/docs/stack-file.md
 #
 # The same stack as `node scripts/dev-stack.mjs` (API, demo runner, dashboard
 # on croniq's 4230-4233 dev block), run by devstack: every process is built
@@ -21,8 +21,8 @@ version = 1
 
 [stack]
 name     = "croniq"
-requires = "0.20.0"                        # `reviewed`; `prepare` (services.ui) needs 0.7.0
-reviewed = "0.20.0"
+requires = "0.21.0"                        # profile `skip`; `reviewed` needs 0.20.0
+reviewed = "0.22.1"
 
 # ------------------------------------------------------------------ services
 #
@@ -143,6 +143,15 @@ steps = [
   { start = "api" },
   { start = "runner" },
 ]
+
+# ------------------------------------------------------------------ profiles
+
+# `devstack up --profile backend`: API, demo runner and seed without the
+# dashboard, which spares Vite's start and its wasm-bridge rebuild for work on
+# the server, a runner or the CLI. `devstack start ui` still starts it.
+[profiles.backend]
+description = "API, demo runner and seed, without the dashboard"
+skip        = ["ui"]
 
 # -------------------------------------------------------------------- groups
 
