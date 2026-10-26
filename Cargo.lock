@@ -929,7 +929,7 @@ dependencies = [
  "tokio-stream",
  "totp-rs",
  "tower",
- "tower-http",
+ "tower-http 0.7.1",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -1083,9 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.23.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
+checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
 dependencies = [
  "darling_core",
  "darling_macro",
@@ -1093,26 +1093,26 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.23.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9865a50f7c335f53564bb694ef660825eb8610e0a53d3e11bf1b0d3df31e03b0"
+checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
 dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
  "strsim",
- "syn 2.0.117",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "darling_macro"
-version = "0.23.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
+checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
 dependencies = [
  "darling_core",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2004,16 +2004,6 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
-
-[[package]]
-name = "iri-string"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e659a4bb38e810ebc252e53b5814ff908a8c58c2a9ce2fae1bbec24cbf4e20"
-dependencies = [
- "memchr",
- "serde",
-]
 
 [[package]]
 name = "is-terminal"
@@ -3205,7 +3195,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -3240,18 +3230,20 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "2.1.0"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f00a32c3b81b7b254076a65abd5ab2551209146713ba38f73818657e865e9433"
+checksum = "ece64e19631fc38758181e637c15509a2c2709ee53bfde1e1d58f9dc991f919e"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "chrono",
  "futures",
  "http",
  "http-body",
  "http-body-util",
+ "indexmap",
+ "libc",
  "pastey",
  "pin-project-lite",
  "rand 0.10.1",
@@ -3271,15 +3263,15 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "2.2.0"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "783d787bf21813b285f13019adc49e11af501c658890c1e519f31f937c68b7e3"
+checksum = "967fa7f7935d7d6217d593df0e8e5c9307bcaf256974a5a9ee64476c97735389"
 dependencies = [
  "darling",
  "proc-macro2",
  "quote",
  "serde_json",
- "syn 2.0.117",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3763,9 +3755,9 @@ dependencies = [
 
 [[package]]
 name = "sse-stream"
-version = "0.2.2"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5e6deb40826033bd7b11c7ef25ef71193fabd71f680f40dd16538a2704d2f4"
+checksum = "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
 dependencies = [
  "bytes",
  "futures-util",
@@ -4205,9 +4197,27 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.8"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
+checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
+dependencies = [
+ "bitflags 2.11.0",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "pin-project-lite",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "url",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
 dependencies = [
  "async-compression",
  "bitflags 2.11.0",
@@ -4219,17 +4229,14 @@ dependencies = [
  "http-body-util",
  "http-range-header",
  "httpdate",
- "iri-string",
  "mime",
  "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "tokio",
  "tokio-util",
- "tower",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -4445,9 +4452,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.28.0"
+version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
+checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -4645,9 +4652,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.10"
+version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
 ]
