@@ -4,7 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup Label="Build tooling">
-    <PackageVersion Include="MinVer" Version="6.1.0" />
+    <PackageVersion Include="MinVer" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup Label="Runtime — Microsoft.Extensions (10.0 baseline; multi-targeted to net8.0+)">
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
