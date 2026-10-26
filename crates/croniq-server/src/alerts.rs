@@ -32,7 +32,7 @@ use croniq_config::compile::{AlertsConfig, ChannelConfig, ChannelKind, RuleConfi
 use croniq_store::models::{
     AlertDelivery, AlertDeliveryKind, AlertDeliveryState, JobAlertAck, JobFailureStreak,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use uuid::Uuid;
 

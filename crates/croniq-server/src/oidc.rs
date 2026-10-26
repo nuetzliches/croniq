@@ -219,7 +219,7 @@ impl OidcProvider {
     /// anyone who only sees the redirect URLs. Deriving it keeps PKCE free of
     /// a schema change to `oidc_pending` (review 2026-10-24, A-10).
     fn pkce_verifier(&self, state: &str) -> String {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(self.config.client_secret.as_bytes())
             .expect("HMAC accepts any key length");
         mac.update(b"croniq-oidc-pkce:");
