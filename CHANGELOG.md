@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Dependency batch of 2026-10-27** (supersedes Dependabot #959, #961 and
+  #962; merged alongside #956, #957, #958, #960 and #963). rand 0.10 in every
+  crate (the demo runner was still on 0.8): `Rng` is now `RngExt` and
+  `RngCore` is now `Rng`, so the TOTP secret and the OIDC state/nonce
+  generators only change their imports; both still draw from the thread-local
+  CSPRNG. criterion 0.8 for the benchmarks, which now use
+  `std::hint::black_box`. WireMock.Net 2 in the .NET SDK's conformance tests
+  (#964): the mock's response provider takes the new `HttpContext` argument.
+  Also: base64 0.23, similar 3, the cargo and .NET minor/patch groups and
+  `xunit.runner.visualstudio` 4. TypeScript 7 stays out of the TypeScript SDK
+  for the same reason as in `ui/`: typescript-eslint does not support it yet
+  (#955).
 - **Dependency batch of 2026-10-26** (supersedes Dependabot #941, #942 and
   #944; merged alongside #933, #936, #939, #940, #943 and #945–#948). sha2
   0.11, hkdf 0.13 and hmac 0.13 move together, because hkdf and hmac 0.13 are

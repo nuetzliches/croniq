@@ -28,7 +28,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use rand::RngCore;
+use rand::Rng;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use thiserror::Error;

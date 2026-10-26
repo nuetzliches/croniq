@@ -1,9 +1,10 @@
 //! Benchmarks for the WorkQueue: enqueue, dequeue, capability matching, removal.
 
 use chrono::Utc;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use croniq_runner::WorkItem;
 use croniq_runner::queue::WorkQueue;
+use std::hint::black_box;
 
 fn make_item(id: usize, require: Vec<&str>) -> WorkItem {
     WorkItem {

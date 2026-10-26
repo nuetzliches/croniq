@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use chrono::{TimeZone, Utc};
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use croniq_store::{
     models::{Execution, ExecutionState, JobState, JobStatus},
     sqlite::SqliteStore,
     traits::{ExecutionStore, JobStore},
 };
+use std::hint::black_box;
 use uuid::Uuid;
 
 fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {

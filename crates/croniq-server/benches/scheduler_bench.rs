@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use croniq_config::compile::{
     CatchUpPolicy, DeadLetterConfig, ExecutionMode, JobConfig, RetryConfig, RunnerConfig,
 };
@@ -18,6 +18,7 @@ use croniq_server::{
     store::{DynStore, sqlite_store},
 };
 use croniq_store::sqlite::SqliteStore;
+use std::hint::black_box;
 
 fn make_job(key: &str, mode: ExecutionMode) -> JobConfig {
     JobConfig {
