@@ -78,6 +78,12 @@ updates:
     groups:
       typescript-sdk-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # @types/node tracks the SDK's lowest supported Node (`engines`), not
+      # the newest one: newer typings would let the SDK call APIs its floor
+      # lacks. Raise it together with `engines` and the CI matrix.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: /sdks/python
