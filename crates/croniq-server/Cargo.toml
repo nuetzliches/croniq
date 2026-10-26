@@ -51,7 +51,7 @@ rand = "0.9"
 # Standard pairing (hmac 0.12 ⇄ sha2 0.10) and same versions as
 # croniq-auth so the workspace resolves to a single copy of each crate.
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # PR-A6: optional SMTP transport for invitations + password resets.
