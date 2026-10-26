@@ -98,7 +98,7 @@ tower = { version = "0.5", features = ["util"] }
 # assembly (ServeDir + ServeFile) to assert security headers on it.
 tower-http = { version = "0.7", features = ["cors", "fs", "set-header", "compression-gzip", "compression-br"] }
 http-body-util = "0.1"
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 tempfile = "3"
 # Tests compute currently-valid TOTP codes so "wrong code" assertions are
 # deterministic instead of failing ~3e-6 of runs on a random collision.
