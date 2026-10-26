@@ -8,20 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Dependency batch of 2026-10-26** (supersedes Dependabot #941 and #944,
-  merged alongside #933, #936, #939, #940, #943, #945–#948). sha2 0.11, hkdf
-  0.13 and hmac 0.13 move together, because hkdf and hmac 0.13 are built on
-  the `digest` 0.11 that sha2 0.11 implements; one at a time none of them
-  compiles. The digest output no longer implements `LowerHex`, so the
-  Croniqfile fingerprint hex-encodes byte by byte (same string as before),
-  and `Hmac::new_from_slice` now needs `KeyInit` in scope. The release image
-  builds with `rust:1.99` and runs on `alpine:3.24`. Also: tower-http 0.7,
-  the cargo minor/patch group, `docker/login-action` 4.7, MinVer 8 for the
-  .NET SDK (tag prefix and `preview.0` pre-release versions checked against
-  `dotnet-sdk-v0.10.0`), `Microsoft.NET.Test.Sdk` 18 and the .NET
+- **Dependency batch of 2026-10-26** (supersedes Dependabot #941, #942 and
+  #944; merged alongside #933, #936, #939, #940, #943 and #945–#948). sha2
+  0.11, hkdf 0.13 and hmac 0.13 move together, because hkdf and hmac 0.13 are
+  built on the `digest` 0.11 that sha2 0.11 implements; one at a time none of
+  them compiles. The digest output no longer implements `LowerHex`, so the
+  Croniqfile fingerprint hex-encodes byte by byte (same string as before), and
+  `Hmac::new_from_slice` now needs `KeyInit` in scope. rmcp 3.7 for
+  `croniq-mcp` (#951) only renames `ServerInfo` to `ServerConfig`. The release
+  image builds with `rust:1.99` and runs on `alpine:3.24`. Also: tower-http
+  0.7, the cargo minor/patch group, `docker/login-action` 4.7, MinVer 8 for
+  the .NET SDK (tag prefix and `preview.0` pre-release versions checked
+  against `dotnet-sdk-v0.10.0`), `Microsoft.NET.Test.Sdk` 18 and the .NET
   minor/patch group, JUnit 6 and the Spotless Gradle plugin 8 in the Java
-  SDK's `buildSrc`. Test and build tooling only in the SDKs; no published
-  SDK's dependency floor moves.
+  SDK. In the SDKs these are build and test tooling only; no published SDK's
+  dependency floor moves.
 
 ## [0.50.0] - 2026-10-26
 
