@@ -15,7 +15,7 @@ kotlinx-coroutines = "1.11.0"
 
 # Spring Boot (starter module + AutoConfiguration). Tracking the latest
 # 3.x LTS line — JDK 21 baseline matches our toolchain pin.
-spring-boot = "3.4.0"
+spring-boot = "4.1.2"
 
 # OpenTelemetry — pinned but not yet wired in core. The otel module ships
 # in PR-7; the version lives here so PR-2..6 can reference it without
