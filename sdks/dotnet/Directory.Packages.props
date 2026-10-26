@@ -4,7 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup Label="Build tooling">
-    <PackageVersion Include="MinVer" Version="6.1.0" />
+    <PackageVersion Include="MinVer" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup Label="Runtime — Microsoft.Extensions (10.0 baseline; multi-targeted to net8.0+)">
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
@@ -24,7 +24,7 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
   </ItemGroup>
   <ItemGroup Label="Tests">
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
