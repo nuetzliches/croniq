@@ -62,7 +62,7 @@ internal sealed class MockServerHarness : IAsyncDisposable
             {
                 held = [.. _held];
             }
-            var logged = _server.LogEntries.Select(e => e.RequestMessage).ToList();
+            var logged = _server.LogEntries.Select(e => e.RequestMessage).OfType<WireMock.IRequestMessage>().ToList();
             return logged
                 .Where(m => !held.Any(h => ReferenceEquals(h, m)))
                 .Concat(held)
@@ -143,6 +143,7 @@ internal sealed class MockServerHarness : IAsyncDisposable
 
         public async Task<(WireMock.IResponseMessage Message, WireMock.IMapping? Mapping)> ProvideResponseAsync(
             WireMock.IMapping mapping,
+            Microsoft.AspNetCore.Http.HttpContext context,
             WireMock.IRequestMessage requestMessage,
             WireMockServerSettings settings)
         {
