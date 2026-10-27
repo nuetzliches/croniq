@@ -36,7 +36,7 @@
     <PackageVersion Include="Scriban.Signed" Version="7.2.5" />
     <!-- Transitive pin: WireMock.Net 1.6.7 brings Microsoft.OpenApi.Readers 1.2.3 which has GHSA-7pxr-59rr-hqj2. Force 1.6.30 (fixed). -->
     <PackageVersion Include="Microsoft.OpenApi.Readers" Version="1.6.30" />
-    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
   </ItemGroup>
 </Project>
