@@ -9,7 +9,7 @@ description = "Execution policies: retry strategies, timeout, and dead-letter ha
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-rand = "0.9"
+rand = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1"

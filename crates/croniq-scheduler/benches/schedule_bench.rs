@@ -1,11 +1,12 @@
 //! Benchmarks for schedule evaluation and trigger state machine.
 
 use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use croniq_scheduler::{
     schedule::{MonthDay, Schedule},
     trigger::Trigger,
 };
+use std::hint::black_box;
 
 fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()

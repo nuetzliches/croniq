@@ -17,7 +17,7 @@
 //!   2. POST /v1/auth/login/totp { mfa_token, code | recovery_code }
 //!      → normal access + refresh tokens
 
-use rand::Rng;
+use rand::RngExt;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use totp_rs::{Algorithm, Builder, Secret, Totp};

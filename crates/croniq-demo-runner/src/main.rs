@@ -27,7 +27,7 @@ use std::time::Duration;
 use croniq_runner_sdk::{
     CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id, shutdown_signal,
 };
-use rand::Rng as _; // for gen_range
+use rand::RngExt as _; // for random_range
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -123,7 +123,7 @@ async fn main() {
 }
 
 async fn simulate(ctx: ExecutionContext, fail_rate: f64) -> Result<(), HandlerError> {
-    let sleep_ms = rand::thread_rng().gen_range(50u64..=2_000);
+    let sleep_ms = rand::rng().random_range(50u64..=2_000);
     info!(
         job_key = %ctx.job_key,
         execution_id = %ctx.execution_id,

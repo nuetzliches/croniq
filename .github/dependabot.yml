@@ -84,6 +84,10 @@ updates:
       # lacks. Raise it together with `engines` and the CI matrix.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # TypeScript 7: same blocker as in ui/ (typescript-eslint's peer range
+      # stops below 6.1, #955). Lift both ignores together.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: /sdks/python
