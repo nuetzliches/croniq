@@ -18,11 +18,12 @@
 //! [`unwrap_totp_secret_with_previous`] — and the boot-time re-wrap built on
 //! it (issue #531) — able to report exactly which key a row is under.
 
-use aes_gcm::aead::{Aead, AeadCore, OsRng};
+use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use hkdf::Hkdf;
+use rand::Rng as _;
 use sha2::Sha256;
 use thiserror::Error;
 
@@ -63,7 +64,7 @@ fn derive_totp_key(jwt_secret: &str) -> Key<Aes256Gcm> {
     let mut okm = [0u8; 32];
     hk.expand(TOTP_KEY_INFO, &mut okm)
         .expect("HKDF expand for 32 bytes never fails");
-    *Key::<Aes256Gcm>::from_slice(&okm)
+    Key::<Aes256Gcm>::from(okm)
 }
 
 /// Wrap a TOTP seed (or any short secret) with AES-256-GCM.
@@ -72,7 +73,11 @@ fn derive_totp_key(jwt_secret: &str) -> Key<Aes256Gcm> {
 pub fn wrap_totp_secret(jwt_secret: &str, plaintext: &[u8]) -> Result<String, CryptoError> {
     let key = derive_totp_key(jwt_secret);
     let cipher = Aes256Gcm::new(&key);
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    // A fresh random 96-bit nonce per wrap, from the thread-local CSPRNG
+    // (aes-gcm 0.11 no longer re-exports `OsRng`). Same format as before.
+    let mut nonce_bytes = [0u8; 12];
+    rand::rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
     let ct = cipher
         .encrypt(&nonce, plaintext)
         .map_err(|_| CryptoError::Encrypt)?;
@@ -157,6 +162,16 @@ mod tests {
         let wrapped = wrap_totp_secret("jwt-secret", plaintext).unwrap();
         let unwrapped = unwrap_totp_secret("jwt-secret", &wrapped).unwrap();
         assert_eq!(unwrapped, plaintext);
+    }
+
+    /// Seeds already stored stay readable across crate upgrades: this value
+    /// was wrapped by the aes-gcm 0.10 / hkdf 0.12 build (croniq 0.50.0).
+    #[test]
+    fn unwraps_a_seed_wrapped_by_an_earlier_build() {
+        let wrapped = "bEsiyK0Wr4kLuS/egaSH5TsxxGAvep7Qz4s74v0YAoxsUDMnWNEeMCUlNbY=";
+        let unwrapped =
+            unwrap_totp_secret("golden-vector-jwt-secret-not-a-real-one", wrapped).unwrap();
+        assert_eq!(unwrapped, b"JBSWY3DPEHPK3PXP");
     }
 
     #[test]

@@ -8,15 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Dependency batch of 2026-10-27** (supersedes Dependabot #959, #961 and
-  #962; merged alongside #956, #957, #958, #960 and #963). rand 0.10 in every
-  crate (the demo runner was still on 0.8): `Rng` is now `RngExt` and
-  `RngCore` is now `Rng`, so the TOTP secret and the OIDC state/nonce
-  generators only change their imports; both still draw from the thread-local
-  CSPRNG. criterion 0.8 for the benchmarks, which now use
+- **Dependency batch of 2026-10-27** (supersedes Dependabot #959, #961, #962
+  and #969; merged alongside #956–#958, #960, #963, #966–#968 and #970).
+  rand 0.10 in every crate (the demo runner was still on 0.8): `Rng` is now
+  `RngExt` and `RngCore` is now `Rng`, so the TOTP secret and the OIDC
+  state/nonce generators only change their imports; both still draw from the
+  thread-local CSPRNG. criterion 0.8 for the benchmarks, which now use
   `std::hint::black_box`. WireMock.Net 2 in the .NET SDK's conformance tests
   (#964): the mock's response provider takes the new `HttpContext` argument.
-  Also: base64 0.23, similar 3, the cargo and .NET minor/patch groups and
+  aes-gcm 0.11, which wraps the TOTP seeds at rest, no longer re-exports `OsRng`;
+  the 96-bit nonce comes from the thread-local CSPRNG, the stored format is
+  unchanged, and a test now unwraps a seed wrapped by the 0.50.0 build.
+  bcrypt 0.19 still truncates at 72 bytes in `hash`/`verify`, so existing
+  password hashes keep verifying. Also: base64 0.23, similar 3, rusqlite 0.40,
+  YamlDotNet 18 in the .NET tests, the cargo and .NET minor/patch groups and
   `xunit.runner.visualstudio` 4. TypeScript 7 stays out of the TypeScript SDK
   for the same reason as in `ui/`: typescript-eslint does not support it yet
   (#955).
