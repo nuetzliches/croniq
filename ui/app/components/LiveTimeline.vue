@@ -742,6 +742,20 @@ onBeforeUnmount(stopMotion)
           data-testid="live-favorites-first"
           @click="favoritesFirst = !favoritesFirst"
         />
+        <!-- In the header, not under the list: expanded, the list is long and
+             a control at its end is a scroll away. -->
+        <UButton
+          v-if="overflowing"
+          v-tooltip="expanded ? `Collapse to ${COLLAPSED_LANES} lanes` : `Show all ${layout.lanes.length} jobs`"
+          size="xs"
+          :variant="expanded ? 'subtle' : 'ghost'"
+          color="neutral"
+          :icon="expanded ? 'i-lucide-chevrons-down-up' : 'i-lucide-chevrons-up-down'"
+          :label="expanded ? 'Collapse' : 'Expand'"
+          :aria-pressed="expanded"
+          data-testid="live-expand"
+          @click="expanded = !expanded"
+        />
       </div>
     </div>
 
@@ -986,14 +1000,6 @@ onBeforeUnmount(stopMotion)
         class="mt-1 flex items-center gap-2 text-xs text-muted"
       >
         <span>{{ layout.lanes.length }} jobs</span>
-        <UButton
-          size="xs"
-          variant="link"
-          :icon="expanded ? 'i-lucide-chevrons-down-up' : 'i-lucide-chevrons-up-down'"
-          :label="expanded ? 'Collapse' : 'Expand'"
-          data-testid="live-expand"
-          @click="expanded = !expanded"
-        />
       </div>
 
       <LiveRangeSelector
