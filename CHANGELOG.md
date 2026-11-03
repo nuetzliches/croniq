@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`devstack.toml` needs devstack 0.23.0 and is up to date with 0.35.0**
+  (`reviewed = "0.35.0"`). The dashboard's `prepare` now names its
+  `outputs` (`ui/node_modules`) and a `version` (`node --version`), so a lane
+  with the same `ui/package-lock.json` copies `node_modules` from devstack's
+  per-machine store instead of running `npm ci` again. `.mcp.json` registers
+  devstack's MCP server (`devstack mcp`) for Claude Code. The stack itself is
+  unchanged.
 - **Dependency batch of 2026-10-27** (supersedes Dependabot #959, #961, #962
   and #969; merged alongside #956–#958, #960, #963, #966–#968 and #970).
   rand 0.10 in every crate (the demo runner was still on 0.8): `Rng` is now
