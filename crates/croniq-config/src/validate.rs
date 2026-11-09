@@ -131,6 +131,11 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
     // before the block does not inherit it, so the UTC warning below must not
     // consider it covered (issue #427).
     let mut default_timezone = false;
+    // Same for `defaults { retry … }`, and the queued jobs that inherit the
+    // built-in retry policy because neither they nor a `defaults` block above
+    // them declare one — reported once per file below (issue #983).
+    let mut default_retry = false;
+    let mut implicit_retry: Vec<&JobBlock> = Vec::new();
     // Jobs, calendars and imports seen so far — what a later `defaults { }`
     // does not reach (review 2026-10-24, F-15).
     let mut declared_before_defaults = 0usize;
@@ -159,6 +164,7 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 }
                 validate_duration_directives(&def.directives, &mut diags);
                 validate_priority_directives(&def.directives, &mut diags);
+                default_retry |= declares_retry(&def.directives);
                 for dob in &def.directives {
                     if let DirectiveOrBlock::Directive(dir) = dob {
                         match dir.key.value.as_str() {
@@ -265,6 +271,15 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
                 // Validate singleton / max_concurrent (issue #278, #302) and
                 // the shared-budget reference (issue #546)
                 validate_concurrency(job, default_ephemeral, &group_names, &mut diags);
+
+                // Ephemeral executions are never retried, so the built-in
+                // policy only matters for queued jobs.
+                if !default_retry
+                    && !declares_retry(&job.directives)
+                    && !job_is_ephemeral(job, default_ephemeral)
+                {
+                    implicit_retry.push(job);
+                }
             }
             // Falls through to the catch-all when the caller owns calendar
             // failures itself — see `Options::check_calendars`.
@@ -281,7 +296,57 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
         }
     }
 
+    if let Some(first) = implicit_retry.first() {
+        diags.push(implicit_retry_warning(&implicit_retry, first));
+    }
+
     diags
+}
+
+/// Whether `directives` hold a `retry { … }` block.
+fn declares_retry(directives: &[DirectiveOrBlock]) -> bool {
+    directives
+        .iter()
+        .any(|dob| matches!(dob, DirectiveOrBlock::Block(b) if b.name.value == "retry"))
+}
+
+/// One warning for every queued job that falls back to the built-in retry
+/// policy, anchored at the first of them. A job without `retry` used to be
+/// retried three times with nothing in the file or the docs saying so, which
+/// surprised jobs with a non-idempotent side effect (issue #983). One
+/// `defaults { retry … }` silences it, so it is per file rather than per job.
+fn implicit_retry_warning(jobs: &[&JobBlock], first: &JobBlock) -> Diagnostic {
+    const NAMED: usize = 3;
+    let built_in = crate::compile::RetryConfig::default();
+    let mut keys: Vec<String> = jobs
+        .iter()
+        .take(NAMED)
+        .map(|j| format!("'{}'", j.key.raw))
+        .collect();
+    if jobs.len() > NAMED {
+        keys.push(format!("and {} more", jobs.len() - NAMED));
+    }
+    let (subject, verb) = if jobs.len() == 1 {
+        ("job".to_string(), "declares")
+    } else {
+        (format!("{} jobs", jobs.len()), "declare")
+    };
+    Diagnostic {
+        severity: Severity::Warning,
+        message: format!(
+            "{subject} {} {verb} no `retry`, and no `defaults {{ }}` above declares one: a \
+             failed run is retried with the built-in policy ({} {{ max_attempts {}; base {}; cap {}; jitter \
+             {} }}); declare `retry` in `defaults {{ }}` to make it explicit, or `retry none {{ }}` \
+             for a single attempt",
+            keys.join(", "),
+            built_in.strategy,
+            built_in.max_attempts,
+            built_in.base.as_deref().unwrap_or_default(),
+            built_in.cap.as_deref().unwrap_or_default(),
+            built_in.jitter.unwrap_or_default(),
+        ),
+        span: first.key.span.into(),
+    }
 }
 
 /// Every time value of `job` that the server could not apply as written: the
@@ -3059,5 +3124,97 @@ job a:b { every 5 minutes }",
                 .any(|m| m.contains("unknown directive 'max_concurent'")),
             "{msgs:?}"
         );
+    }
+
+    // ── built-in retry policy (issue #983) ──────────────────────────────────
+
+    fn retry_warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+        warnings(diags)
+            .into_iter()
+            .filter(|d| d.message.contains("built-in policy"))
+            .collect()
+    }
+
+    #[test]
+    fn job_without_retry_warns_once_per_file() {
+        let diags = validate_src(
+            r#"
+            job a:one   { every 5 minutes }
+            job a:two   { every 5 minutes }
+            job a:three { every 5 minutes }
+            job a:four  { every 5 minutes }
+            job a:own   { every 5 minutes; retry fixed { max_attempts 1 } }
+        "#,
+        );
+        assert!(errors(&diags).is_empty(), "must not be an error: {diags:?}");
+        let found = retry_warnings(&diags);
+        assert_eq!(found.len(), 1, "one warning for the file: {diags:?}");
+        let msg = &found[0].message;
+        assert!(
+            msg.starts_with("4 jobs 'a:one', 'a:two', 'a:three', and 1 more declare"),
+            "{msg}"
+        );
+        assert!(!msg.contains("a:own"), "{msg}");
+        assert!(
+            msg.contains("exponential { max_attempts 3; base 2s; cap 30s; jitter 0.25 }"),
+            "names the built-in values: {msg}"
+        );
+        assert!(msg.contains("retry none"), "names the way out: {msg}");
+    }
+
+    #[test]
+    fn single_job_without_retry_reads_in_the_singular() {
+        let diags = validate_src("job a:b { every 5 minutes }");
+        let found = retry_warnings(&diags);
+        assert_eq!(found.len(), 1, "{diags:?}");
+        assert!(
+            found[0]
+                .message
+                .starts_with("job 'a:b' declares no `retry`"),
+            "{:?}",
+            found[0]
+        );
+    }
+
+    #[test]
+    fn defaults_retry_silences_the_retry_warning() {
+        for defaults in ["retry exponential { max_attempts 5 }", "retry none { }"] {
+            let diags = validate_src(&format!(
+                "defaults {{ {defaults} }}\njob a:b {{ every 5 minutes }}"
+            ));
+            assert!(retry_warnings(&diags).is_empty(), "{defaults}: {diags:?}");
+        }
+    }
+
+    #[test]
+    fn defaults_retry_after_a_job_does_not_silence_it() {
+        // compile_job inherits only from a `defaults` block above the job.
+        let diags = validate_src(
+            r#"
+            job a:b { every 5 minutes }
+            defaults { retry none { } }
+            job a:c { every 5 minutes }
+        "#,
+        );
+        let found = retry_warnings(&diags);
+        assert_eq!(found.len(), 1, "{diags:?}");
+        assert!(
+            found[0].message.starts_with("job 'a:b' declares"),
+            "{:?}",
+            found[0]
+        );
+    }
+
+    #[test]
+    fn ephemeral_job_without_retry_does_not_warn() {
+        // Ephemeral executions are never retried.
+        let diags = validate_src(
+            r#"
+            defaults { execution_mode ephemeral }
+            job a:b { every 5 minutes }
+            job a:c { every 5 minutes; execution_mode ephemeral }
+        "#,
+        );
+        assert!(retry_warnings(&diags).is_empty(), "{diags:?}");
     }
 }

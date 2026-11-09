@@ -652,6 +652,11 @@ fn retry_loose_line(r: Option<&RetryPayload>) -> Option<String> {
         let s = r.strategy.trim();
         if s.is_empty() { "exponential" } else { s }
     };
+    // `none` takes no fields, and an empty block is what says "one attempt":
+    // leaving it out would inherit the built-in retries (issue #983).
+    if strat == "none" {
+        return Some("retry none { }".into());
+    }
     let mut inner: Vec<String> = Vec::new();
     if let Some(n) = r.max_attempts {
         inner.push(format!("max_attempts {n}"));
@@ -2388,6 +2393,28 @@ mod tests {
         let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
         assert!(!out.contains("step"), "{out}");
         Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn job_block_retry_none_emits_an_empty_block() {
+        // Issue #983: `none` carries no fields, so the "no usable fields"
+        // rule dropped the block — and a job without `retry` inherits the
+        // built-in retries, the opposite of what was picked.
+        let o = JobOptions {
+            retry: Some(RetryPayload {
+                strategy: "none".into(),
+                max_attempts: Some(3),
+                base: Some("2s".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = format_job_block_inner(&interval5(), "ops:check", &o).unwrap();
+        assert!(out.contains("retry none { }"), "{out}");
+        assert!(!out.contains("max_attempts"), "{out}");
+        let ast = Parser::parse(&out).unwrap();
+        let job = &croniq_config::compile::compile(&ast).jobs[0];
+        assert_eq!(job.retry.max_attempts, 1, "{out}");
     }
 
     #[test]
