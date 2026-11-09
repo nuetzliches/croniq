@@ -8,6 +8,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **rmcp 3.9 for `croniq-mcp`** (RUSTSEC-2026-0462). The advisory covers
+  rmcp's Streamable HTTP *clients*, which croniq does not use (it only serves
+  MCP), but cargo-deny fails on it. The bundled SQLite advisory
+  RUSTSEC-2026-0459 was already fixed by rusqlite 0.41 (#974).
 - **`devstack.toml` needs devstack 0.23.0 and is up to date with 0.35.0**
   (`reviewed = "0.35.0"`). The dashboard's `prepare` now names its
   `outputs` (`ui/node_modules`) and a `version` (`node --version`), so a lane
