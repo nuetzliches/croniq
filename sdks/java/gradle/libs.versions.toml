@@ -29,7 +29,7 @@ assertj = "3.27.7"
 wiremock = "3.13.2"
 mockito = "5.24.0"
 awaitility = "4.3.0"
-logback = "1.6.5"
+logback = "1.6.6"
 
 # Build / tooling plugins
 spotless = "8.10.4"
