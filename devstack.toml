@@ -1,4 +1,4 @@
-# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.22.1/docs/stack-file.md
+# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.35.0/docs/stack-file.md
 #
 # The same stack as `node scripts/dev-stack.mjs` (API, demo runner, dashboard
 # on croniq's 4230-4233 dev block), run by devstack: every process is built
@@ -21,8 +21,8 @@ version = 1
 
 [stack]
 name     = "croniq"
-requires = "0.21.0"                        # profile `skip`; `reviewed` needs 0.20.0
-reviewed = "0.22.1"
+requires = "0.23.0"                        # `prepare.outputs`; profile `skip` needs 0.21.0
+reviewed = "0.35.0"
 
 # ------------------------------------------------------------------ services
 #
@@ -113,8 +113,10 @@ run    = "npm run dev -- --host 127.0.0.1 --port {port}"
 port   = 4231
 health = { http = "/", timeout = "300s" }
 # A worktree's lane runs vite from a snapshot without node_modules; the main
-# tree uses its own and never runs this.
-prepare = { run = "npm ci", inputs = ["ui/package-lock.json"] }
+# tree uses its own and never runs this. `outputs` keeps what `npm ci` made in
+# the machine's store, so the next lane with the same lockfile copies it
+# instead; `version` makes a new Node a new entry.
+prepare = { run = "npm ci", inputs = ["ui/package-lock.json"], outputs = ["ui/node_modules"], version = "node --version" }
 env    = { CRONIQ_API_ORIGIN = "{service.api.url}" }
 # Vite reloads app code itself; these it only reads on start. The wasm bridge
 # is rebuilt by `predev`, so a DSL change needs a restart too.
