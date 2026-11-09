@@ -7,6 +7,7 @@ import { logout } from '~/api/session'
 import { useUiStore } from '~/stores/ui'
 import { GO_TO, useGoToShortcuts } from '~/composables/useGoToShortcuts'
 import { useIsAdmin } from '~/composables/useIsAdmin'
+import { UI_VERSION } from '~/lib/build-version'
 import { formatBadgeCount } from '~/lib/format'
 import { NAV_SECTIONS, type NavBadge } from '~/router/nav'
 
@@ -381,7 +382,8 @@ async function signOut() {
             v-if="version?.version"
             v-tooltip="
               [
-                `Croniq ${version.version}`,
+                `Server ${version.version}`,
+                `UI ${UI_VERSION ?? 'unstamped'}`,
                 version.git_sha && `build ${version.git_sha}`,
                 version.build_time && `built ${version.build_time}`,
                 version.env && `env ${version.env}`,
