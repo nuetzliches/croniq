@@ -6,8 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-11-09
+
+A maintenance release: the built-in retry policy is documented and reported,
+`retry none` reads as one attempt, the bundled SQLite and rmcp move past two
+advisories, and a batch of dependency updates.
+
+**Upgrading from 0.50**, the changes that can need action:
+
+- **`croniq validate` and the server's boot log may show a new warning** about
+  jobs that inherit the built-in retry policy (three runs in total). Nothing
+  changes at runtime. Declare `retry` in `defaults { }` to make the policy
+  explicit, or `retry none { }` where a job must not run twice.
+- **A job with `retry none` now reports `max_retries` 1** in the API and the
+  dashboard instead of 3. It already ran only once.
+
+### Added
+
+- **The dashboard header's version tooltip names the server and the UI
+  version.** After an upgrade the tab can still run the old bundle against the
+  new server; the tooltip now shows both (`UI unstamped` for a build without a
+  version stamp).
+
 ### Changed
 
+- **The live view's Expand / Collapse toggle sits in the card header**, next
+  to the other controls, and appears only when there are more jobs than the
+  collapsed card shows. Expanded, it used to be a full scroll away below the
+  list.
 - **rmcp 3.9 for `croniq-mcp`** (RUSTSEC-2026-0462). The advisory covers
   rmcp's Streamable HTTP *clients*, which croniq does not use (it only serves
   MCP), but cargo-deny fails on it. The bundled SQLite advisory
@@ -8055,7 +8081,8 @@ section and the repository's security advisories.
   accumulated under the old non-`--all-targets` clippy invocation are
   cleaned up.
 
-[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/nuetzliches/croniq/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/nuetzliches/croniq/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/nuetzliches/croniq/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/nuetzliches/croniq/compare/v0.48.0...v0.48.1
