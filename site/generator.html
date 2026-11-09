@@ -556,7 +556,16 @@
               </div>
 
               <div class="field">
-                <label class="opt-check"><input type="checkbox" id="sch-opt-retry-enabled"> Retry on failure</label>
+                <label class="opt-check"><input type="checkbox" id="sch-opt-retry-enabled"> Own retry policy</label>
+                <!-- Unchecked emits no `retry` block, which is not "no
+                     retries": the job inherits `defaults { retry }` or the
+                     built-in policy (issue #983). -->
+                <p style="color: var(--fg-muted); font-size: 0.8125rem;">
+                  Unchecked, the job inherits <code>retry</code> from
+                  <code>defaults { }</code> or the built-in policy:
+                  exponential, 3 attempts, 2s base, 30s cap. Pick
+                  <code>none</code> for a single attempt.
+                </p>
               </div>
               <div id="sch-opt-retry-fields" hidden>
                 <div class="field-row">
@@ -566,6 +575,7 @@
                       <option value="exponential">exponential</option>
                       <option value="linear">linear</option>
                       <option value="fixed">fixed</option>
+                      <option value="none">none</option>
                     </select>
                   </div>
                   <div class="field">
@@ -888,6 +898,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js?v=2026-10-24a"></script>
+  <script type="module" src="./generator.js?v=2026-11-09a"></script>
 </body>
 </html>

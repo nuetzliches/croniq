@@ -225,6 +225,9 @@ server {
 
 defaults {
   timezone Europe/Vienna
+  # A job with no `retry` of its own inherits this one. Without it here
+  # either, it gets the built-in policy (the same values plus jitter
+  # 0.25), and `croniq validate` warns. `retry none { }` = one attempt.
   retry exponential { max_attempts 3; base 2s; cap 30s }
   timeout 5m
 
@@ -553,12 +556,24 @@ all|latest|none`, `queue_ttl 1h|none`, `max_queue_depth N`, `keep_last N`,
 `singleton`, `max_concurrent N`, `concurrency_group <name>`, `coalesce
 [schedule]`, `priority low|normal|high`, `tags a b c`, `run_on_register`.
 Blocks: `retry exponential|linear|fixed|none { max_attempts; base; cap; step;
-delay; jitter 0..1 }`, `dead_letter { enabled; retention; operator_hint;
+delay; jitter 0..1 }` (`max_attempts` counts every run, the first one
+included; `none` means one attempt), `dead_letter { enabled; retention; operator_hint;
 replay_max_age }`, `metadata { key value }` (keys starting with `__` are
 reserved), `runner { require cap; prefer cap; exclude cap; sticky }` (one
 capability per line), and the payload for the generic shell runner,
 `runner shell { command "…"; workdir; user; env { K v } }` or `runner exec {
 args …; workdir; user; env { … } }`.
+
+**Retry default.** A queued job retries a failed run even if nothing in the
+Croniqfile says so. A job without its own `retry` block inherits the one in
+`defaults { }`, and without that it gets the built-in policy `retry
+exponential { max_attempts 3; base 2s; cap 30s; jitter 0.25 }`: three runs in
+total. `croniq validate` warns about the jobs this affects. For a job whose
+run has a side effect that must not happen twice (sending, printing, charging),
+declare `retry none { }` — on the job, or in `defaults { }` to make "no
+retries" the default for the file and opt in per job. Ephemeral jobs are never
+retried. A job registered through the API without `max_retries` gets the same
+built-in policy.
 
 **Calendar rules.** `include` / `exclude` followed by `weekly monday friday`
 (also `Mon`, `weekday`, `weekend`, `"Mon".."Fri"`), `monthly 1 15`, `annual

@@ -2174,6 +2174,24 @@ fn compile_job(
         coalesce_schedule = false;
     }
 
+    // `retry none` runs once (`croniq-bridge` maps it to `RetryPolicy::none()`),
+    // but kept the inherited `max_attempts 3` and backoff, so `croniq compile`
+    // and the job's stored `max_retries` read as three attempts (issue #983).
+    // Normalised here rather than in `compile_retry_block`: a `defaults { retry
+    // none }` stays a plain field-merge base, so a job that switches back to
+    // `retry exponential { … }` inherits the counts it would have had anyway.
+    if retry.strategy == "none" {
+        retry = RetryConfig {
+            strategy: retry.strategy,
+            max_attempts: 1,
+            base: None,
+            cap: None,
+            delay: None,
+            step: None,
+            jitter: None,
+        };
+    }
+
     // Stamp the concurrency limit into the job metadata so it rides along
     // with every execution / work item (same mechanism as `__runner_exec`).
     // The server's claim path reads this key to enforce the limit.
@@ -3069,6 +3087,68 @@ mod tests {
         );
         assert_eq!(switch.retry.max_attempts, 5, "other fields still inherit");
         assert_eq!(switch.retry.delay.as_deref(), Some("3s"));
+    }
+
+    #[test]
+    fn retry_none_compiles_to_a_single_attempt() {
+        // Issue #983: `retry none { }` kept the inherited `max_attempts 3` and
+        // backoff, so the compiled job read as three attempts although the
+        // runtime ran it once.
+        let ast = Parser::parse(
+            r#"
+            job own:none { every 5 minutes; retry none { } }
+            job typed:none { every 5 minutes; retry none { max_attempts 4; base 9s } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        for key in ["own:none", "typed:none"] {
+            let job = cfg.jobs.iter().find(|j| j.key == key).unwrap();
+            assert_eq!(job.retry.strategy, "none", "{key}");
+            assert_eq!(job.retry.max_attempts, 1, "{key}");
+            assert_eq!(job.retry.base, None, "{key}");
+            assert_eq!(job.retry.cap, None, "{key}");
+            assert_eq!(job.retry.jitter, None, "{key}");
+        }
+    }
+
+    #[test]
+    fn defaults_retry_none_reaches_jobs_and_stays_a_merge_base() {
+        // `defaults { retry none }` turns retries off file-wide; a job that
+        // opts back in inherits the counts of the built-in policy, not the
+        // single attempt `none` reports.
+        let ast = Parser::parse(
+            r#"
+            defaults { retry none { } }
+            job plain:job { every 5 minutes }
+            job opt:in    { every 5 minutes; retry exponential { cap 1m } }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+
+        let plain = cfg.jobs.iter().find(|j| j.key == "plain:job").unwrap();
+        assert_eq!(plain.retry.strategy, "none");
+        assert_eq!(plain.retry.max_attempts, 1);
+
+        let opt_in = cfg.jobs.iter().find(|j| j.key == "opt:in").unwrap();
+        assert_eq!(opt_in.retry.strategy, "exponential");
+        assert_eq!(opt_in.retry.max_attempts, 3);
+        assert_eq!(opt_in.retry.cap.as_deref(), Some("1m"));
+    }
+
+    #[test]
+    fn job_without_any_retry_gets_the_built_in_policy() {
+        // Pins the documented built-in default (README, `validate` warning;
+        // issue #983). Changing it is a behaviour change for every job that
+        // declares no `retry`: update both and the CHANGELOG with it.
+        let ast = Parser::parse("job a:b { every 5 minutes }").unwrap();
+        let retry = &compile(&ast).jobs[0].retry;
+        assert_eq!(retry.strategy, "exponential");
+        assert_eq!(retry.max_attempts, 3);
+        assert_eq!(retry.base.as_deref(), Some("2s"));
+        assert_eq!(retry.cap.as_deref(), Some("30s"));
+        assert_eq!(retry.jitter, Some(0.25));
     }
 
     #[test]
