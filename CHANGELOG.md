@@ -48,6 +48,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SDK. In the SDKs these are build and test tooling only; no published SDK's
   dependency floor moves.
 
+### Fixed
+
+- **The built-in retry policy is documented and no longer silent** (#983). A
+  queued job with no `retry` block, in a file whose `defaults { }` declares
+  none either, has always been retried with `retry exponential { max_attempts
+  3; base 2s; cap 30s; jitter 0.25 }`, three runs in total. Nothing said so,
+  and the README's `defaults { }` example read as an opt-in, so a job with a
+  side effect that must not repeat was run three times. The policy is
+  unchanged; the README now states it under "Retry default", and `croniq
+  validate` (and the server at boot) warns once per file, naming the jobs that
+  inherit it. `defaults { retry … }` or a job's own `retry` silences it.
+- **`retry none { }` compiles to one attempt.** It already ran once, but
+  `croniq compile` and the job's stored `max_retries` kept the inherited
+  `max_attempts 3` and backoff values. They now read `max_attempts 1` with no
+  backoff. A `defaults { retry none }` still acts as a field-merge base: a job
+  that opts back in with `retry exponential { … }` inherits the built-in counts.
+- **The DSL generator can emit `retry none`.** Its retry checkbox read "Retry
+  on failure" and, unchecked, emitted no block, which inherits the built-in
+  retries. It is now "Own retry policy" with a note on what unchecked means,
+  and offers `none`, which the bridge used to drop for having no fields.
+
 ## [0.50.0] - 2026-10-26
 
 Most of this release works off a whole-repository review (the entries cite

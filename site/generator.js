@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-10-24a'
+const WASM_VERSION = '2026-11-09a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-10-24a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-11-09a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -246,9 +246,12 @@ const retryStrategyEl = document.getElementById('sch-opt-retry-strategy')
 const retryExpEl = document.getElementById('sch-opt-retry-exp')
 const retryFixedEl = document.getElementById('sch-opt-retry-fixed')
 const retryStepFieldEl = document.getElementById('sch-opt-retry-step-field')
+const retryMaxFieldEl = document.getElementById('sch-opt-retry-max').closest('.field')
 function syncRetryStrategy() {
   const fixed = O.retry.strategy === 'fixed'
-  retryExpEl.hidden = fixed
+  const none = O.retry.strategy === 'none'
+  retryMaxFieldEl.hidden = none
+  retryExpEl.hidden = fixed || none
   retryFixedEl.hidden = !fixed
   // `step` is read by linear backoff alone.
   retryStepFieldEl.hidden = O.retry.strategy !== 'linear'
@@ -353,10 +356,11 @@ function buildJobOptions() {
   if (O.timeout.trim()) opts.timeout = O.timeout.trim()
   if (O.retry.enabled) {
     const r = { strategy: O.retry.strategy }
-    if (O.retry.max) r.max_attempts = O.retry.max
+    // `none` is one attempt and reads no other field.
+    if (O.retry.max && O.retry.strategy !== 'none') r.max_attempts = O.retry.max
     if (O.retry.strategy === 'fixed') {
       if (O.retry.delay.trim()) r.delay = O.retry.delay.trim()
-    } else {
+    } else if (O.retry.strategy !== 'none') {
       if (O.retry.base.trim()) r.base = O.retry.base.trim()
       // The bridge drops `step` on a non-linear strategy anyway; not sending
       // it keeps the payload honest about what was asked for.
