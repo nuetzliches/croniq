@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.51.1] - 2026-11-10
+
+A patch release: the watchdog stops reporting work as stranded that was only
+on its way to the queue.
+
+**Upgrading from 0.51**, nothing needs action. After the upgrade, a WARN
+`re-enqueued stranded queued execution` means a queued row really went missing
+for at least a minute; under steady load it should no longer appear.
+
 ### Fixed
 
 - **The watchdog no longer re-enqueues executions that were never stranded**
@@ -8098,7 +8107,8 @@ section and the repository's security advisories.
   accumulated under the old non-`--all-targets` clippy invocation are
   cleaned up.
 
-[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/nuetzliches/croniq/compare/v0.51.1...HEAD
+[0.51.1]: https://github.com/nuetzliches/croniq/compare/v0.51.0...v0.51.1
 [0.51.0]: https://github.com/nuetzliches/croniq/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/nuetzliches/croniq/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/nuetzliches/croniq/compare/v0.48.1...v0.49.0
