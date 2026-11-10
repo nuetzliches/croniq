@@ -58,6 +58,13 @@ const PRUNE_MAX_BATCHES: usize = 20;
 /// and `find_queued_executions` returns oldest-due first.
 const RECONCILE_BATCH: u32 = 500;
 
+/// How long a row must have been `queued` before the reconcile sweep calls it
+/// stranded (issue #987). Every producer writes the row first and enqueues the
+/// work item after; the scheduler does so for a whole tick's wave at once
+/// (#841). A sweep landing in that window found rows that were milliseconds
+/// from the queue. A genuinely stranded row only waits one more sweep.
+const RECONCILE_MIN_AGE: chrono::Duration = chrono::Duration::seconds(60);
+
 /// Max claimed executions examined per SLA / stale-claim sweep. The store
 /// query lists oldest claim first, so with more than this many concurrent
 /// claims the overflow only defers the NEWEST claims to a later sweep —
@@ -578,7 +585,29 @@ where
     // its capabilities and the timeout the reaper just judged it by (#558).
     let item = crate::loader::work_item_from_execution(&execution, &job);
 
-    runner.queue.write().await.enqueue(item)
+    // Read the state again under the queue lock, the one a poll dequeues and
+    // claims under. The check above ran without it: a producer could publish
+    // the item and a poll claim it in between, and with the item gone from
+    // the queue again `enqueue`'s dedupe had nothing to catch — a duplicate
+    // of a claimed execution went back in, for the next poll to drop
+    // (issue #987). Under the lock, `queued` here means no poll has it.
+    let mut queue = runner.queue.write().await;
+    match store.get_execution(*exec_id) {
+        Ok(Some(e)) if e.state == ExecutionState::Queued => queue.enqueue(item),
+        Ok(Some(e)) => {
+            tracing::debug!(
+                id = %exec_id,
+                state = ?e.state,
+                "requeue: execution left queued state concurrently — not enqueuing"
+            );
+            false
+        }
+        Ok(None) => false,
+        Err(e) => {
+            tracing::error!(id = %exec_id, error = %e, "requeue: store read error");
+            false
+        }
+    }
 }
 
 /// In-memory set of `(rule_name, execution_id)` pairs that have
@@ -1803,10 +1832,12 @@ impl WatchdogLoop {
     /// error while resolving is NOT treated as "job gone" — the row is left
     /// for the next sweep.
     ///
-    /// Races with concurrent enqueuers (scheduler fire between
-    /// create-row and enqueue, poll-handler inline takeover) are harmless:
-    /// `WorkQueue::enqueue` dedupes by execution_id, and the store-side
-    /// claim CAS is the final arbiter.
+    /// Rows younger than [`RECONCILE_MIN_AGE`] are left alone: their
+    /// producer (a scheduler wave, a trigger) may not have enqueued them yet
+    /// (issue #987). Other races with concurrent enqueuers (poll-handler
+    /// inline takeover, a requeue) are harmless: `WorkQueue::enqueue` dedupes
+    /// by execution_id, [`enqueue_requeued_execution`] re-reads the row under
+    /// the queue lock, and the store-side claim CAS is the final arbiter.
     async fn reconcile_stranded_queued(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
         let queued = match self.store.find_queued_executions(RECONCILE_BATCH) {
             Ok(v) => v,
@@ -1838,6 +1869,13 @@ impl WatchdogLoop {
         let mut enqueued = 0usize;
         for execution in &queued {
             if in_queue.contains(&execution.id.to_string()) {
+                continue;
+            }
+            // Its producer has written the row but may not have enqueued the
+            // item yet — the scheduler holds a tick's items back until the
+            // whole wave is persisted (issue #987).
+            let queued_for = now.signed_duration_since(execution.created_at);
+            if queued_for < RECONCILE_MIN_AGE {
                 continue;
             }
 
@@ -1892,6 +1930,7 @@ impl WatchdogLoop {
                 tracing::warn!(
                     job_key = %execution.job_key,
                     execution_id = %execution.id,
+                    queued_for_secs = queued_for.num_seconds(),
                     "watchdog: re-enqueued stranded queued execution missing from in-memory queue"
                 );
                 result.reconciled.push(execution.id);
@@ -2873,6 +2912,62 @@ mod tests {
         let again = watchdog.sweep(Utc::now()).await;
         assert!(again.reconciled.is_empty());
         assert_eq!(runner.queue.read().await.len(), 1, "no duplicate item");
+    }
+
+    // Issue #987: the scheduler persists every row of a tick before it
+    // publishes the wave of work items (#841). A sweep landing in between saw
+    // the fresh rows as stranded and re-enqueued them — a WARN per row for
+    // work that was a few milliseconds from the queue.
+    #[tokio::test]
+    async fn reconcile_leaves_fresh_queued_rows_to_their_producer() {
+        let store = make_store();
+        let runner = make_runner();
+        let now = Utc::now();
+        let exec_id = seed_queued_at(&*store, "test:job", now);
+
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
+        let result = watchdog.sweep(now).await;
+        assert!(
+            result.reconciled.is_empty(),
+            "a row its producer is about to enqueue is not stranded"
+        );
+        assert_eq!(runner.queue.read().await.len(), 0);
+
+        // Still missing once it is past the producer's window: now it is.
+        let later = now + RECONCILE_MIN_AGE + ChronoDuration::seconds(1);
+        let result = watchdog.sweep(later).await;
+        assert_eq!(result.reconciled, vec![exec_id]);
+        assert_eq!(runner.queue.read().await.len(), 1);
+    }
+
+    // Issue #987: the requeue read the row's state before it took the queue
+    // lock. A poll that dequeued and claimed the execution in between (the
+    // scheduler had published it meanwhile) left nothing in the queue for the
+    // dedupe to catch, so the requeue put a duplicate of a claimed execution
+    // back — which the next poll dropped with "work item dropped".
+    #[tokio::test]
+    async fn requeue_does_not_resurrect_an_execution_claimed_meanwhile() {
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_queued_at(&*store, "test:job", Utc::now() - ChronoDuration::minutes(5));
+
+        // The resolver runs between the first read and the enqueue: the
+        // window a concurrent poll's claim fell into.
+        let claiming_store = Arc::clone(&store);
+        let mut resolve = |key: &str| {
+            claiming_store
+                .claim_execution(exec_id, "runner-1", Utc::now())
+                .unwrap();
+            Some(make_job(key))
+        };
+        let enqueued = enqueue_requeued_execution(&store, &runner, &exec_id, &mut resolve).await;
+
+        assert!(!enqueued, "a claimed execution must not be enqueued again");
+        assert_eq!(runner.queue.read().await.len(), 0);
     }
 
     #[tokio::test]

@@ -2752,8 +2752,12 @@ complementary mechanisms — no operator action needed:
 - **Queued-reconcile sweep** (same watchdog cadence): a row that is `queued`
   in the store but missing from the in-memory dispatch queue (e.g. a requeue
   that could not be re-enqueued right away, or a server restart between store
-  write and dispatch) is re-enqueued. If the row's job no longer exists in
-  the DSL or the store, the execution is cancelled instead, with an
+  write and dispatch) is re-enqueued. Rows queued less than 60 s ago are left
+  alone: their producer writes the row first and enqueues it right after (the
+  scheduler for a whole tick at once), so a younger row is not stranded yet.
+  A WARN `re-enqueued stranded queued execution` therefore means work really
+  went missing; its `queued_for_secs` says for how long. If the row's job no
+  longer exists in the DSL or the store, the execution is cancelled instead, with an
   `execution.stranded_queued_cancelled` audit event.
 
 The claim sweeps list the **oldest claims first**, so with more than 500
