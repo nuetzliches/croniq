@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The watchdog no longer re-enqueues executions that were never stranded**
+  (#987). Its queued-reconcile sweep treated every `queued` row missing from
+  the in-memory queue as stranded, but the scheduler writes all rows of a tick
+  before it publishes their work items as one wave (#841). A sweep landing in
+  that window logged `re-enqueued stranded queued execution` for work that was
+  milliseconds from the queue — in bursts, under steady load with many
+  every-minute jobs. Worse, the requeue checked the row's state before taking
+  the queue lock: when a poll claimed the execution in between, the duplicate
+  went back in and the next poll dropped it (`work item dropped`). No run was
+  lost or doubled — the store's claim guard held — but the warnings read like
+  lost work. The sweep now leaves rows younger than 60 s to their producer,
+  the requeue re-reads the row under the queue lock (which also covers the
+  dead-runner and stale-claim requeues), and both warnings carry more context:
+  `queued_for_secs` on the re-enqueue, the store's answer on the drop.
+
 ## [0.51.0] - 2026-11-09
 
 A maintenance release: the built-in retry policy is documented and reported,

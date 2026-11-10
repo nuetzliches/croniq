@@ -1334,11 +1334,14 @@ async fn try_dequeue_for(
                 // claimed via another path. Handing the item out anyway
                 // would start a run whose completion the store's CAS guard
                 // then rejects (issue #374), so drop it instead.
-                Err(croniq_store::traits::StoreError::Conflict(_))
-                | Err(croniq_store::traits::StoreError::NotFound(_)) => {
+                Err(
+                    e @ (croniq_store::traits::StoreError::Conflict(_)
+                    | croniq_store::traits::StoreError::NotFound(_)),
+                ) => {
                     tracing::warn!(
                         execution_id = %item.execution_id,
                         job_key = %item.job_key,
+                        error = %e,
                         "work item dropped — execution is no longer queued in the store"
                     );
                     false
