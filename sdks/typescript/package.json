@@ -56,5 +56,8 @@
   "license": "(MIT OR Apache-2.0)",
   "bugs": {
     "url": "https://github.com/nuetzliches/croniq/issues"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

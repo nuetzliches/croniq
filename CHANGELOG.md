@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **minimatch 11 in the lint tooling of `ui/` and the TypeScript SDK**
+  (GHSA-g3hv-75wg-m249, pattern amplification DoS, medium). eslint,
+  `@eslint/config-array` and `@typescript-eslint/typescript-estree` still
+  declare `^10`, and 11.0.1 is the first fixed release, so an npm `overrides`
+  entry lifts them. The patterns come from the repository's own lint config,
+  and nothing of it ships. ESLint lints the same files as before.
+- **The TOTP seed key is derived straight into its buffer.** HKDF used to
+  write into a zeroed `[0u8; 32]` scratch array that was then copied into the
+  key; the copy is gone, and with it CodeQL's reading of the zero initialiser
+  as a hard-coded key. The derived key is unchanged (golden-vector test).
+
 ## [0.51.1] - 2026-11-10
 
 A patch release: the watchdog stops reporting work as stranded that was only
