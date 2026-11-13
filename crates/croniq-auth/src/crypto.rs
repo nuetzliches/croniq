@@ -61,10 +61,14 @@ fn derive_totp_key(jwt_secret: &str) -> Key<Aes256Gcm> {
     // have to be stored somewhere the wrap format deliberately has no room
     // for (see the module docs on why there is no key identifier on disk).
     let hk = Hkdf::<Sha256>::new(None, jwt_secret.as_bytes());
-    let mut okm = [0u8; 32];
-    hk.expand(TOTP_KEY_INFO, &mut okm)
+    // Expand straight into the key rather than through a `[0u8; 32]` scratch
+    // buffer: no second copy of the key left on the stack, and CodeQL's
+    // `rust/hard-coded-cryptographic-value` read the zero initialiser as a
+    // hard-coded key (alerts 44, 51) although HKDF overwrites every byte.
+    let mut key = Key::<Aes256Gcm>::default();
+    hk.expand(TOTP_KEY_INFO, &mut key)
         .expect("HKDF expand for 32 bytes never fails");
-    Key::<Aes256Gcm>::from(okm)
+    key
 }
 
 /// Wrap a TOTP seed (or any short secret) with AES-256-GCM.
