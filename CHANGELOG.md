@@ -14,6 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declare `^10`, and 11.0.1 is the first fixed release, so an npm `overrides`
   entry lifts them. The patterns come from the repository's own lint config,
   and nothing of it ships. ESLint lints the same files as before.
+- **`@nuxt/schema` 4.6.4 in the dashboard build of `ui/`**
+  (GHSA-mjrq-cffv-q4qc, Nuxt dev server serves files from a parent directory
+  with a stray lockfile or workspace file, medium). `@nuxt/ui` pulls it in
+  with `^4.6.1`, so the lockfile update reaches the fixed release without an
+  `overrides` entry; `pkg-types` moves to 2.4.0 with it. The dashboard runs on
+  Vite, not on a Nuxt dev server, and the package is read only by the
+  `@nuxt/ui` build plugin, so nothing of it ships.
 - **The TOTP seed key is derived straight into its buffer.** HKDF used to
   write into a zeroed `[0u8; 32]` scratch array that was then copied into the
   key; the copy is gone, and with it CodeQL's reading of the zero initialiser
