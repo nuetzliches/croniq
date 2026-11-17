@@ -2,23 +2,39 @@ use croniq_config::{compile, convert, diff, format, parser, validate};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use std::path::Path;
 
-pub fn validate(path: &Path) -> Result<()> {
-    let source = std::fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot read {}", path.display()))?;
+/// The configuration the server would load from `path`: the file with its
+/// `import`s inlined (review 2026-11-17, finding 3). Checked on its own, a
+/// file that leans on an imported calendar, `concurrency_group` or
+/// `defaults { }` failed although the server accepts it.
+///
+/// Each import the server would skip is printed as an **error**, and the
+/// count returned for the caller's summary and exit code. The server only
+/// warns and loads the rest, so the jobs of a broken import go missing with
+/// nothing failing; `validate` and `compile` are the gate before a deploy,
+/// which is where that has to stop.
+fn load_resolved(path: &Path) -> Result<(croniq_config::ast::Croniqfile, usize)> {
+    use croniq_config::import::{LoadFileError, parse_file_resolved};
 
-    let ast = parser::Parser::parse(&source).map_err(|e| {
-        miette::Report::new(e).with_source_code(miette::NamedSource::new(
-            path.display().to_string(),
-            source.clone(),
-        ))
+    let resolved = parse_file_resolved(path).map_err(|e| match e {
+        LoadFileError::Io(e) => miette::miette!("cannot read {}: {e}", path.display()),
+        LoadFileError::Parse { text, error } => miette::Report::new(error)
+            .with_source_code(miette::NamedSource::new(path.display().to_string(), text)),
     })?;
+    for skipped in &resolved.skipped {
+        eprintln!("error: {skipped} — the server would load the file without it");
+    }
+    Ok((resolved.ast, resolved.skipped.len()))
+}
+
+pub fn validate(path: &Path) -> Result<()> {
+    let (ast, skipped_imports) = load_resolved(path)?;
 
     let diags = validate::validate(&ast);
     let errors = diags
         .iter()
         .filter(|d| d.severity == validate::Severity::Error)
-        .count();
+        .count()
+        + skipped_imports;
     // Placeholders resolve against *this* shell's environment and files, which
     // need not be the server's — so a warning, not an error (review
     // 2026-10-24, F-14).
@@ -115,16 +131,7 @@ pub fn fmt(path: &Path, write: bool) -> Result<()> {
 }
 
 pub fn compile(path: &Path) -> Result<()> {
-    let source = std::fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("cannot read {}", path.display()))?;
-
-    let ast = parser::Parser::parse(&source).map_err(|e| {
-        miette::Report::new(e).with_source_code(miette::NamedSource::new(
-            path.display().to_string(),
-            source.clone(),
-        ))
-    })?;
+    let (ast, skipped_imports) = load_resolved(path)?;
 
     // Compiling a file the server would refuse to load must not print JSON that
     // looks authoritative (issue #426): `compile` output is meant to be the
@@ -133,7 +140,9 @@ pub fn compile(path: &Path) -> Result<()> {
     // what `load_from_compiled` fails closed on since #402, so the two agree.
     // Warnings go to stderr and still produce output — stdout stays pure JSON.
     let diags = validate::validate(&ast);
-    let mut errors = 0usize;
+    // A skipped import leaves its jobs out of the JSON, which would then not
+    // be the complete description it claims to be.
+    let mut errors = skipped_imports;
     for diag in &diags {
         match diag.severity {
             validate::Severity::Error => {

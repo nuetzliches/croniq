@@ -103,8 +103,10 @@ pub fn validate_with(ast: &Croniqfile, opts: Options) -> Vec<Diagnostic> {
 
     // Alert channel names, from every `alerts { }` block, so a rule's
     // `channels` can be checked wherever the channel is declared. A file with
-    // `import`s is not checked for dangling references: `croniq validate`
-    // sees only this file, and the channel may live in an imported one.
+    // `import`s is not checked for dangling references: the channel may live
+    // in an imported file. `croniq validate` and the server inline imports
+    // first (`import::parse_file_resolved`), so this only spares callers that
+    // validate a single text — the dashboard's and the generator's editors.
     let alert_channels: HashSet<String> = ast
         .items
         .iter()

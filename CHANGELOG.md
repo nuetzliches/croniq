@@ -19,6 +19,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   key; the copy is gone, and with it CodeQL's reading of the zero initialiser
   as a hard-coded key. The derived key is unchanged (golden-vector test).
 
+### Fixed
+
+- **The 0.51.0 upgrade notes name the one-time `run_on_register` fire.** A
+  job with `retry none` and `run_on_register` runs once when a 0.50 server is
+  upgraded, because compiling `retry none` to one attempt moved the job's
+  definition fingerprint; the notes said nothing changes at runtime. The
+  fingerprint stays as 0.51 computes it: reverting it would fire the same jobs
+  a second time on every server already on 0.51.
+- **The DSL generator can emit `defaults { retry none { } }`**, the file-wide
+  single attempt that `croniq validate` suggests. Its Defaults form offered no
+  `none`, and the block emitter dropped a `retry` block without fields — the
+  gap 0.51.0 closed for the job form only.
+- **`croniq validate` and `croniq compile` follow `import`s** the way the
+  server does. They checked the named file on its own, so a split
+  configuration the server loads without complaint failed with "calendar … is
+  not defined" or "concurrency_group … is not defined" when the calendar or
+  group came from an import, and warned about a missing timezone or retry
+  policy that an imported `defaults { }` supplies. `compile` printed the jobs
+  without those defaults. Both now inline imports first, with the same
+  implementation the server loads with.
+- **`croniq validate` and `croniq compile` fail on an import they cannot
+  inline**: a pattern that matches no file, a cycle, or an imported file that
+  does not parse. The server skips such an import with a warning and loads
+  the rest, so the jobs in it go missing without anything failing; the CLI is
+  the check before a deploy, so there it is an error (exit 1, and `compile`
+  prints no JSON). The server's behaviour is unchanged.
+
 ## [0.51.1] - 2026-11-10
 
 A patch release: the watchdog stops reporting work as stranded that was only
@@ -59,6 +86,11 @@ advisories, and a batch of dependency updates.
   explicit, or `retry none { }` where a job must not run twice.
 - **A job with `retry none` now reports `max_retries` 1** in the API and the
   dashboard instead of 3. It already ran only once.
+- **A job with `retry none` and `run_on_register` fires once after the
+  upgrade** (added after the release). `retry none` now compiles to one
+  attempt, which changes the job's definition fingerprint, so the upgraded
+  server adopts it as a changed job and runs it once. This holds for `retry
+  none` on the job and for one inherited from `defaults { }`.
 
 ### Added
 

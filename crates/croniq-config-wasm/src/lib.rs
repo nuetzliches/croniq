@@ -1204,6 +1204,13 @@ fn emit_directive(d: &DirectivePayload, indent: usize) -> Option<String> {
     }
     let pad = "  ".repeat(indent);
 
+    // `retry none` reads no fields, and its empty block is what says "one
+    // attempt": dropped as empty, the file would inherit the built-in retries
+    // instead. `retry_loose_line` does the same for the job form (#983).
+    if key == "retry" && d.qualifier.as_deref().map(str::trim) == Some("none") {
+        return Some(format!("{pad}retry none {{ }}"));
+    }
+
     let child_lines: Vec<String> = d
         .children
         .iter()
@@ -2520,6 +2527,27 @@ job ops:check {{ every 5 minutes }}
         );
         assert!(out.contains("dead_letter { retention 30d }"), "{out}");
         Parser::parse(&out).unwrap();
+    }
+
+    #[test]
+    fn defaults_retry_none_emits_an_empty_block() {
+        // `validate` and the README recommend `defaults { retry none { } }`,
+        // but a sub-block without children was dropped here — the gap #983
+        // closed for the job form only. `none` reads no fields, so any the
+        // form still holds are ignored rather than emitted.
+        for children in [vec![], vec![dir("max_attempts", &["3"])]] {
+            let dirs = vec![
+                dir("timeout", &["5m"]),
+                block("retry", Some("none"), children),
+            ];
+            let out = format_top_level_block_inner("defaults", None, &dirs).unwrap();
+            assert!(out.contains("retry none {"), "{out}");
+            assert!(!out.contains("max_attempts"), "{out}");
+            let src = format!("{out}job a:b {{ every 5 minutes }}\n");
+            let job = &croniq_config::compile::compile(&Parser::parse(&src).unwrap()).jobs[0];
+            assert_eq!(job.retry.strategy, "none", "{out}");
+            assert_eq!(job.retry.max_attempts, 1, "{out}");
+        }
     }
 
     #[test]

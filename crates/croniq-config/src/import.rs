@@ -3,6 +3,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::ast::{Croniqfile, Item};
+use crate::parser::{ParseError, Parser};
+
 /// Resolve import paths relative to the base directory.
 /// Supports glob patterns. Detects circular imports via a visited set of
 /// canonical paths.
@@ -42,6 +45,102 @@ pub fn resolve_imports_with_visited(
     }
 
     Ok(paths)
+}
+
+/// A Croniqfile with every `import` replaced by the items it names, in place
+/// and recursively — the configuration the server runs.
+#[derive(Debug)]
+pub struct ResolvedFile {
+    pub ast: Croniqfile,
+    /// Imports left out, in the order met. The server skips each with a
+    /// warning rather than refusing the boot, so a caller that checks a file
+    /// must say what it did not see.
+    pub skipped: Vec<SkippedImport>,
+}
+
+/// An `import` [`parse_file_resolved`] could not inline.
+#[derive(Debug)]
+pub enum SkippedImport {
+    /// The pattern matched no file, or a matched file closes a cycle.
+    Unresolved { import: String, error: ImportError },
+    /// A matched file could not be read or does not parse.
+    Unreadable { file: PathBuf, error: LoadFileError },
+}
+
+impl std::fmt::Display for SkippedImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unresolved { import, error } => write!(f, "import '{import}' skipped: {error}"),
+            Self::Unreadable { file, error } => {
+                write!(f, "imported file '{}' skipped: {error}", file.display())
+            }
+        }
+    }
+}
+
+/// Why the top-level file of [`parse_file_resolved`] could not be loaded.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadFileError {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    /// Carries the file's text, which a caller needs to point at the error.
+    #[error("{error}")]
+    Parse { text: String, error: ParseError },
+}
+
+/// Parse `path` and inline its imports recursively.
+///
+/// The one implementation of what a Croniqfile *is*: the server loads with
+/// it, and `croniq validate` / `croniq compile` check with it. When the CLI
+/// checked the top-level file alone, a calendar, `concurrency_group` or
+/// `defaults { }` that an import supplies read as missing (review
+/// 2026-11-17, finding 3). Only the top-level file is fatal; an import that
+/// does not resolve or parse is left out and listed in
+/// [`ResolvedFile::skipped`].
+pub fn parse_file_resolved(path: &Path) -> Result<ResolvedFile, LoadFileError> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut visited = HashSet::from([canonical.clone()]);
+    let mut skipped = Vec::new();
+    let ast = parse_and_inline(&canonical, &mut visited, &mut skipped)?;
+    Ok(ResolvedFile { ast, skipped })
+}
+
+fn parse_and_inline(
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    skipped: &mut Vec<SkippedImport>,
+) -> Result<Croniqfile, LoadFileError> {
+    let text = std::fs::read_to_string(path)?;
+    let mut ast = match Parser::parse(&text) {
+        Ok(ast) => ast,
+        Err(error) => return Err(LoadFileError::Parse { text, error }),
+    };
+    let base_dir = path.parent().unwrap_or(Path::new("."));
+
+    let mut items = Vec::with_capacity(ast.items.len());
+    for item in std::mem::take(&mut ast.items) {
+        let Item::Import(ref import) = item else {
+            items.push(item);
+            continue;
+        };
+        let pattern = &import.path.value;
+        match resolve_imports_with_visited(base_dir, pattern, visited) {
+            Ok(files) => {
+                for file in files {
+                    match parse_and_inline(&file, visited, skipped) {
+                        Ok(imported) => items.extend(imported.items),
+                        Err(error) => skipped.push(SkippedImport::Unreadable { file, error }),
+                    }
+                }
+            }
+            Err(error) => skipped.push(SkippedImport::Unresolved {
+                import: pattern.clone(),
+                error,
+            }),
+        }
+    }
+    ast.items = items;
+    Ok(ast)
 }
 
 #[derive(Debug, Clone, thiserror::Error)]

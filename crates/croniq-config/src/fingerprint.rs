@@ -163,6 +163,84 @@ mod tests {
         job(src).config_hash()
     }
 
+    /// Pinned hashes of typical jobs. A hash the store already holds is what
+    /// `run_on_register` compares against, so a compiler change that moves
+    /// one fires every such job on upgrade — 0.51.0 did exactly that for
+    /// `retry none` without a word in its upgrade notes. If a value here has
+    /// to change, that is the decision: update it and name the one-time fire
+    /// in the CHANGELOG's upgrade notes.
+    #[test]
+    fn hashes_of_typical_jobs_stay_put_across_releases() {
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "bare interval",
+                "job etl:sync { every 15 minutes }",
+                "da871239971d8247370571e4b3af26fde8d637ee922d7c7c4b87e995289fa65b",
+            ),
+            (
+                "daily with zone, calendar and window",
+                r#"calendar business { timezone Europe/Vienna; include weekly monday }
+                job report:daily {
+                    every day at 06:30 { timezone Europe/Vienna; calendar business }
+                    window "06:00".."08:00"
+                }"#,
+                "378626f2bc7c522964a44b7a1798a8ca9ce6649db042452b2f9747f959b9b077",
+            ),
+            (
+                "shell runner with policies",
+                r#"job ops:backup {
+                    every 1 hour
+                    runner shell { command "backup.sh"; env { A "1"; B "2" } }
+                    timeout 10m
+                    retry exponential { max_attempts 5; base 5s; cap 2m; jitter 0.3 }
+                    dead_letter { retention 14d; operator_hint "page ops" }
+                    singleton
+                    priority high
+                    catch_up latest
+                    queue_ttl 30m
+                    metadata { team "ops" }
+                }"#,
+                "195ed88461fd3134560ac67e1fd5e2f5d8ca59d4c06ec5c3fba2c3abb02b5de2",
+            ),
+            (
+                "own retry none",
+                "job pay:settle { every day at 04:20; retry none { } }",
+                "bd8f90819d162eba4f56f9d66f4b1c8b0ef36b74c915d0b81cfd8d810c51714b",
+            ),
+            (
+                "retry none from defaults",
+                "defaults { retry none { } }\njob pay:notify { every 5 minutes }",
+                "1d4cdada34669ee868b49ce1a9b9d1eb4f8c3cdc1527aef6a634eae692914f6c",
+            ),
+            (
+                "ephemeral fixed retry",
+                "job ping:edge { every 1 minute; execution_mode ephemeral; retry fixed { max_attempts 2; delay 10s } }",
+                "7d912fdeabdac08eb6d52473377f6f6da692e27843fb2cdfdbd233ea41e78647",
+            ),
+        ];
+        let moved: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, src, want)| {
+                // A fixture the validator rejects would pin a job nobody can
+                // deploy, and a typo in it would pass unnoticed.
+                let ast = Parser::parse(src).expect("parses");
+                let errors: Vec<_> = crate::validate::validate(&ast)
+                    .into_iter()
+                    .filter(|d| d.severity == crate::validate::Severity::Error)
+                    .map(|d| d.message)
+                    .collect();
+                assert!(errors.is_empty(), "{name}: {errors:?}");
+                let got = hash(src);
+                (got != *want).then(|| format!("{name}: {got}"))
+            })
+            .collect();
+        assert!(
+            moved.is_empty(),
+            "config_hash moved — every `run_on_register` job of this shape fires on upgrade:\n{}",
+            moved.join("\n")
+        );
+    }
+
     #[test]
     fn hash_is_stable_across_calls() {
         let j = job(r#"job etl:sync { every 15 minutes }"#);

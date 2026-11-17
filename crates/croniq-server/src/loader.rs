@@ -4,14 +4,13 @@
 //! - A `RuntimeConfig` with fully resolved job definitions
 //! - A map of job key → `Trigger` (ready-to-tick scheduler state machines)
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use croniq_config::ast::{Croniqfile, Item};
+use croniq_config::ast::Croniqfile;
 use croniq_config::compile::JobConfig;
 use croniq_config::compile::{self, CatchUpPolicy, RuntimeConfig};
-use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
 use croniq_scheduler::{
     calendar::Calendar,
@@ -135,60 +134,34 @@ pub struct LoadedConfig {
 }
 
 /// Load a Croniqfile from a file path, resolving `import` directives recursively.
+///
+/// The resolution lives in `croniq-config` so `croniq validate` / `croniq
+/// compile` check the same configuration this function loads (review
+/// 2026-11-17, finding 3). An import that does not resolve is skipped with a
+/// warning, as it always was.
 pub fn load_file(path: &Path) -> Result<LoadedConfig, LoadError> {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let mut visited = HashSet::new();
-    visited.insert(canonical.clone());
+    use croniq_config::import::{LoadFileError, SkippedImport, parse_file_resolved};
 
-    let ast = load_and_resolve(&canonical, &mut visited)?;
-    let runtime = compile::compile(&ast);
-    load_from_compiled(runtime, &ast)
-}
-
-/// Load and parse a single file, then recursively resolve its imports.
-fn load_and_resolve(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Croniqfile, LoadError> {
-    let src = std::fs::read_to_string(path)?;
-    let mut ast = Parser::parse(&src).map_err(|e| parse_error_to_load(e, &src))?;
-
-    let base_dir = path.parent().unwrap_or(Path::new("."));
-
-    // Collect imports, replace them with the imported items
-    let mut resolved_items = Vec::new();
-    for item in std::mem::take(&mut ast.items) {
-        if let Item::Import(ref imp) = item {
-            let import_path = &imp.path.value;
-            match resolve_imports_with_visited(base_dir, import_path, visited) {
-                Ok(paths) => {
-                    for import_file in paths {
-                        match load_and_resolve(&import_file, visited) {
-                            Ok(imported_ast) => {
-                                resolved_items.extend(imported_ast.items);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    file = %import_file.display(),
-                                    error = %e,
-                                    "failed to load imported file — skipping"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        import = %import_path,
-                        error = %e,
-                        "failed to resolve import — skipping"
-                    );
-                }
-            }
-        } else {
-            resolved_items.push(item);
+    let resolved = parse_file_resolved(path).map_err(|e| match e {
+        LoadFileError::Io(e) => LoadError::Io(e),
+        LoadFileError::Parse { text, error } => parse_error_to_load(error, &text),
+    })?;
+    for skipped in &resolved.skipped {
+        match skipped {
+            SkippedImport::Unresolved { import, error } => tracing::warn!(
+                import = %import,
+                error = %error,
+                "failed to resolve import — skipping"
+            ),
+            SkippedImport::Unreadable { file, error } => tracing::warn!(
+                file = %file.display(),
+                error = %error,
+                "failed to load imported file — skipping"
+            ),
         }
     }
-    ast.items = resolved_items;
-
-    Ok(ast)
+    let runtime = compile::compile(&resolved.ast);
+    load_from_compiled(runtime, &resolved.ast)
 }
 
 /// Load a Croniqfile from a source string (no import resolution).

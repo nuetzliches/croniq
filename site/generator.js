@@ -9,9 +9,9 @@
 // Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
 // lived browser/CDN caches will keep serving an old bundle and the DSL
 // output drifts from the actual config crate.
-const WASM_VERSION = '2026-11-09a'
+const WASM_VERSION = '2026-11-17a'
 
-import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-11-09a'
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-11-17a'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
@@ -1178,7 +1178,9 @@ const CONFIG_SCHEMA = {
     { key: 'priority', label: 'Priority', type: 'select', options: ['', 'low', 'normal', 'high'] },
     // `linear` is a real strategy in croniq-execution (base/step/cap); it and
     // its `step` were simply never offered by a form.
-    { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'linear', 'fixed'] }, fields: [
+    // `none` is the file-wide "one attempt" that `croniq validate` suggests;
+    // it reads none of the fields below (see buildConfigDirectives).
+    { sub: 'retry', label: 'Retry', qualifier: { options: ['exponential', 'linear', 'fixed', 'none'] }, fields: [
       { key: 'max_attempts', label: 'Max attempts', type: 'number' },
       { key: 'base', label: 'Base', placeholder: '2s' },
       { key: 'step', label: 'Step (linear only)', placeholder: '10s' },
@@ -1494,9 +1496,13 @@ function buildConfigDirectives() {
         const d = leaf(`${entry.sub}.${f.key}`, f)
         if (d) children.push(d)
       })
-      if (children.length === 0) return
+      const qualifier = entry.qualifier
+        ? vals[`${entry.sub}.__q`] || entry.qualifier.options[0]
+        : undefined
+      // `retry none` has no fields, and its empty block is the whole point.
+      if (children.length === 0 && qualifier !== 'none') return
       const dir = { key: entry.sub, children }
-      if (entry.qualifier) dir.qualifier = vals[`${entry.sub}.__q`] || entry.qualifier.options[0]
+      if (qualifier) dir.qualifier = qualifier
       dirs.push(dir)
     } else {
       const d = leaf(entry.key, entry)
