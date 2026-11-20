@@ -1,5 +1,5 @@
 # ── Stage 1: Build Rust binaries ──────────────────────────────────────────────
-FROM rust:1.99-bookworm AS rust-builder
+FROM rust:1.100-bookworm AS rust-builder
 
 # Statically linked against musl, because the runtime below is Alpine (#599).
 # Same target release.yml has published since #577, and the same reasoning:
@@ -64,7 +64,7 @@ RUN set -eux; \
 # WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
 # and reuse the artefacts across every TARGETPLATFORM. wasm-pack itself is
 # fetched as a pre-built binary (cargo install wasm-pack would add ~2 min).
-FROM --platform=$BUILDPLATFORM rust:1.99-bookworm AS wasm-builder
+FROM --platform=$BUILDPLATFORM rust:1.100-bookworm AS wasm-builder
 
 # Version and SHA-256 pins of the release tarballs live in the script, which
 # CI and the Pages deploy call too — one set of pins for every place that
