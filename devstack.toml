@@ -1,4 +1,4 @@
-# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.35.0/docs/stack-file.md
+# devstack stack file — https://github.com/nuetzliches/devstack/blob/v0.54.0/docs/stack-file.md
 #
 # The same stack as `node scripts/dev-stack.mjs` (API, demo runner, dashboard
 # on croniq's 4230-4233 dev block), run by devstack: every process is built
@@ -21,8 +21,14 @@ version = 1
 
 [stack]
 name     = "croniq"
-requires = "0.23.0"                        # `prepare.outputs`; profile `skip` needs 0.21.0
-reviewed = "0.35.0"
+requires = "0.48.0"                        # `shortcut`; `[prepare] warm` needs 0.24.0, `prepare.outputs` 0.23.0
+reviewed = "0.54.0"
+
+# The daemon runs the dashboard's `npm ci` for origin/main in the background,
+# so the first worktree lane after a lockfile change copies node_modules from
+# the store instead of installing them. It never fetches: a fetch moves it.
+[prepare]
+warm = ["origin/main"]
 
 # ------------------------------------------------------------------ services
 #
@@ -112,16 +118,22 @@ cwd    = "ui"
 run    = "npm run dev -- --host 127.0.0.1 --port {port}"
 port   = 4231
 health = { http = "/", timeout = "300s" }
-# A worktree's lane runs vite from a snapshot without node_modules; the main
-# tree uses its own and never runs this. `outputs` keeps what `npm ci` made in
-# the machine's store, so the next lane with the same lockfile copies it
+# A card of its own at the top of devstack's dashboard that opens croniq's.
+shortcut = true
+# A worktree's lane runs vite from a snapshot without node_modules. The main
+# tree runs this in place when the lockfile changed since its last run (a
+# merge that brought new packages), stopping vite first so `npm ci` can
+# replace the files Windows keeps locked. `outputs` keeps what `npm ci` made
+# in the machine's store, so the next lane with the same lockfile copies it
 # instead; `version` makes a new Node a new entry.
 prepare = { run = "npm ci", inputs = ["ui/package-lock.json"], outputs = ["ui/node_modules"], version = "node --version" }
 env    = { CRONIQ_API_ORIGIN = "{service.api.url}" }
 # Vite reloads app code itself; these it only reads on start. The wasm bridge
-# is rebuilt by `predev`, so a DSL change needs a restart too.
+# is rebuilt by `predev`, so a DSL change needs a restart too. The lockfile
+# makes the restart that runs `prepare` (above) come by itself after a pull.
 restart_on = [
   "ui/package.json",
+  "ui/package-lock.json",
   "ui/vite.config.ts",
   "ui/tsconfig*.json",
   "crates/croniq-config/src/**",

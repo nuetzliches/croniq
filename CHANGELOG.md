@@ -108,6 +108,16 @@ advisories, and a batch of dependency updates.
 
 ### Changed
 
+- **`devstack.toml` needs devstack 0.48.0 and is up to date with 0.54.0**
+  (`reviewed = "0.54.0"`). The dashboard is a shortcut card at the top of
+  devstack's dashboard (`shortcut = true`, the reason for 0.48.0). A change to
+  `ui/package-lock.json` restarts vite, and since devstack 0.54.0 that start
+  runs `npm ci` in the main tree too, so a pull with new packages no longer
+  leaves the dev server on the old `node_modules`. `[prepare] warm =
+  ["origin/main"]` has the daemon install them for origin/main ahead, so the
+  first worktree lane after a lockfile change copies them from the store. The
+  services themselves are unchanged.
+
 - **The live view's Expand / Collapse toggle sits in the card header**, next
   to the other controls, and appears only when there are more jobs than the
   collapsed card shows. Expanded, it used to be a full scroll away below the
